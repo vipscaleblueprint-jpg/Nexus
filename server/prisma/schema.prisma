@@ -1,0 +1,376 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// ENUMS
+// -----------------------------------------------------------------------------
+
+// System-wide access permission
+enum SystemRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// Functional Job Description Roles
+enum RoleType {
+  PM
+  DESIGNER
+  TECH
+  CRM
+  AUDITOR
+  ADMIN
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  INTERN
+  CONTRACTOR
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum EntityType {
+  SPACE
+  FOLDER
+  SUBFOLDER
+  LIST
+  DOC
+}
+
+// -----------------------------------------------------------------------------
+// DYNAMIC TEAMS
+// -----------------------------------------------------------------------------
+
+model Team {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g. "Design Team", "Dev Team", "Production Team"
+  description String?
+  color       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members User[]
+  tasks   Task[]
+}
+
+// -----------------------------------------------------------------------------
+// USER & MULTI-ROLE AUTHORIZATION
+// -----------------------------------------------------------------------------
+
+model User {
+  id             String         @id @default(uuid())
+  email          String         @unique
+  password       String
+  name           String
+  avatarUrl      String?
+  dailySheetUrl  String?
+  starRating     Int            @default(1) // 1 - 3
+  employmentType EmploymentType @default(FULL_TIME)
+  isActive       Boolean        @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // System Permission Access Level
+  systemRole SystemRole @default(MEMBER)
+
+  // Functional Job Description Multi-Roles
+  primaryRole   RoleType?
+  secondaryRole RoleType?
+  tertiaryRole  RoleType?
+  minorRole     RoleType?
+
+  // Dynamic Team Relation
+  teamId String?
+  team   Team?   @relation(fields: [teamId], references: [id])
+
+  // Relations
+  ownedSpaces         Space[]            @relation("SpaceOwner")
+  assignedTasks       Task[]             @relation("TaskAssignee")
+  createdTasks        Task[]             @relation("TaskCreator")
+  checkedItems        ChecklistItem[]    @relation("ItemChecker")
+  favorites           Favorite[]
+  messages            Message[]
+  uploadedAttachments Attachment[]
+  auditLogs           AuditLog[]
+}
+
+// -----------------------------------------------------------------------------
+// CLICKUP-STYLE HIERARCHY (Spaces, Folders, Subfolders, Lists, Docs, Favorites)
+// -----------------------------------------------------------------------------
+
+model Space {
+  id        String   @id @default(uuid())
+  name      String
+  icon      String?
+  color     String?
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner   User     @relation("SpaceOwner", fields: [ownerId], references: [id])
+  folders Folder[]
+  lists   List[]
+  docs    Doc[]
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String
+  spaceId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  space      Space       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  subfolders Subfolder[]
+  lists      List[]
+  docs       Doc[]
+}
+
+model Subfolder {
+  id        String   @id @default(uuid())
+  name      String
+  folderId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  lists  List[]
+  docs   Doc[]
+}
+
+model List {
+  id          String   @id @default(uuid())
+  name        String
+  spaceId     String?
+  folderId    String?
+  subfolderId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  space     Space?       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  folder    Folder?      @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  subfolder Subfolder?   @relation(fields: [subfolderId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+  columns   TaskColumn[]
+}
+
+model Doc {
+  id          String   @id @default(uuid())
+  title       String
+  content     String?  // Rich text Tiptap HTML or JSON
+  docDate     DateTime @default(now()) // Organized by date
+  spaceId     String?
+  folderId    String?
+  subfolderId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  space     Space?     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  folder    Folder?    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  subfolder Subfolder? @relation(fields: [subfolderId], references: [id], onDelete: Cascade)
+}
+
+model Favorite {
+  id         String     @id @default(uuid())
+  userId     String
+  entityType EntityType
+  entityId   String
+  createdAt  DateTime   @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, entityType, entityId])
+}
+
+// -----------------------------------------------------------------------------
+// KANBAN COLUMNS, SUB-COLUMNS & WORKFLOW RULE ENGINE
+// -----------------------------------------------------------------------------
+
+model TaskColumn {
+  id             String   @id @default(uuid())
+  name           String
+  position       Int      @default(0)
+  color          String?
+  listId         String
+  parentColumnId String? // For collapsible subcolumns e.g. In-Review -> In-Checking
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  list         List         @relation(fields: [listId], references: [id], onDelete: Cascade)
+  parentColumn TaskColumn?  @relation("SubColumns", fields: [parentColumnId], references: [id], onDelete: Cascade)
+  subColumns   TaskColumn[] @relation("SubColumns")
+  tasks        Task[]
+  statusRules  StatusRule[]
+}
+
+model StatusRule {
+  id                               String   @id @default(uuid())
+  columnId                         String
+  requireAllSubtasksComplete       Boolean  @default(false)
+  requireAllChecklistItemsComplete Boolean  @default(false)
+  allowedRoles                     String[] // Job Roles permitted to change status to this column e.g. ["PM", "CRM"]
+  createdAt                        DateTime @default(now())
+
+  column TaskColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+}
+
+// -----------------------------------------------------------------------------
+// TASKS, SUBTASKS, CHECKLISTS & ATTACHMENTS
+// -----------------------------------------------------------------------------
+
+model Task {
+  id             String   @id @default(uuid())
+  title          String
+  description    String?  // Tiptap rich text
+  clientName     String?  // Used for auto-listing and client sorting in Doc task subtab
+  position       Int      @default(0)
+  priority       Priority @default(MEDIUM)
+  listId         String
+  columnId       String
+  assigneeUserId String?
+  assigneeTeamId String?  // Dynamic Team assignment
+  creatorId      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  list         List          @relation(fields: [listId], references: [id], onDelete: Cascade)
+  column       TaskColumn    @relation(fields: [columnId], references: [id])
+  assigneeUser User?         @relation("TaskAssignee", fields: [assigneeUserId], references: [id])
+  assigneeTeam Team?         @relation(fields: [assigneeTeamId], references: [id])
+  creator      User          @relation("TaskCreator", fields: [creatorId], references: [id])
+  subtasks     Subtask[]
+  checklists   Checklist[]
+  attachments  Attachment[]
+  comments     TaskComment[]
+}
+
+model Subtask {
+  id        String   @id @default(uuid())
+  title     String
+  isDone    Boolean  @default(false)
+  taskId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model Checklist {
+  id        String          @id @default(uuid())
+  title     String
+  taskId    String
+  createdAt DateTime        @default(now())
+  items     ChecklistItem[]
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model ChecklistItem {
+  id              String    @id @default(uuid())
+  text            String
+  isDone          Boolean   @default(false)
+  checklistId     String
+  checkedByUserId String?   // Auditor check verification
+  checkedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  checklist Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  checkedBy User?     @relation("ItemChecker", fields: [checkedByUserId], references: [id])
+}
+
+model TaskComment {
+  id        String   @id @default(uuid())
+  content   String
+  taskId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attachments Attachment[]
+}
+
+model Attachment {
+  id            String   @id @default(uuid())
+  fileName      String
+  fileUrl       String   // Cloudflare R2 S3 Object URL
+  fileKey       String   // R2 object key
+  fileSize      Int
+  mimeType      String
+  taskId        String?
+  taskCommentId String?
+  messageId     String?
+  uploadedById  String
+  createdAt     DateTime @default(now())
+
+  task        Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskComment TaskComment? @relation(fields: [taskCommentId], references: [id], onDelete: Cascade)
+  message     Message?     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploadedBy  User         @relation(fields: [uploadedById], references: [id])
+}
+
+// -----------------------------------------------------------------------------
+// CHANNELS, SUB-CHANNELS & DIRECT MESSAGES (DMs)
+// -----------------------------------------------------------------------------
+
+model Channel {
+  id          String       @id @default(uuid())
+  name        String
+  description String?
+  isPrivate   Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  subChannels SubChannel[]
+  messages    Message[]
+}
+
+model SubChannel {
+  id        String    @id @default(uuid())
+  name      String
+  channelId String
+  createdAt DateTime  @default(now())
+
+  channel  Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+model Message {
+  id           String   @id @default(uuid())
+  content      String
+  senderId     String
+  channelId    String?
+  subChannelId String?
+  receiverId   String?  // For Direct Messages (DMs)
+  isEdited     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sender      User         @relation(fields: [senderId], references: [id])
+  channel     Channel?     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  subChannel  SubChannel?  @relation(fields: [subChannelId], references: [id], onDelete: Cascade)
+  attachments Attachment[]
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  entity    String
+  entityId  String
+  userId    String
+  details   Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

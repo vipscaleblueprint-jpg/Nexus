@@ -1,79 +1,45 @@
-import { Router, Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { Router } from 'express';
+import {
+  listSpaces,
+  getDashboardData,
+  createSpace,
+  deleteSpace,
+  createFolder,
+  deleteFolder,
+  createDoc,
+  updateDoc,
+  deleteDoc,
+  createPage,
+  updatePage,
+  deletePage,
+  listDocTaskSubtab,
+} from '../controllers/space.controller';
+import { idParams, validate } from '../validation';
+import {
+  createDocSchema,
+  createFolderSchema,
+  createPageSchema,
+  createSpaceSchema,
+  updateDocSchema,
+  updatePageSchema,
+} from '../validation/schemas';
 
-const prisma = new PrismaClient();
 export const spaceRouter = Router();
 
-// GET /api/spaces (Get full hierarchy: Spaces -> Folders -> Subfolders -> Lists/Docs)
-spaceRouter.get('/', async (req: Request, res: Response) => {
-  try {
-    const spaces = await prisma.space.findMany({
-      include: {
-        folders: {
-          include: {
-            subfolders: {
-              include: { lists: true, docs: true },
-            },
-            lists: true,
-            docs: true,
-          },
-        },
-        lists: true,
-        docs: true,
-      },
-    });
-    return res.json({ spaces });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
+spaceRouter.get('/dashboard', getDashboardData);
 
-// POST /api/spaces (Create Space)
-spaceRouter.post('/', async (req: Request, res: Response) => {
-  try {
-    const { name, icon, color, ownerId } = req.body;
-    const space = await prisma.space.create({
-      data: { name, icon, color, ownerId },
-    });
-    return res.status(201).json({ space });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
+spaceRouter.post('/folders', validate({ body: createFolderSchema }), createFolder);
+spaceRouter.delete('/folders/:id', validate({ params: idParams }), deleteFolder);
 
-// POST /api/docs (Create Doc, organized by date)
-spaceRouter.post('/docs', async (req: Request, res: Response) => {
-  try {
-    const { title, content, docDate, spaceId, folderId, subfolderId } = req.body;
-    const doc = await prisma.doc.create({
-      data: {
-        title,
-        content,
-        docDate: docDate ? new Date(docDate) : new Date(),
-        spaceId,
-        folderId,
-        subfolderId,
-      },
-    });
-    return res.status(201).json({ doc });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
+spaceRouter.post('/docs', validate({ body: createDocSchema }), createDoc);
+spaceRouter.get('/docs/:id/task-subtab', validate({ params: idParams }), listDocTaskSubtab);
+spaceRouter.patch('/docs/:id', validate({ params: idParams, body: updateDocSchema }), updateDoc);
+spaceRouter.delete('/docs/:id', validate({ params: idParams }), deleteDoc);
 
-// GET /api/docs/:id/task-subtab (Auto-list available tasks/subtasks sorted by client)
-spaceRouter.get('/docs/:id/task-subtab', async (req: Request, res: Response) => {
-  try {
-    const tasks = await prisma.task.findMany({
-      include: {
-        subtasks: true,
-        column: true,
-        assigneeUser: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { clientName: 'asc' },
-    });
-    return res.json({ tasks });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
+spaceRouter.post('/pages', validate({ body: createPageSchema }), createPage);
+spaceRouter.patch('/pages/:id', validate({ params: idParams, body: updatePageSchema }), updatePage);
+spaceRouter.delete('/pages/:id', validate({ params: idParams }), deletePage);
+
+spaceRouter.get('/', listSpaces);
+spaceRouter.post('/', validate({ body: createSpaceSchema }), createSpace);
+spaceRouter.delete('/:id', validate({ params: idParams }), deleteSpace);

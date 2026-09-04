@@ -1,24 +1,39 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { z } from 'zod';
-import { PrismaClient, RoleType, SystemRole, EmploymentType } from '@prisma/client';
+import { RoleType, SystemRole } from '@prisma/client';
+import type {
+  ChangePasswordInput,
+  ForgotPasswordInput,
+  LoginInput,
+  ResetPasswordInput,
+  SignupInput,
+  UpdateProfileInput,
+} from '../validation/schemas';
 import {
   storeRefreshToken,
   getRefreshToken,
   removeRefreshToken,
   blacklistToken,
+  storeOTP,
+  getOTP,
+  removeOTP,
 } from '../services/redisService';
+import { sendOTPEmail, sendPasswordChangeEmail } from '../services/emailService';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { requireEnv } from '../config/env';
+import { prisma } from '../config/prisma';
+import { createLogger, errMsg } from '../config/logger';
 
-const prisma = new PrismaClient();
-const JWT_SECRET = process.env.JWT_SECRET || 'nexus-default-jwt-secret-key-2026';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'nexus-default-jwt-refresh-secret-2026';
+const log = createLogger('auth');
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback';
-const FRONTEND_URL = process.env.CORS_ORIGIN || 'http://localhost:3000';
+const JWT_SECRET = requireEnv('JWT_SECRET');
+const JWT_REFRESH_SECRET = requireEnv('JWT_REFRESH_SECRET');
+
+const GOOGLE_CLIENT_ID = requireEnv('GOOGLE_CLIENT_ID');
+const GOOGLE_CLIENT_SECRET = requireEnv('GOOGLE_CLIENT_SECRET');
+const GOOGLE_CALLBACK_URL = requireEnv('GOOGLE_CALLBACK_URL');
+const FRONTEND_URL = requireEnv('CORS_ORIGIN');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -50,28 +65,6 @@ function clearAuthCookies(res: Response) {
   res.clearCookie('refreshToken', { httpOnly: true, sameSite: 'lax' });
 }
 
-const signupSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-  name: z.string().min(2),
-  systemRole: z.nativeEnum(SystemRole).optional(),
-  primaryRole: z.nativeEnum(RoleType).optional(),
-  secondaryRole: z.nativeEnum(RoleType).optional(),
-  tertiaryRole: z.nativeEnum(RoleType).optional(),
-  minorRole: z.nativeEnum(RoleType).optional(),
-  employmentType: z.nativeEnum(EmploymentType).optional(),
-  dailySheetUrl: z.string().url().optional(),
-  starRating: z.number().min(1).max(3).optional(),
-  teamId: z.string().optional(),
-  rememberMe: z.boolean().optional(),
-});
-
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string(),
-  rememberMe: z.boolean().optional(),
-});
-
 function generateTokens(user: {
   id: string;
   email: string;
@@ -102,7 +95,7 @@ function generateTokens(user: {
 
 export async function signup(req: Request, res: Response) {
   try {
-    const data = signupSchema.parse(req.body);
+    const data = req.body as SignupInput;
     const rememberMe = data.rememberMe ?? true;
 
     const existingUser = await prisma.user.findUnique({ where: { email: data.email } });
@@ -154,14 +147,13 @@ export async function signup(req: Request, res: Response) {
       rememberMe,
     });
   } catch (err: any) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
     return res.status(500).json({ error: err.message || 'Signup failed' });
   }
 }
 
 export async function login(req: Request, res: Response) {
   try {
-    const { email, password, rememberMe = true } = loginSchema.parse(req.body);
+    const { email, password, rememberMe = true } = req.body as LoginInput;
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -208,7 +200,6 @@ export async function login(req: Request, res: Response) {
       rememberMe,
     });
   } catch (err: any) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
     return res.status(500).json({ error: err.message || 'Login failed' });
   }
 }
@@ -274,6 +265,8 @@ export async function googleCallback(req: Request, res: Response) {
           email: googleUser.email,
           name: googleUser.name || googleUser.email.split('@')[0],
           avatarUrl: googleUser.picture,
+          imageUrl: googleUser.picture,
+          googleId: googleUser.sub,
           password: randomPassword,
           systemRole: 'MEMBER',
           employmentType: 'FULL_TIME',
@@ -286,6 +279,8 @@ export async function googleCallback(req: Request, res: Response) {
         data: {
           lastLoginAt: new Date(),
           avatarUrl: user.avatarUrl || googleUser.picture,
+          imageUrl: user.imageUrl || googleUser.picture,
+          googleId: user.googleId || googleUser.sub,
         },
       });
     }
@@ -298,7 +293,7 @@ export async function googleCallback(req: Request, res: Response) {
 
     return res.redirect(FRONTEND_URL);
   } catch (err: any) {
-    console.error('Google Callback Error:', err.message);
+    log.error({ err }, `Google OAuth callback failed: ${errMsg(err)}`);
     return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent(err.message)}`);
   }
 }
@@ -384,24 +379,10 @@ export async function getMe(req: AuthRequest, res: Response) {
   }
 }
 
-const updateProfileSchema = z.object({
-  name: z.string().optional(),
-  avatarUrl: z.string().url().optional(),
-  dailySheetUrl: z.string().url().optional(),
-  starRating: z.number().min(1).max(3).optional(),
-  employmentType: z.nativeEnum(EmploymentType).optional(),
-  systemRole: z.nativeEnum(SystemRole).optional(),
-  primaryRole: z.nativeEnum(RoleType).nullable().optional(),
-  secondaryRole: z.nativeEnum(RoleType).nullable().optional(),
-  tertiaryRole: z.nativeEnum(RoleType).nullable().optional(),
-  minorRole: z.nativeEnum(RoleType).nullable().optional(),
-  teamId: z.string().nullable().optional(),
-});
-
 export async function updateProfile(req: AuthRequest, res: Response) {
   try {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    const data = updateProfileSchema.parse(req.body);
+    const data = req.body as UpdateProfileInput;
 
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
@@ -411,7 +392,102 @@ export async function updateProfile(req: AuthRequest, res: Response) {
 
     return res.json({ user: updatedUser });
   } catch (err: any) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
     return res.status(500).json({ error: err.message });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// PASSWORD MANAGEMENT & FORGOT PASSWORD (REDIS OTP + GOOGLE SMTP)
+// -----------------------------------------------------------------------------
+
+export async function changePassword(req: AuthRequest, res: Response) {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { currentPassword, newPassword } = req.body as ChangePasswordInput;
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (user.password) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'Current password is required' });
+      }
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Current password is incorrect' });
+      }
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword },
+    });
+
+    sendPasswordChangeEmail(user.email, user.name).catch((err) =>
+      log.warn({ err }, `Background email dispatch failed: ${errMsg(err)}`)
+    );
+
+    return res.json({ message: 'Password changed successfully' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to change password' });
+  }
+}
+
+export async function forgotPassword(req: Request, res: Response) {
+  try {
+    const { email } = req.body as ForgotPasswordInput;
+
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (!user) {
+      return res.status(404).json({ error: 'No account registered with this email address' });
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    await storeOTP(user.email, otpCode, 600);
+
+    const sent = await sendOTPEmail(user.email, otpCode);
+    if (!sent) {
+      return res.status(500).json({ error: 'Failed to dispatch verification email. Please try again.' });
+    }
+
+    return res.json({ message: 'Verification OTP code sent to your email address' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Forgot password request failed' });
+  }
+}
+
+export async function resetPassword(req: Request, res: Response) {
+  try {
+    const { email, otp, newPassword } = req.body as ResetPasswordInput;
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const storedOTP = await getOTP(normalizedEmail);
+    if (!storedOTP || storedOTP !== otp.trim()) {
+      return res.status(400).json({ error: 'Invalid or expired OTP verification code' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword },
+    });
+
+    await removeOTP(normalizedEmail);
+
+    sendPasswordChangeEmail(user.email, user.name).catch((err) =>
+      log.warn({ err }, `Background email dispatch failed: ${errMsg(err)}`)
+    );
+
+    return res.json({ message: 'Password reset successfully. You may now sign in.' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Reset password failed' });
   }
 }

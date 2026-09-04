@@ -1,21 +1,17 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { isTokenBlacklisted } from '../services/redisService';
-import { SystemRole, RoleType } from '@prisma/client';
+import { requireEnv } from '../config/env';
+import type {
+  AuthRequest,
+  AuthenticatedUserPayload,
+  RoleType,
+  SystemRole,
+} from '../types';
 
-export interface AuthenticatedUserPayload {
-  id: string;
-  email: string;
-  systemRole: SystemRole;
-  roles: RoleType[];
-}
+export type { AuthRequest, AuthenticatedUserPayload };
 
-export interface AuthRequest extends Request {
-  user?: AuthenticatedUserPayload;
-  token?: string;
-}
-
-const JWT_SECRET = process.env.JWT_SECRET || 'nexus-default-jwt-secret-key-2026';
+const JWT_SECRET = requireEnv('JWT_SECRET');
 
 export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   // Read token from HttpOnly cookie first, or fallback to Authorization header

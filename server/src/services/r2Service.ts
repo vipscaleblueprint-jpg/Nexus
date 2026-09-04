@@ -1,3 +1,5 @@
+import { requireEnv } from '../config/env';
+
 export interface R2UploadConfig {
   bucketName: string;
   accountId: string;
@@ -7,7 +9,7 @@ export interface R2UploadConfig {
 
 export function getR2PresignedUrl(fileName: string, mimeType: string) {
   const fileKey = `uploads/${Date.now()}-${fileName}`;
-  const publicUrl = `${process.env.R2_PUBLIC_DOMAIN || 'https://r2.nexus.internal'}/${fileKey}`;
+  const publicUrl = `${requireEnv('R2_PUBLIC_DOMAIN')}/${fileKey}`;
   
   return {
     uploadUrl: `${publicUrl}?presigned=true`,

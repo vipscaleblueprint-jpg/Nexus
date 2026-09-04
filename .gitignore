@@ -1,3 +1,14 @@
+# Environment files
 .env*
+
+# Dependencies
 node_modules/
+
+# Build outputs
+dist/
 .next/
+*.tsbuildinfo
+
+# Logs & OS artifacts
+*.log
+.DS_Store

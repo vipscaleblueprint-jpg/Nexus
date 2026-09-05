@@ -13,9 +13,10 @@ const PRIORITY_COLORS: Record<string, string> = {
 interface Props {
   task: Task;
   isOverlay?: boolean;
+  onClick?: (task: Task) => void;
 }
 
-export function KanbanCard({ task, isOverlay }: Props) {
+export function KanbanCard({ task, isOverlay, onClick }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: {
@@ -63,6 +64,7 @@ export function KanbanCard({ task, isOverlay }: Props) {
       style={style}
       {...attributes}
       {...listeners}
+      onClick={() => onClick && onClick(task)}
       className={`bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm cursor-grab active:cursor-grabbing flex flex-col gap-3 transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
         isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
       }`}

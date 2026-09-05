@@ -22,13 +22,15 @@ interface Props {
   onTaskMove: (taskId: string, newStatus: string) => Promise<void>;
   onTaskReorder?: (activeId: string, overId: string) => void;
   onAddTaskClick?: (status: string) => void;
+  onTaskClick?: (task: Task) => void;
+  customGroups: string[];
+  onAddGroup: (group: string) => void;
 }
 
-export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick }: Props) {
+export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup }: Props) {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [isAddingGroup, setIsAddingGroup] = useState(false);
   const [newGroup, setNewGroup] = useState('');
-  const [customGroups, setCustomGroups] = useState<string[]>([]);
   const [columnThemes, setColumnThemes] = useState<Record<string, string>>({});
 
   const sensors = useSensors(
@@ -70,7 +72,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick }
 
   const handleAddGroup = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && newGroup.trim()) {
-      setCustomGroups([...customGroups, newGroup.trim()]);
+      onAddGroup(newGroup.trim());
       setNewGroup('');
       setIsAddingGroup(false);
     }
@@ -149,6 +151,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick }
             customTheme={columnThemes[status]}
             onThemeChange={(themeId) => setColumnThemes({ ...columnThemes, [status]: themeId })}
             onAddTaskClick={onAddTaskClick}
+            onTaskClick={onTaskClick}
           />
         ))}
         

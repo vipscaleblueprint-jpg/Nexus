@@ -412,48 +412,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 </div>
               </div>
 
-              {/* Direct Messages Section (DYNAMIC DB USERS - MAX 3 ITEMS) */}
-              <div className="border-t border-zinc-800/80 pt-3 space-y-1.5">
-                <div className="px-1 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                  Direct Messages ({users.slice(0, 3).length})
-                </div>
 
-                <div className="space-y-1">
-                  {users.length === 0 ? (
-                    <p className="text-zinc-500 text-[11px] px-1 italic">No users found in database.</p>
-                  ) : (
-                    users.slice(0, 3).map((u) => {
-                      const isSelf = u.id === currentUser?.id;
-                      const initial = u.name ? u.name.charAt(0).toUpperCase() : 'U';
-
-                      return (
-                        <div
-                          key={u.id}
-                          className="flex items-center gap-2 px-2 py-1 text-zinc-300 hover:bg-zinc-900 rounded-lg cursor-pointer"
-                        >
-                          <div className="relative shrink-0">
-                            {u.avatarUrl || (u as any).imageUrl ? (
-                              <img
-                                src={u.avatarUrl || (u as any).imageUrl}
-                                alt={u.name}
-                                className="w-5 h-5 rounded-full object-cover shadow"
-                              />
-                            ) : (
-                              <div className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-[10px] shadow">
-                                {initial}
-                              </div>
-                            )}
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 absolute -bottom-0.5 -right-0.5 ring-2 ring-[#161619]" />
-                          </div>
-                          <span className="truncate text-xs">
-                            {u.name} {isSelf ? '— You' : ''}
-                          </span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
             </div>
           )}
 

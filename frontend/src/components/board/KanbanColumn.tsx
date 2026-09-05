@@ -11,6 +11,7 @@ interface Props {
   customTheme?: string;
   onThemeChange?: (themeId: string) => void;
   onAddTaskClick?: (status: string) => void;
+  onTaskClick?: (task: Task) => void;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -43,7 +44,7 @@ const getStatusTheme = (status: string, customTheme?: string) => {
   return THEMES[defaultThemeId];
 };
 
-export function KanbanColumn({ status, tasks, customTheme, onThemeChange, onAddTaskClick }: Props) {
+export function KanbanColumn({ status, tasks, customTheme, onThemeChange, onAddTaskClick, onTaskClick }: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: status,
     data: {
@@ -144,7 +145,7 @@ export function KanbanColumn({ status, tasks, customTheme, onThemeChange, onAddT
       >
         <SortableContext items={tasks.map(t => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
-            <KanbanCard key={task.id} task={task} />
+            <KanbanCard key={task.id} task={task} onClick={onTaskClick} />
           ))}
         </SortableContext>
         

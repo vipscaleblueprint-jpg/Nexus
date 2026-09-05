@@ -67,7 +67,7 @@ export interface List {
   name: string;
   spaceId?: string;
   folderId?: string;
-  columns?: TaskColumn[];
+  columns?: any[];
 }
 
 export interface Doc {

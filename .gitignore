@@ -1,5 +1,6 @@
 # Environment files
 .env*
+.env.local
 
 # Dependencies
 node_modules/
@@ -11,4 +12,7 @@ dist/
 
 # Logs & OS artifacts
 *.log
-.DS_Store
+.DS_Store
+
+.github/architecture.md
+.github/agentic_rules.md

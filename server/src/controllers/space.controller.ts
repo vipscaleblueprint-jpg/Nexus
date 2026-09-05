@@ -4,25 +4,31 @@ import { getCache, setCache, invalidateCache } from '../services/redisService';
 
 // Helper for recursive folder inclusion
 const folderIncludeConfig: any = {
+  orderBy: { createdAt: 'asc' },
   include: {
-    lists: true,
+    lists: { orderBy: { createdAt: 'asc' } },
     docs: {
+      orderBy: { createdAt: 'asc' },
       include: {
         pages: {
+          orderBy: { createdAt: 'asc' },
           include: {
-            subpages: true,
+            subpages: { orderBy: { createdAt: 'asc' } },
           },
         },
       },
     },
     subfolders: {
+      orderBy: { createdAt: 'asc' },
       include: {
-        lists: true,
+        lists: { orderBy: { createdAt: 'asc' } },
         docs: {
+          orderBy: { createdAt: 'asc' },
           include: {
             pages: {
+              orderBy: { createdAt: 'asc' },
               include: {
-                subpages: true,
+                subpages: { orderBy: { createdAt: 'asc' } },
               },
             },
           },
@@ -41,14 +47,18 @@ export async function listSpaces(req: Request, res: Response) {
     }
 
     const spaces = await prisma.space.findMany({
+      orderBy: { createdAt: 'asc' },
       include: {
         folders: folderIncludeConfig,
-        lists: true,
+        lists: { where: { folderId: null }, orderBy: { createdAt: 'asc' } },
         docs: {
+          where: { folderId: null },
+          orderBy: { createdAt: 'asc' },
           include: {
             pages: {
+              orderBy: { createdAt: 'asc' },
               include: {
-                subpages: true,
+                subpages: { orderBy: { createdAt: 'asc' } },
               },
             },
           },
@@ -59,17 +69,21 @@ export async function listSpaces(req: Request, res: Response) {
     // Also fetch standalone root items (folders/lists/docs with no spaceId)
     const rootFolders = await prisma.folder.findMany({
       where: { spaceId: null, parentFolderId: null },
+      orderBy: { createdAt: 'asc' },
       include: folderIncludeConfig.include,
     });
     const rootLists = await prisma.list.findMany({
       where: { spaceId: null, folderId: null },
+      orderBy: { createdAt: 'asc' },
     });
     const rootDocs = await prisma.doc.findMany({
       where: { spaceId: null, folderId: null },
+      orderBy: { createdAt: 'asc' },
       include: {
         pages: {
+          orderBy: { createdAt: 'asc' },
           include: {
-            subpages: true,
+            subpages: { orderBy: { createdAt: 'asc' } },
           },
         },
       },
@@ -108,14 +122,18 @@ export async function getDashboardData(req: Request, res: Response) {
     }
 
     const spaces = await prisma.space.findMany({
+      orderBy: { createdAt: 'asc' },
       include: {
         folders: folderIncludeConfig,
-        lists: true,
+        lists: { where: { folderId: null }, orderBy: { createdAt: 'asc' } },
         docs: {
+          where: { folderId: null },
+          orderBy: { createdAt: 'asc' },
           include: {
             pages: {
+              orderBy: { createdAt: 'asc' },
               include: {
-                subpages: true,
+                subpages: { orderBy: { createdAt: 'asc' } },
               },
             },
           },
@@ -125,17 +143,21 @@ export async function getDashboardData(req: Request, res: Response) {
 
     const rootFolders = await prisma.folder.findMany({
       where: { spaceId: null, parentFolderId: null },
+      orderBy: { createdAt: 'asc' },
       include: folderIncludeConfig.include,
     });
     const rootLists = await prisma.list.findMany({
       where: { spaceId: null, folderId: null },
+      orderBy: { createdAt: 'asc' },
     });
     const rootDocs = await prisma.doc.findMany({
       where: { spaceId: null, folderId: null },
+      orderBy: { createdAt: 'asc' },
       include: {
         pages: {
+          orderBy: { createdAt: 'asc' },
           include: {
-            subpages: true,
+            subpages: { orderBy: { createdAt: 'asc' } },
           },
         },
       },
@@ -190,6 +212,47 @@ export async function createSpace(req: Request, res: Response) {
   }
 }
 
+// PATCH /api/spaces/:id
+export async function updateSpace(req: Request, res: Response) {
+  try {
+    const { name, icon, color } = req.body;
+    const space = await prisma.space.update({
+      where: { id: req.params.id },
+      data: {
+        ...(name && { name }),
+        ...(icon && { icon }),
+        ...(color && { color }),
+      },
+    });
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.json({ space });
+  } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Space not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/spaces/:id/duplicate
+export async function duplicateSpace(req: Request, res: Response) {
+  try {
+    const original = await prisma.space.findUnique({ where: { id: req.params.id } });
+    if (!original) return res.status(404).json({ error: 'Space not found' });
+
+    const space = await prisma.space.create({
+      data: {
+        name: `${original.name} (Copy)`,
+        icon: original.icon,
+        color: original.color,
+        ownerId: original.ownerId,
+      },
+    });
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.status(201).json({ space });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // DELETE /api/spaces/:id
 export async function deleteSpace(req: Request, res: Response) {
   try {
@@ -208,6 +271,44 @@ export async function createFolder(req: Request, res: Response) {
     const { name, spaceId, parentFolderId } = req.body;
     const folder = await prisma.folder.create({
       data: { name, spaceId: spaceId || null, parentFolderId: parentFolderId || null },
+    });
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.status(201).json({ folder });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// PATCH /api/spaces/folders/:id
+export async function updateFolder(req: Request, res: Response) {
+  try {
+    const { name } = req.body;
+    const folder = await prisma.folder.update({
+      where: { id: req.params.id },
+      data: {
+        ...(name && { name }),
+      },
+    });
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.json({ folder });
+  } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Folder not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/spaces/folders/:id/duplicate
+export async function duplicateFolder(req: Request, res: Response) {
+  try {
+    const original = await prisma.folder.findUnique({ where: { id: req.params.id } });
+    if (!original) return res.status(404).json({ error: 'Folder not found' });
+
+    const folder = await prisma.folder.create({
+      data: {
+        name: `${original.name} (Copy)`,
+        spaceId: original.spaceId,
+        parentFolderId: original.parentFolderId,
+      },
     });
     await invalidateCache('spaces:all', 'dashboard:all');
     return res.status(201).json({ folder });
@@ -247,6 +348,37 @@ export async function createDoc(req: Request, res: Response) {
   }
 }
 
+// GET /api/spaces/docs/:id
+export async function getDoc(req: Request, res: Response) {
+  try {
+    const doc = await prisma.doc.findUnique({
+      where: { id: req.params.id },
+      include: {
+        space: { select: { id: true, name: true, color: true } },
+        folder: { select: { id: true, name: true } },
+        pages: {
+          where: { parentPageId: null },
+          orderBy: { createdAt: 'asc' },
+          include: {
+            subpages: {
+              orderBy: { createdAt: 'asc' },
+              include: {
+                subpages: { orderBy: { createdAt: 'asc' } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!doc) return res.status(404).json({ error: 'Doc not found' });
+    return res.json({ doc });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+
+
 // PATCH /api/spaces/docs/:id
 export async function updateDoc(req: Request, res: Response) {
   try {
@@ -262,6 +394,27 @@ export async function updateDoc(req: Request, res: Response) {
     return res.json({ doc });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Doc not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/spaces/docs/:id/duplicate
+export async function duplicateDoc(req: Request, res: Response) {
+  try {
+    const original = await prisma.doc.findUnique({ where: { id: req.params.id } });
+    if (!original) return res.status(404).json({ error: 'Doc not found' });
+
+    const doc = await prisma.doc.create({
+      data: {
+        title: `${original.title} (Copy)`,
+        docDate: original.docDate,
+        spaceId: original.spaceId,
+        folderId: original.folderId,
+      },
+    });
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.status(201).json({ doc });
+  } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 }
@@ -312,6 +465,27 @@ export async function updatePage(req: Request, res: Response) {
     return res.json({ page });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Page not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/spaces/pages/:id/duplicate
+export async function duplicatePage(req: Request, res: Response) {
+  try {
+    const original = await prisma.page.findUnique({ where: { id: req.params.id } });
+    if (!original) return res.status(404).json({ error: 'Page not found' });
+
+    const page = await prisma.page.create({
+      data: {
+        title: `${original.title} (Copy)`,
+        content: original.content,
+        docId: original.docId,
+        parentPageId: original.parentPageId,
+      },
+    });
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.status(201).json({ page });
+  } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 }

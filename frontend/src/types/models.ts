@@ -101,36 +101,17 @@ export interface Favorite {
   createdAt: string;
 }
 
-export interface TaskColumn {
-  id: string;
-  name: string;
-  position: number;
-  color?: string;
-  parentColumnId?: string;
-  subColumns?: TaskColumn[];
-  statusRules?: StatusRule[];
-}
-
-export interface StatusRule {
-  id: string;
-  columnId: string;
-  requireAllSubtasksComplete: boolean;
-  requireAllChecklistItemsComplete: boolean;
-  allowedRoles: string[];
-}
-
 export interface Task {
   id: string;
   title: string;
   description?: string;
-  clientName?: string;
-  position: number;
+  status: string;
   priority: Priority;
+  dueDate?: string;
+  startDate?: string;
   listId: string;
-  columnId: string;
-  assigneeUserId?: string;
-  assigneeUser?: User;
-  assigneeTeamId?: string;
+  assigneeId?: string;
+  assignee?: User;
   creatorId: string;
   subtasks: Subtask[];
   checklists: Checklist[];
@@ -142,23 +123,26 @@ export interface Task {
 export interface Subtask {
   id: string;
   title: string;
-  isDone: boolean;
+  completed: boolean;
   taskId: string;
+  createdAt: string;
 }
 
 export interface Checklist {
   id: string;
-  title: string;
+  name: string;
+  taskId: string;
   items: ChecklistItem[];
+  createdAt: string;
 }
 
 export interface ChecklistItem {
   id: string;
   text: string;
-  isDone: boolean;
-  checkedByUserId?: string;
-  checkedBy?: User;
-  checkedAt?: string;
+  completed: boolean;
+  checklistId: string;
+  checkedById?: string;
+  createdAt: string;
 }
 
 export interface TaskComment {

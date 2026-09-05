@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { InviteModal } from '@/components/modals/InviteModal';
@@ -9,6 +9,9 @@ import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
 import { CreateListModal } from '@/components/modals/CreateListModal';
 import { CreateDocModal } from '@/components/modals/CreateDocModal';
 import { CreatePageModal } from '@/components/modals/CreatePageModal';
+import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
+import { RenameModal } from '@/components/modals/RenameModal';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
 import { spacesApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -26,10 +29,14 @@ import {
   ChevronRight,
   Layers,
   Plus,
-  Inbox,
+  Activity,
   CheckSquare,
   Sparkles,
   Hash,
+  MoreHorizontal,
+  Pencil,
+  Copy,
+  Trash2,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -122,15 +129,16 @@ function getAllFolders(spaces: Space[]): Folder[] {
 
 // Helper to collect all docs across spaces & folders
 function getAllDocs(spaces: Space[]): Doc[] {
+  const seen = new Set<string>();
   const docs: Doc[] = [];
   function collectFromFolders(fList: Folder[]) {
     fList.forEach((f) => {
-      if (f.docs) docs.push(...f.docs);
+      if (f.docs) f.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); } });
       if (f.subfolders) collectFromFolders(f.subfolders);
     });
   }
   spaces.forEach((s) => {
-    if (s.docs) docs.push(...s.docs);
+    if (s.docs) s.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); } });
     if (s.folders) collectFromFolders(s.folders);
   });
   return docs;
@@ -138,15 +146,16 @@ function getAllDocs(spaces: Space[]): Doc[] {
 
 // Helper to collect all task lists across spaces & folders
 function getAllLists(spaces: Space[]): List[] {
+  const seen = new Set<string>();
   const lists: List[] = [];
   function collectFromFolders(fList: Folder[]) {
     fList.forEach((f) => {
-      if (f.lists) lists.push(...f.lists);
+      if (f.lists) f.lists.forEach((l) => { if (!seen.has(l.id)) { seen.add(l.id); lists.push(l); } });
       if (f.subfolders) collectFromFolders(f.subfolders);
     });
   }
   spaces.forEach((s) => {
-    if (s.lists) lists.push(...s.lists);
+    if (s.lists) s.lists.forEach((l) => { if (!seen.has(l.id)) { seen.add(l.id); lists.push(l); } });
     if (s.folders) collectFromFolders(s.folders);
   });
   return lists;
@@ -154,8 +163,12 @@ function getAllLists(spaces: Space[]): List[] {
 
 export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: SidebarProps) {
   const pathname = usePathname();
-  const { currentUser } = useAppStore();
-  const [spaces, setSpaces] = useState<Space[]>(initialSpaces);
+  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces } = useAppStore();
+  
+  // We can just use globalSpaces instead of syncing local state.
+  // But to not break the rest of the component, we'll assign it to spaces.
+  const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
+  
   const [users, setUsers] = useState<User[]>(userRoster);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
 
@@ -170,12 +183,14 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const [activeFolderId, setActiveFolderId] = useState<string | undefined>();
   const [activeDocId, setActiveDocId] = useState<string | undefined>();
 
-  // Synchronize state when props update
-  useEffect(() => {
-    if (initialSpaces && initialSpaces.length > 0) {
-      setSpaces(initialSpaces);
-    }
-  }, [initialSpaces]);
+  // Global Action State
+  const [actionEntity, setActionEntity] = useState<{
+    type: 'space' | 'folder' | 'doc' | 'page' | 'list';
+    id: string;
+    name: string;
+  } | null>(null);
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
   useEffect(() => {
     if (userRoster && userRoster.length > 0) {
@@ -183,18 +198,9 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     }
   }, [userRoster]);
 
-  // Fetch only once on mount if empty to prevent infinite API polling loops
+  // Fetch users only once on mount if empty
   useEffect(() => {
     let isSubscribed = true;
-
-    if (initialSpaces.length === 0) {
-      spacesApi
-        .getSpaces()
-        .then((res) => {
-          if (isSubscribed && res.spaces) setSpaces(res.spaces);
-        })
-        .catch((err) => console.warn('Failed to load spaces in Sidebar:', err));
-    }
 
     if (userRoster.length === 0) {
       usersApi
@@ -211,12 +217,50 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   }, []);
 
   const loadSpaces = async () => {
-    try {
-      const res = await spacesApi.getSpaces();
-      if (res.spaces) setSpaces(res.spaces);
-    } catch (err) {
-      console.warn('Failed to load spaces in Sidebar:', err);
+    await globalLoadSpaces();
+  };
+
+  const handleAction = async (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => {
+    if (action === 'rename') {
+      setActionEntity({ type, id, name });
+      setIsRenameOpen(true);
+    } else if (action === 'delete') {
+      setActionEntity({ type, id, name });
+      setIsDeleteOpen(true);
+    } else if (action === 'duplicate') {
+      try {
+        if (type === 'space') await spacesApi.duplicateSpace(id);
+        else if (type === 'folder') await spacesApi.duplicateFolder(id);
+        else if (type === 'doc') await spacesApi.duplicateDoc(id);
+        else if (type === 'page') await spacesApi.duplicatePage(id);
+        else if (type === 'list') await spacesApi.duplicateList(id);
+        loadSpaces();
+      } catch (err) {
+        console.error('Failed to duplicate:', err);
+      }
     }
+  };
+
+  const handleConfirmRename = async (newName: string) => {
+    if (!actionEntity) return;
+    const { type, id } = actionEntity;
+    if (type === 'space') await spacesApi.updateSpace(id, { name: newName });
+    else if (type === 'folder') await spacesApi.updateFolder(id, { name: newName });
+    else if (type === 'doc') await spacesApi.updateDoc(id, { title: newName });
+    else if (type === 'page') await spacesApi.updatePage(id, { title: newName });
+    else if (type === 'list') await spacesApi.updateList(id, { name: newName });
+    loadSpaces();
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!actionEntity) return;
+    const { type, id } = actionEntity;
+    if (type === 'space') await spacesApi.deleteSpace(id);
+    else if (type === 'folder') await spacesApi.deleteFolder(id);
+    else if (type === 'doc') await spacesApi.deleteDoc(id);
+    else if (type === 'page') await spacesApi.deletePage(id);
+    else if (type === 'list') await spacesApi.deleteList(id);
+    loadSpaces();
   };
 
   const activeSection =
@@ -271,7 +315,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       <aside className="w-64 h-full bg-[#161619] border-r border-zinc-800/60 text-zinc-300 flex flex-col select-none shadow-2xl">
         {/* Header */}
         <div className="px-4 py-3 border-b border-zinc-800/60 flex items-center justify-between">
-          <h2 className="text-sm font-bold tracking-tight text-zinc-100 flex items-center gap-2">
+          <h2 className="text-sm font-bold tracking-tight text-zinc-100 flex items-center gap-2 cursor-pointer">
             <span>{activeSection.label}</span>
           </h2>
 
@@ -289,12 +333,12 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
           {/* 1. HOME SECTION (OPTIMIZED CLICKUP / SLACK LAYOUT) */}
           {activeSection.id === 'home' && (
             <div className="space-y-4 text-xs font-sans">
-              {/* Top Navigation Items: Inbox & My Tasks ONLY */}
+              {/* Top Navigation Items: Activity & My Tasks ONLY */}
               <div className="space-y-0.5">
                 <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-zinc-900 text-zinc-200 font-semibold cursor-pointer transition-colors">
-                  <div className="flex items-center gap-2">
-                    <Inbox className="w-4 h-4 text-zinc-400" />
-                    <span>Inbox</span>
+                  <div className="flex items-center gap-2 cursor-pointer">
+                    <Activity className="w-4 h-4 text-zinc-400" />
+                    <span>Activity</span>
                   </div>
                   <span className="bg-[#ec4899] text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full shadow">
                     99+
@@ -322,31 +366,39 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2 px-2 py-1 text-zinc-300 font-medium hover:bg-zinc-900 rounded-lg cursor-pointer">
+                <Link href="/lists" className="flex items-center gap-2 px-2 py-1 text-zinc-300 font-medium hover:bg-zinc-900 rounded-lg cursor-pointer transition-colors">
                   <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                   <span className="truncate">All Tasks</span>
                   <span className="text-[10px] text-zinc-500 font-mono ml-auto truncate">
                     {spaces.length > 0 ? `- ${spaces[0].name}` : ''}
                   </span>
-                </div>
+                </Link>
 
                 <div className="space-y-1">
                   {spaces.map((space) => (
                     <SpaceTreeItem
                       key={space.id}
                       space={space}
-                      onAddFolder={(sId) => {
+                      onAddFolder={(sId, fId) => {
                         setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
                         setIsCreateFolderOpen(true);
                       }}
-                      onAddDoc={(sId) => {
+                      onAddDoc={(sId, fId) => {
                         setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
                         setIsCreateDocOpen(true);
                       }}
                       onAddPage={(dId) => {
                         setActiveDocId(dId);
                         setIsCreatePageOpen(true);
                       }}
+                      onAddList={(sId, fId) => {
+                        setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
+                        setIsCreateListOpen(true);
+                      }}
+                      onAction={handleAction}
                     />
                   ))}
 
@@ -358,47 +410,6 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                     <span>New Space</span>
                   </button>
                 </div>
-              </div>
-
-              {/* Channels Section (DYNAMIC BASED ON DB SPACES) */}
-              <div className="border-t border-zinc-800/80 pt-3 space-y-1.5">
-                <div className="flex items-center justify-between px-1 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                  <span>Channels</span>
-                  <button
-                    onClick={() => setIsCreateSpaceOpen(true)}
-                    className="p-0.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {spaces.length === 0 ? (
-                  <div className="flex items-center gap-2 px-2 py-1 text-zinc-300 hover:bg-zinc-900 rounded-lg cursor-pointer">
-                    <Hash className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>General</span>
-                  </div>
-                ) : (
-                  spaces.map((s) => (
-                    <div
-                      key={`channel-${s.id}`}
-                      className="flex items-center gap-2 px-2 py-1 text-zinc-300 hover:bg-zinc-900 rounded-lg cursor-pointer"
-                    >
-                      <Hash className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                      <span className="truncate">General</span>
-                      <span className="text-[10px] text-zinc-500 font-mono ml-auto truncate">
-                        - {s.name}
-                      </span>
-                    </div>
-                  ))
-                )}
-
-                <button
-                  onClick={() => setIsCreateSpaceOpen(true)}
-                  className="w-full flex items-center gap-1.5 px-2 py-1 text-xs text-zinc-400 hover:text-white hover:bg-zinc-900 rounded-lg transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5 text-zinc-500" />
-                  <span>Add Channel</span>
-                </button>
               </div>
 
               {/* Direct Messages Section (DYNAMIC DB USERS - MAX 3 ITEMS) */}
@@ -471,18 +482,26 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                     <SpaceTreeItem
                       key={space.id}
                       space={space}
-                      onAddFolder={(sId) => {
+                      onAddFolder={(sId, fId) => {
                         setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
                         setIsCreateFolderOpen(true);
                       }}
-                      onAddDoc={(sId) => {
+                      onAddDoc={(sId, fId) => {
                         setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
                         setIsCreateDocOpen(true);
                       }}
                       onAddPage={(dId) => {
                         setActiveDocId(dId);
                         setIsCreatePageOpen(true);
                       }}
+                      onAddList={(sId, fId) => {
+                        setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
+                        setIsCreateListOpen(true);
+                      }}
+                      onAction={handleAction}
                     />
                   ))}
                 </div>
@@ -515,7 +534,14 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                     <FolderTreeItem
                       key={folder.id}
                       folder={folder}
-                      onAddDoc={(fId) => {
+                      spaceId={folder.spaceId || ''}
+                      onAddFolder={(sId, fId) => {
+                        setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
+                        setIsCreateFolderOpen(true);
+                      }}
+                      onAddDoc={(sId, fId) => {
+                        setActiveSpaceId(sId);
                         setActiveFolderId(fId);
                         setIsCreateDocOpen(true);
                       }}
@@ -523,6 +549,12 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                         setActiveDocId(dId);
                         setIsCreatePageOpen(true);
                       }}
+                      onAddList={(sId, fId) => {
+                        setActiveSpaceId(sId);
+                        setActiveFolderId(fId);
+                        setIsCreateListOpen(true);
+                      }}
+                      onAction={handleAction}
                     />
                   ))}
                 </div>
@@ -559,6 +591,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                         setActiveDocId(dId);
                         setIsCreatePageOpen(true);
                       }}
+                      onAction={handleAction}
                     />
                   ))}
                 </div>
@@ -647,6 +680,22 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
         allDocs={allDocs}
         defaultDocId={activeDocId}
       />
+
+      <RenameModal
+        isOpen={isRenameOpen}
+        onClose={() => setIsRenameOpen(false)}
+        onConfirm={handleConfirmRename}
+        title={`Rename ${actionEntity?.type}`}
+        initialName={actionEntity?.name || ''}
+      />
+
+      <ConfirmDeleteModal
+        isOpen={isDeleteOpen}
+        onClose={() => setIsDeleteOpen(false)}
+        onConfirm={handleConfirmDelete}
+        title={`Delete ${actionEntity?.type}`}
+        itemName={actionEntity?.name || ''}
+      />
     </div>
   );
 }
@@ -656,49 +705,73 @@ function SpaceTreeItem({
   onAddFolder,
   onAddDoc,
   onAddPage,
+  onAddList,
+  onAction,
 }: {
   space: Space;
-  onAddFolder: (spaceId: string) => void;
-  onAddDoc: (spaceId: string) => void;
+  onAddFolder: (spaceId: string, folderId?: string) => void;
+  onAddDoc: (spaceId: string, folderId?: string) => void;
   onAddPage: (docId: string) => void;
+  onAddList: (spaceId: string, folderId?: string) => void;
+  onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(true);
 
   return (
-    <div className="space-y-0.5 text-xs group">
-      <div className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-zinc-900 text-zinc-200 font-medium cursor-pointer transition-colors">
+    <div className="space-y-0.5 text-xs">
+      <div className="group flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-zinc-900 text-zinc-200 font-medium cursor-pointer transition-colors">
         <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-1.5 truncate flex-1">
-          {isOpen ? (
-            <ChevronDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-          ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-          )}
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: space.color || '#3B82F6' }} />
+          <div className="relative w-3.5 h-3.5 flex items-center justify-center shrink-0">
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-zinc-500" /> : <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />}
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: space.color || '#3B82F6' }} />
+            </div>
+          </div>
           <span className="truncate">{space.name}</span>
         </div>
 
-        {/* Quick Add under Space */}
-        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddFolder(space.id);
-            }}
-            title="Add Folder to Space"
-            className="p-0.5 text-zinc-400 hover:text-amber-400"
-          >
-            <FolderIcon className="w-3 h-3" />
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddDoc(space.id);
-            }}
-            title="Add Doc to Space"
-            className="p-0.5 text-zinc-400 hover:text-purple-400"
-          >
-            <FileText className="w-3 h-3" />
-          </button>
+        {/* Quick Actions under Space */}
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+          {space.id !== 'root-space' && (
+            <ActionMenu icon={<MoreHorizontal className="w-3.5 h-3.5" />}>
+              <button onClick={(e) => { e.stopPropagation(); onAction('rename', 'space', space.id, space.name); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+                <Pencil className="w-3.5 h-3.5 text-zinc-400" />
+                Rename
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); onAction('duplicate', 'space', space.id, space.name); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+                <Copy className="w-3.5 h-3.5 text-zinc-400" />
+                Duplicate
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); onAction('delete', 'space', space.id, space.name); }} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer">
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete
+              </button>
+            </ActionMenu>
+          )}
+          <ActionMenu>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddFolder(space.id);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+            >
+              <FolderIcon className="w-3.5 h-3.5 text-amber-400" />
+              Folder
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddDoc(space.id);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5 text-purple-400" />
+              Doc
+            </button>
+          </ActionMenu>
         </div>
       </div>
 
@@ -706,20 +779,26 @@ function SpaceTreeItem({
         <div className="pl-4 space-y-0.5 border-l border-zinc-800/80 ml-2">
           {/* Folders */}
           {space.folders?.map((folder) => (
-            <FolderTreeItem key={folder.id} folder={folder} onAddDoc={onAddDoc} onAddPage={onAddPage} />
+            <FolderTreeItem 
+              key={folder.id} 
+              folder={folder} 
+              spaceId={space.id}
+              onAddFolder={onAddFolder}
+              onAddDoc={onAddDoc} 
+              onAddPage={onAddPage} 
+              onAddList={onAddList}
+              onAction={onAction}
+            />
           ))}
 
-          {/* Direct Lists */}
-          {space.lists?.map((list) => (
-            <div key={list.id} className="flex items-center gap-2 px-2 py-1 text-zinc-400 hover:text-zinc-200 cursor-pointer">
-              <ListIcon className="w-3 h-3 text-blue-400 shrink-0" />
-              <span className="truncate text-[11px]">{list.name}</span>
-            </div>
+          {/* Direct Lists (Only those without a folderId) */}
+          {space.lists?.filter(list => !list.folderId).map((list) => (
+            <ListTreeItem key={list.id} list={list} onAction={onAction} />
           ))}
 
-          {/* Direct Docs */}
-          {space.docs?.map((doc) => (
-            <DocTreeItem key={doc.id} doc={doc} onAddPage={onAddPage} />
+          {/* Direct Docs (Only those without a folderId) */}
+          {space.docs?.filter(doc => !doc.folderId).map((doc) => (
+            <DocTreeItem key={doc.id} doc={doc} onAddPage={onAddPage} onAction={onAction} />
           ))}
         </div>
       )}
@@ -729,40 +808,86 @@ function SpaceTreeItem({
 
 function FolderTreeItem({
   folder,
+  spaceId,
+  onAddFolder,
   onAddDoc,
   onAddPage,
+  onAddList,
+  onAction,
 }: {
   folder: Folder;
-  onAddDoc: (folderId: string) => void;
+  spaceId: string;
+  onAddFolder: (spaceId: string, folderId?: string) => void;
+  onAddDoc: (spaceId: string, folderId?: string) => void;
   onAddPage: (docId: string) => void;
+  onAddList: (spaceId: string, folderId?: string) => void;
+  onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(true);
 
   return (
-    <div className="space-y-0.5 text-xs group">
-      <div className="flex items-center justify-between px-2 py-1 rounded hover:bg-zinc-900 text-zinc-300 cursor-pointer">
+    <div className="space-y-0.5 text-xs">
+      <div className="group flex items-center justify-between px-2 py-1 rounded hover:bg-zinc-900 text-zinc-300 cursor-pointer transition-colors">
         <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-1.5 truncate flex-1">
-          {isOpen ? (
-            <ChevronDown className="w-3 h-3 text-zinc-500 shrink-0" />
-          ) : (
-            <ChevronRight className="w-3 h-3 text-zinc-500 shrink-0" />
-          )}
-          <FolderIcon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <div className="relative w-3.5 h-3.5 flex items-center justify-center shrink-0">
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              {isOpen ? <ChevronDown className="w-3 h-3 text-zinc-500" /> : <ChevronRight className="w-3 h-3 text-zinc-500" />}
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
+              <FolderIcon className="w-3.5 h-3.5 text-amber-400" />
+            </div>
+          </div>
           <span className="truncate text-[11px]">{folder.name}</span>
         </div>
 
-        {/* Quick Add under Folder */}
-        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddDoc(folder.id);
-            }}
-            title="Add Doc to Folder"
-            className="p-0.5 text-zinc-400 hover:text-purple-400"
-          >
-            <FileText className="w-3 h-3" />
-          </button>
+        {/* Quick Actions under Folder */}
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+          <ActionMenu icon={<MoreHorizontal className="w-3.5 h-3.5" />}>
+            <button onClick={(e) => { onAction('rename', 'folder', folder.id, folder.name); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Pencil className="w-3.5 h-3.5 text-zinc-400" />
+              Rename
+            </button>
+            <button onClick={(e) => { onAction('duplicate', 'folder', folder.id, folder.name); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Copy className="w-3.5 h-3.5 text-zinc-400" />
+              Duplicate
+            </button>
+            <button onClick={(e) => { onAction('delete', 'folder', folder.id, folder.name); }} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer">
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </button>
+          </ActionMenu>
+          <ActionMenu>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddFolder(spaceId, folder.id);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+            >
+              <FolderIcon className="w-3.5 h-3.5 text-amber-400" />
+              Subfolder
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddDoc(spaceId, folder.id);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5 text-purple-400" />
+              Doc
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddList(spaceId, folder.id);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+            >
+              <ListIcon className="w-3.5 h-3.5 text-blue-400" />
+              Board
+            </button>
+          </ActionMenu>
         </div>
       </div>
 
@@ -770,20 +895,26 @@ function FolderTreeItem({
         <div className="pl-4 space-y-0.5 border-l border-zinc-800/80 ml-2">
           {/* Nested Subfolders (Recursive) */}
           {folder.subfolders?.map((sub) => (
-            <FolderTreeItem key={sub.id} folder={sub} onAddDoc={onAddDoc} onAddPage={onAddPage} />
+            <FolderTreeItem 
+              key={sub.id} 
+              folder={sub} 
+              spaceId={spaceId}
+              onAddFolder={onAddFolder}
+              onAddDoc={onAddDoc} 
+              onAddPage={onAddPage} 
+              onAddList={onAddList}
+              onAction={onAction}
+            />
           ))}
 
           {/* Lists */}
           {folder.lists?.map((list) => (
-            <div key={list.id} className="flex items-center gap-2 px-2 py-1 text-zinc-400 hover:text-zinc-200 cursor-pointer">
-              <ListIcon className="w-3 h-3 text-blue-400 shrink-0" />
-              <span className="truncate text-[11px]">{list.name}</span>
-            </div>
+            <ListTreeItem key={list.id} list={list} onAction={onAction} />
           ))}
 
           {/* Docs */}
           {folder.docs?.map((doc) => (
-            <DocTreeItem key={doc.id} doc={doc} onAddPage={onAddPage} />
+            <DocTreeItem key={doc.id} doc={doc} onAddPage={onAddPage} onAction={onAction} />
           ))}
         </div>
       )}
@@ -794,46 +925,71 @@ function FolderTreeItem({
 function DocTreeItem({
   doc,
   onAddPage,
+  onAction,
 }: {
   doc: Doc;
   onAddPage: (docId: string) => void;
+  onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const hasPages = doc.pages && doc.pages.length > 0;
 
   return (
-    <div className="space-y-0.5 text-xs group">
-      <div className="flex items-center justify-between px-2 py-1 text-zinc-400 hover:text-zinc-200 cursor-pointer">
-        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-1.5 truncate flex-1">
+    <div className="space-y-0.5 text-xs">
+      <div className="group flex items-center justify-between px-2 py-1 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors">
+        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-1.5 shrink-0 cursor-pointer">
           {hasPages ? (
-            isOpen ? (
-              <ChevronDown className="w-3 h-3 text-zinc-500 shrink-0" />
-            ) : (
-              <ChevronRight className="w-3 h-3 text-zinc-500 shrink-0" />
-            )
+            <div className="relative w-3 h-3 flex items-center justify-center shrink-0">
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {isOpen ? <ChevronDown className="w-3 h-3 text-zinc-500" /> : <ChevronRight className="w-3 h-3 text-zinc-500" />}
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
+                <FileText className="w-3 h-3 text-purple-400" />
+              </div>
+            </div>
           ) : (
-            <span className="w-3 h-3 inline-block shrink-0" />
+            <FileText className="w-3 h-3 text-purple-400 shrink-0" />
           )}
-          <FileText className="w-3 h-3 text-purple-400 shrink-0" />
-          <span className="truncate text-[11px] font-medium">{doc.title}</span>
         </div>
+        <Link href={`/docs/${doc.id}`} className="truncate flex-1 cursor-pointer">
+          <span className="truncate text-[11px] font-medium">{doc.title}</span>
+        </Link>
 
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onAddPage(doc.id);
-          }}
-          title="Add Page to Doc"
-          className="opacity-0 group-hover:opacity-100 p-0.5 text-zinc-400 hover:text-emerald-400 transition-opacity"
-        >
-          <Plus className="w-3 h-3" />
-        </button>
+        {/* Quick Actions under Doc */}
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+          <ActionMenu icon={<MoreHorizontal className="w-3.5 h-3.5" />}>
+            <button onClick={() => onAction('rename', 'doc', doc.id, doc.title)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Pencil className="w-3.5 h-3.5 text-zinc-400" />
+              Rename
+            </button>
+            <button onClick={() => onAction('duplicate', 'doc', doc.id, doc.title)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Copy className="w-3.5 h-3.5 text-zinc-400" />
+              Duplicate
+            </button>
+            <button onClick={() => onAction('delete', 'doc', doc.id, doc.title)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer">
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </button>
+          </ActionMenu>
+          <ActionMenu>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddPage(doc.id);
+              }}
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              Page
+            </button>
+          </ActionMenu>
+        </div>
       </div>
 
       {isOpen && hasPages && (
         <div className="pl-4 space-y-0.5 border-l border-zinc-800/80 ml-2">
           {doc.pages?.map((page) => (
-            <PageTreeItem key={page.id} page={page} />
+            <PageTreeItem key={page.id} page={page} onAction={onAction} />
           ))}
         </div>
       )}
@@ -841,35 +997,93 @@ function DocTreeItem({
   );
 }
 
-function PageTreeItem({ page }: { page: Page }) {
+function PageTreeItem({
+  page,
+  onAction,
+}: {
+  page: Page;
+  onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const hasSubpages = page.subpages && page.subpages.length > 0;
 
   return (
     <div className="space-y-0.5 text-xs">
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 px-2 py-0.5 text-zinc-400 hover:text-zinc-200 cursor-pointer"
-      >
-        {hasSubpages ? (
-          isOpen ? (
-            <ChevronDown className="w-2.5 h-2.5 text-zinc-500 shrink-0" />
+      <div className="group flex items-center justify-between px-2 py-0.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors">
+        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-1.5 flex-1 truncate">
+          {hasSubpages ? (
+            isOpen ? (
+              <ChevronDown className="w-2.5 h-2.5 text-zinc-500 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+            ) : (
+              <ChevronRight className="w-2.5 h-2.5 text-zinc-500 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+            )
           ) : (
-            <ChevronRight className="w-2.5 h-2.5 text-zinc-500 shrink-0" />
-          )
-        ) : (
-          <span className="w-2.5 h-2.5 inline-block shrink-0" />
-        )}
-        <span className="truncate text-[10.5px]">{page.title}</span>
+            <span className="w-2.5 h-2.5 inline-block shrink-0" />
+          )}
+          <span className="truncate text-[10.5px]">{page.title}</span>
+        </div>
+
+        {/* Quick Actions under Page */}
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+          <ActionMenu icon={<MoreHorizontal className="w-3.5 h-3.5" />}>
+            <button onClick={(e) => { onAction('rename', 'page', page.id, page.title); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Pencil className="w-3.5 h-3.5 text-zinc-400" />
+              Rename
+            </button>
+            <button onClick={(e) => { onAction('duplicate', 'page', page.id, page.title); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Copy className="w-3.5 h-3.5 text-zinc-400" />
+              Duplicate
+            </button>
+            <button onClick={(e) => { onAction('delete', 'page', page.id, page.title); }} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer">
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </button>
+          </ActionMenu>
+        </div>
       </div>
 
       {isOpen && hasSubpages && (
         <div className="pl-3 space-y-0.5 border-l border-zinc-800/80 ml-1.5">
           {page.subpages?.map((sub) => (
-            <PageTreeItem key={sub.id} page={sub} />
+            <PageTreeItem key={sub.id} page={sub} onAction={onAction} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ListTreeItem({
+  list,
+  onAction,
+}: {
+  list: List;
+  onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
+}) {
+  return (
+    <div className="space-y-0.5 text-xs">
+      <div className="group flex items-center justify-between px-2 py-1 text-zinc-400 hover:text-zinc-200 transition-colors rounded">
+        <Link href={`/lists/${list.id}`} className="flex items-center gap-1.5 truncate flex-1 cursor-pointer">
+          <ListIcon className="w-3 h-3 text-blue-400 shrink-0" />
+          <span className="truncate text-[11px] font-medium">{list.name}</span>
+        </Link>
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+          <ActionMenu icon={<MoreHorizontal className="w-3.5 h-3.5" />}>
+            <button onClick={(e) => { onAction('rename', 'list', list.id, list.name); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Pencil className="w-3.5 h-3.5 text-zinc-400" />
+              Rename
+            </button>
+            <button onClick={(e) => { onAction('duplicate', 'list', list.id, list.name); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer">
+              <Copy className="w-3.5 h-3.5 text-zinc-400" />
+              Duplicate
+            </button>
+            <button onClick={(e) => { onAction('delete', 'list', list.id, list.name); }} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer">
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </button>
+          </ActionMenu>
+        </div>
+      </div>
     </div>
   );
 }

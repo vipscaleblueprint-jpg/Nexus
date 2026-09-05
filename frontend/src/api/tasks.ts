@@ -27,4 +27,11 @@ export const tasksApi = {
       method: 'DELETE',
     });
   },
+
+  async moveTask(id: string, status: string): Promise<{ task: Task }> {
+    return apiClient<{ task: Task }>(`/api/tasks/${id}/move`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  },
 };

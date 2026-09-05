@@ -47,7 +47,7 @@ function setAuthCookies(
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: IS_PROD,
-    sameSite: 'lax',
+    sameSite: IS_PROD ? 'none' : 'lax',
     maxAge: 24 * 3600 * 1000,
   });
 
@@ -55,7 +55,7 @@ function setAuthCookies(
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: IS_PROD,
-    sameSite: 'lax',
+    sameSite: IS_PROD ? 'none' : 'lax',
     ...(rememberMe ? { maxAge: 7 * 24 * 3600 * 1000 } : {}),
   });
 }

@@ -3,6 +3,8 @@ import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import { WebSocketServer } from 'ws';
+import { Hocuspocus } from '@hocuspocus/server';
 import { requireEnv } from './config/env';
 import { logger, createLogger, errMsg } from './config/logger';
 import { httpLogger } from './middleware/logging.middleware';
@@ -14,8 +16,42 @@ import { listRouter } from './routes/list.routes';
 import { taskRouter } from './routes/task.routes';
 import { chatRouter } from './routes/chat.routes';
 
+// Import workers to initialize them
+import './workers/task.worker';
+
 const app = express();
 const server = http.createServer(app);
+
+// Hocuspocus WebSocket Server for Collaborative Editing
+const hocuspocus = new Hocuspocus();
+hocuspocus.configure({
+  async onConnect(data) {
+    logger.info(`Hocuspocus Client connecting to document: ${data.documentName}`);
+  },
+  async onChange(data) {
+    logger.info(`Hocuspocus Document changed: ${data.documentName}`);
+  },
+});
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  const url = request.url || '';
+  logger.info(`WebSocket Upgrade request to: ${url}`);
+  if (url.startsWith('/collaboration')) {
+    // HocuspocusProvider appends the document name to the URL path.
+    // e.g. ws://host/collaboration/task-abc123 → document name = "task-abc123"
+    // Strip /collaboration prefix so Hocuspocus sees "/<docName>" and parses it correctly.
+    const docPath = url.replace(/^\/collaboration/, '') || '/default';
+    const documentName = docPath.split('?')[0].replace(/^\//, '') || 'default';
+    
+    logger.info(`Accepting Hocuspocus connection for document: ${documentName}`);
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      // Rewrite request.url so Hocuspocus internal parsing reads the correct document name
+      request.url = '/' + documentName;
+      hocuspocus.handleConnection(ws as any, request as any);
+    });
+  }
+});
 
 // Global Security, Logging & CORS Middlewares
 app.use(httpLogger);
@@ -78,7 +114,50 @@ io.on('connection', (socket) => {
     socketLog.debug({ taskId: data.taskId, assigneeUserId: data.assigneeUserId }, 'Broadcasting urgent task');
     io.emit(`urgent_popup:${data.assigneeUserId}`, data);
   });
+
+  // Kanban Real-time Sync
+  socket.on('join_list', (listId: string) => {
+    socket.join(`list:${listId}`);
+    socketLog.debug({ socketId: socket.id, listId }, 'Client joined list room');
+  });
+
+  socket.on('leave_list', (listId: string) => {
+    socket.leave(`list:${listId}`);
+    socketLog.debug({ socketId: socket.id, listId }, 'Client left list room');
+  });
+
+  socket.on('add_group', (data: { listId: string; group: string }) => {
+    logger.debug(`Group ${data.group} added to list ${data.listId}`);
+    socket.to(`list:${data.listId}`).emit('list:group_added', data.group);
+  });
+
+  // Handle task activity broadcast
+  socket.on('task_activity', (data: { listId: string; taskId: string; activity: any }) => {
+    socket.to(`list:${data.listId}`).emit('task_activity', data);
+  });
+
+  // Handle task reorder broadcast
+  socket.on('task_reorder', (data: { listId: string; status: string; taskIds: string[] }) => {
+    socket.to(`list:${data.listId}`).emit('task_reorder', { status: data.status, taskIds: data.taskIds });
+  });
+
+  // Handle task description editing lock
+  socket.on('task_editing_start', (data: { listId: string; taskId: string; userName: string }) => {
+    socket.to(`list:${data.listId}`).emit('task_editing_start', { taskId: data.taskId, userName: data.userName });
+  });
+
+  // Handle live content streaming while editing
+  socket.on('task_editing_content', (data: { listId: string; taskId: string; content: string }) => {
+    socket.to(`list:${data.listId}`).emit('task_editing_content', { taskId: data.taskId, content: data.content });
+  });
+
+  // Handle task description editing unlock + broadcast new content
+  socket.on('task_editing_stop', (data: { listId: string; taskId: string; description: string }) => {
+    socket.to(`list:${data.listId}`).emit('task_editing_stop', { taskId: data.taskId, description: data.description });
+  });
 });
+
+export { io };
 
 const PORT = requireEnv('PORT');
 server.listen(PORT, () => {

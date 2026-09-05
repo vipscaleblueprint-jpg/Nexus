@@ -1,422 +1,260 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Sidebar } from '@/components/layout/Sidebar';
-import { Header } from '@/components/layout/Header';
+import { useState, useEffect } from 'react';
 import { useAppStore } from '@/lib/store';
-import { authApi } from '@/api';
-import { User } from '@/lib/types';
-import {
-  Lock,
-  Eye,
-  EyeOff,
-  CheckCircle2,
-  AlertCircle,
-  User as UserIcon,
-  Star,
-  Loader2,
-} from 'lucide-react';
+import { authApi } from '@/api/auth';
+import { Settings, User as UserIcon, Lock, Star, Eye, EyeOff } from 'lucide-react';
 
-type Feedback = { kind: 'error' | 'success'; text: string } | null;
+function StarRating({ rating }: { rating: number }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1, 2, 3].map((n) => (
+        <Star
+          key={n}
+          className={`w-3.5 h-3.5 ${n <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-zinc-700 fill-zinc-700'}`}
+        />
+      ))}
+      <span className="ml-1.5 text-sm text-zinc-300">{rating}</span>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const { currentUser, setCurrentUser } = useAppStore();
-  const [isLoadingUser, setIsLoadingUser] = useState(!currentUser);
 
-  // Password form
+  const [name, setName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [dailySheetUrl, setDailySheetUrl] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [isSavingPassword, setIsSavingPassword] = useState(false);
-  const [passwordFeedback, setPasswordFeedback] = useState<Feedback>(null);
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwMsg, setPwMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // The page can be opened directly, so it cannot rely on another route
-  // having populated the store first.
+  // Fetch current user if not yet in store (e.g. direct navigation to /settings)
   useEffect(() => {
-    if (currentUser) return;
-
-    let cancelled = false;
-    (async () => {
-      try {
-        const { user } = await authApi.getMe();
-        if (!cancelled && user) setCurrentUser(user);
-      } catch (e) {
-        console.warn('No active session found:', e);
-      } finally {
-        if (!cancelled) setIsLoadingUser(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser, setCurrentUser]);
-
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasswordFeedback(null);
-
-    if (newPassword.length < 6) {
-      setPasswordFeedback({ kind: 'error', text: 'New password must be at least 6 characters long.' });
-      return;
+    if (!currentUser) {
+      authApi.getMe().then(({ user }) => setCurrentUser(user)).catch(() => {});
     }
+  }, []);
 
-    if (newPassword !== confirmPassword) {
-      setPasswordFeedback({ kind: 'error', text: 'New password and confirmation do not match.' });
-      return;
+  // Populate form fields whenever currentUser is available/changes
+  useEffect(() => {
+    if (currentUser) {
+      setName(currentUser.name || '');
+      setAvatarUrl(currentUser.avatarUrl || '');
+      setDailySheetUrl(currentUser.dailySheetUrl || '');
     }
+  }, [currentUser]);
 
-    setIsSavingPassword(true);
-
+  const handleSaveProfile = async () => {
+    setProfileSaving(true);
+    setProfileMsg(null);
     try {
-      const res = await authApi.changePassword({
-        currentPassword: currentPassword || undefined,
-        newPassword,
-      });
-      setPasswordFeedback({
-        kind: 'success',
-        text: res.message || 'Password updated. A confirmation email was sent.',
-      });
+      const res = await authApi.updateProfile({ name, avatarUrl, dailySheetUrl });
+      setCurrentUser(res.user);
+      setProfileMsg({ type: 'success', text: 'Profile updated successfully.' });
+    } catch (e: any) {
+      setProfileMsg({ type: 'error', text: e?.message || 'Failed to update profile.' });
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      setPwMsg({ type: 'error', text: 'New password must be at least 6 characters.' });
+      return;
+    }
+    setPwSaving(true);
+    setPwMsg(null);
+    try {
+      await authApi.changePassword({ currentPassword, newPassword });
+      setPwMsg({ type: 'success', text: 'Password changed successfully.' });
       setCurrentPassword('');
       setNewPassword('');
-      setConfirmPassword('');
-    } catch (err) {
-      setPasswordFeedback({
-        kind: 'error',
-        text: err instanceof Error ? err.message : 'Failed to update password.',
-      });
+    } catch (e: any) {
+      setPwMsg({ type: 'error', text: e?.message || 'Failed to change password.' });
     } finally {
-      setIsSavingPassword(false);
+      setPwSaving(false);
     }
   };
 
-  const inputClass =
-    'w-full bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors';
-
-  const passwordInputClass =
-    'w-full bg-[#131316] border border-zinc-800 rounded-xl pl-9 pr-10 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors';
-
   return (
-    <div className="flex h-screen bg-[#131316] text-[#e4e4e7] overflow-hidden font-sans">
-      <Sidebar />
+    <div className="p-8 w-full">
+      {/* Page title */}
+      <div className="max-w-[660px] mx-auto mb-8">
+        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <Settings className="w-6 h-6" />
+          Account Settings
+        </h1>
+        <p className="text-zinc-500 text-sm mt-1">Manage your profile details and sign-in credentials.</p>
+      </div>
 
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#131316]">
-        <Header />
+      <div className="max-w-[660px] mx-auto space-y-5">
 
-        <main className="flex-1 overflow-y-auto p-6">
-          {isLoadingUser ? (
-            <div className="h-full flex items-center justify-center text-xs text-zinc-400 gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-zinc-300" />
-              <span>Loading account...</span>
+        {/* ── Account (read-only) ── */}
+        <div className="border border-zinc-800 rounded-xl overflow-hidden">
+          {/* Section header */}
+          <div className="px-5 pt-4 pb-3 flex items-center gap-2">
+            <UserIcon className="w-4 h-4 text-zinc-400" />
+            <h2 className="text-sm font-semibold text-zinc-200">Account</h2>
+          </div>
+
+          {/* Rows */}
+          <div className="divide-y divide-zinc-800/70">
+            <div className="flex items-center justify-between px-5 py-3">
+              <span className="text-sm text-zinc-500">Email</span>
+              <span className="text-sm text-zinc-300">{currentUser?.email}</span>
             </div>
-          ) : !currentUser ? (
-            <div className="h-full flex items-center justify-center text-xs text-zinc-400">
-              You must be signed in to view account settings.
+            <div className="flex items-center justify-between px-5 py-3">
+              <span className="text-sm text-zinc-500">System Role</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-yellow-400">
+                {currentUser?.systemRole}
+              </span>
             </div>
-          ) : (
-            <div className="max-w-2xl mx-auto space-y-6">
-              <div className="border-b border-zinc-800/60 pb-4">
-                <h1 className="text-lg font-bold text-zinc-100">Account Settings</h1>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Manage your profile details and sign-in credentials.
-                </p>
-              </div>
+            <div className="flex items-center justify-between px-5 py-3">
+              <span className="text-sm text-zinc-500">Employment</span>
+              <span className="text-sm font-medium text-zinc-300">{currentUser?.employmentType}</span>
+            </div>
+            <div className="flex items-center justify-between px-5 py-3">
+              <span className="text-sm text-zinc-500">Star Rating</span>
+              <StarRating rating={currentUser?.starRating ?? 0} />
+            </div>
+          </div>
 
-              {/* Read-only identity */}
-              <section className="bg-zinc-900/40 border border-zinc-800/80 rounded-2xl p-5 space-y-3">
-                <h2 className="text-xs font-bold text-zinc-200 flex items-center gap-2">
-                  <UserIcon className="w-3.5 h-3.5 text-indigo-400" />
-                  Account
-                </h2>
+          <p className="px-5 py-3 text-[11px] text-zinc-600 italic border-t border-zinc-800/70">
+            Role, employment type and rating are set by an administrator.
+          </p>
+        </div>
 
-                <dl className="text-xs space-y-2">
-                  <div className="flex justify-between py-1 border-b border-zinc-800/60">
-                    <dt className="text-zinc-400">Email</dt>
-                    <dd className="text-zinc-200">{currentUser.email}</dd>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-zinc-800/60">
-                    <dt className="text-zinc-400">System Role</dt>
-                    <dd className="font-mono text-[10px] text-zinc-300 bg-zinc-900 px-1.5 py-0.5 rounded">
-                      {currentUser.systemRole}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-zinc-800/60">
-                    <dt className="text-zinc-400">Employment</dt>
-                    <dd className="font-mono text-[10px] text-zinc-300 bg-zinc-900 px-1.5 py-0.5 rounded">
-                      {currentUser.employmentType}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <dt className="text-zinc-400">Star Rating</dt>
-                    <dd className="text-amber-400 font-bold flex items-center gap-1">
-                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                      {currentUser.starRating ?? 1}
-                    </dd>
-                  </div>
-                </dl>
+        {/* ── Profile (editable) ── */}
+        <div className="border border-zinc-800 rounded-xl overflow-hidden">
+          <div className="px-5 pt-4 pb-3">
+            <h2 className="text-sm font-semibold text-zinc-200">Profile</h2>
+          </div>
 
-                <p className="text-[10px] text-zinc-500">
-                  Role, employment type and rating are set by an administrator.
-                </p>
-              </section>
-
-              <ProfileForm
-                key={currentUser.id}
-                user={currentUser}
-                onSaved={setCurrentUser}
-                inputClass={inputClass}
+          <div className="px-5 pb-5 space-y-4">
+            {/* Display Name */}
+            <div>
+              <label className="block text-[12px] text-zinc-400 mb-1.5">Display Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-700/60 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-zinc-500 transition-colors"
               />
-
-              {/* Password */}
-              <section className="bg-zinc-900/40 border border-zinc-800/80 rounded-2xl p-5">
-                <h2 className="text-xs font-bold text-zinc-200 mb-4 flex items-center gap-2">
-                  <Lock className="w-3.5 h-3.5 text-emerald-400" />
-                  Password
-                </h2>
-
-                <form onSubmit={handleChangePassword} className="space-y-4">
-                  {passwordFeedback && <FeedbackBanner feedback={passwordFeedback} />}
-
-                  <PasswordField
-                    id="currentPassword"
-                    label="Current Password"
-                    value={currentPassword}
-                    onChange={setCurrentPassword}
-                    show={showCurrent}
-                    onToggle={() => setShowCurrent(!showCurrent)}
-                    placeholder="Enter current password"
-                    className={passwordInputClass}
-                  />
-
-                  <PasswordField
-                    id="newPassword"
-                    label="New Password (min. 6 characters)"
-                    value={newPassword}
-                    onChange={setNewPassword}
-                    show={showNew}
-                    onToggle={() => setShowNew(!showNew)}
-                    placeholder="Enter new password"
-                    required
-                    className={passwordInputClass}
-                  />
-
-                  <PasswordField
-                    id="confirmPassword"
-                    label="Confirm New Password"
-                    value={confirmPassword}
-                    onChange={setConfirmPassword}
-                    show={showConfirm}
-                    onToggle={() => setShowConfirm(!showConfirm)}
-                    placeholder="Confirm new password"
-                    required
-                    className={passwordInputClass}
-                  />
-
-                  <button
-                    type="submit"
-                    disabled={isSavingPassword}
-                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition-all shadow-md cursor-pointer disabled:opacity-50"
-                  >
-                    {isSavingPassword ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Updating Password...</span>
-                      </>
-                    ) : (
-                      <span>Save New Password</span>
-                    )}
-                  </button>
-                </form>
-              </section>
             </div>
-          )}
-        </main>
+
+            {/* Avatar URL */}
+            <div>
+              <label className="block text-[12px] text-zinc-400 mb-1.5">Avatar URL</label>
+              <input
+                type="text"
+                value={avatarUrl}
+                onChange={(e) => setAvatarUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full bg-zinc-900 border border-zinc-700/60 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+              />
+            </div>
+
+            {/* Daily Sheet URL */}
+            <div>
+              <label className="block text-[12px] text-zinc-400 mb-1.5">
+                Google Daily Sheet URL
+              </label>
+              <input
+                type="text"
+                value={dailySheetUrl}
+                onChange={(e) => setDailySheetUrl(e.target.value)}
+                placeholder="https://docs.google.com/..."
+                className="w-full bg-zinc-900 border border-zinc-700/60 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+              />
+            </div>
+
+            {profileMsg && (
+              <p className={`text-xs ${profileMsg.type === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                {profileMsg.text}
+              </p>
+            )}
+
+            <button
+              onClick={handleSaveProfile}
+              disabled={profileSaving}
+              className="w-full py-2.5 bg-zinc-100 hover:bg-white disabled:opacity-50 text-zinc-900 text-sm font-semibold rounded-lg transition-colors"
+            >
+              {profileSaving ? 'Saving...' : 'Save Profile'}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Password ── */}
+        <div className="border border-zinc-800 rounded-xl overflow-hidden">
+          <div className="px-5 pt-4 pb-3 flex items-center gap-2">
+            <Lock className="w-4 h-4 text-zinc-400" />
+            <h2 className="text-sm font-semibold text-zinc-200">Password</h2>
+          </div>
+
+          <div className="px-5 pb-5 space-y-4">
+            {/* Current Password */}
+            <div>
+              <label className="block text-[12px] text-zinc-400 mb-1.5">Current Password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-600" />
+                <input
+                  type={showCurrent ? 'text' : 'password'}
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password"
+                  className="w-full bg-zinc-900 border border-zinc-700/60 rounded-lg pl-9 pr-10 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrent(!showCurrent)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400"
+                >
+                  {showCurrent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* New Password */}
+            <div>
+              <label className="block text-[12px] text-zinc-400 mb-1.5">
+                New Password <span className="text-zinc-600">(min. 6 characters)</span>
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-600" />
+                <input
+                  type={showNew ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  className="w-full bg-zinc-900 border border-zinc-700/60 rounded-lg pl-9 pr-10 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNew(!showNew)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400"
+                >
+                  {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {pwMsg && (
+              <p className={`text-xs ${pwMsg.type === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                {pwMsg.text}
+              </p>
+            )}
+          </div>
+        </div>
+
       </div>
     </div>
-  );
-}
-
-function FeedbackBanner({ feedback }: { feedback: NonNullable<Feedback> }) {
-  const isError = feedback.kind === 'error';
-  return (
-    <div
-      role="status"
-      className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-        isError
-          ? 'bg-rose-950/80 border-rose-900/80 text-rose-300'
-          : 'bg-emerald-950/80 border-emerald-900/80 text-emerald-300'
-      }`}
-    >
-      {isError ? (
-        <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-      ) : (
-        <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-      )}
-      <span>{feedback.text}</span>
-    </div>
-  );
-}
-
-function PasswordField({
-  id,
-  label,
-  value,
-  onChange,
-  show,
-  onToggle,
-  placeholder,
-  required,
-  className,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  show: boolean;
-  onToggle: () => void;
-  placeholder: string;
-  required?: boolean;
-  className: string;
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="text-[11px] font-medium text-zinc-400 block mb-1">
-        {label}
-      </label>
-      <div className="relative">
-        <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
-        <input
-          id={id}
-          type={show ? 'text' : 'password'}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          required={required}
-          className={className}
-        />
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={show ? 'Hide password' : 'Show password'}
-          className="absolute right-3 top-2.5 text-zinc-500 hover:text-zinc-300"
-        >
-          {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Rendered with `key={user.id}` so its state initialises straight from props.
- * Seeding it from an effect instead would set state during render commit.
- */
-function ProfileForm({
-  user,
-  onSaved,
-  inputClass,
-}: {
-  user: User;
-  onSaved: (user: User) => void;
-  inputClass: string;
-}) {
-  const [name, setName] = useState(user.name ?? '');
-  const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl ?? '');
-  const [dailySheetUrl, setDailySheetUrl] = useState(user.dailySheetUrl ?? '');
-  const [isSaving, setIsSaving] = useState(false);
-  const [feedback, setFeedback] = useState<Feedback>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFeedback(null);
-    setIsSaving(true);
-
-    try {
-      // The server validates these as URLs, so send them only when non-empty.
-      const { user: updated } = await authApi.updateProfile({
-        name: name.trim() || undefined,
-        avatarUrl: avatarUrl.trim() || undefined,
-        dailySheetUrl: dailySheetUrl.trim() || undefined,
-      });
-      onSaved(updated);
-      setFeedback({ kind: 'success', text: 'Profile updated.' });
-    } catch (err) {
-      setFeedback({
-        kind: 'error',
-        text: err instanceof Error ? err.message : 'Failed to update profile.',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <section className="bg-zinc-900/40 border border-zinc-800/80 rounded-2xl p-5">
-      <h2 className="text-xs font-bold text-zinc-200 mb-4">Profile</h2>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {feedback && <FeedbackBanner feedback={feedback} />}
-
-        <div>
-          <label htmlFor="name" className="text-[11px] font-medium text-zinc-400 block mb-1">
-            Display Name
-          </label>
-          <input
-            id="name"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Your name"
-            className={inputClass}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="avatarUrl" className="text-[11px] font-medium text-zinc-400 block mb-1">
-            Avatar URL
-          </label>
-          <input
-            id="avatarUrl"
-            type="url"
-            value={avatarUrl}
-            onChange={(e) => setAvatarUrl(e.target.value)}
-            placeholder="https://..."
-            className={inputClass}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="dailySheetUrl" className="text-[11px] font-medium text-zinc-400 block mb-1">
-            Google Daily Sheet URL
-          </label>
-          <input
-            id="dailySheetUrl"
-            type="url"
-            value={dailySheetUrl}
-            onChange={(e) => setDailySheetUrl(e.target.value)}
-            placeholder="https://docs.google.com/spreadsheets/..."
-            className={inputClass}
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={isSaving}
-          className="w-full flex items-center justify-center gap-2 bg-zinc-200 hover:bg-white text-zinc-950 font-semibold py-2.5 px-4 rounded-xl text-xs transition-all shadow-md cursor-pointer disabled:opacity-50"
-        >
-          {isSaving ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Saving...</span>
-            </>
-          ) : (
-            <span>Save Profile</span>
-          )}
-        </button>
-      </form>
-    </section>
   );
 }

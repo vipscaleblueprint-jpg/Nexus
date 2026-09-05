@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getR2PresignedUrl } from '../services/r2Service';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
+import { taskUpdatesQueue } from '../queues/task.queue';
+import { io } from '../server';
 
 const taskInclude = {
   subtasks: true,
@@ -91,6 +93,9 @@ export async function createTask(req: Request, res: Response) {
 
     await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
 
+    // Broadcast new task to the list room for real-time sync
+    io.to(`list:${listId}`).emit('task:created', task);
+
     return res.status(201).json({ task });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -103,30 +108,39 @@ export async function updateTask(req: Request, res: Response) {
     const taskId = req.params.id;
     const {
       title, description, status, priority,
-      listId, assigneeId, teamId, dueDate, startDate,
+      listId, assigneeId, teamId, dueDate, startDate, currentListId
     } = req.body;
 
-    const task = await prisma.task.update({
-      where: { id: taskId },
-      data: {
-        ...(title !== undefined ? { title } : {}),
-        ...(description !== undefined ? { description } : {}),
-        ...(status !== undefined ? { status } : {}),
-        ...(priority !== undefined ? { priority } : {}),
-        ...(listId !== undefined ? { listId } : {}),
-        ...(assigneeId !== undefined ? { assigneeId } : {}),
-        ...(teamId !== undefined ? { teamId } : {}),
-        ...(dueDate !== undefined ? { dueDate: dueDate ? new Date(dueDate) : null } : {}),
-        ...(startDate !== undefined ? { startDate: startDate ? new Date(startDate) : null } : {}),
-      },
-      include: taskInclude,
-    });
+    const updateData = {
+      ...(title !== undefined ? { title } : {}),
+      ...(description !== undefined ? { description } : {}),
+      ...(status !== undefined ? { status } : {}),
+      ...(priority !== undefined ? { priority } : {}),
+      ...(listId !== undefined ? { listId } : {}),
+      ...(assigneeId !== undefined ? { assigneeId } : {}),
+      ...(teamId !== undefined ? { teamId } : {}),
+      ...(dueDate !== undefined ? { dueDate: dueDate ? new Date(dueDate) : null } : {}),
+      ...(startDate !== undefined ? { startDate: startDate ? new Date(startDate) : null } : {}),
+    };
 
+    // 1. Enqueue job for write-behind DB persistence
+    await taskUpdatesQueue.add('updateTask', { taskId, data: updateData });
+
+    // 2. Invalidate caches
     await invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
 
-    return res.json({ task });
+    const partialTask = { id: taskId, ...updateData };
+
+    // 3. Broadcast real-time update
+    const roomListId = listId || currentListId;
+    if (roomListId) {
+      io.to(`list:${roomListId}`).emit('task:updated', partialTask);
+    } else {
+      io.emit('task:updated', partialTask);
+    }
+
+    return res.json({ task: partialTask, queued: true });
   } catch (err: any) {
-    if (err.code === 'P2025') return res.status(404).json({ error: 'Task not found' });
     return res.status(500).json({ error: err.message });
   }
 }
@@ -150,17 +164,51 @@ export async function deleteTask(req: Request, res: Response) {
 export async function moveTask(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, currentListId } = req.body;
 
-    const updatedTask = await prisma.task.update({
-      where: { id },
-      data: { status },
-      include: taskInclude,
-    });
-
+    // Enqueue write-behind DB persistence
+    await taskUpdatesQueue.add('updateTask', { taskId: id, data: { status } });
     await invalidateCache(`task:${id}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
 
-    return res.json({ task: updatedTask, message: 'Status updated successfully' });
+    const partialTask = { id, status };
+
+    if (currentListId) {
+      io.to(`list:${currentListId}`).emit('task:updated', partialTask);
+    } else {
+      io.emit('task:updated', partialTask);
+    }
+
+    return res.json({ task: partialTask, queued: true, message: 'Status updated successfully' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/tasks/:id/comments
+export async function createTaskComment(req: Request, res: Response) {
+  try {
+    const taskId = req.params.id;
+    const { content, userId, listId } = req.body;
+
+    // We write comments directly to DB since they are text-heavy and less frequent than drags
+    const comment = await prisma.taskComment.create({
+      data: {
+        content,
+        taskId,
+        userId,
+      },
+      // Include user details if needed for UI
+    });
+
+    // Broadcast the new comment
+    const payload = { taskId, comment };
+    if (listId) {
+      io.to(`list:${listId}`).emit('task:comment_added', payload);
+    } else {
+      io.emit('task:comment_added', payload);
+    }
+
+    return res.status(201).json({ comment });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

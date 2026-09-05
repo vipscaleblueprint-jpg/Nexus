@@ -1,15 +1,18 @@
 import { z } from 'zod';
 import { nullableUuid, shortText } from './common';
 
-export const createListSchema = z
+export const createListSchema = z.object({
+  name: shortText('name'),
+  spaceId: nullableUuid,
+  folderId: nullableUuid,
+});
+
+export const updateListSchema = z
   .object({
-    name: shortText('name'),
-    spaceId: nullableUuid,
-    folderId: nullableUuid,
+    name: shortText('name').optional(),
   })
-  .refine((body) => body.spaceId || body.folderId, {
-    message: 'a list must belong to either a space or a folder',
-    path: ['spaceId'],
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'at least one field must be provided',
   });
 
 export type CreateListInput = z.infer<typeof createListSchema>;

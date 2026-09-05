@@ -27,4 +27,18 @@ export const tasksApi = {
       method: 'DELETE',
     });
   },
+
+  async moveTask(id: string, status: string, currentListId?: string): Promise<{ task: Task }> {
+    return apiClient<{ task: Task }>(`/api/tasks/${id}/move`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, currentListId }),
+    });
+  },
+
+  async addComment(id: string, content: string, userId: string, listId?: string): Promise<{ comment: any }> {
+    return apiClient<{ comment: any }>(`/api/tasks/${id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ content, userId, listId }),
+    });
+  },
 };

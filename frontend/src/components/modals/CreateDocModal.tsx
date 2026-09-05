@@ -65,7 +65,7 @@ export function CreateDocModal({
     try {
       await spacesApi.createDoc({
         title: title.trim(),
-        spaceId: spaceId || undefined,
+        spaceId: spaceId && spaceId !== 'root-space' ? spaceId : undefined,
         folderId: folderId || undefined,
       });
       setLoading(false);

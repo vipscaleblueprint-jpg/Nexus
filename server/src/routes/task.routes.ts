@@ -7,6 +7,7 @@ import {
   deleteTask,
   moveTask,
   createAttachmentUrl,
+  createTaskComment,
 } from '../controllers/task.controller';
 import { idParams, validate } from '../validation';
 import {
@@ -29,6 +30,7 @@ taskRouter.post(
   validate({ params: idParams, body: attachmentUrlSchema }),
   createAttachmentUrl
 );
+taskRouter.post('/:id/comments', validate({ params: idParams }), createTaskComment);
 
 taskRouter.get('/:id', validate({ params: idParams }), getTask);
 taskRouter.patch('/:id', validate({ params: idParams, body: updateTaskSchema }), updateTask);

@@ -65,7 +65,7 @@ export function CreateFolderModal({
     try {
       await spacesApi.createFolder({
         name: name.trim(),
-        spaceId: spaceId || undefined,
+        spaceId: spaceId && spaceId !== 'root-space' ? spaceId : undefined,
         parentFolderId: parentFolderId || undefined,
       });
       setLoading(false);

@@ -16,6 +16,8 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@emnapi/core": "^1.11.3",
+    "@emnapi/runtime": "^1.11.3",
     "@hocuspocus/server": "^4.6.0",
     "@prisma/client": "^5.19.0",
     "@types/nodemailer": "^8.0.1",

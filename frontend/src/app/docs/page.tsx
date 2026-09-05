@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Sidebar } from '@/components/layout/Sidebar';
-import { Header } from '@/components/layout/Header';
 import { WorkspaceDashboard } from '@/components/dashboard/WorkspaceDashboard';
 import { CreateSpaceModal } from '@/components/modals/CreateSpaceModal';
 import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
@@ -11,7 +9,7 @@ import { CreateDocModal } from '@/components/modals/CreateDocModal';
 import { CreatePageModal } from '@/components/modals/CreatePageModal';
 import { EntityType } from '@/components/modals/CreateEntityModal';
 import { useAppStore } from '@/lib/store';
-import { authApi, spacesApi } from '@/api';
+import { authApi } from '@/api';
 import { Space, Folder, Doc } from '@/lib/types';
 
 function getAllDocs(spaces: Space[]): Doc[] {
@@ -30,9 +28,7 @@ function getAllDocs(spaces: Space[]): Doc[] {
 }
 
 export default function DocsPage() {
-  const { currentUser, setCurrentUser } = useAppStore();
-  const [spaces, setSpaces] = useState<Space[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { currentUser, setCurrentUser, spaces, loadSpaces, loadingSpaces } = useAppStore();
 
   // Individual Modals State
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
@@ -45,18 +41,6 @@ export default function DocsPage() {
   const [targetFolderId, setTargetFolderId] = useState<string | undefined>();
   const [targetDocId, setTargetDocId] = useState<string | undefined>();
 
-  const loadSpaces = async () => {
-    setLoading(true);
-    try {
-      const res = await spacesApi.getSpaces();
-      if (res.spaces) setSpaces(res.spaces);
-    } catch (e) {
-      console.warn('Failed to fetch spaces:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -65,15 +49,11 @@ export default function DocsPage() {
           const { user } = await authApi.getMe();
           if (!cancelled && user) setCurrentUser(user);
         } catch (e) {
-          // Unauthenticated session fallback
+          // Auth is handled by the global ClientLayout
         }
       }
-      await loadSpaces();
     })();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [currentUser, setCurrentUser]);
 
   const handleOpenCreate = (type: EntityType, spaceId?: string, folderId?: string, docId?: string) => {
@@ -91,21 +71,13 @@ export default function DocsPage() {
   const allDocs = getAllDocs(spaces);
 
   return (
-    <div className="flex h-screen bg-[#131316] text-[#e4e4e7] overflow-hidden font-sans">
-      <Sidebar spaces={spaces} />
-
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#131316]">
-        <Header />
-
-        <main className="flex-1 overflow-y-auto bg-[#131316]">
-          <WorkspaceDashboard
-            activeView="docs"
-            spaces={spaces}
-            loading={loading}
-            onOpenCreate={handleOpenCreate}
-          />
-        </main>
-      </div>
+    <>
+      <WorkspaceDashboard
+        activeView="docs"
+        spaces={spaces}
+        loading={loadingSpaces}
+        onOpenCreate={handleOpenCreate}
+      />
 
       <CreateSpaceModal
         isOpen={isCreateSpaceOpen}
@@ -142,6 +114,6 @@ export default function DocsPage() {
         allDocs={allDocs}
         defaultDocId={targetDocId}
       />
-    </div>
+    </>
   );
 }

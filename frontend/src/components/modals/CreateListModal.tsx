@@ -65,7 +65,7 @@ export function CreateListModal({
     try {
       await spacesApi.createList({
         name: name.trim(),
-        spaceId: spaceId || undefined,
+        spaceId: spaceId && spaceId !== 'root-space' ? spaceId : undefined,
         folderId: folderId || undefined,
       });
       setLoading(false);

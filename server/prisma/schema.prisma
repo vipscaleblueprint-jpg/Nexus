@@ -182,12 +182,13 @@ model Folder {
 }
 
 model List {
-  id        String   @id @default(uuid())
-  name      String
-  spaceId   String?
-  folderId  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  name         String
+  spaceId      String?
+  folderId     String?
+  customGroups String[] @default([])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   space  Space?  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   folder Folder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
@@ -257,7 +258,7 @@ model Task {
   id          String    @id @default(uuid())
   title       String
   description String?
-  status      String    @default("TODO")
+  status      String    @default("Pending")
   priority    Priority  @default(MEDIUM)
   dueDate     DateTime?
   startDate   DateTime?

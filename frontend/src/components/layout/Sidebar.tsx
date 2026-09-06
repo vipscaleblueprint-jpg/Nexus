@@ -12,6 +12,7 @@ import { CreatePageModal } from '@/components/modals/CreatePageModal';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
+import { SidebarSkeleton } from '@/components/ui/Skeleton';
 import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
 import { spacesApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -163,7 +164,7 @@ function getAllLists(spaces: Space[]): List[] {
 
 export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: SidebarProps) {
   const pathname = usePathname();
-  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces } = useAppStore();
+  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces, loadingSpaces } = useAppStore();
   
   // We can just use globalSpaces instead of syncing local state.
   // But to not break the rest of the component, we'll assign it to spaces.
@@ -433,7 +434,9 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 </button>
               </div>
 
-              {spaces.length === 0 ? (
+              {loadingSpaces && spaces.length === 0 ? (
+                <SidebarSkeleton />
+              ) : spaces.length === 0 ? (
                 <p className="text-zinc-500 text-[11px] px-1 italic">No spaces created yet.</p>
               ) : (
                 <div className="space-y-1">

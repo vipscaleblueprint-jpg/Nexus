@@ -10,6 +10,7 @@ interface AppState {
   // Spaces
   spaces: Space[];
   loadingSpaces: boolean;
+  hasLoadedSpaces: boolean;
   loadSpaces: () => Promise<void>;
 }
 
@@ -19,6 +20,7 @@ export const useAppStore = create<AppState>((set) => ({
   
   spaces: [],
   loadingSpaces: false,
+  hasLoadedSpaces: false,
   loadSpaces: async () => {
     set({ loadingSpaces: true });
     try {
@@ -29,7 +31,7 @@ export const useAppStore = create<AppState>((set) => ({
     } catch (e) {
       console.error('Failed to fetch spaces', e);
     } finally {
-      set({ loadingSpaces: false });
+      set({ loadingSpaces: false, hasLoadedSpaces: true });
     }
   }
 }));

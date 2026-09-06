@@ -8,13 +8,13 @@ import { useEffect } from 'react';
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { spaces, loadSpaces, loadingSpaces } = useAppStore();
+  const { spaces, loadSpaces, loadingSpaces, hasLoadedSpaces } = useAppStore();
 
   useEffect(() => {
-    if (spaces.length === 0 && !loadingSpaces) {
+    if (!hasLoadedSpaces && !loadingSpaces) {
       loadSpaces();
     }
-  }, [spaces.length, loadSpaces, loadingSpaces]);
+  }, [hasLoadedSpaces, loadingSpaces, loadSpaces]);
 
   if (pathname === '/login') {
     return <>{children}</>;

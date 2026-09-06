@@ -55,9 +55,9 @@ server.on('upgrade', (request, socket, head) => {
 
 // Global Security, Logging & CORS Middlewares
 app.use(httpLogger);
+app.use(cors(corsOptions));
 app.use(botBlocker);
 app.use(rateLimiter);
-app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 

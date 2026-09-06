@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/Skeleton';
 
 export interface WorkspaceDashboardProps {
-  activeView?: 'all' | 'spaces' | 'lists' | 'docs';
+  activeView?: 'all' | 'spaces' | 'lists' | 'docs' | 'folders';
   spaces: Space[];
   loading: boolean;
   onOpenCreate: (type: EntityType, spaceId?: string, folderId?: string, docId?: string) => void;
@@ -91,7 +91,7 @@ export function WorkspaceDashboard({
   onOpenCreate,
 }: WorkspaceDashboardProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [currentTab, setCurrentTab] = useState<'all' | 'spaces' | 'lists' | 'docs'>(activeView);
+  const [currentTab, setCurrentTab] = useState<'all' | 'spaces' | 'lists' | 'docs' | 'folders'>(activeView);
 
   if (loading) {
     if (currentTab === 'lists') return <ListSkeleton />;

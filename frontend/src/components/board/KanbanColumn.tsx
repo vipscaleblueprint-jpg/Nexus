@@ -15,25 +15,87 @@ interface Props {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  TODO: 'To Do',
+  // Client Details
+  KYC: 'KYC',
+  'Pin Board': 'Pin Board',
+  PIN_BOARD: 'Pin Board',
+  
+  // Recurring
+  Daily: 'Daily',
+  Weekly: 'Weekly',
+  Monthly: 'Monthly',
+  DAILY: 'Daily',
+  WEEKLY: 'Weekly',
+  MONTHLY: 'Monthly',
+
+  // Workflow & Progress
+  Pending: 'Pending',
+  PENDING: 'Pending',
+  'In Progress': 'In Progress',
   IN_PROGRESS: 'In Progress',
+  Revision: 'Revision',
+  REVISION: 'Revision',
+  Waiting: 'Waiting',
+  WAITING: 'Waiting',
+  'In Review': 'In Review',
+  IN_REVIEW: 'In Review',
+  Checking: 'Checking',
+  CHECKING: 'Checking',
+  'On-Hold': 'On-Hold',
+  ON_HOLD: 'On-Hold',
+  Closed: 'Closed',
+  CLOSED: 'Closed',
+
+  // Fallbacks
+  TODO: 'To Do',
   DONE: 'Done',
   CANCELLED: 'Cancelled',
 };
 
 const THEMES: Record<string, { badge: string; bg: string; text: string }> = {
-  teal: { badge: 'bg-[#00a884] text-black', bg: 'bg-teal-500/10', text: 'text-teal-400' },
+  cyan: { badge: 'bg-cyan-500 text-black', bg: 'bg-cyan-500/10', text: 'text-cyan-400' },
   blue: { badge: 'bg-blue-500 text-white', bg: 'bg-blue-500/10', text: 'text-blue-400' },
-  emerald: { badge: 'bg-emerald-500 text-white', bg: 'bg-emerald-500/10', text: 'text-emerald-400' },
+  indigo: { badge: 'bg-indigo-500 text-white', bg: 'bg-indigo-500/10', text: 'text-indigo-400' },
+  violet: { badge: 'bg-violet-500 text-white', bg: 'bg-violet-500/10', text: 'text-violet-400' },
   purple: { badge: 'bg-purple-500 text-white', bg: 'bg-purple-500/10', text: 'text-purple-400' },
-  rose: { badge: 'bg-rose-500 text-white', bg: 'bg-rose-500/10', text: 'text-rose-400' },
+  teal: { badge: 'bg-[#00a884] text-black', bg: 'bg-teal-500/10', text: 'text-teal-400' },
+  emerald: { badge: 'bg-emerald-500 text-white', bg: 'bg-emerald-500/10', text: 'text-emerald-400' },
   amber: { badge: 'bg-amber-500 text-black', bg: 'bg-amber-500/10', text: 'text-amber-400' },
+  orange: { badge: 'bg-orange-500 text-white', bg: 'bg-orange-500/10', text: 'text-orange-400' },
+  rose: { badge: 'bg-rose-500 text-white', bg: 'bg-rose-500/10', text: 'text-rose-400' },
   zinc: { badge: 'bg-zinc-500 text-white', bg: 'bg-zinc-500/10', text: 'text-zinc-400' },
 };
 
 const DEFAULT_STATUS_THEMES: Record<string, string> = {
-  TODO: 'teal',
+  KYC: 'cyan',
+  'Pin Board': 'blue',
+  PIN_BOARD: 'blue',
+
+  Daily: 'purple',
+  Weekly: 'indigo',
+  Monthly: 'violet',
+  DAILY: 'purple',
+  WEEKLY: 'indigo',
+  MONTHLY: 'violet',
+
+  Pending: 'amber',
+  PENDING: 'amber',
+  'In Progress': 'blue',
   IN_PROGRESS: 'blue',
+  Revision: 'rose',
+  REVISION: 'rose',
+  Waiting: 'orange',
+  WAITING: 'orange',
+  'In Review': 'purple',
+  IN_REVIEW: 'purple',
+  Checking: 'teal',
+  CHECKING: 'teal',
+  'On-Hold': 'zinc',
+  ON_HOLD: 'zinc',
+  Closed: 'emerald',
+  CLOSED: 'emerald',
+
+  TODO: 'teal',
   DONE: 'emerald',
   CANCELLED: 'rose',
 };

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { usersApi } from '@/api/users';
 import { User } from '@/lib/types';
 import { Users, Star, ExternalLink, Search, Shield } from 'lucide-react';
+import { MemberSkeleton } from '@/components/ui/Skeleton';
 
 const ROLE_COLORS: Record<string, string> = {
   PM: 'bg-violet-500/20 text-violet-300 border-violet-500/30',
@@ -160,7 +161,11 @@ export default function TeamPage() {
 
       {/* Grid */}
       {loading ? (
-        <div className="flex items-center justify-center py-20 text-zinc-500 text-sm">Loading members...</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
+            <MemberSkeleton key={i} />
+          ))}
+        </div>
       ) : sorted.length === 0 ? (
         <div className="flex items-center justify-center py-20 text-zinc-600 text-sm">No members found.</div>
       ) : (

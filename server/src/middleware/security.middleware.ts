@@ -36,6 +36,8 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS_PER_WINDOW = 120;
 
 export function rateLimiter(req: Request, res: Response, next: NextFunction) {
+  if (process.env.NODE_ENV === 'development') return next();
+
   const clientIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
   const now = Date.now();
 

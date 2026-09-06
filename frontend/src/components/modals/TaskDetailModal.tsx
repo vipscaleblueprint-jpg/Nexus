@@ -23,9 +23,46 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: 'text-red-400 bg-red-500/20',
 };
 
+const ALL_STATUSES = [
+  'KYC',
+  'Pin Board',
+  'Daily',
+  'Weekly',
+  'Monthly',
+  'Pending',
+  'In Progress',
+  'Revision',
+  'Waiting',
+  'In Review',
+  'Checking',
+  'On-Hold',
+  'Closed',
+];
+
 const STATUS_COLORS: Record<string, string> = {
-  TODO: 'bg-zinc-700 text-zinc-300',
+  KYC: 'bg-cyan-600 text-white',
+  'Pin Board': 'bg-blue-600 text-white',
+  PIN_BOARD: 'bg-blue-600 text-white',
+  Daily: 'bg-purple-600 text-white',
+  Weekly: 'bg-indigo-600 text-white',
+  Monthly: 'bg-violet-600 text-white',
+  Pending: 'bg-amber-600 text-white',
+  PENDING: 'bg-amber-600 text-white',
+  'In Progress': 'bg-blue-600 text-white',
   IN_PROGRESS: 'bg-blue-600 text-white',
+  Revision: 'bg-rose-600 text-white',
+  REVISION: 'bg-rose-600 text-white',
+  Waiting: 'bg-orange-600 text-white',
+  WAITING: 'bg-orange-600 text-white',
+  'In Review': 'bg-purple-600 text-white',
+  IN_REVIEW: 'bg-purple-600 text-white',
+  Checking: 'bg-teal-600 text-white',
+  CHECKING: 'bg-teal-600 text-white',
+  'On-Hold': 'bg-zinc-700 text-zinc-300',
+  ON_HOLD: 'bg-zinc-700 text-zinc-300',
+  Closed: 'bg-emerald-600 text-white',
+  CLOSED: 'bg-emerald-600 text-white',
+  TODO: 'bg-zinc-700 text-zinc-300',
   DONE: 'bg-emerald-600 text-white',
   CANCELLED: 'bg-red-700/60 text-red-200',
 };
@@ -183,6 +220,7 @@ export function TaskDetailModal({ isOpen, onClose, task, socket, onStatusChange,
 
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   
   // Resizable activity panel
   const [activityWidth, setActivityWidth] = useState(450);
@@ -219,8 +257,8 @@ export function TaskDetailModal({ isOpen, onClose, task, socket, onStatusChange,
   if (!isOpen || !task) return null;
 
   const handleStatusClick = () => {
-    const statuses = ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'];
-    const currentIndex = statuses.indexOf(task.status || 'TODO');
+    const statuses = ALL_STATUSES;
+    const currentIndex = statuses.indexOf(task.status || 'Pending');
     const nextIndex = (currentIndex + 1) % statuses.length;
     const newStatus = statuses[nextIndex];
     if (onStatusChange) onStatusChange(newStatus);
@@ -262,8 +300,22 @@ export function TaskDetailModal({ isOpen, onClose, task, socket, onStatusChange,
     >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-[#18181b]">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <span className="text-xs text-zinc-500 font-mono">Task ID: {task.id.slice(0, 8)}</span>
+            <button
+              onClick={() => {
+                const url = task.listId
+                  ? `${window.location.origin}/lists/${task.listId}?task=${task.id}`
+                  : `${window.location.origin}/tasks/${task.id}`;
+                navigator.clipboard.writeText(url);
+                setCopiedLink(true);
+                setTimeout(() => setCopiedLink(false), 2000);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-md text-xs transition-colors border border-zinc-700/50"
+            >
+              <Link2 className="w-3.5 h-3.5 text-purple-400" />
+              <span>{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
+            </button>
           </div>
           <div className="flex items-center gap-2">
             <button 

@@ -15,6 +15,7 @@ import {
   Loader2,
   KanbanSquare,
 } from 'lucide-react';
+import { ListSkeleton } from '@/components/ui/Skeleton';
 import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
@@ -73,7 +74,7 @@ export default function BoardPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [id, currentUser, setCurrentUser]);
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -168,7 +169,21 @@ export default function BoardPage() {
     return acc;
   }, {} as Record<string, any[]>) ?? {};
 
-  const statusOrder = ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'];
+  const statusOrder = [
+    'KYC',
+    'Pin Board',
+    'Daily',
+    'Weekly',
+    'Monthly',
+    'Pending',
+    'In Progress',
+    'Revision',
+    'Waiting',
+    'In Review',
+    'Checking',
+    'On-Hold',
+    'Closed',
+  ];
   const orderedStatuses = [
     ...statusOrder.filter((s) => tasksByStatus[s]),
     ...Object.keys(tasksByStatus).filter((s) => !statusOrder.includes(s)),
@@ -252,10 +267,8 @@ export default function BoardPage() {
   return (
     <>
       {loading ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="w-6 h-6 animate-spin text-zinc-500" />
-            </div>
-          ) : error ? (
+        <ListSkeleton />
+      ) : error ? (
             <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>
           ) : selectedTask ? (
             <div className="w-full h-full">

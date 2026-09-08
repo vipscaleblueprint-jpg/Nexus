@@ -174,6 +174,14 @@ io.on('connection', (socket) => {
   socket.on('block_blur', (data: { docId: string; blockId: string; userId: string }) => {
     socket.to(`doc:${data.docId}`).emit('block_unlocked', { blockId: data.blockId, userId: data.userId });
   });
+
+  socket.on('block_content_update', (data: { docId: string; blockId: string; content: string }) => {
+    socket.to(`doc:${data.docId}`).emit('block_content_update', { blockId: data.blockId, content: data.content });
+  });
+
+  socket.on('page_updated', (data: { docId: string; pageId: string }) => {
+    socket.to(`doc:${data.docId}`).emit('page_updated', { pageId: data.pageId });
+  });
 });
 
 export { io };

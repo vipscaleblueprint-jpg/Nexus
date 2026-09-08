@@ -58,10 +58,13 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus }:
   });
 
   const handleKeyDownCapture = (e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && editor?.isEmpty) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (onKeyDown) onKeyDown(e);
+    if (e.key === 'Backspace') {
+      const html = editor?.getHTML();
+      if (html === '<p></p>' || html === '<p><br></p>') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (onKeyDown) onKeyDown(e);
+      }
     }
   };
 

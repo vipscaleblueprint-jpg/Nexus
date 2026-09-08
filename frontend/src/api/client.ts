@@ -29,14 +29,20 @@ export async function apiClient<T = any>(
     }
   }
 
-  const res = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
-    credentials: 'include',
-    ...restOptions,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+      },
+      credentials: 'include',
+      ...restOptions,
+    });
+  } catch (err: any) {
+    console.warn(`[apiClient] Network request failed for ${url}:`, err?.message || err);
+    throw new Error(`Unable to connect to backend server at ${url}. Please make sure the server is running.`);
+  }
 
   const data = await res.json().catch(() => ({}));
 

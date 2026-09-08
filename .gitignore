@@ -14,5 +14,5 @@ dist/
 *.log
 .DS_Store
 
-.github/architecture.md
-.github/agentic_rules.md
+.agents
+.github

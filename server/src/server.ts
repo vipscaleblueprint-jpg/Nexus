@@ -55,9 +55,9 @@ server.on('upgrade', (request, socket, head) => {
 
 // Global Security, Logging & CORS Middlewares
 app.use(httpLogger);
+app.use(cors(corsOptions));
 app.use(botBlocker);
 app.use(rateLimiter);
-app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -154,6 +154,33 @@ io.on('connection', (socket) => {
   // Handle task description editing unlock + broadcast new content
   socket.on('task_editing_stop', (data: { listId: string; taskId: string; description: string }) => {
     socket.to(`list:${data.listId}`).emit('task_editing_stop', { taskId: data.taskId, description: data.description });
+  });
+
+  // --- Document Real-time Sync ---
+  socket.on('join_doc', (docId: string) => {
+    socket.join(`doc:${docId}`);
+    socketLog.debug({ socketId: socket.id, docId }, 'Client joined doc room');
+  });
+
+  socket.on('leave_doc', (docId: string) => {
+    socket.leave(`doc:${docId}`);
+    socketLog.debug({ socketId: socket.id, docId }, 'Client left doc room');
+  });
+
+  socket.on('block_focus', (data: { docId: string; blockId: string; userId: string; userName: string }) => {
+    socket.to(`doc:${data.docId}`).emit('block_locked', { blockId: data.blockId, userId: data.userId, userName: data.userName });
+  });
+
+  socket.on('block_blur', (data: { docId: string; blockId: string; userId: string }) => {
+    socket.to(`doc:${data.docId}`).emit('block_unlocked', { blockId: data.blockId, userId: data.userId });
+  });
+
+  socket.on('block_content_update', (data: { docId: string; blockId: string; content: string }) => {
+    socket.to(`doc:${data.docId}`).emit('block_content_update', { blockId: data.blockId, content: data.content });
+  });
+
+  socket.on('page_updated', (data: { docId: string; pageId: string }) => {
+    socket.to(`doc:${data.docId}`).emit('page_updated', { pageId: data.pageId });
   });
 });
 

@@ -58,6 +58,19 @@ export function KanbanCard({ task, isOverlay, onClick }: Props) {
     );
   }
 
+  const hasDescription = !!task.description;
+  const commentsCount = task.comments?.length || 0;
+  const attachmentsCount = task.attachments?.length || 0;
+  const subtasksCount = task.subtasks?.length || 0;
+  const completedSubtasks = task.subtasks?.filter(s => s.completed).length || 0;
+  
+  let checklistTotal = 0;
+  let checklistCompleted = 0;
+  task.checklists?.forEach(c => {
+    checklistTotal += c.items?.length || 0;
+    checklistCompleted += c.items?.filter(i => i.completed).length || 0;
+  });
+
   return (
     <div
       ref={setNodeRef}
@@ -70,7 +83,7 @@ export function KanbanCard({ task, isOverlay, onClick }: Props) {
       }`}
     >
       <div className="pr-6">
-        <h4 className="text-[13px] font-semibold text-zinc-200 mb-0.5 truncate leading-tight">
+        <h4 className="text-[13px] font-semibold text-zinc-200 mb-0.5 leading-tight">
           {task.title}
         </h4>
         <p className="text-[11px] text-zinc-500">
@@ -79,30 +92,72 @@ export function KanbanCard({ task, isOverlay, onClick }: Props) {
       </div>
 
       <div className="flex flex-col gap-2.5 mt-1">
-        <div className="flex items-center gap-2 text-[12px] text-zinc-500">
-          <AlignLeft className="w-3.5 h-3.5" />
+        {/* Indicators Row */}
+        <div className="flex flex-wrap items-center gap-3 text-[12px] text-zinc-500">
+          {hasDescription && (
+            <div className="flex items-center gap-1" title="Has Description">
+              <AlignLeft className="w-3.5 h-3.5" />
+            </div>
+          )}
+          
+          {commentsCount > 0 && (
+            <div className="flex items-center gap-1" title={`${commentsCount} Comments`}>
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              <span>{commentsCount}</span>
+            </div>
+          )}
+
+          {attachmentsCount > 0 && (
+            <div className="flex items-center gap-1" title={`${attachmentsCount} Attachments`}>
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+              <span>{attachmentsCount}</span>
+            </div>
+          )}
+
+          {subtasksCount > 0 && (
+            <div className="flex items-center gap-1" title={`${completedSubtasks}/${subtasksCount} Subtasks`}>
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h22M3 12h22M3 17h22M3 22h22"></path></svg>
+              <span>{completedSubtasks}/{subtasksCount}</span>
+            </div>
+          )}
+
+          {checklistTotal > 0 && (
+            <div className="flex items-center gap-1" title={`${checklistCompleted}/${checklistTotal} Checklist Items`}>
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>{checklistCompleted}/{checklistTotal}</span>
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center gap-2 text-[12px] text-zinc-500">
-          <User className="w-3.5 h-3.5" />
-          <span>{task.assignee ? task.assignee.name : '-'}</span>
-        </div>
+        <div className="flex items-center justify-between text-[12px] text-zinc-500 mt-1 pt-2 border-t border-zinc-700/50">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <User className="w-3.5 h-3.5" />
+              <span>{task.assignee ? task.assignee.name : 'Unassigned'}</span>
+            </div>
 
-        <div className="flex items-center gap-2 text-[12px] text-zinc-500">
-          <Calendar className="w-3.5 h-3.5" />
-          <span>{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '-'}</span>
-        </div>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>
+                {task.startDate ? new Date(task.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' - ' : ''}
+                {task.dueDate ? new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No due date'}
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-1">
+              <Flag className="w-3.5 h-3.5" />
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium uppercase ${task.priority ? PRIORITY_COLORS[task.priority] : 'text-zinc-400 bg-zinc-800'}`}>
+                {task.priority || 'NONE'}
+              </span>
+            </div>
 
-        <div className="flex items-center gap-2 text-[12px] text-zinc-500">
-          <Flag className="w-3.5 h-3.5" />
-          <span className={task.priority ? PRIORITY_COLORS[task.priority] : ''}>
-            {task.priority || '-'}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2 text-[12px] text-zinc-400 font-medium">
-          <CircleDashed className="w-3.5 h-3.5" />
-          <span>{task.status || 'Status'}</span>
+            <div className="flex items-center gap-1 text-[11px] text-zinc-400 font-medium">
+              <CircleDashed className="w-3 h-3" />
+              <span>{task.status || 'Pending'}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

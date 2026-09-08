@@ -12,6 +12,7 @@ import { CreatePageModal } from '@/components/modals/CreatePageModal';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
+import { SidebarSkeleton } from '@/components/ui/Skeleton';
 import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
 import { spacesApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -163,7 +164,7 @@ function getAllLists(spaces: Space[]): List[] {
 
 export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: SidebarProps) {
   const pathname = usePathname();
-  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces } = useAppStore();
+  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces, loadingSpaces } = useAppStore();
   
   // We can just use globalSpaces instead of syncing local state.
   // But to not break the rest of the component, we'll assign it to spaces.
@@ -433,7 +434,9 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 </button>
               </div>
 
-              {spaces.length === 0 ? (
+              {loadingSpaces && spaces.length === 0 ? (
+                <SidebarSkeleton />
+              ) : spaces.length === 0 ? (
                 <p className="text-zinc-500 text-[11px] px-1 italic">No spaces created yet.</p>
               ) : (
                 <div className="space-y-1">
@@ -896,23 +899,30 @@ function DocTreeItem({
   return (
     <div className="space-y-0.5 text-xs">
       <div className="group flex items-center justify-between px-2 py-1 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors">
-        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-1.5 shrink-0 cursor-pointer">
-          {hasPages ? (
-            <div className="relative w-3 h-3 flex items-center justify-center shrink-0">
+        <div className="flex items-center gap-1.5 truncate flex-1 cursor-pointer">
+          <div
+            onClick={(e) => {
+              if (hasPages) {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsOpen(!isOpen);
+              }
+            }}
+            className="relative w-3.5 h-3.5 flex items-center justify-center shrink-0"
+          >
+            {hasPages && (
               <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                {isOpen ? <ChevronDown className="w-3 h-3 text-zinc-500" /> : <ChevronRight className="w-3 h-3 text-zinc-500" />}
+                {isOpen ? <ChevronDown className="w-3 h-3 text-zinc-400" /> : <ChevronRight className="w-3 h-3 text-zinc-400" />}
               </div>
-              <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
-                <FileText className="w-3 h-3 text-purple-400" />
-              </div>
+            )}
+            <div className={`absolute inset-0 flex items-center justify-center ${hasPages ? 'group-hover:opacity-0' : ''} transition-opacity`}>
+              <FileText className="w-3.5 h-3.5 text-purple-400" />
             </div>
-          ) : (
-            <FileText className="w-3 h-3 text-purple-400 shrink-0" />
-          )}
+          </div>
+          <Link href={`/docs/${doc.id}`} className="truncate flex-1 cursor-pointer">
+            <span className="truncate text-[11px] font-medium">{doc.title}</span>
+          </Link>
         </div>
-        <Link href={`/docs/${doc.id}`} className="truncate flex-1 cursor-pointer">
-          <span className="truncate text-[11px] font-medium">{doc.title}</span>
-        </Link>
 
         {/* Quick Actions under Doc */}
         <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
@@ -969,16 +979,17 @@ function PageTreeItem({
   return (
     <div className="space-y-0.5 text-xs">
       <div className="group flex items-center justify-between px-2 py-0.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors">
-        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-1.5 flex-1 truncate">
-          {hasSubpages ? (
-            isOpen ? (
-              <ChevronDown className="w-2.5 h-2.5 text-zinc-500 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-            ) : (
-              <ChevronRight className="w-2.5 h-2.5 text-zinc-500 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-            )
-          ) : (
-            <span className="w-2.5 h-2.5 inline-block shrink-0" />
-          )}
+        <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="flex items-center gap-1.5 flex-1 truncate">
+          <div className="relative w-3 h-3 flex items-center justify-center shrink-0">
+            {hasSubpages && (
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {isOpen ? <ChevronDown className="w-2.5 h-2.5 text-zinc-400" /> : <ChevronRight className="w-2.5 h-2.5 text-zinc-400" />}
+              </div>
+            )}
+            <div className={`absolute inset-0 flex items-center justify-center ${hasSubpages ? 'group-hover:opacity-0' : ''} transition-opacity`}>
+              <FileText className="w-3 h-3 text-emerald-400 opacity-80" />
+            </div>
+          </div>
           <span className="truncate text-[10.5px]">{page.title}</span>
         </div>
 

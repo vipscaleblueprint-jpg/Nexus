@@ -16,6 +16,8 @@ export async function listLists(req: Request, res: Response) {
           include: {
             subtasks: true,
             checklists: { include: { items: true } },
+            comments: { select: { id: true } },
+            attachments: { select: { id: true } },
             assignee: { select: { id: true, name: true, email: true } },
           },
         },
@@ -43,6 +45,8 @@ export async function getList(req: Request, res: Response) {
           include: {
             subtasks: { orderBy: { createdAt: 'asc' } },
             checklists: { include: { items: { orderBy: { createdAt: 'asc' } } } },
+            comments: { select: { id: true } },
+            attachments: { select: { id: true } },
             assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
             creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
           },
@@ -79,11 +83,12 @@ export async function createList(req: Request, res: Response) {
 // PATCH /api/lists/:id
 export async function updateList(req: Request, res: Response) {
   try {
-    const { name } = req.body;
+    const { name, customGroups } = req.body;
     const list = await prisma.list.update({
       where: { id: req.params.id },
       data: {
         ...(name && { name }),
+        ...(customGroups && { customGroups }),
       },
     });
 

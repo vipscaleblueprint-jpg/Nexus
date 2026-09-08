@@ -2,7 +2,7 @@ import { useState, useMemo, useRef } from 'react';
 import {
   DndContext,
   DragOverlay,
-  closestCorners,
+  rectIntersection,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -31,21 +31,24 @@ const CATEGORIES = [
   {
     id: 'client_details',
     title: 'Client Details',
-    badgeClass: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+    badgeClass: 'bg-cyan-500/15 text-cyan-300',
+    borderColor: 'rgba(6, 182, 212, 0.5)',
     icon: '👤',
     statuses: ['KYC', 'Pin Board'],
   },
   {
     id: 'recurring',
     title: 'Recurring',
-    badgeClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+    badgeClass: 'bg-purple-500/15 text-purple-300',
+    borderColor: 'rgba(168, 85, 247, 0.5)',
     icon: '🔁',
     statuses: ['Daily', 'Weekly', 'Monthly'],
   },
   {
     id: 'workflow',
     title: 'Workflow & Progress',
-    badgeClass: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+    badgeClass: 'bg-indigo-500/15 text-indigo-300',
+    borderColor: 'rgba(99, 102, 241, 0.5)',
     icon: '⚡',
     statuses: [
       'Pending',
@@ -65,10 +68,22 @@ const ALL_CONFIGURED_STATUSES = CATEGORIES.flatMap((c) => c.statuses);
 export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup }: Props) {
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  // Local visual override: tracks which status to SHOW the dragged card in during drag
+  // This does NOT call any API — it's purely for visual feedback.
+  const [dragOverride, setDragOverride] = useState<{ taskId: string; status: string } | null>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem('nexus_board_collapsed_categories');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return {};
+  });
+  const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('nexus_board_collapsed_columns');
         if (saved) return JSON.parse(saved);
       } catch {}
     }
@@ -80,19 +95,40 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
 
   const toggleCategory = (categoryId: string) => {
     setCollapsedCategories((prev) => {
-      const next = { ...prev, [categoryId]: !prev[categoryId] };
+      const isCurrentlyCollapsed = prev[categoryId];
+      const next = { ...prev, [categoryId]: !isCurrentlyCollapsed };
+      
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('nexus_board_collapsed_categories', JSON.stringify(next));
         } catch {}
       }
+
+      // If we are uncollapsing the category,ALSO uncollapse all columns inside it
+      if (isCurrentlyCollapsed) {
+        const cat = categorizedColumns.find(c => c.id === categoryId);
+        if (cat) {
+          setCollapsedColumns(prevCols => {
+             const nextCols = { ...prevCols };
+             cat.statuses.forEach(status => {
+               nextCols[status] = false;
+             });
+             if (typeof window !== 'undefined') {
+               try {
+                 localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(nextCols));
+               } catch {}
+             }
+             return nextCols;
+          });
+        }
+      }
+
       return next;
     });
   };
 
   const handleWheelScroll = (e: React.WheelEvent<HTMLDivElement>) => {
     if (boardContainerRef.current && e.deltaY !== 0 && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-      // Multiply scroll distance for fast, effortless left-to-right navigation
       boardContainerRef.current.scrollLeft += e.deltaY * 2.5;
     }
   };
@@ -100,7 +136,8 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 5,
+        // Require the user to move 8px before drag starts — prevents accidental drags on click
+        distance: 8,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -108,15 +145,16 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     })
   );
 
-  // Group tasks by status
+  // Group tasks by status, applying the local drag override for visual preview
   const tasksByStatus = useMemo(() => {
     return tasks.reduce((acc: Record<string, Task[]>, task) => {
-      const status = task.status || 'Pending';
+      // If this task is being dragged, show it in the override column instead
+      const status = (dragOverride?.taskId === task.id ? dragOverride.status : task.status) || 'Pending';
       if (!acc[status]) acc[status] = [];
       acc[status].push(task);
       return acc;
     }, {});
-  }, [tasks]);
+  }, [tasks, dragOverride]);
 
   // Group columns into configured categories + any custom/extra columns
   const categorizedColumns = useMemo(() => {
@@ -136,7 +174,8 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
       sections.push({
         id: 'custom',
         title: 'Custom Groups',
-        badgeClass: 'bg-zinc-500/15 text-zinc-300 border-zinc-500/30',
+        badgeClass: 'bg-zinc-500/15 text-zinc-300',
+        borderColor: 'rgba(113, 113, 122, 0.5)',
         icon: '📌',
         statuses: activeCustom,
       });
@@ -144,6 +183,38 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
 
     return sections;
   }, [tasksByStatus, customGroups]);
+
+  const toggleColumnCollapse = (status: string, categoryId: string) => {
+    setCollapsedColumns((prev) => {
+      const next = { ...prev, [status]: !prev[status] };
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next));
+        } catch {}
+      }
+
+      // Check if newly collapsed column causes category to auto-collapse
+      if (next[status]) {
+        const cat = categorizedColumns.find(c => c.id === categoryId);
+        if (cat) {
+          const allCollapsed = cat.statuses.every(s => next[s]);
+          if (allCollapsed) {
+            setCollapsedCategories((pc) => {
+              const pcNext = { ...pc, [categoryId]: true };
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem('nexus_board_collapsed_categories', JSON.stringify(pcNext));
+                } catch {}
+              }
+              return pcNext;
+            });
+          }
+        }
+      }
+
+      return next;
+    });
+  };
 
   const handleAddGroup = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && newGroup.trim()) {
@@ -156,71 +227,93 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
     const task = tasks.find((t) => t.id === active.id);
-    if (task) setActiveTask(task);
+    if (task) {
+      setActiveTask(task);
+      // Initialize the override to the task's current status
+      setDragOverride({ taskId: task.id, status: task.status });
+    }
   };
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (!over) return;
+    if (!over || !activeTask) return;
 
     const activeId = active.id as string;
     const overId = over.id as string;
 
     if (activeId === overId) return;
 
-    let newStatus = over.data?.current?.status;
-    if (!newStatus) {
+    // Determine the target column status from the over element
+    let targetStatus = over.data?.current?.status;
+    if (!targetStatus) {
+      // Hovering over another task — use that task's current status
       const overTask = tasks.find((t) => t.id === overId);
-      if (overTask) newStatus = overTask.status;
+      if (overTask) targetStatus = overTask.status;
     }
 
-    if (newStatus && activeTask && activeTask.status !== newStatus) {
-      // Optimistically move to new column so the placeholder shows up there
-      onTaskMove(activeId, newStatus);
-      setActiveTask(prev => prev ? { ...prev, status: newStatus } : null);
+    // Only update the LOCAL visual override — NO API call here
+    if (targetStatus && dragOverride?.status !== targetStatus) {
+      setDragOverride({ taskId: activeId, status: targetStatus });
     }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
-    setActiveTask(null);
     const { active, over } = event;
-    if (!over) return;
+    const originalTask = activeTask;
+    // Capture the last known hover target BEFORE clearing state
+    const lastOverrideStatus = dragOverride?.status ?? null;
+
+    // Clear drag state
+    setActiveTask(null);
+    setDragOverride(null);
+
+    if (!originalTask) return;
 
     const activeId = active.id as string;
-    const overId = over.id as string;
 
-    // Is it dropped directly on a column?
-    let newStatus = over.data?.current?.status;
-    
-    // If dropped on another task, find that task's status
-    if (!newStatus) {
-      const overTask = tasks.find((t) => t.id === overId);
-      if (overTask) newStatus = overTask.status || 'TODO';
-    }
+    // PRIMARY: use the last column the card was hovering over (dragOverride)
+    // This is the most reliable signal — wherever the card visually "was" is where it should go.
+    // FALLBACK: use the dnd-kit over target if dragOverride is unavailable.
+    let finalStatus: string | undefined = lastOverrideStatus ?? undefined;
 
-    if (newStatus && activeTask) {
-      if (activeTask.status !== newStatus) {
-        // Moved to a different column
-        onTaskMove(activeId, newStatus);
-      } else if (activeId !== overId && onTaskReorder) {
-        // Reordered in the same column
-        onTaskReorder(activeId, overId);
+    if (!finalStatus && over) {
+      const overId = over.id as string;
+      finalStatus = over.data?.current?.status;
+      if (!finalStatus) {
+        const overTask = tasks.find((t) => t.id === overId);
+        if (overTask) finalStatus = overTask.status;
       }
     }
+
+    if (!finalStatus) return;
+
+    if (finalStatus !== originalTask.status) {
+      // Card moved to a different column — commit to API
+      onTaskMove(activeId, finalStatus);
+    } else if (over && active.id !== over.id && onTaskReorder) {
+      // Reordered within the same column
+      onTaskReorder(activeId, over.id as string);
+    }
+  };
+
+  const handleDragCancel = () => {
+    setActiveTask(null);
+    setDragOverride(null);
   };
 
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={rectIntersection}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
       <div 
         ref={boardContainerRef}
         onWheel={handleWheelScroll}
-        className="flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar snap-x snap-mandatory"
+        className="flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 pb-4 px-2 custom-scrollbar snap-x snap-mandatory transition-all duration-300"
       >
         {categorizedColumns.map((category) => {
           const isCollapsed = Boolean(collapsedCategories[category.id]);
@@ -230,64 +323,123 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
           );
 
           return (
-            <div key={category.id} className="flex flex-col gap-3 flex-shrink-0 transition-all snap-start">
-              {/* Category Header (Clickable Collapse Toggle) */}
+            <div key={category.id} className="flex-shrink-0 snap-start self-stretch flex items-stretch">
+              {/* ── COLLAPSED: slim vertical pill ── */}
               <button
                 onClick={() => toggleCategory(category.id)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-wider ${category.badgeClass} w-fit shadow-sm hover:opacity-90 transition-all cursor-pointer select-none group`}
+                title={`Expand ${category.title}`}
+                className={`relative flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-500 ease-in-out overflow-hidden select-none whitespace-nowrap rounded-xl border ${category.badgeClass} ${
+                  isCollapsed 
+                    ? 'max-w-[48px] w-12 opacity-80 hover:opacity-100 hover:brightness-110' 
+                    : 'max-w-0 w-0 opacity-0 border-transparent p-0 mx-0'
+                }`}
               >
-                <span className="text-sm">{category.icon}</span>
-                <span>{category.title}</span>
-                <span className="opacity-60 text-[10px]">
-                  ({totalCategoryTasks} task{totalCategoryTasks !== 1 ? 's' : ''})
-                </span>
-                {isCollapsed ? (
-                  <ChevronRight className="w-3.5 h-3.5 ml-1 text-zinc-400 group-hover:translate-x-0.5 transition-transform" />
-                ) : (
-                  <ChevronDown className="w-3.5 h-3.5 ml-1 text-zinc-400 group-hover:translate-y-0.5 transition-transform" />
-                )}
+                <div className="flex flex-col items-center justify-center w-12 min-h-[200px] h-full shrink-0">
+                  <ChevronRight className="w-4 h-4 shrink-0 mb-2" />
+                  <span
+                    className="text-[11px] font-bold uppercase tracking-widest"
+                    style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}
+                  >
+                    {totalCategoryTasks} task{totalCategoryTasks !== 1 ? 's' : ''} · {category.statuses.length} cols
+                  </span>
+                  <span className="text-lg mt-2">{category.icon}</span>
+                </div>
               </button>
 
-              {/* Category Content (Expanded columns OR Collapsed Summary) */}
-              {isCollapsed ? (
-                <div
-                  onClick={() => toggleCategory(category.id)}
-                  className="w-56 bg-[#18181c] border border-zinc-800/80 hover:border-zinc-700 rounded-2xl p-4 flex flex-col gap-3 cursor-pointer transition-all hover:bg-zinc-800/40 shadow-md"
+              {/* ── EXPANDED: bordered group box ── */}
+              <div 
+                className={`relative flex flex-col h-full min-h-[200px] transition-all duration-500 ease-in-out ${
+                  isCollapsed 
+                    ? 'max-w-0 opacity-0 mx-0' 
+                    : 'max-w-[5000px] opacity-100'
+                }`}
+              >
+                {/* Floating Chrome-style Tab at top-left */}
+                <div className={`absolute bottom-full translate-y-[1px] left-4 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg rounded-b-none text-[10px] font-bold uppercase tracking-wider border border-b-0 bg-[#18181c] cursor-pointer transition-all duration-200 hover:brightness-125 ${category.badgeClass.replace(/bg-[a-z]+-\d+\/\d+/, '')}`}
+                     onClick={() => toggleCategory(category.id)}
+                     title="Collapse section"
+                     style={{ 
+                       pointerEvents: isCollapsed ? 'none' : 'auto',
+                       borderColor: category.borderColor
+                     }}
                 >
-                  <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                    <span className="text-xs font-semibold text-zinc-300">Section Collapsed</span>
-                    <span className="text-[10px] text-zinc-500 font-mono">{category.statuses.length} cols</span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {category.statuses.map((status) => {
-                      const count = tasksByStatus[status]?.length || 0;
+                  <span className="shrink-0">{category.icon}</span>
+                  <span className="whitespace-nowrap">{category.title}</span>
+                  <span className="opacity-60 shrink-0">({totalCategoryTasks})</span>
+                  <ChevronDown className="w-3 h-3 ml-1 opacity-70 shrink-0" />
+                </div>
+
+                {/* Inner container with overflow-hidden to clip contents during animation */}
+                <div 
+                  className="rounded-2xl border bg-[#18181c] h-full p-4 pt-6 overflow-hidden flex gap-4 items-start shadow-sm shadow-black/20"
+                  style={{ borderColor: category.borderColor }}
+                >
+                  {/* Columns inside the group */}
+                  <div className="flex items-start h-full shrink-0 min-w-max">
+                    {category.statuses.map((status, index) => {
+                      const isCollapsed = collapsedColumns[status];
+                      
+                      let groupRunIndex = 0;
+                      let groupRunCount = 1;
+                      let statusesInRun: string[] = [status];
+
+                      if (isCollapsed) {
+                         let start = index;
+                         while (start > 0 && collapsedColumns[category.statuses[start - 1]]) {
+                            start--;
+                         }
+                         groupRunIndex = index - start;
+                         
+                         let end = index;
+                         while (end < category.statuses.length - 1 && collapsedColumns[category.statuses[end + 1]]) {
+                            end++;
+                         }
+                         groupRunCount = end - start + 1;
+                         statusesInRun = category.statuses.slice(start, end + 1);
+                      }
+                      
+                      const isCollapsedGroupLeader = isCollapsed && groupRunIndex === 0;
+                      const isCollapsedFollower = isCollapsed && groupRunIndex > 0;
+                      
+                      const isLast = index === category.statuses.length - 1;
+                      const hasMarginRight = !isLast && !isCollapsedFollower;
+
+                      const handleToggle = () => {
+                         if (isCollapsed && groupRunCount > 1 && isCollapsedGroupLeader) {
+                            // Expand all in this run
+                            setCollapsedColumns(prev => {
+                               const next = { ...prev };
+                               statusesInRun.forEach(s => { next[s] = false; });
+                               if (typeof window !== 'undefined') {
+                                 try { localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next)); } catch {}
+                               }
+                               return next;
+                            });
+                         } else {
+                            toggleColumnCollapse(status, category.id);
+                         }
+                      };
+
                       return (
-                        <div key={status} className="flex justify-between items-center text-[11px] text-zinc-400">
-                          <span className="truncate pr-2">{status}</span>
-                          <span className="px-1.5 py-0.2 rounded bg-zinc-800 font-mono text-[10px] text-zinc-300">{count}</span>
+                        <div key={status} className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''}`}>
+                          <KanbanColumn
+                            status={status}
+                            tasks={tasksByStatus[status] || []}
+                            isCollapsed={isCollapsed}
+                            collapsedGroupCount={groupRunCount}
+                            isCollapsedGroupLeader={isCollapsedGroupLeader}
+                            onToggleCollapse={handleToggle}
+                            customTheme={columnThemes[status]}
+                            onThemeChange={(themeId) => setColumnThemes((prev) => ({ ...prev, [status]: themeId }))}
+                            onAddTaskClick={onAddTaskClick}
+                            onTaskClick={onTaskClick}
+                          />
                         </div>
                       );
                     })}
                   </div>
-                  <div className="text-[10px] text-indigo-400 font-medium pt-1 text-center">
-                    Click to Expand →
-                  </div>
                 </div>
-              ) : (
-                <div className="flex gap-4 items-start">
-                  {category.statuses.map((status) => (
-                    <KanbanColumn
-                      key={status}
-                      status={status}
-                      tasks={tasksByStatus[status] || []}
-                      customTheme={columnThemes[status]}
-                      onThemeChange={(themeId) => setColumnThemes((prev) => ({ ...prev, [status]: themeId }))}
-                      onAddTaskClick={onAddTaskClick}
-                      onTaskClick={onTaskClick}
-                    />
-                  ))}
-                </div>
-              )}
+              </div>
             </div>
           );
         })}

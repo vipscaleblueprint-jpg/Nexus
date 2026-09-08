@@ -8,13 +8,15 @@ import { useEffect } from 'react';
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { spaces, loadSpaces, loadingSpaces, hasLoadedSpaces } = useAppStore();
+  const { spaces, loadSpaces, loadingSpaces, hasLoadedSpaces, hydrateFromCache } = useAppStore();
 
   useEffect(() => {
+    // Instantly populate from localStorage cache (no flash)
+    hydrateFromCache();
     if (!hasLoadedSpaces && !loadingSpaces) {
       loadSpaces();
     }
-  }, [hasLoadedSpaces, loadingSpaces, loadSpaces]);
+  }, []);
 
   if (pathname === '/login') {
     return <>{children}</>;

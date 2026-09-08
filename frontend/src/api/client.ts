@@ -1,8 +1,4 @@
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL;
-
-if (!apiBaseUrl) {
-  throw new Error('Missing required environment variable: NEXT_PUBLIC_API_URL');
-}
+const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 
 export const API_BASE_URL = apiBaseUrl;
 
@@ -18,7 +14,7 @@ export async function apiClient<T = any>(
 
   let url = endpoint.startsWith('http')
     ? endpoint
-    : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    : `${API_BASE_URL}/${endpoint.replace(/^\/+/, '')}`;
 
   if (params) {
     const searchParams = new URLSearchParams();
@@ -33,14 +29,20 @@ export async function apiClient<T = any>(
     }
   }
 
-  const res = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
-    credentials: 'include',
-    ...restOptions,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+      },
+      credentials: 'include',
+      ...restOptions,
+    });
+  } catch (err: any) {
+    console.warn(`[apiClient] Network request failed for ${url}:`, err?.message || err);
+    throw new Error(`Unable to connect to backend server at ${url}. Please make sure the server is running.`);
+  }
 
   const data = await res.json().catch(() => ({}));
 

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAppStore } from '@/lib/store';
 import { authApi } from '@/api/auth';
 import { Settings, User as UserIcon, Lock, Star, Eye, EyeOff } from 'lucide-react';
+import { SettingsSkeleton } from '@/components/ui/Skeleton';
 
 function StarRating({ rating }: { rating: number }) {
   return (
@@ -22,6 +23,7 @@ function StarRating({ rating }: { rating: number }) {
 export default function SettingsPage() {
   const { currentUser, setCurrentUser } = useAppStore();
 
+  const [loading, setLoading] = useState(!currentUser);
   const [name, setName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [dailySheetUrl, setDailySheetUrl] = useState('');
@@ -38,7 +40,12 @@ export default function SettingsPage() {
   // Fetch current user if not yet in store (e.g. direct navigation to /settings)
   useEffect(() => {
     if (!currentUser) {
-      authApi.getMe().then(({ user }) => setCurrentUser(user)).catch(() => {});
+      authApi.getMe()
+        .then(({ user }) => setCurrentUser(user))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
     }
   }, []);
 
@@ -48,6 +55,7 @@ export default function SettingsPage() {
       setName(currentUser.name || '');
       setAvatarUrl(currentUser.avatarUrl || '');
       setDailySheetUrl(currentUser.dailySheetUrl || '');
+      setLoading(false);
     }
   }, [currentUser]);
 
@@ -83,6 +91,10 @@ export default function SettingsPage() {
       setPwSaving(false);
     }
   };
+
+  if (loading) {
+    return <SettingsSkeleton />;
+  }
 
   return (
     <div className="p-8 w-full">

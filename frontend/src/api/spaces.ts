@@ -131,7 +131,7 @@ export const spacesApi = {
     });
   },
 
-  async updateList(id: string, data: { name?: string }): Promise<{ list: any }> {
+  async updateList(id: string, data: { name?: string; customGroups?: string[] }): Promise<{ list: any }> {
     return apiClient<{ list: any }>(`/api/lists/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),

@@ -8,6 +8,12 @@ export const tasksApi = {
     });
   },
 
+  async getTask(id: string): Promise<{ task: Task }> {
+    return apiClient<{ task: Task }>(`/api/tasks/${id}`, {
+      method: 'GET',
+    });
+  },
+
   async createTask(data: Partial<Task>): Promise<{ task: Task }> {
     return apiClient<{ task: Task }>('/api/tasks', {
       method: 'POST',

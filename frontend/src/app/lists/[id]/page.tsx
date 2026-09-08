@@ -209,11 +209,12 @@ export default function BoardPage() {
 
     try {
       await tasksApi.moveTask(taskId, newStatus, id as string);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to move task:', err);
       // Revert on failure by refetching
       const listRes = await spacesApi.getList(id as string);
       setList(listRes.list);
+      alert(err.message || 'You do not have permission to move to this status');
     }
   };
 
@@ -349,6 +350,43 @@ export default function BoardPage() {
                 }}
                 onTaskClick={setSelectedTask}
                 customGroups={customGroups}
+                listStatuses={list?.statuses || []}
+                onStatusChange={async (statusName, data) => {
+                  try {
+                    // Find existing status or create it
+                    const existingStatus = list?.statuses?.find((s: any) => s.name === statusName);
+                    
+                    if (existingStatus) {
+                      const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${existingStatus.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data),
+                      });
+                      if (res.ok) {
+                        const updated = await res.json();
+                        setList((prev: any) => ({
+                          ...prev,
+                          statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s)
+                        }));
+                      }
+                    } else {
+                      const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: statusName, ...data }),
+                      });
+                      if (res.ok) {
+                        const created = await res.json();
+                        setList((prev: any) => ({
+                          ...prev,
+                          statuses: [...(prev.statuses || []), created.status]
+                        }));
+                      }
+                    }
+                  } catch (e) {
+                    console.error('Failed to update status', e);
+                  }
+                }}
                 onAddGroup={(group) => {
                   setCustomGroups(prev => {
                     const newGroups = [...prev, group];

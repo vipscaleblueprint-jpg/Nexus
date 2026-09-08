@@ -166,6 +166,30 @@ export async function moveTask(req: Request, res: Response) {
     const { id } = req.params;
     const { status, currentListId } = req.body;
 
+    // Optional: Add backend authorization check
+    const authReq = req as any;
+    if (currentListId && authReq.user) {
+      const listStatus = await prisma.listStatus.findFirst({
+        where: { listId: currentListId, name: status },
+      });
+      
+      if (listStatus && listStatus.allowedRoles.length > 0) {
+        // Fetch user's current roles
+        const user = await prisma.user.findUnique({
+          where: { id: authReq.user.id },
+          select: { primaryRole: true, secondaryRole: true, tertiaryRole: true, minorRole: true, systemRole: true }
+        });
+
+        if (user && user.systemRole !== 'ADMIN') {
+          const userRoles = [user.primaryRole, user.secondaryRole, user.tertiaryRole, user.minorRole].filter(Boolean);
+          const hasAccess = listStatus.allowedRoles.some(r => userRoles.includes(r));
+          if (!hasAccess) {
+            return res.status(403).json({ error: 'You do not have the required role to move a task to this status' });
+          }
+        }
+      }
+    }
+
     // Enqueue write-behind DB persistence
     await taskUpdatesQueue.add('updateTask', { taskId: id, data: { status } });
     await invalidateCache(`task:${id}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');

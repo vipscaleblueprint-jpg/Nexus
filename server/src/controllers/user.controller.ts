@@ -18,6 +18,7 @@ const rosterSelect = {
   secondaryRole: true,
   tertiaryRole: true,
   minorRole: true,
+  createdAt: true,
   team: true,
 };
 
@@ -65,21 +66,35 @@ export async function listTeams(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
-//Check
+
 // PATCH /api/users/:id
 export async function updateUser(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { dailySheetUrl, starRating, primaryRole, secondaryRole, systemRole } = req.body;
+    const {
+      dailySheetUrl,
+      starRating,
+      primaryRole,
+      secondaryRole,
+      tertiaryRole,
+      minorRole,
+      systemRole,
+      employmentType,
+      isActive,
+    } = req.body;
 
     const user = await prisma.user.update({
       where: { id },
       data: {
         ...(dailySheetUrl !== undefined && { dailySheetUrl }),
         ...(starRating !== undefined && { starRating }),
-        ...(primaryRole && { primaryRole }),
-        ...(secondaryRole && { secondaryRole }),
-        ...(systemRole && { systemRole }),
+        ...(primaryRole !== undefined && { primaryRole }),
+        ...(secondaryRole !== undefined && { secondaryRole }),
+        ...(tertiaryRole !== undefined && { tertiaryRole }),
+        ...(minorRole !== undefined && { minorRole }),
+        ...(systemRole !== undefined && { systemRole }),
+        ...(employmentType !== undefined && { employmentType }),
+        ...(isActive !== undefined && { isActive }),
       },
       select: rosterSelect,
     });
@@ -87,6 +102,27 @@ export async function updateUser(req: Request, res: Response) {
     await invalidateCache('users:all', 'teams:all', 'dashboard:all');
 
     return res.json({ user });
+  } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'User not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// DELETE /api/users/:id
+export async function deleteUser(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    if ((req as any).user?.id === id) {
+      return res.status(400).json({ error: 'You cannot delete your own account' });
+    }
+
+    await prisma.user.delete({
+      where: { id },
+    });
+
+    await invalidateCache('users:all', 'teams:all', 'dashboard:all');
+
+    return res.json({ message: 'User deleted successfully' });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'User not found' });
     return res.status(500).json({ error: err.message });

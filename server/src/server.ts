@@ -15,6 +15,8 @@ import { spaceRouter } from './routes/space.routes';
 import { listRouter } from './routes/list.routes';
 import { taskRouter } from './routes/task.routes';
 import { chatRouter } from './routes/chat.routes';
+import { invitationRouter } from './routes/invitation.routes';
+import { rolesRouter } from './routes/roles.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -85,6 +87,8 @@ app.use('/api/spaces', spaceRouter);
 app.use('/api/lists', listRouter);
 app.use('/api/tasks', taskRouter);
 app.use('/api/chat', chatRouter);
+app.use('/api/invitations', invitationRouter);
+app.use('/api/roles', rolesRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { RoleType, SystemRole } from '@prisma/client';
+import { SystemRole } from '@prisma/client';
 import type {
   ChangePasswordInput,
   ForgotPasswordInput,
@@ -69,12 +69,12 @@ function generateTokens(user: {
   id: string;
   email: string;
   systemRole: SystemRole;
-  primaryRole: RoleType | null;
-  secondaryRole: RoleType | null;
-  tertiaryRole: RoleType | null;
-  minorRole: RoleType | null;
+  primaryRole: string | null;
+  secondaryRole: string | null;
+  tertiaryRole: string | null;
+  minorRole: string | null;
 }) {
-  const roles: RoleType[] = [];
+  const roles: string[] = [];
   if (user.primaryRole) roles.push(user.primaryRole);
   if (user.secondaryRole) roles.push(user.secondaryRole);
   if (user.tertiaryRole) roles.push(user.tertiaryRole);
@@ -373,6 +373,14 @@ export async function getMe(req: AuthRequest, res: Response) {
     });
 
     if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // If role changed in DB since JWT was minted, automatically refresh tokens and cookies
+    if (user.systemRole !== req.user.systemRole) {
+      const tokens = generateTokens(user);
+      await storeRefreshToken(user.id, tokens.refreshToken);
+      setAuthCookies(res, tokens.accessToken, tokens.refreshToken, true);
+    }
+
     return res.json({ user });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

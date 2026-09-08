@@ -12,6 +12,7 @@ export async function listLists(req: Request, res: Response) {
 
     const lists = await prisma.list.findMany({
       include: {
+        statuses: true,
         tasks: {
           include: {
             subtasks: true,
@@ -40,6 +41,7 @@ export async function getList(req: Request, res: Response) {
       include: {
         space: { select: { id: true, name: true, color: true } },
         folder: { select: { id: true, name: true } },
+        statuses: true,
         tasks: {
           orderBy: { createdAt: 'asc' },
           include: {
@@ -133,6 +135,54 @@ export async function deleteList(req: Request, res: Response) {
     return res.json({ message: 'List deleted successfully' });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'List not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/lists/:id/statuses
+export async function createStatus(req: Request, res: Response) {
+  try {
+    const { name, color, allowedRoles } = req.body;
+    const status = await prisma.listStatus.create({
+      data: {
+        name,
+        color: color || 'zinc',
+        allowedRoles: allowedRoles || [],
+        listId: req.params.id,
+      },
+    });
+    return res.status(201).json({ status });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// PATCH /api/lists/:id/statuses/:statusId
+export async function updateStatus(req: Request, res: Response) {
+  try {
+    const { name, color, allowedRoles } = req.body;
+    const status = await prisma.listStatus.update({
+      where: { id: req.params.statusId },
+      data: {
+        ...(name && { name }),
+        ...(color && { color }),
+        ...(allowedRoles && { allowedRoles }),
+      },
+    });
+    return res.json({ status });
+  } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Status not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// DELETE /api/lists/:id/statuses/:statusId
+export async function deleteStatus(req: Request, res: Response) {
+  try {
+    await prisma.listStatus.delete({ where: { id: req.params.statusId } });
+    return res.json({ message: 'Status deleted successfully' });
+  } catch (err: any) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Status not found' });
     return res.status(500).json({ error: err.message });
   }
 }

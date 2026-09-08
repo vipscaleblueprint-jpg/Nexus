@@ -13,4 +13,17 @@ export const usersApi = {
       method: 'GET',
     });
   },
+
+  async updateUser(id: string, data: Partial<User>): Promise<{ user: User }> {
+    return apiClient<{ user: User }>(`/api/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteUser(id: string): Promise<{ message: string }> {
+    return apiClient<{ message: string }>(`/api/users/${id}`, {
+      method: 'DELETE',
+    });
+  },
 };

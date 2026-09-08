@@ -6,9 +6,19 @@ import { Header } from '@/components/layout/Header';
 import { useAppStore } from '@/lib/store';
 import { useEffect } from 'react';
 
+import { authApi } from '@/api';
+
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { spaces, loadSpaces, loadingSpaces, hasLoadedSpaces, hydrateFromCache } = useAppStore();
+  const {
+    spaces,
+    loadSpaces,
+    loadingSpaces,
+    hasLoadedSpaces,
+    hydrateFromCache,
+    currentUser,
+    setCurrentUser,
+  } = useAppStore();
 
   useEffect(() => {
     // Instantly populate from localStorage cache (no flash)
@@ -16,7 +26,13 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     if (!hasLoadedSpaces && !loadingSpaces) {
       loadSpaces();
     }
-  }, []);
+    if (!currentUser && pathname !== '/login') {
+      authApi
+        .getMe()
+        .then(({ user }) => setCurrentUser(user))
+        .catch(() => {});
+    }
+  }, [pathname]);
 
   if (pathname === '/login') {
     return <>{children}</>;

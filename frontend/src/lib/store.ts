@@ -31,6 +31,10 @@ interface AppState {
   hasLoadedSpaces: boolean;
   hydrateFromCache: () => void;
   loadSpaces: () => Promise<void>;
+
+  // UI State
+  isSidebarCollapsed: boolean;
+  toggleSidebar: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -59,5 +63,8 @@ export const useAppStore = create<AppState>((set) => ({
     } finally {
       set({ loadingSpaces: false, hasLoadedSpaces: true });
     }
-  }
+  },
+
+  isSidebarCollapsed: true,
+  toggleSidebar: () => set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
 }));

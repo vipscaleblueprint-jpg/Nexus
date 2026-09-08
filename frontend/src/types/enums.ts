@@ -6,8 +6,10 @@
 export const SYSTEM_ROLES = ['ADMIN', 'MEMBER'] as const;
 export type SystemRole = (typeof SYSTEM_ROLES)[number];
 
-export const ROLE_TYPES = ['PM', 'DESIGNER', 'TECH', 'CRM', 'AUDITOR', 'ADMIN'] as const;
-export type RoleType = (typeof ROLE_TYPES)[number];
+export const INVITATION_STATUSES = ['PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED'] as const;
+export type InvitationStatus = (typeof INVITATION_STATUSES)[number];
+
+
 
 export const EMPLOYMENT_TYPES = ['FULL_TIME', 'PART_TIME', 'INTERN', 'CONTRACTOR'] as const;
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];

@@ -25,6 +25,8 @@ interface Props {
   onTaskClick?: (task: Task) => void;
   customGroups: string[];
   onAddGroup: (group: string) => void;
+  listStatuses?: any[];
+  onStatusChange?: (statusName: string, data: { color?: string; allowedRoles?: string[] }) => void;
 }
 
 const CATEGORIES = [
@@ -65,7 +67,7 @@ const CATEGORIES = [
 
 const ALL_CONFIGURED_STATUSES = CATEGORIES.flatMap((c) => c.statuses);
 
-export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup }: Props) {
+export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup, listStatuses = [], onStatusChange }: Props) {
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   // Local visual override: tracks which status to SHOW the dragged card in during drag
@@ -420,6 +422,8 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                          }
                       };
 
+                      const dbStatus = listStatuses.find(s => s.name === status);
+
                       return (
                         <div key={status} className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''}`}>
                           <KanbanColumn
@@ -429,10 +433,17 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                             collapsedGroupCount={groupRunCount}
                             isCollapsedGroupLeader={isCollapsedGroupLeader}
                             onToggleCollapse={handleToggle}
-                            customTheme={columnThemes[status]}
-                            onThemeChange={(themeId) => setColumnThemes((prev) => ({ ...prev, [status]: themeId }))}
+                            customTheme={dbStatus?.color || columnThemes[status]}
+                            onThemeChange={(themeId) => {
+                                if (onStatusChange) onStatusChange(status, { color: themeId });
+                                setColumnThemes((prev) => ({ ...prev, [status]: themeId }));
+                            }}
                             onAddTaskClick={onAddTaskClick}
                             onTaskClick={onTaskClick}
+                            allowedRoles={dbStatus?.allowedRoles}
+                            onRoleChange={(roles) => {
+                                if (onStatusChange) onStatusChange(status, { allowedRoles: roles });
+                            }}
                           />
                         </div>
                       );

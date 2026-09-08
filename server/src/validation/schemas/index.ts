@@ -5,3 +5,4 @@ export * from './space.schema';
 export * from './list.schema';
 export * from './task.schema';
 export * from './chat.schema';
+export * from './invitation.schema';

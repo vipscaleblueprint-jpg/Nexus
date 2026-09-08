@@ -5,7 +5,6 @@ import { requireEnv } from '../config/env';
 import type {
   AuthRequest,
   AuthenticatedUserPayload,
-  RoleType,
   SystemRole,
 } from '../types';
 
@@ -42,23 +41,37 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
   }
 }
 
+import { prisma } from '../config/prisma';
+
 // System Role Guard (e.g. ADMIN only)
 export function requireSystemRole(...allowedSystemRoles: SystemRole[]) {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (!allowedSystemRoles.includes(req.user.systemRole)) {
-      return res.status(403).json({
-        error: `Requires system role: ${allowedSystemRoles.join(', ')}`,
-      });
+    if (allowedSystemRoles.includes(req.user.systemRole)) {
+      return next();
     }
 
-    next();
+    // Check fresh systemRole from database in case role was recently updated
+    try {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { systemRole: true },
+      });
+      if (dbUser && allowedSystemRoles.includes(dbUser.systemRole)) {
+        req.user.systemRole = dbUser.systemRole;
+        return next();
+      }
+    } catch (e) {}
+
+    return res.status(403).json({
+      error: `Requires system role: ${allowedSystemRoles.join(', ')}`,
+    });
   };
 }
 
 // Job Role Guard (e.g. PM, AUDITOR, CRM)
-export function requireJobRole(...allowedJobRoles: RoleType[]) {
+export function requireJobRole(...allowedJobRoles: string[]) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 

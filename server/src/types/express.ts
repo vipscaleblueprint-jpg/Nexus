@@ -3,14 +3,14 @@
  */
 
 import type { Request } from 'express';
-import type { RoleType, SystemRole } from './enums';
+import type { SystemRole } from './enums';
 
 /** JWT payload carried in the accessToken cookie / Authorization header. */
 export interface AuthenticatedUserPayload {
   id: string;
   email: string;
   systemRole: SystemRole;
-  roles: RoleType[];
+  roles: string[];
 }
 
 export interface AuthRequest extends Request {

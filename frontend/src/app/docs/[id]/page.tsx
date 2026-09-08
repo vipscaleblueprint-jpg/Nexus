@@ -38,6 +38,7 @@ import {
   Tags,
   Save,
   Edit2,
+  Folder,
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 
@@ -54,6 +55,7 @@ export interface DocBlock {
   stars?: number;
   assignees?: Assignee[];
   lockedBy?: string | null;
+  lockedByName?: string;
 }
 
 interface SidebarPageItemProps {
@@ -90,29 +92,30 @@ function SidebarPageItem({
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
         <div className="flex items-center gap-1.5 truncate">
-          {hasChildren ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpanded(!expanded);
-              }}
-              className="w-4 h-4 flex items-center justify-center rounded hover:bg-zinc-700/50 text-zinc-400"
-            >
-              {expanded ? (
-                <ChevronDown className="w-3 h-3" />
+          <div className="relative w-4 h-4 flex items-center justify-center shrink-0">
+            {hasChildren && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded(!expanded);
+                }}
+                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer hover:bg-zinc-700/50 rounded"
+              >
+                {expanded ? (
+                  <ChevronDown className="w-3 h-3 text-zinc-300" />
+                ) : (
+                  <ChevronRight className="w-3 h-3 text-zinc-300" />
+                )}
+              </button>
+            )}
+            <div className={`absolute inset-0 flex items-center justify-center ${hasChildren ? 'group-hover:opacity-0' : ''} transition-opacity`}>
+              {depth > 0 ? (
+                <FileText className="w-3.5 h-3.5 text-zinc-400" />
               ) : (
-                <ChevronRight className="w-3 h-3" />
+                <Folder className="w-3.5 h-3.5 text-zinc-400" />
               )}
-            </button>
-          ) : (
-            <span className="w-4" />
-          )}
-
-          {depth > 0 ? (
-            <Pin className="w-3.5 h-3.5 text-rose-500 shrink-0 fill-rose-500/20" />
-          ) : (
-            <FileText className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-          )}
+            </div>
+          </div>
           <span className="truncate">{page.title || 'Untitled'}</span>
         </div>
 
@@ -141,7 +144,7 @@ function SidebarPageItem({
               onAddSubpage(page.id);
             }}
             title="Add subpage"
-            className="p-1 hover:bg-zinc-700/60 rounded text-zinc-400 hover:text-white transition-opacity"
+            className="p-1 hover:bg-zinc-700/60 rounded text-zinc-400 hover:text-white transition-opacity cursor-pointer"
           >
             <Plus className="w-3 h-3" />
           </button>
@@ -191,12 +194,22 @@ export default function DocPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [activePage, setActivePage] = useState<any>(null);
+  const activePageRef = useRef<any>(null);
+  useEffect(() => {
+    activePageRef.current = activePage;
+  }, [activePage]);
+
   const [pageTitle, setPageTitle] = useState('');
   const [blocks, setBlocks] = useState<DocBlock[]>([]);
   const [savingPage, setSavingPage] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
 
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
+  const [subpageLimit, setSubpageLimit] = useState(10);
+
+  useEffect(() => {
+    setSubpageLimit(10);
+  }, [activePage?.id]);
 
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [tasksMap, setTasksMap] = useState<Record<string, Task>>({});
@@ -252,7 +265,7 @@ export default function DocPage() {
     try {
       const docRes = await spacesApi.getDoc(id as string);
       setDoc(docRes.doc);
-      if (docRes.doc?.pages?.length > 0 && !activePage) {
+      if (docRes.doc?.pages?.length > 0 && !activePageRef.current) {
         const firstPage = docRes.doc.pages[0];
         setActivePage(firstPage);
         setPageTitle(firstPage.title || 'Untitled Page');
@@ -293,11 +306,20 @@ export default function DocPage() {
     });
 
     s.on('block_locked', ({ blockId, userId, userName }) => {
-      setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, lockedBy: userId } : b));
+      setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, lockedBy: userId, lockedByName: userName } : b));
     });
 
     s.on('block_unlocked', ({ blockId, userId }) => {
-      setBlocks(prev => prev.map(b => b.id === blockId && b.lockedBy === userId ? { ...b, lockedBy: null } : b));
+      setBlocks(prev => prev.map(b => b.id === blockId && b.lockedBy === userId ? { ...b, lockedBy: null, lockedByName: undefined } : b));
+    });
+
+    s.on('block_content_update', ({ blockId, content }) => {
+      setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, content } : b));
+    });
+
+    s.on('page_updated', () => {
+      // Allow other users to see structure changes (new blocks/deleted blocks) by re-fetching
+      fetchDoc();
     });
 
     setSocket(s);
@@ -344,6 +366,9 @@ export default function DocPage() {
         title: pageTitle,
         content: blocksToMarkdown(updatedBlocks),
       });
+      if (socket) {
+        socket.emit('page_updated', { docId: id, pageId: activePage.id });
+      }
     } catch (err) {
       console.error('Failed to save page:', err);
     } finally {
@@ -392,7 +417,7 @@ export default function DocPage() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleAddBlock('text', blockId);
-    } else if (e.key === 'Backspace' && blocks[index].content === '') {
+    } else if (e.key === 'Backspace') {
       e.preventDefault();
       handleDeleteBlock(blockId);
       if (index > 0) {
@@ -401,16 +426,23 @@ export default function DocPage() {
     }
   };
 
-  const handleUpdateBlockContent = (id: string, content: string) => {
+  const handleUpdateBlockContent = (blockId: string, content: string) => {
     let updated = blocks.map((b) => {
-      if (b.id !== id) return b;
+      if (b.id !== blockId) return b;
       return {
         ...b,
         content: content,
       };
     });
 
-    if (updated.length === 0 || updated[updated.length - 1].content !== '') {
+    if (socket) {
+      socket.emit('block_content_update', { docId: id, blockId, content });
+    }
+
+    const lastBlock = updated[updated.length - 1];
+    const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+
+    if (updated.length === 0 || !isLastBlockEmpty) {
       updated.push({
         id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         type: 'text',
@@ -419,7 +451,7 @@ export default function DocPage() {
     }
 
     setBlocks(updated);
-    handleSavePage(updated);
+    // Don't call handleSavePage here on every keystroke! It is already handled on blur.
   };
 
   const handleDeleteBlock = (id: string) => {
@@ -559,6 +591,44 @@ export default function DocPage() {
               </div>
             </div>
 
+            {/* ── Subpages List ── */}
+            {activePage.subpages && activePage.subpages.length > 0 && (
+              <div className="pt-4 pb-2">
+                <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold border-b border-zinc-800 pb-2 mb-2 px-2">
+                  <span>Subpages</span>
+                </div>
+                <div className="space-y-1">
+                  {activePage.subpages.slice(0, subpageLimit).map((sub: any) => (
+                    <div 
+                      key={sub.id}
+                      onClick={() => handleSelectPage(sub)}
+                      className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-zinc-800/40 cursor-pointer group transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-1 rounded bg-zinc-800/80 group-hover:bg-zinc-700 transition-colors">
+                          <FileText className="w-3.5 h-3.5 text-zinc-400" />
+                        </div>
+                        <span className="text-sm text-zinc-200 font-medium group-hover:text-white transition-colors">{sub.title || 'Untitled Page'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {activePage.subpages.length > subpageLimit && (
+                  <div className="flex justify-center mt-3">
+                    <button 
+                      onClick={() => setSubpageLimit(prev => prev + 10)}
+                      className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/60 hover:border-zinc-700 rounded-full transition-all cursor-pointer shadow-sm"
+                    >
+                      <span>See More</span>
+                      <span className="text-[10px] font-mono bg-zinc-800/80 px-1.5 py-0.5 rounded-md">
+                        {activePage.subpages.length - subpageLimit} left
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* ── Freeform Writable Canvas Blocks ── */}
             <div className="space-y-1.5 pt-2">
               {blocks.length === 0 ? (
@@ -636,34 +706,12 @@ export default function DocPage() {
                       {/* Block Hover Actions */}
                       <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-[#0d0d0d] px-1 py-1 rounded-md shadow-sm border border-zinc-800 ${focusedBlockId === block.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                         {isLockedBySomeoneElse && (
-                          <div className="p-1 text-red-500 flex items-center gap-1 bg-red-950/30 rounded" title="Locked by another user">
-                            <Lock className="w-3.5 h-3.5" />
-                            <span className="text-[10px] font-bold">LOCKED</span>
+                          <div className="px-1.5 py-1 text-red-500 flex items-center gap-1 bg-red-950/40 rounded shadow-sm border border-red-900/50" title={`Locked by ${block.lockedByName || 'another user'}`}>
+                            <Lock className="w-3 h-3" />
+                            <span className="text-[10px] font-bold tracking-wide">
+                              LOCKED BY {block.lockedByName ? block.lockedByName.toUpperCase() : 'USER'}
+                            </span>
                           </div>
-                        )}
-
-                        {!isLockedBySomeoneElse && (
-                          <>
-                            {focusedBlockId === block.id && (
-                              <button
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  handleBlurBlock(block.id);
-                                }}
-                                className="p-1.5 text-purple-500 hover:bg-purple-500/20 hover:text-purple-400 rounded transition-colors"
-                                title="Save block"
-                              >
-                                <Save className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleDeleteBlock(block.id)}
-                              className="p-1.5 text-zinc-500 hover:bg-red-500/20 hover:text-red-400 rounded transition-colors"
-                              title="Delete block"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
                         )}
                       </div>
                     </div>

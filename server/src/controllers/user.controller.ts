@@ -65,7 +65,7 @@ export async function listTeams(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
-
+//Check
 // PATCH /api/users/:id
 export async function updateUser(req: Request, res: Response) {
   try {

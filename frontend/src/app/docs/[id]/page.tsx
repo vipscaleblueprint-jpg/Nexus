@@ -2,11 +2,16 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
+import { io, Socket } from 'socket.io-client';
 import { authApi, spacesApi } from '@/api';
+import { FormattedRichText, markdownToBlocks, blocksToMarkdown } from './utils';
+import { BlockEditor } from '@/components/ui/BlockEditor';
 import { tasksApi } from '@/api/tasks';
 import { useAppStore } from '@/lib/store';
 import { Task } from '@/lib/types';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { ActionMenu } from '@/components/ui/ActionMenu';
+import { RenameModal } from '@/components/modals/RenameModal';
 import {
   FileText,
   ChevronRight,
@@ -27,6 +32,12 @@ import {
   Heading,
   AlignLeft,
   CheckCircle2,
+  Lock,
+  Unlock,
+  AlertCircle,
+  Tags,
+  Save,
+  Edit2,
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 
@@ -37,11 +48,12 @@ export interface Assignee {
 
 export interface DocBlock {
   id: string;
-  type: 'heading' | 'task' | 'text';
+  type: 'heading' | 'task' | 'text' | 'callout' | 'tags';
   content: string;
   status?: 'CLOSED' | 'WAITING' | 'DAILY' | 'IN_PROGRESS';
   stars?: number;
   assignees?: Assignee[];
+  lockedBy?: string | null;
 }
 
 interface SidebarPageItemProps {
@@ -49,6 +61,8 @@ interface SidebarPageItemProps {
   activePageId: string | null;
   onSelect: (page: any) => void;
   onAddSubpage: (parentPageId: string) => void;
+  onRename: (pageId: string, title: string) => void;
+  onDelete: (pageId: string) => void;
   depth?: number;
 }
 
@@ -57,6 +71,8 @@ function SidebarPageItem({
   activePageId,
   onSelect,
   onAddSubpage,
+  onRename,
+  onDelete,
   depth = 0,
 }: SidebarPageItemProps) {
   const [expanded, setExpanded] = useState(true);
@@ -67,11 +83,10 @@ function SidebarPageItem({
     <div className="select-none">
       <div
         onClick={() => onSelect(page)}
-        className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors group ${
-          isActive
+        className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors group ${isActive
             ? 'bg-[#27272a] text-white shadow-sm font-semibold'
             : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
-        }`}
+          }`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
         <div className="flex items-center gap-1.5 truncate">
@@ -101,16 +116,36 @@ function SidebarPageItem({
           <span className="truncate">{page.title || 'Untitled'}</span>
         </div>
 
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onAddSubpage(page.id);
-          }}
-          title="Add subpage"
-          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700/60 rounded text-zinc-400 hover:text-white transition-opacity"
-        >
-          <Plus className="w-3 h-3" />
-        </button>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          <div onClick={(e) => e.stopPropagation()}>
+            <ActionMenu icon={<MoreHorizontal className="w-3.5 h-3.5" />}>
+              <div className="flex flex-col py-1">
+                <button
+                  onClick={() => onRename(page.id, page.title)}
+                  className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5" /> Rename
+                </button>
+                <button
+                  onClick={() => onDelete(page.id)}
+                  className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 flex items-center gap-2 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              </div>
+            </ActionMenu>
+          </div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddSubpage(page.id);
+            }}
+            title="Add subpage"
+            className="p-1 hover:bg-zinc-700/60 rounded text-zinc-400 hover:text-white transition-opacity"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+        </div>
       </div>
 
       {expanded && hasChildren && (
@@ -122,6 +157,8 @@ function SidebarPageItem({
               activePageId={activePageId}
               onSelect={onSelect}
               onAddSubpage={onAddSubpage}
+              onRename={onRename}
+              onDelete={onDelete}
               depth={depth + 1}
             />
           ))}
@@ -131,188 +168,20 @@ function SidebarPageItem({
   );
 }
 
-function StatusCircle({ status, onClick }: { status: string; onClick?: () => void }) {
-  if (status === 'CLOSED') {
-    return (
-      <button
-        onClick={onClick}
-        title="Status: CLOSED (Click to toggle)"
-        className="w-4 h-4 rounded-full bg-emerald-600 flex items-center justify-center text-white shrink-0 hover:scale-110 transition-transform shadow-sm"
-      >
-        <svg className="w-2.5 h-2.5 stroke-[3]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-        </svg>
-      </button>
-    );
+const getTaskStatusBadgeColor = (status?: string) => {
+  switch (status) {
+    case 'CLOSED':
+      return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+    case 'WAITING':
+      return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+    case 'DAILY':
+      return 'bg-purple-500/20 text-purple-400 border border-purple-500/30';
+    case 'IN_PROGRESS':
+      return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
+    default:
+      return 'bg-zinc-800 text-zinc-400 border border-zinc-700';
   }
-  if (status === 'WAITING') {
-    return (
-      <button
-        onClick={onClick}
-        title="Status: WAITING (Click to toggle)"
-        className="w-4 h-4 rounded-full bg-red-600 flex items-center justify-center text-white shrink-0 hover:scale-110 transition-transform shadow-sm"
-      >
-        <div className="w-1.5 h-1.5 rounded-full bg-white" />
-      </button>
-    );
-  }
-  return (
-    <button
-      onClick={onClick}
-      title="Status: DAILY (Click to toggle)"
-      className="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-white shrink-0 hover:scale-110 transition-transform shadow-sm"
-    >
-      <div className="w-1.5 h-1.5 rounded-full bg-white" />
-    </button>
-  );
-}
-
-function getTaskStatusBadgeColor(status?: string) {
-  if (!status) return 'bg-zinc-700 text-white';
-  const s = status.toUpperCase().replace(/\s+/g, '_');
-  if (s === 'CLOSED' || s === 'DONE' || s === 'COMPLETED') return 'bg-emerald-600 text-white';
-  if (s === 'WAITING' || s === 'ON_HOLD' || s === 'REVISION') return 'bg-red-600 text-white';
-  if (s === 'IN_PROGRESS' || s === 'PIN_BOARD' || s === 'CHECKING') return 'bg-blue-600 text-white';
-  if (s === 'PENDING') return 'bg-amber-600 text-white';
-  return 'bg-purple-600 text-white';
-}
-
-function FormattedRichText({
-  text,
-  tasksMap,
-  onOpenTask,
-}: {
-  text: string;
-  tasksMap: Record<string, Task>;
-  onOpenTask: (taskId: string) => void;
-}) {
-  const pattern = /(https?:\/\/[^\s]+\/(?:tasks\/|lists\/[^\s\?]+\?task=)|(?:\/tasks\/|task:))([a-zA-Z0-9_-]+)/gi;
-  
-  const parts = [];
-  let lastIndex = 0;
-  let match;
-
-  while ((match = pattern.exec(text)) !== null) {
-    const taskId = match[2];
-    const matchIndex = match.index;
-
-    if (matchIndex > lastIndex) {
-      parts.push(text.substring(lastIndex, matchIndex));
-    }
-
-    const task = tasksMap[taskId];
-    parts.push(
-      <span
-        key={`${taskId}-${matchIndex}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenTask(taskId);
-        }}
-        className="inline-flex items-center gap-1.5 px-2 py-0.5 mx-1 rounded bg-zinc-800/90 border border-purple-500/40 text-xs text-white hover:bg-zinc-700/90 cursor-pointer shadow-sm transition-all group/chip select-none"
-        title="Click to open Task Modal"
-      >
-        <CheckSquare className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-        <span className="font-semibold text-purple-200 group-hover/chip:text-white transition-colors underline decoration-dotted underline-offset-2">
-          {task ? task.title : `Task #${taskId}`}
-        </span>
-        <span
-          className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded uppercase tracking-wider shrink-0 ${getTaskStatusBadgeColor(
-            task?.status
-          )}`}
-        >
-          {task?.status || 'TASK'}
-        </span>
-      </span>
-    );
-
-    lastIndex = pattern.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.substring(lastIndex));
-  }
-
-  return <>{parts.length > 0 ? parts : text}</>;
-}
-
-// Convert Markdown text content into flat block list
-export function markdownToBlocks(md: string): DocBlock[] {
-  if (!md || !md.trim()) {
-    return [{ id: `blk-1`, type: 'text', content: '' }];
-  }
-
-  // Gracefully support legacy JSON strings
-  if (md.trim().startsWith('[') || md.trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(md);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        if ('type' in parsed[0] || 'content' in parsed[0]) return parsed;
-        const converted: DocBlock[] = [];
-        parsed.forEach((sec: any) => {
-          if (sec.title) converted.push({ id: `h-${Math.random()}`, type: 'heading', content: sec.title.replace(/\[(CLOSED|WAITING|DAILY|IN_PROGRESS)\]/g, '').trim() });
-          if (Array.isArray(sec.items)) {
-            sec.items.forEach((item: any) => {
-              converted.push({
-                id: `t-${Math.random()}`,
-                type: 'task',
-                content: (item.title || '').replace(/\[(CLOSED|WAITING|DAILY|IN_PROGRESS)\]/g, '').trim(),
-                status: item.status === 'CLOSED' ? 'CLOSED' : 'DAILY',
-              });
-            });
-          }
-        });
-        return converted.length > 0 ? converted : [{ id: `blk-1`, type: 'text', content: '' }];
-      }
-    } catch {}
-  }
-
-  const lines = md.split('\n');
-  const blocks: DocBlock[] = [];
-
-  lines.forEach((line, index) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    const id = `blk-${index}-${Math.random().toString(36).substr(2, 4)}`;
-
-    if (trimmed.startsWith('# ')) {
-      let text = trimmed.replace(/^#+\s*/, '').replace(/\[(CLOSED|WAITING|DAILY|IN_PROGRESS)\]/g, '').trim();
-      blocks.push({ id, type: 'heading', content: text });
-    } else if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]')) {
-      const isChecked = trimmed.startsWith('- [x]');
-      let text = trimmed.replace(/^- \[(?:x| )\]\s*/, '').replace(/\[(CLOSED|WAITING|DAILY|IN_PROGRESS)\]/g, '').trim();
-
-      blocks.push({
-        id,
-        type: 'task',
-        content: text,
-        status: isChecked ? 'CLOSED' : 'DAILY',
-      });
-    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      let text = trimmed.replace(/^[-*]\s*/, '').replace(/\[(CLOSED|WAITING|DAILY|IN_PROGRESS)\]/g, '').trim();
-      blocks.push({ id, type: 'text', content: text });
-    } else {
-      let text = trimmed.replace(/\[(CLOSED|WAITING|DAILY|IN_PROGRESS)\]/g, '').trim();
-      blocks.push({ id, type: 'text', content: text });
-    }
-  });
-
-  return blocks.length > 0 ? blocks : [{ id: `blk-1`, type: 'text', content: '' }];
-}
-
-export function blocksToMarkdown(blocks: DocBlock[]): string {
-  return blocks
-    .map((b) => {
-      const cleanContent = (b.content || '').replace(/\[(CLOSED|WAITING|DAILY|IN_PROGRESS)\]/g, '').trim();
-      if (b.type === 'heading') return `# ${cleanContent}`;
-      if (b.type === 'task') {
-        const check = b.status === 'CLOSED' ? '[x]' : '[ ]';
-        return `- ${check} ${cleanContent}`;
-      }
-      return cleanContent;
-    })
-    .join('\n');
-}
+};
 
 export default function DocPage() {
   const { id } = useParams<{ id: string }>();
@@ -325,21 +194,44 @@ export default function DocPage() {
   const [pageTitle, setPageTitle] = useState('');
   const [blocks, setBlocks] = useState<DocBlock[]>([]);
   const [savingPage, setSavingPage] = useState(false);
+  const [socket, setSocket] = useState<Socket | null>(null);
 
-  // Active editing block
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
 
-  // Task integration states
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [tasksMap, setTasksMap] = useState<Record<string, Task>>({});
   const [selectedTaskForModal, setSelectedTaskForModal] = useState<Task | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  // Link Task Selector Modal
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
 
-  // Fetch task list
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [pageToRename, setPageToRename] = useState<{ id: string, title: string } | null>(null);
+
+  const handleRenamePageClick = (pageId: string, title: string) => {
+    setPageToRename({ id: pageId, title: title || 'Untitled Page' });
+    setIsRenameOpen(true);
+  };
+
+  const handleConfirmRename = async (newTitle: string) => {
+    if (!pageToRename) return;
+    try {
+      await spacesApi.updatePage(pageToRename.id, { title: newTitle });
+
+      if (activePage?.id === pageToRename.id) {
+        setPageTitle(newTitle);
+      }
+
+      await fetchDoc();
+    } catch (err) {
+      console.error('Failed to rename page:', err);
+    } finally {
+      setIsRenameOpen(false);
+      setPageToRename(null);
+    }
+  };
+
   const fetchTasks = async () => {
     try {
       const res = await tasksApi.getTasks();
@@ -356,7 +248,6 @@ export default function DocPage() {
     }
   };
 
-  // Fetch doc data
   const fetchDoc = async () => {
     try {
       const docRes = await spacesApi.getDoc(id as string);
@@ -381,7 +272,7 @@ export default function DocPage() {
         try {
           const { user } = await authApi.getMe();
           if (!cancelled && user) setCurrentUser(user);
-        } catch {}
+        } catch { }
       }
       await fetchTasks();
       await fetchDoc();
@@ -391,13 +282,38 @@ export default function DocPage() {
     };
   }, [id]);
 
+  useEffect(() => {
+    if (!id) return;
+    const s = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000', {
+      withCredentials: true,
+    });
+
+    s.on('connect', () => {
+      s.emit('join_doc', id);
+    });
+
+    s.on('block_locked', ({ blockId, userId, userName }) => {
+      setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, lockedBy: userId } : b));
+    });
+
+    s.on('block_unlocked', ({ blockId, userId }) => {
+      setBlocks(prev => prev.map(b => b.id === blockId && b.lockedBy === userId ? { ...b, lockedBy: null } : b));
+    });
+
+    setSocket(s);
+
+    return () => {
+      s.emit('leave_doc', id);
+      s.disconnect();
+    };
+  }, [id]);
+
   const handleSelectPage = (page: any) => {
     setActivePage(page);
     setPageTitle(page.title || 'Untitled Page');
     setBlocks(markdownToBlocks(page.content));
   };
 
-  // Completely clean empty page creation
   const handleCreatePage = async (parentPageId?: string) => {
     try {
       const cleanBlocks: DocBlock[] = [
@@ -428,7 +344,6 @@ export default function DocPage() {
         title: pageTitle,
         content: blocksToMarkdown(updatedBlocks),
       });
-      await fetchDoc();
     } catch (err) {
       console.error('Failed to save page:', err);
     } finally {
@@ -448,7 +363,6 @@ export default function DocPage() {
     }
   };
 
-  // Block manipulation helpers
   const handleAddBlock = (type: DocBlock['type'] = 'text', afterId?: string) => {
     const newBlock: DocBlock = {
       id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -474,50 +388,36 @@ export default function DocPage() {
     handleSavePage(updated);
   };
 
-  const handleUpdateBlockContent = (id: string, content: string) => {
-    let newType: DocBlock['type'] | undefined;
-    let newContent = content;
+  const handleKeyDown = (e: any, blockId: string, index: number) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleAddBlock('text', blockId);
+    } else if (e.key === 'Backspace' && blocks[index].content === '') {
+      e.preventDefault();
+      handleDeleteBlock(blockId);
+      if (index > 0) {
+        handleFocusBlock(blocks[index - 1].id);
+      }
+    }
+  };
 
-    if (content.startsWith('# ')) {
-      newType = 'heading';
-      newContent = content.slice(2);
-    } else if (content.startsWith('- [ ] ') || content.startsWith('- [x] ')) {
-      newType = 'task';
-      newContent = content.replace(/^- \[(?:x| )\]\s*/, '');
+  const handleUpdateBlockContent = (id: string, content: string) => {
+    let updated = blocks.map((b) => {
+      if (b.id !== id) return b;
+      return {
+        ...b,
+        content: content,
+      };
+    });
+
+    if (updated.length === 0 || updated[updated.length - 1].content !== '') {
+      updated.push({
+        id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        type: 'text',
+        content: '',
+      });
     }
 
-    const updated = blocks.map((b) => {
-      if (b.id !== id) return b;
-      return {
-        ...b,
-        type: newType || b.type,
-        content: newContent,
-      };
-    });
-    setBlocks(updated);
-  };
-
-  const handleToggleBlockStatus = (id: string) => {
-    const statusCycle: DocBlock['status'][] = ['CLOSED', 'WAITING', 'DAILY'];
-    const updated = blocks.map((b) => {
-      if (b.id !== id) return b;
-      const cur = b.status || 'DAILY';
-      const nextIndex = (statusCycle.indexOf(cur) + 1) % statusCycle.length;
-      return { ...b, status: statusCycle[nextIndex] };
-    });
-    setBlocks(updated);
-    handleSavePage(updated);
-  };
-
-  const handleChangeBlockType = (id: string, type: DocBlock['type']) => {
-    const updated = blocks.map((b) => {
-      if (b.id !== id) return b;
-      return {
-        ...b,
-        type,
-        status: type === 'task' ? b.status || 'DAILY' : undefined,
-      };
-    });
     setBlocks(updated);
     handleSavePage(updated);
   };
@@ -526,6 +426,21 @@ export default function DocPage() {
     const updated = blocks.filter((b) => b.id !== id);
     setBlocks(updated);
     handleSavePage(updated);
+  };
+
+  const handleFocusBlock = (blockId: string) => {
+    setFocusedBlockId(blockId);
+    if (socket && currentUser) {
+      socket.emit('block_focus', { docId: id, blockId, userId: currentUser.id, userName: currentUser.name });
+    }
+  };
+
+  const handleBlurBlock = (blockId: string) => {
+    setFocusedBlockId(null);
+    if (socket && currentUser) {
+      socket.emit('block_blur', { docId: id, blockId, userId: currentUser.id });
+    }
+    handleSavePage();
   };
 
   const handleOpenTaskModal = async (taskId: string) => {
@@ -575,9 +490,7 @@ export default function DocPage() {
 
   return (
     <div className="flex h-full w-full bg-[#0d0d0d] text-[#e4e4e7] overflow-hidden font-sans">
-      {/* ── Sub-Sidebar Panel for Pages ── */}
       <aside className="w-60 shrink-0 bg-[#141414] border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none">
-        {/* Document Header */}
         <div
           onClick={() => setActivePage(null)}
           className="mb-5 pb-3 border-b border-zinc-800/60 cursor-pointer group hover:opacity-90 transition-all"
@@ -589,13 +502,11 @@ export default function DocPage() {
           <h2 className="text-base font-bold text-zinc-100 group-hover:text-white transition-colors truncate">{doc?.title || 'Priorities for Today'}</h2>
         </div>
 
-        {/* Pages Section Label */}
         <div className="flex items-center justify-between mb-2 px-1">
           <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Pages</span>
           <span className="text-[10px] text-zinc-600 font-mono">{totalPages}</span>
         </div>
 
-        {/* Nested Pages Tree */}
         <div className="flex-1 space-y-1">
           {doc?.pages?.length === 0 ? (
             <p className="text-xs text-zinc-600 italic px-1 py-2">No pages created yet.</p>
@@ -607,11 +518,12 @@ export default function DocPage() {
                 activePageId={activePage?.id}
                 onSelect={handleSelectPage}
                 onAddSubpage={(pId) => handleCreatePage(pId)}
+                onRename={handleRenamePageClick}
+                onDelete={handleDeletePage}
               />
             ))
           )}
 
-          {/* Add Top Level Page */}
           <button
             onClick={() => handleCreatePage()}
             className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs text-zinc-400 hover:text-white rounded hover:bg-zinc-800/60 mt-3 transition-colors"
@@ -622,36 +534,10 @@ export default function DocPage() {
         </div>
       </aside>
 
-      {/* ── Main Clean Writable Canvas ── */}
       <main className="flex-1 overflow-y-auto custom-scrollbar bg-[#0d0d0d]">
         {activePage ? (
           <div className="max-w-4xl mx-auto px-10 py-6 space-y-6">
-            {/* Top Toolbar Actions */}
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800/40 text-xs text-zinc-400">
-              <button
-                onClick={() => setIsLinkModalOpen(true)}
-                className="flex items-center gap-1.5 text-purple-400 hover:text-purple-300 transition-colors font-medium hover:bg-purple-950/30 px-2 py-1 rounded"
-              >
-                <LinkIcon className="w-3.5 h-3.5" />
-                <span>Link Task or Doc</span>
-              </button>
 
-              <div className="flex items-center gap-4 text-zinc-400">
-                <button title="Typography" className="hover:text-white transition-colors p-1"><Type className="w-4 h-4" /></button>
-                <button title="Pin Page" className="hover:text-white transition-colors p-1"><Pin className="w-4 h-4" /></button>
-                <button title="View Options" className="hover:text-white transition-colors p-1"><SlidersHorizontal className="w-4 h-4" /></button>
-                <button title="Download / Export" className="hover:text-white transition-colors p-1"><Download className="w-4 h-4" /></button>
-                <button
-                  onClick={() => handleDeletePage(activePage.id)}
-                  title="Delete page"
-                  className="hover:text-red-400 transition-colors ml-2 p-1"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Page Header (Title + Avatar Info) */}
             <div className="space-y-2">
               <input
                 type="text"
@@ -677,83 +563,61 @@ export default function DocPage() {
             <div className="space-y-1.5 pt-2">
               {blocks.length === 0 ? (
                 <div
-                  onClick={() => handleAddBlock('task')}
+                  onClick={() => handleAddBlock('text')}
                   className="py-1 px-2 cursor-text"
                 >
                   <input
                     type="text"
                     autoFocus
                     placeholder="Start typing..."
-                    onFocus={() => handleAddBlock('task')}
+                    onFocus={() => handleAddBlock('text')}
                     className="w-full bg-transparent border-none text-white text-sm font-semibold focus:outline-none placeholder-zinc-700"
                   />
                 </div>
               ) : (
-                blocks.map((block) => (
-                  <div
-                    key={block.id}
-                    className="flex items-center justify-between py-1 px-2 rounded-md hover:bg-zinc-800/40 group transition-colors relative"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      {block.type === 'text' && (
-                        <span className="text-zinc-400 font-bold text-sm select-none shrink-0">•</span>
-                      )}
-                      {/* Content Input / Formatted View */}
-                      {focusedBlockId === block.id ? (
-                        <input
-                          type="text"
-                          autoFocus
-                          value={block.content}
-                          onChange={(e) => handleUpdateBlockContent(block.id, e.target.value)}
-                          onBlur={() => {
-                            setFocusedBlockId(null);
-                            handleSavePage();
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleAddBlock(block.type, block.id);
-                            }
-                            if (e.key === 'Backspace' && block.content === '') {
-                              e.preventDefault();
-                              handleDeleteBlock(block.id);
-                            }
-                          }}
-                          placeholder={
-                            block.type === 'heading'
-                              ? 'Heading title...'
-                              : block.type === 'task'
-                              ? 'Task title or URL...'
-                              : 'Write text...'
-                          }
-                          className={`bg-transparent border-none text-white focus:outline-none flex-1 ${
-                            block.type === 'heading'
-                              ? 'text-xl font-bold tracking-tight text-zinc-100'
-                              : 'text-sm font-semibold'
-                          }`}
-                        />
-                      ) : (
-                        <span
-                          onClick={() => setFocusedBlockId(block.id)}
-                          className={`flex-1 cursor-text select-text ${
-                            block.type === 'heading'
-                              ? 'text-xl font-bold tracking-tight text-zinc-100'
-                              : 'text-sm font-semibold text-white'
-                          }`}
-                        >
-                          {block.content ? (
-                            <FormattedRichText
-                              text={block.content}
-                              tasksMap={tasksMap}
-                              onOpenTask={handleOpenTaskModal}
+                blocks.map((block, index) => {
+                  const isLockedBySomeoneElse = block.lockedBy && block.lockedBy !== currentUser?.id;
+
+                  return (
+                    <div
+                      key={block.id}
+                      className={`flex items-center justify-between py-1 px-2 rounded-md group transition-colors relative ${block.type === 'callout'
+                          ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
+                          : 'hover:bg-zinc-800/40'
+                        }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-20">
+
+                        {block.type === 'callout' && (
+                          <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+                        )}
+                        {block.type === 'tags' && (
+                          <Tags className="w-4 h-4 text-zinc-500 shrink-0" />
+                        )}
+
+                        {/* Content Input / Formatted View */}
+                        {focusedBlockId === block.id && !isLockedBySomeoneElse ? (
+                          <div key={`editor-wrapper-${block.id}`} className="flex-1 min-w-0">
+                            <BlockEditor
+                              autoFocus
+                              content={block.content}
+                              onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
+                              onBlur={() => handleBlurBlock(block.id)}
+                              onKeyDown={(e) => handleKeyDown(e as any, block.id, index)}
                             />
-                          ) : (
-                            <span className="text-zinc-600 italic text-xs">
-                              {block.type === 'heading' ? 'Heading...' : 'Empty line...'}
-                            </span>
-                          )}
-                        </span>
-                      )}
+                          </div>
+                        ) : (
+                          <div
+                            key={`viewer-${block.id}`}
+                            onClick={() => {
+                              if (!isLockedBySomeoneElse) handleFocusBlock(block.id);
+                            }}
+                            className={`flex-1 ${!isLockedBySomeoneElse ? 'cursor-text select-text' : 'cursor-not-allowed text-zinc-500 select-none'} min-h-[24px] prose prose-invert max-w-none text-sm text-zinc-100 prose-p:my-0 prose-headings:my-0 prose-ul:my-0 prose-ol:my-0 ${block.content ? '' : 'text-zinc-600 italic'
+                              }`}
+                            dangerouslySetInnerHTML={{ __html: block.content || 'Write text...' }}
+                          />
+                        )}
+                      </div>
 
                       {/* Assignee badges */}
                       {block.assignees && block.assignees.length > 0 && (
@@ -768,11 +632,57 @@ export default function DocPage() {
                           ))}
                         </div>
                       )}
+
+                      {/* Block Hover Actions */}
+                      <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-[#0d0d0d] px-1 py-1 rounded-md shadow-sm border border-zinc-800 ${focusedBlockId === block.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        {isLockedBySomeoneElse && (
+                          <div className="p-1 text-red-500 flex items-center gap-1 bg-red-950/30 rounded" title="Locked by another user">
+                            <Lock className="w-3.5 h-3.5" />
+                            <span className="text-[10px] font-bold">LOCKED</span>
+                          </div>
+                        )}
+
+                        {!isLockedBySomeoneElse && (
+                          <>
+                            {focusedBlockId === block.id && (
+                              <button
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  handleBlurBlock(block.id);
+                                }}
+                                className="p-1.5 text-purple-500 hover:bg-purple-500/20 hover:text-purple-400 rounded transition-colors"
+                                title="Save block"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteBlock(block.id)}
+                              className="p-1.5 text-zinc-500 hover:bg-red-500/20 hover:text-red-400 rounded transition-colors"
+                              title="Delete block"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
+
+            {/* Clickable area at the bottom to append a new block (Innate Line) */}
+            <div
+              className="min-h-[50vh] w-full cursor-text"
+              onClick={() => {
+                if (blocks.length === 0 || blocks[blocks.length - 1].content !== '') {
+                  handleAddBlock('text');
+                } else {
+                  handleFocusBlock(blocks[blocks.length - 1].id);
+                }
+              }}
+            />
           </div>
         ) : (
           /* Document Overview State */
@@ -864,7 +774,15 @@ export default function DocPage() {
           }}
         />
       )}
+
+      {/* Modals */}
+      <RenameModal
+        isOpen={isRenameOpen}
+        onClose={() => setIsRenameOpen(false)}
+        onConfirm={handleConfirmRename}
+        title="Rename Page"
+        initialName={pageToRename?.title || ''}
+      />
     </div>
   );
 }
-

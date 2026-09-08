@@ -59,13 +59,16 @@ export default function BoardPage() {
         try {
           const { user } = await authApi.getMe();
           if (!cancelled && user) setCurrentUser(user);
-        } catch {}
+        } catch { }
       }
 
       try {
         const listRes = await spacesApi.getList(id);
         if (!cancelled) {
           setList(listRes.list);
+          if (listRes.list?.customGroups) {
+            setCustomGroups(listRes.list.customGroups);
+          }
         }
       } catch (e: any) {
         if (!cancelled) setError(e.message || 'Failed to load board');
@@ -92,7 +95,7 @@ export default function BoardPage() {
         // Don't add if we already have it by real ID (API response arrived first)
         if (prev.tasks.some((t: any) => t.id === newTask.id)) return prev;
         // If we have a temp task (we were the creator), replace it with the real one
-        const tempIdx = prev.tasks.findIndex((t: any) => 
+        const tempIdx = prev.tasks.findIndex((t: any) =>
           typeof t.id === 'string' && t.id.startsWith('temp-') && t.title === newTask.title
         );
         if (tempIdx !== -1) {
@@ -199,7 +202,7 @@ export default function BoardPage() {
     // Optimistically update UI
     setList((prev: any) => ({
       ...prev,
-      tasks: prev.tasks.map((t: any) => 
+      tasks: prev.tasks.map((t: any) =>
         t.id === taskId ? { ...t, status: newStatus } : t
       ),
     }));
@@ -241,7 +244,7 @@ export default function BoardPage() {
     // Optimistic ID for UI
     const tempId = `temp-${Date.now()}`;
     const newTask = { ...task, id: tempId, listId: id, creatorId: currentUser?.id, createdAt: new Date().toISOString() };
-    
+
     setList((prev: any) => ({
       ...prev,
       tasks: [...(prev.tasks || []), newTask],
@@ -269,197 +272,201 @@ export default function BoardPage() {
       {loading ? (
         <ListSkeleton />
       ) : error ? (
-            <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>
-          ) : selectedTask ? (
-            <div className="w-full h-full">
-              <TaskDetailModal
-                isOpen={!!selectedTask}
-                onClose={() => setSelectedTask(null)}
-                task={selectedTask}
-                socket={socket}
-                onStatusChange={(newStatus) => {
-                  if (selectedTask) {
-                    handleTaskMove(selectedTask.id, newStatus);
-                    setSelectedTask({ ...selectedTask, status: newStatus });
-                  }
+        <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>
+      ) : selectedTask ? (
+        <div className="w-full h-full">
+          <TaskDetailModal
+            isOpen={!!selectedTask}
+            onClose={() => setSelectedTask(null)}
+            task={selectedTask}
+            socket={socket}
+            onStatusChange={(newStatus) => {
+              if (selectedTask) {
+                handleTaskMove(selectedTask.id, newStatus);
+                setSelectedTask({ ...selectedTask, status: newStatus });
+              }
+            }}
+            onUpdateTask={async (updatedTask) => {
+              // Optimistic update
+              setSelectedTask(updatedTask);
+              setList((prev: any) => ({
+                ...prev,
+                tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
+              }));
+              // API call
+              try {
+                await tasksApi.updateTask(updatedTask.id, {
+                  ...updatedTask,
+                  assigneeId: updatedTask.assignee?.id,
+                  currentListId: id
+                } as any);
+              } catch (e) {
+                console.error('Update failed', e);
+              }
+            }}
+          />
+        </div>
+      ) : (
+        <div className="w-full h-full flex flex-col px-6 py-6 overflow-hidden">
+          {/* Header */}
+          <div className="mb-6">
+            <p className="text-[11px] text-zinc-500 mb-1">{breadcrumb}</p>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-blue-500/15">
+                <ListIcon className="w-5 h-5 text-blue-400" />
+              </div>
+              <h1 className="text-xl font-semibold text-zinc-100">{list?.name}</h1>
+              <span className="text-[11px] text-zinc-500 px-2 py-0.5 bg-zinc-800 rounded-full">
+                {list?.tasks?.length ?? 0} tasks
+              </span>
+            </div>
+          </div>
+
+          {/* View Tabs */}
+          <div className="flex items-center gap-4 border-b border-zinc-800/80 mb-4">
+            <button
+              onClick={() => setActiveTab('board')}
+              className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'board'
+                  ? 'border-indigo-500 text-indigo-400'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                }`}
+            >
+              <KanbanSquare className="w-4 h-4" />
+              Board
+            </button>
+          </div>
+
+          {/* Task Groups by Status */}
+          {activeTab === 'board' ? (
+            <div className="flex-1 min-h-0">
+              <KanbanBoard
+                tasks={list?.tasks || []}
+                onTaskMove={handleTaskMove}
+                onTaskReorder={handleTaskReorder}
+                onAddTaskClick={(status) => {
+                  setTaskModalStatus(status);
+                  setIsTaskModalOpen(true);
                 }}
-                onUpdateTask={async (updatedTask) => {
-                  // Optimistic update
-                  setSelectedTask(updatedTask);
-                  setList((prev: any) => ({
-                    ...prev,
-                    tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
-                  }));
-                  // API call
-                  try {
-                    await tasksApi.updateTask(updatedTask.id, {
-                      ...updatedTask,
-                      assigneeId: updatedTask.assignee?.id,
-                      currentListId: id
-                    } as any);
-                  } catch(e) {
-                    console.error('Update failed', e);
-                  }
+                onTaskClick={setSelectedTask}
+                customGroups={customGroups}
+                onAddGroup={(group) => {
+                  setCustomGroups(prev => {
+                    const newGroups = [...prev, group];
+                    // Persist to backend
+                    spacesApi.updateList(id as string, { customGroups: newGroups }).catch(console.error);
+                    return newGroups;
+                  });
+                  socket?.emit('add_group', { listId: id, group });
                 }}
               />
             </div>
+          ) : list?.tasks?.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-zinc-600">
+              <CheckSquare className="w-10 h-10 mb-3 opacity-40" />
+              <p className="text-sm font-medium">No tasks yet</p>
+              <p className="text-xs mt-1">Tasks added to this list will appear here</p>
+            </div>
           ) : (
-            <div className="w-full h-full flex flex-col px-6 py-6 overflow-hidden">
-              {/* Header */}
-              <div className="mb-6">
-                <p className="text-[11px] text-zinc-500 mb-1">{breadcrumb}</p>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-500/15">
-                    <ListIcon className="w-5 h-5 text-blue-400" />
+            <div className="flex-1 overflow-y-auto space-y-6 custom-scrollbar pr-2">
+              {orderedStatuses.map((status) => (
+                <div key={status}>
+                  {/* Status group header */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <button className="flex items-center gap-1.5">
+                      <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${STATUS_COLORS[status] ?? 'bg-zinc-700 text-zinc-300'}`}>
+                        {status.replace('_', ' ')}
+                      </span>
+                    </button>
+                    <span className="text-[11px] text-zinc-600">{tasksByStatus[status].length}</span>
                   </div>
-                  <h1 className="text-xl font-semibold text-zinc-100">{list?.name}</h1>
-                  <span className="text-[11px] text-zinc-500 px-2 py-0.5 bg-zinc-800 rounded-full">
-                    {list?.tasks?.length ?? 0} tasks
-                  </span>
-                </div>
-              </div>
 
-              {/* View Tabs */}
-              <div className="flex items-center gap-4 border-b border-zinc-800/80 mb-4">
-                <button
-                  onClick={() => setActiveTab('board')}
-                  className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${
-                    activeTab === 'board'
-                      ? 'border-indigo-500 text-indigo-400'
-                      : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-                  }`}
-                >
-                  <KanbanSquare className="w-4 h-4" />
-                  Board
-                </button>
-              </div>
-
-              {/* Task Groups by Status */}
-              {activeTab === 'board' ? (
-                <div className="flex-1 min-h-0">
-                  <KanbanBoard 
-                    tasks={list?.tasks || []} 
-                    onTaskMove={handleTaskMove}
-                    onTaskReorder={handleTaskReorder}
-                    onAddTaskClick={(status) => {
-                      setTaskModalStatus(status);
-                      setIsTaskModalOpen(true);
-                    }} 
-                    onTaskClick={setSelectedTask}
-                    customGroups={customGroups}
-                    onAddGroup={(group) => {
-                      setCustomGroups(prev => [...prev, group]);
-                      socket?.emit('add_group', { listId: id, group });
-                    }}
-                  />
-                </div>
-              ) : list?.tasks?.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-zinc-600">
-                  <CheckSquare className="w-10 h-10 mb-3 opacity-40" />
-                  <p className="text-sm font-medium">No tasks yet</p>
-                  <p className="text-xs mt-1">Tasks added to this list will appear here</p>
-                </div>
-              ) : (
-                <div className="flex-1 overflow-y-auto space-y-6 custom-scrollbar pr-2">
-                  {orderedStatuses.map((status) => (
-                    <div key={status}>
-                      {/* Status group header */}
-                      <div className="flex items-center gap-2 mb-2">
-                        <button className="flex items-center gap-1.5">
-                          <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
-                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${STATUS_COLORS[status] ?? 'bg-zinc-700 text-zinc-300'}`}>
-                            {status.replace('_', ' ')}
-                          </span>
-                        </button>
-                        <span className="text-[11px] text-zinc-600">{tasksByStatus[status].length}</span>
-                      </div>
-
-                      {/* Task table */}
-                      <div className="border border-zinc-800 rounded-lg overflow-hidden">
-                        {/* Column headers */}
-                        <div className="grid grid-cols-[1fr_140px_120px_100px] bg-zinc-900/60 border-b border-zinc-800 px-4 py-2 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">
-                          <span>Name</span>
-                          <span>Assignee</span>
-                          <span>Due Date</span>
-                          <span>Priority</span>
-                        </div>
-
-                        {/* Task rows */}
-                        {tasksByStatus[status].map((task: any) => (
-                          <div
-                            key={task.id}
-                            onClick={() => setSelectedTask(task)}
-                            className="grid grid-cols-[1fr_140px_120px_100px] px-4 py-2.5 border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30 transition-colors group cursor-pointer"
-                          >
-                            {/* Name */}
-                            <div className="flex items-center gap-2 min-w-0">
-                              <CheckSquare className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
-                              <span className="text-[12px] text-zinc-200 truncate">{task.title}</span>
-                              {task.subtasks?.length > 0 && (
-                                <span className="text-[10px] text-zinc-500 shrink-0">
-                                  {task.subtasks.filter((s: any) => s.completed).length}/{task.subtasks.length}
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Assignee */}
-                            <div className="flex items-center gap-1.5">
-                              {task.assignee ? (
-                                <>
-                                  <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
-                                    {task.assignee.name?.charAt(0).toUpperCase()}
-                                  </div>
-                                  <span className="text-[11px] text-zinc-400 truncate">{task.assignee.name}</span>
-                                </>
-                              ) : (
-                                <div className="flex items-center gap-1 text-zinc-600">
-                                  <User className="w-3.5 h-3.5" />
-                                  <span className="text-[11px]">Unassigned</span>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Due Date */}
-                            <div className="flex items-center gap-1 text-zinc-500">
-                              <Calendar className="w-3 h-3" />
-                              <span className="text-[11px]">
-                                {task.dueDate
-                                  ? new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                                  : '—'}
-                              </span>
-                            </div>
-
-                            {/* Priority */}
-                            <div className="flex items-center">
-                              {task.priority ? (
-                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${PRIORITY_COLORS[task.priority] ?? 'text-zinc-400 bg-zinc-800'}`}>
-                                  {task.priority}
-                                </span>
-                              ) : (
-                                <Flag className="w-3.5 h-3.5 text-zinc-700" />
-                              )}
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* Add Task row */}
-                        <div 
-                          onClick={() => {
-                            setTaskModalStatus(status);
-                            setIsTaskModalOpen(true);
-                          }}
-                          className="px-4 py-2 flex items-center gap-2 text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/20 cursor-pointer transition-colors"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span className="text-[11px]">Add Task</span>
-                        </div>
-                      </div>
+                  {/* Task table */}
+                  <div className="border border-zinc-800 rounded-lg overflow-hidden">
+                    {/* Column headers */}
+                    <div className="grid grid-cols-[1fr_140px_120px_100px] bg-zinc-900/60 border-b border-zinc-800 px-4 py-2 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">
+                      <span>Name</span>
+                      <span>Assignee</span>
+                      <span>Due Date</span>
+                      <span>Priority</span>
                     </div>
-                  ))}
+
+                    {/* Task rows */}
+                    {tasksByStatus[status].map((task: any) => (
+                      <div
+                        key={task.id}
+                        onClick={() => setSelectedTask(task)}
+                        className="grid grid-cols-[1fr_140px_120px_100px] px-4 py-2.5 border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30 transition-colors group cursor-pointer"
+                      >
+                        {/* Name */}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CheckSquare className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
+                          <span className="text-[12px] text-zinc-200 truncate">{task.title}</span>
+                          {task.subtasks?.length > 0 && (
+                            <span className="text-[10px] text-zinc-500 shrink-0">
+                              {task.subtasks.filter((s: any) => s.completed).length}/{task.subtasks.length}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Assignee */}
+                        <div className="flex items-center gap-1.5">
+                          {task.assignee ? (
+                            <>
+                              <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
+                                {task.assignee.name?.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="text-[11px] text-zinc-400 truncate">{task.assignee.name}</span>
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-1 text-zinc-600">
+                              <User className="w-3.5 h-3.5" />
+                              <span className="text-[11px]">Unassigned</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Due Date */}
+                        <div className="flex items-center gap-1 text-zinc-500">
+                          <Calendar className="w-3 h-3" />
+                          <span className="text-[11px]">
+                            {task.dueDate
+                              ? new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                              : '—'}
+                          </span>
+                        </div>
+
+                        {/* Priority */}
+                        <div className="flex items-center">
+                          {task.priority ? (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${PRIORITY_COLORS[task.priority] ?? 'text-zinc-400 bg-zinc-800'}`}>
+                              {task.priority}
+                            </span>
+                          ) : (
+                            <Flag className="w-3.5 h-3.5 text-zinc-700" />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Add Task row */}
+                    <div
+                      onClick={() => {
+                        setTaskModalStatus(status);
+                        setIsTaskModalOpen(true);
+                      }}
+                      className="px-4 py-2 flex items-center gap-2 text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/20 cursor-pointer transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span className="text-[11px]">Add Task</span>
+                    </div>
+                  </div>
                 </div>
-              )}
+              ))}
             </div>
           )}
+        </div>
+      )}
 
       <CreateTaskModal
         isOpen={isTaskModalOpen}

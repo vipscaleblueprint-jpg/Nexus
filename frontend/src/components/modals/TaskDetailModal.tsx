@@ -104,6 +104,67 @@ export function TaskDetailModal({
   const [isActivityExpanded, setIsActivityExpanded] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Mentions
+  const [showMentionMenu, setShowMentionMenu] = useState(false);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [mentionStartIndex, setMentionStartIndex] = useState(-1);
+  const [mentionedUsers, setMentionedUsers] = useState<{ id: string; name: string }[]>([]);
+
+  const markdownComponents = React.useMemo(() => ({
+    a: (props: any) => {
+      const { node, ...rest } = props;
+      const href = rest.href || '';
+      if (href.match(/\.(mp4|webm|ogg|mov)$/i)) {
+        return (
+          <div className="mt-2 mb-2 inline-block">
+            <video 
+              src={href} 
+              className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity bg-black/50"
+              onClick={(e) => {
+                e.preventDefault();
+                setLightboxImage(href);
+              }}
+            ></video>
+          </div>
+        );
+      }
+      if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
+        return (
+          <div className="mt-2 mb-2 inline-block">
+            <img 
+              src={href} 
+              alt="attachment" 
+              className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity" 
+              onClick={(e) => {
+                e.preventDefault();
+                setLightboxImage(href);
+              }}
+            />
+          </div>
+        );
+      }
+      if (href.startsWith('mention://')) {
+        return <span className="bg-indigo-500/20 text-indigo-400 font-medium px-1 rounded">{rest.children}</span>;
+      }
+      return <a {...rest} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{rest.children}</a>;
+    },
+    img: (props: any) => {
+      const { node, ...rest } = props;
+      return (
+        <div className="mt-2 mb-2 inline-block">
+          <img 
+            {...rest}
+            className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity" 
+            onClick={(e) => {
+              e.preventDefault();
+              setLightboxImage(rest.src);
+            }}
+          />
+        </div>
+      );
+    }
+  }), []);
+
   const { currentUser } = useAppStore();
 
   // Fetch real users from DB for assignee picker
@@ -517,11 +578,13 @@ export function TaskDetailModal({
         task.id,
         finalComment,
         currentUser?.id || '',
-        task.listId
+        task.listId,
+        mentionedUsers.map(u => u.id)
       );
       
       setComment('');
       setStagedFiles([]);
+      setMentionedUsers([]);
 
       if (res?.activity) {
         setActivities(prev => {
@@ -1050,46 +1113,17 @@ export function TaskDetailModal({
                               <ReactMarkdown 
                                 remarkPlugins={[remarkGfm]} 
                                 rehypePlugins={[rehypeRaw]}
-                                components={{
-                                  a: (props: any) => {
-                                    const { node, ...rest } = props;
-                                    const href = rest.href || '';
-                                    if (href.match(/\.(mp4|webm|ogg|mov)$/i)) {
-                                      return (
-                                        <div className="mt-2 mb-2">
-                                          <video controls src={href} className="w-full max-w-[250px] rounded-lg bg-black/50"></video>
-                                        </div>
-                                      );
-                                    }
-                                    if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
-                                      return (
-                                        <div className="mt-2 mb-2">
-                                          <img 
-                                            src={href} 
-                                            alt="attachment" 
-                                            className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity" 
-                                            onClick={() => setLightboxImage(href)}
-                                          />
-                                        </div>
-                                      );
-                                    }
-                                    return <a {...rest} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{rest.children}</a>;
-                                  },
-                                  img: (props: any) => {
-                                    const { node, ...rest } = props;
-                                    return (
-                                      <div className="mt-2 mb-2 inline-block">
-                                        <img 
-                                          {...rest}
-                                          className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity" 
-                                          onClick={() => setLightboxImage(rest.src)}
-                                        />
-                                      </div>
-                                    );
-                                  }
-                                }}
+                                components={markdownComponents}
                               >
-                                {act.text}
+                                {(() => {
+                                  let text = act.text || '';
+                                  dbUsers.forEach(u => {
+                                    if (text.includes(`@${u.name}`)) {
+                                      text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
+                                    }
+                                  });
+                                  return text;
+                                })()}
                               </ReactMarkdown>
                             </div>
                             <div className="flex items-center gap-3 mt-1 pl-11">
@@ -1142,9 +1176,61 @@ export function TaskDetailModal({
                 </div>
               )}
               <div className="relative">
+                {showMentionMenu && (
+                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100]">
+                    <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
+                      People
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {dbUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).map(u => (
+                        <div
+                          key={u.id}
+                          className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
+                          onClick={() => {
+                            const before = comment.substring(0, mentionStartIndex);
+                            const after = comment.substring(comment.length);
+                            setComment(`${before}@${u.name} `);
+                            setShowMentionMenu(false);
+                            if (!mentionedUsers.some(m => m.id === u.id)) {
+                              setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
+                            }
+                          }}
+                        >
+                          {u.avatarUrl ? (
+                            <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold">
+                              {(u.name || '?').substring(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          <span>{u.name}</span>
+                        </div>
+                      ))}
+                      {dbUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).length === 0 && (
+                        <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <textarea 
                   value={comment}
-                  onChange={e => setComment(e.target.value)}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setComment(val);
+                    
+                    // Mention logic
+                    const cursorPosition = e.target.selectionStart;
+                    const textBeforeCursor = val.substring(0, cursorPosition);
+                    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+                    
+                    if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
+                      setShowMentionMenu(true);
+                      setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
+                      setMentionStartIndex(lastAtIndex);
+                    } else {
+                      setShowMentionMenu(false);
+                    }
+                  }}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -1190,12 +1276,22 @@ export function TaskDetailModal({
         >
           <X className="w-6 h-6" />
         </button>
-        <img 
-          src={lightboxImage} 
-          alt="Expanded view" 
-          className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
-          onClick={e => e.stopPropagation()}
-        />
+        {lightboxImage.match(/\.(mp4|webm|ogg|mov)$/i) ? (
+          <video 
+            controls 
+            autoPlay
+            src={lightboxImage} 
+            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <img 
+            src={lightboxImage} 
+            alt="Expanded view" 
+            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
+            onClick={e => e.stopPropagation()}
+          />
+        )}
       </div>
     )}
     </>

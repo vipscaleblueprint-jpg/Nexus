@@ -139,6 +139,8 @@ model User {
   readReceipts        MessageReadReceipt[]
   savedMessages       SavedMessage[]
   notifications       MessageNotification[]
+  taskNotifications   TaskNotification[]    @relation("UserNotification")
+  taskNotificationsSent TaskNotification[]  @relation("ActorNotification")
   pinnedMessages      Message[]             @relation("MessagePinnedBy")
   createdChannels     Channel[]             @relation("ChannelCreatedBy")
   sentInvitations     Invitation[]          @relation("UserInvitations")
@@ -301,6 +303,7 @@ model Task {
   checklists  Checklist[]
   comments    TaskComment[]
   attachments Attachment[]
+  notifications TaskNotification[]
 
   @@index([listId])
   @@index([status])
@@ -548,6 +551,30 @@ model MessageNotification {
 
   @@index([userId, isRead])
   @@index([messageId])
+}
+
+// -----------------------------------------------------------------------------
+// TASK NOTIFICATIONS (INBOX)
+// -----------------------------------------------------------------------------
+
+model TaskNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  actorId   String?
+  taskId    String?
+  type      String   // "ASSIGNMENT" or "MENTION"
+  title     String
+  content   String?
+  isRead    Boolean  @default(false)
+  isCleared Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user  User  @relation("UserNotification", fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("ActorNotification", fields: [actorId], references: [id], onDelete: SetNull)
+  task  Task? @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isCleared])
+  @@index([taskId])
 }
 
 // -----------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import { taskRouter } from './routes/task.routes';
 import { chatRouter } from './routes/chat.routes';
 import { invitationRouter } from './routes/invitation.routes';
 import { rolesRouter } from './routes/roles.routes';
+import { uploadRouter } from './routes/upload.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -89,6 +90,7 @@ app.use('/api/tasks', taskRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/invitations', invitationRouter);
 app.use('/api/roles', rolesRouter);
+app.use('/api/upload', uploadRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

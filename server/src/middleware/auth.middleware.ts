@@ -41,6 +41,21 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
   }
 }
 
+export async function optionalAuthenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+  let token = req.cookies?.accessToken;
+  if (!token) {
+    const authHeader = req.headers['authorization'];
+    token = authHeader && authHeader.split(' ')[1];
+  }
+  if (!token) return next();
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload;
+    req.user = decoded;
+    req.token = token;
+  } catch {}
+  next();
+}
+
 import { prisma } from '../config/prisma';
 
 // System Role Guard (e.g. ADMIN only)

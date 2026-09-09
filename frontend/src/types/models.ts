@@ -87,6 +87,8 @@ export interface List {
   folderId?: string;
   columns?: any[];
   tasks?: Task[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Doc {
@@ -129,13 +131,22 @@ export interface Task {
   dueDate?: string;
   startDate?: string;
   listId: string;
-  assigneeId?: string;
-  assignee?: User;
+  assigneeId?: string | null;
+  assignee?: User | null;
+  assignees?: User[];
+  assigneeIds?: string[];
   creatorId: string;
+  creator?: User;
   subtasks: Subtask[];
   checklists: Checklist[];
   attachments: Attachment[];
   comments: TaskComment[];
+  list?: {
+    id: string;
+    name: string;
+    space?: { id: string; name: string };
+    folder?: { id: string; name: string };
+  };
   createdAt: string;
 }
 

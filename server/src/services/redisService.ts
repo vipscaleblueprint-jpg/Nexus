@@ -158,9 +158,21 @@ export async function invalidateCache(...keys: string[]) {
   for (const key of keys) {
     try {
       await redis.del(`cache:${key}`);
+      if (key.endsWith(':all') || key.includes('*') || key.startsWith('tasks')) {
+        const prefix = key.replace(/:all$/, '').replace(/\*$/, '');
+        const matching = await redis.keys(`cache:${prefix}*`);
+        if (matching.length > 0) {
+          await redis.del(...matching);
+        }
+      }
     } catch (err) {
       // ignore
     }
     inMemoryCacheStore.delete(key);
+    for (const memKey of inMemoryCacheStore.keys()) {
+      if (memKey.startsWith(key.replace(/:all$/, ''))) {
+        inMemoryCacheStore.delete(memKey);
+      }
+    }
   }
 }

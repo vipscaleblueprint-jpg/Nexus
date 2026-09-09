@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { InviteModal } from '@/components/modals/InviteModal';
 import { AddInvitationModal } from '@/components/modals/AddInvitationModal';
 import { CreateSpaceModal } from '@/components/modals/CreateSpaceModal';
@@ -255,11 +255,15 @@ function GroupLabel({ children, collapsed }: { children: React.ReactNode; collap
 
 export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: SidebarProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const filterParam = searchParams?.get('filter');
+  const isMyTasksActive = pathname === '/tasks' && filterParam === 'my';
+  const isAllTasksActive = (pathname === '/' || pathname === '/tasks') && filterParam !== 'my';
+
   const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
 
-  const [nexusHomeOpen, setNexusHomeOpen] = useState(true);
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [isAddInvitationOpen, setIsAddInvitationOpen] = useState(false);
@@ -446,47 +450,72 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               <span className="truncate">Activity</span>
               <span className="ml-auto text-[10px] font-bold bg-pink-500 text-white px-1.5 py-0.5 rounded-full">99+</span>
             </div>
-            <div className="flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]">
-              <CheckSquare className="size-4 shrink-0 text-zinc-400" />
-              <span className="truncate">My Tasks</span>
-            </div>
 
-            {/* Home Dashboard Collapsible */}
-            <div className="pt-1">
-              <button
-                onClick={() => setNexusHomeOpen(!nexusHomeOpen)}
-                className={`flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${pathname === '/' ? 'bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] font-medium' : 'text-[hsl(240,4.8%,95.9%)]'}`}
+
+            {/* Spaces Section */}
+            <div className="pt-2 space-y-px">
+              <div className="flex items-center justify-between mb-1 px-2 pt-1">
+                <span className="text-[10px] font-semibold text-[hsl(0,0%,63.9%)] uppercase tracking-wide">Spaces</span>
+                <button onClick={() => setIsCreateSpaceOpen(true)} className="text-[hsl(0,0%,63.9%)] hover:text-white transition-colors cursor-pointer" title="New Space">
+                  <Plus className="size-3.5" />
+                </button>
+              </div>
+
+              {/* ── ALL TASKS ── */}
+              <Link
+                href="/"
+                className={`flex items-center gap-2 px-2 py-1.5 rounded-md font-medium text-xs transition-colors group cursor-pointer mb-1 ${
+                  isAllTasksActive
+                    ? 'bg-[hsl(240,3.7%,15.9%)] text-cyan-300 font-semibold'
+                    : 'text-zinc-300 hover:bg-[hsl(240,3.7%,15.9%)] hover:text-white'
+                }`}
               >
-                <Home className="size-4 shrink-0 text-zinc-400" />
-                <span className="flex-1 truncate">Home Dashboard</span>
-                <ChevronRight className={`ml-auto size-4 shrink-0 text-[hsl(240,5.3%,26.1%)] transition-transform duration-200 ${nexusHomeOpen ? 'rotate-90' : ''}`} />
+                <Sparkles className="size-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
+                <span className="truncate flex-1">All Tasks</span>
+              </Link>
+
+              {/* Spaces & Root Folders */}
+              {spaces.map((space) => {
+                if (space.id === 'root-space') {
+                  return (
+                    <div key="root-items" className="space-y-px">
+                      {space.folders?.map((folder) => (
+                        <FolderTreeItem
+                          key={folder.id}
+                          folder={folder}
+                          onAddFolder={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateFolderOpen(true); }}
+                          onAddDoc={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateDocOpen(true); }}
+                          onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }}
+                          onAddList={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateListOpen(true); }}
+                          onAction={handleAction}
+                        />
+                      ))}
+                      {space.lists?.filter((l) => !l.folderId).map((list) => (
+                        <ListTreeItem key={list.id} list={list} onAction={handleAction} />
+                      ))}
+                      {space.docs?.filter((d) => !d.folderId).map((doc) => (
+                        <DocTreeItem key={doc.id} doc={doc} onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }} onAction={handleAction} />
+                      ))}
+                    </div>
+                  );
+                }
+
+                return (
+                  <SpaceTreeItem
+                    key={space.id}
+                    space={space}
+                    onAddFolder={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateFolderOpen(true); }}
+                    onAddDoc={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateDocOpen(true); }}
+                    onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }}
+                    onAddList={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateListOpen(true); }}
+                    onAction={handleAction}
+                  />
+                );
+              })}
+              <button onClick={() => setIsCreateSpaceOpen(true)} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-white hover:bg-[hsl(240,3.7%,15.9%)] transition-colors cursor-pointer">
+                <Plus className="size-3.5" />
+                <span>New Space</span>
               </button>
-              
-              {nexusHomeOpen && (
-                <div className="pl-6 pr-2 py-1 space-y-px">
-                  <div className="flex items-center justify-between mb-1 pt-1">
-                    <span className="text-[10px] font-semibold text-[hsl(0,0%,63.9%)] uppercase tracking-wide">Spaces</span>
-                    <button onClick={() => setIsCreateSpaceOpen(true)} className="text-[hsl(0,0%,63.9%)] hover:text-white transition-colors">
-                      <Plus className="size-3.5" />
-                    </button>
-                  </div>
-                  {spaces.map((space) => (
-                    <SpaceTreeItem
-                      key={space.id}
-                      space={space}
-                      onAddFolder={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateFolderOpen(true); }}
-                      onAddDoc={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateDocOpen(true); }}
-                      onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }}
-                      onAddList={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateListOpen(true); }}
-                      onAction={handleAction}
-                    />
-                  ))}
-                  <button onClick={() => setIsCreateSpaceOpen(true)} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-white hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
-                    <Plus className="size-3.5" />
-                    <span>New Space</span>
-                  </button>
-                </div>
-              )}
             </div>
 
             <Link href="/team" className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${pathname === '/team' ? 'bg-[hsl(240,3.7%,15.9%)] font-medium text-[hsl(240,4.8%,95.9%)]' : 'text-[hsl(240,4.8%,95.9%)]'}`}>
@@ -525,10 +554,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
 function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onAction }: {
   space: Space;
-  onAddFolder: (spaceId: string, folderId?: string) => void;
-  onAddDoc: (spaceId: string, folderId?: string) => void;
+  onAddFolder: (spaceId?: string, folderId?: string) => void;
+  onAddDoc: (spaceId?: string, folderId?: string) => void;
   onAddPage: (docId: string) => void;
-  onAddList: (spaceId: string, folderId?: string) => void;
+  onAddList: (spaceId?: string, folderId?: string) => void;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(true);
@@ -572,11 +601,11 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
 }
 
 function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onAddList, onAction }: {
-  folder: Folder; spaceId: string;
-  onAddFolder: (spaceId: string, folderId?: string) => void;
-  onAddDoc: (spaceId: string, folderId?: string) => void;
+  folder: Folder; spaceId?: string;
+  onAddFolder: (spaceId?: string, folderId?: string) => void;
+  onAddDoc: (spaceId?: string, folderId?: string) => void;
   onAddPage: (docId: string) => void;
-  onAddList: (spaceId: string, folderId?: string) => void;
+  onAddList: (spaceId?: string, folderId?: string) => void;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(true);

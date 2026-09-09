@@ -1,7 +1,7 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Task } from '@/lib/types';
-import { CheckSquare, Calendar, User, Flag, GripVertical, AlignLeft, CircleDashed } from 'lucide-react';
+import { CheckSquare, Calendar, User, Flag, GripVertical, AlignLeft, CircleDashed, Lock } from 'lucide-react';
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400 bg-zinc-800',
@@ -14,15 +14,18 @@ interface Props {
   task: Task;
   isOverlay?: boolean;
   onClick?: (task: Task) => void;
+  isMoveDisabled?: boolean;
+  moveLockReason?: string;
 }
 
-export function KanbanCard({ task, isOverlay, onClick }: Props) {
+export function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: {
       type: 'Task',
       task,
     },
+    disabled: isMoveDisabled,
   });
 
   const style = {
@@ -78,14 +81,23 @@ export function KanbanCard({ task, isOverlay, onClick }: Props) {
       {...attributes}
       {...listeners}
       onClick={() => onClick && onClick(task)}
-      className={`bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm cursor-grab active:cursor-grabbing flex flex-col gap-3 transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
+      className={`bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col gap-3 transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
+        isMoveDisabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+      } ${
         isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
       }`}
     >
       <div className="pr-6">
-        <h4 className="text-[13px] font-semibold text-zinc-200 mb-0.5 leading-tight">
-          {task.title}
-        </h4>
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <h4 className="text-[13px] font-semibold text-zinc-200 leading-tight">
+            {task.title}
+          </h4>
+          {isMoveDisabled && (
+            <span title={moveLockReason || 'Status transition restricted'} className="text-amber-400 shrink-0">
+              <Lock className="w-3.5 h-3.5" />
+            </span>
+          )}
+        </div>
         <p className="text-[11px] text-zinc-500">
           In {task.listId || 'List'}
         </p>
@@ -131,9 +143,37 @@ export function KanbanCard({ task, isOverlay, onClick }: Props) {
 
         <div className="flex items-center justify-between text-[12px] text-zinc-500 mt-1 pt-2 border-t border-zinc-700/50">
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              <User className="w-3.5 h-3.5" />
-              <span>{task.assignee ? task.assignee.name : 'Unassigned'}</span>
+            <div className="flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 shrink-0" />
+              {task.assignees && task.assignees.length > 0 ? (
+                <div className="flex items-center gap-1">
+                  <div className="flex items-center -space-x-1">
+                    {task.assignees.slice(0, 2).map((a) => (
+                      <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
+                        {a.avatarUrl ? (
+                          <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
+                            {(a.name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {task.assignees.length > 2 && (
+                      <div className="relative ring-1 ring-[#18181b] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold px-1 h-4 flex items-center justify-center shrink-0">
+                        +{task.assignees.length - 2}
+                      </div>
+                    )}
+                  </div>
+                  <span className="truncate max-w-[110px]">
+                    {task.assignees.length === 1 ? task.assignees[0].name : `${task.assignees.length} assignees`}
+                  </span>
+                </div>
+              ) : task.assignee ? (
+                <span className="truncate max-w-[110px]">{task.assignee.name}</span>
+              ) : (
+                <span>Unassigned</span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">

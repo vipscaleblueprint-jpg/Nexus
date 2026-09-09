@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { WorkspaceDashboard } from '@/components/dashboard/WorkspaceDashboard';
 import { CreateSpaceModal } from '@/components/modals/CreateSpaceModal';
 import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
@@ -72,12 +72,14 @@ export default function DocsPage() {
 
   return (
     <>
-      <WorkspaceDashboard
-        activeView="docs"
-        spaces={spaces}
-        loading={loadingSpaces}
-        onOpenCreate={handleOpenCreate}
-      />
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center h-full"><div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>}>
+        <WorkspaceDashboard
+          activeView="docs"
+          spaces={spaces}
+          loading={loadingSpaces}
+          onOpenCreate={handleOpenCreate}
+        />
+      </Suspense>
 
       <CreateSpaceModal
         isOpen={isCreateSpaceOpen}

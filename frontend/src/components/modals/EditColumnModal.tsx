@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Trash2, Check, AlertCircle, Users, Lock } from 'lucide-react';
+import { X, Save, Trash2, Check, AlertCircle, Users, Lock, Shield, Loader2 } from 'lucide-react';
 import { THEMES } from '../board/KanbanColumn';
 import { getRoles } from '@/api/roles';
 import type { WorkspaceRole } from '@/types/models';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { toast } from '@/lib/toast';
 
 interface EditColumnModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ interface EditColumnModalProps {
   onRename?: (newName: string) => void;
   onThemeChange?: (themeId: string) => void;
   onRoleChange?: (allowedRoles: string[]) => void;
+  onSave?: (data: { name: string; color: string; allowedRoles: string[] }) => Promise<void> | void;
   onDelete?: () => void;
 }
 
@@ -22,9 +24,11 @@ export function EditColumnModal({
   onClose,
   status,
   theme,
+  allowedRoles: initialAllowedRoles = [],
   onRename,
   onThemeChange,
   onRoleChange,
+  onSave,
   onDelete,
 }: EditColumnModalProps) {
   const [name, setName] = useState(status);
@@ -33,17 +37,16 @@ export function EditColumnModal({
   const [allowedRoles, setAllowedRoles] = useState<string[]>([]);
   const [roles, setRoles] = useState<WorkspaceRole[]>([]);
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedNotice, setSavedNotice] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     setName(status);
     setSelectedTheme(theme);
-    // If we have allowedRoles passed from parent (future), we'd set accessType to 'restricted'
-    // For now, if there's any allowedRoles, it's restricted
-    if (allowedRoles.length > 0) {
-      setAccessType('restricted');
-    }
-  }, [status, theme, isOpen]);
+    setAllowedRoles(initialAllowedRoles || []);
+    setAccessType(initialAllowedRoles && initialAllowedRoles.length > 0 ? 'restricted' : 'all');
+  }, [status, theme, initialAllowedRoles, isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -55,32 +58,64 @@ export function EditColumnModal({
     }
   }, [isOpen]);
 
-  const toggleRole = (roleId: string) => {
-    setAllowedRoles(prev => 
-      prev.includes(roleId) ? prev.filter(id => id !== roleId) : [...prev, roleId]
+  // Filter out ADMIN and ADMINISTRATOR from selectable options
+  // Admins always have access to all columns
+  const selectableRoles = roles.filter((role) => {
+    const upper = role.name.trim().toUpperCase();
+    return upper !== 'ADMIN' && upper !== 'ADMINISTRATOR';
+  });
+
+  const isRoleSelected = (role: WorkspaceRole) => {
+    return allowedRoles.some(
+      (r) => r === role.name || r === role.id || r.toUpperCase() === role.name.toUpperCase()
     );
   };
 
-  useEffect(() => {
-    setName(status);
-    setSelectedTheme(theme);
-  }, [status, theme, isOpen]);
+  const toggleRole = (role: WorkspaceRole) => {
+    setAllowedRoles((prev) => {
+      const exists = prev.some(
+        (r) => r === role.name || r === role.id || r.toUpperCase() === role.name.toUpperCase()
+      );
+      if (exists) {
+        return prev.filter(
+          (r) => r !== role.name && r !== role.id && r.toUpperCase() !== role.name.toUpperCase()
+        );
+      }
+      return [...prev, role.name];
+    });
+  };
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    if (name.trim() !== status && onRename) {
-      onRename(name.trim());
-    }
-    if (selectedTheme !== theme && onThemeChange) {
-      onThemeChange(selectedTheme);
-    }
-    
-    if (onRoleChange) {
-      onRoleChange(accessType === 'all' ? [] : allowedRoles);
-    }
+  const handleSave = async () => {
+    setIsSaving(true);
+    const finalRoles = accessType === 'all' ? [] : allowedRoles;
+    const trimmedName = name.trim() || status;
 
-    onClose();
+    try {
+      if (onSave) {
+        await onSave({
+          name: trimmedName,
+          color: selectedTheme,
+          allowedRoles: finalRoles,
+        });
+      } else {
+        if (trimmedName !== status && onRename) onRename(trimmedName);
+        if (selectedTheme !== theme && onThemeChange) onThemeChange(selectedTheme);
+        if (onRoleChange) onRoleChange(finalRoles);
+      }
+
+      setSavedNotice(true);
+      setTimeout(() => {
+        setSavedNotice(false);
+        setIsSaving(false);
+        onClose();
+      }, 300);
+    } catch (err: any) {
+      console.error('Failed to save column settings:', err);
+      toast.error(err.message || 'Failed to save column settings');
+      setIsSaving(false);
+    }
   };
 
   const handleDeleteConfirm = async () => {
@@ -144,11 +179,18 @@ export function EditColumnModal({
           <div className="space-y-4">
             <div className="flex flex-col">
               <label className="text-sm font-medium text-zinc-300">Status Access Restrictions</label>
-              <p className="text-xs text-zinc-500 mt-1">Control who can move tasks into this status.</p>
+              <p className="text-xs text-zinc-400 mt-1">
+                Anyone can move tasks into this column. Restricting access ensures only selected roles can move or change tasks out of this status.
+              </p>
+              <div className="mt-2 text-[11px] text-zinc-400 flex items-center gap-1.5 bg-zinc-900/90 px-2.5 py-1.5 rounded-lg border border-zinc-800/80">
+                <Shield className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>Admins have full access to all columns and can move tasks out of any status.</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
                 onClick={() => setAccessType('all')}
                 className={`flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
                   accessType === 'all'
@@ -160,6 +202,7 @@ export function EditColumnModal({
                 <span className="text-xs font-semibold">Allow Everyone</span>
               </button>
               <button
+                type="button"
                 onClick={() => setAccessType('restricted')}
                 className={`flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
                   accessType === 'restricted'
@@ -173,31 +216,32 @@ export function EditColumnModal({
             </div>
 
             {accessType === 'restricted' && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-lg max-h-40 overflow-y-auto custom-scrollbar p-1 animate-in slide-in-from-top-2 duration-200">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-lg max-h-44 overflow-y-auto custom-scrollbar p-1 animate-in slide-in-from-top-2 duration-200">
                 {isLoadingRoles ? (
                   <div className="p-4 flex justify-center"><div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>
-                ) : roles.length === 0 ? (
+                ) : selectableRoles.length === 0 ? (
                   <div className="p-4 text-center text-xs text-zinc-500 flex flex-col items-center gap-2">
                     <AlertCircle className="w-5 h-5 opacity-50" />
-                    No custom roles found
+                    No custom roles available
                   </div>
                 ) : (
                   <div className="flex flex-col gap-1">
-                    {roles.map(role => {
-                      const isSelected = allowedRoles.includes(role.id);
+                    {selectableRoles.map((role) => {
+                      const selected = isRoleSelected(role);
                       return (
                         <button
                           key={role.id}
-                          onClick={() => toggleRole(role.id)}
+                          type="button"
+                          onClick={() => toggleRole(role)}
                           className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left ${
-                            isSelected ? 'bg-indigo-500/10 text-indigo-100' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-300'
+                            selected ? 'bg-indigo-500/15 text-indigo-200 font-medium' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-300'
                           }`}
                         >
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2.5 h-2.5 rounded-full ${role.color || 'bg-zinc-500'}`} />
-                            <span className="font-medium">{role.name}</span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${role.color || 'bg-zinc-500'}`} />
+                            <span className="truncate">{role.name}</span>
                           </div>
-                          {isSelected && <Check className="w-4 h-4 text-indigo-400" />}
+                          {selected && <Check className="w-4 h-4 text-indigo-400 shrink-0" />}
                         </button>
                       );
                     })}
@@ -210,6 +254,7 @@ export function EditColumnModal({
 
         <div className="flex items-center justify-between p-4 border-t border-zinc-800 bg-zinc-900/50">
           <button
+            type="button"
             onClick={() => setIsDeleteModalOpen(true)}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-colors"
           >
@@ -219,17 +264,35 @@ export function EditColumnModal({
 
           <div className="flex gap-2">
             <button
+              type="button"
+              disabled={isSaving}
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors"
+              className="px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
+              type="button"
+              disabled={isSaving}
               onClick={handleSave}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors shadow-lg shadow-indigo-500/20"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50"
             >
-              <Save className="w-4 h-4" />
-              Save Changes
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : savedNotice ? (
+                <>
+                  <Check className="w-4 h-4 text-emerald-300" />
+                  Saved!
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </>
+              )}
             </button>
           </div>
         </div>

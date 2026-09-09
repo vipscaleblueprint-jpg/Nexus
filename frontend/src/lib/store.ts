@@ -31,6 +31,15 @@ interface AppState {
   hasLoadedSpaces: boolean;
   hydrateFromCache: () => void;
   loadSpaces: () => Promise<void>;
+
+  // Notifications
+  unreadNotifications: number;
+  setUnreadNotifications: (count: number) => void;
+  decrementUnreadNotifications: () => void;
+
+  // UI State
+  isSidebarCollapsed: boolean;
+  toggleSidebar: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -59,5 +68,12 @@ export const useAppStore = create<AppState>((set) => ({
     } finally {
       set({ loadingSpaces: false, hasLoadedSpaces: true });
     }
-  }
+  },
+
+  unreadNotifications: 0,
+  setUnreadNotifications: (count) => set({ unreadNotifications: count }),
+  decrementUnreadNotifications: () => set((state) => ({ unreadNotifications: Math.max(0, state.unreadNotifications - 1) })),
+
+  isSidebarCollapsed: true,
+  toggleSidebar: () => set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
 }));

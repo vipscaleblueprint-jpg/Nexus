@@ -1,4 +1,3 @@
-import { RoleType } from '@prisma/client';
 import { prisma } from '../config/prisma';
 
 export interface ValidationResult {
@@ -9,7 +8,7 @@ export interface ValidationResult {
 export async function validateTaskStatusTransition(
   taskId: string,
   targetStatus: string,
-  userRoles: RoleType[]
+  userRoles: string[]
 ): Promise<ValidationResult> {
   const task = await prisma.task.findUnique({
     where: { id: taskId },

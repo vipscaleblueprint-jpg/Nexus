@@ -8,11 +8,29 @@ import type {
   ChannelType,
   EmploymentType,
   EntityType,
+  InvitationStatus,
   NotificationType,
   Priority,
-  RoleType,
   SystemRole,
 } from './enums';
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: SystemRole;
+  employmentType: EmploymentType;
+  token: string;
+  status: InvitationStatus;
+  invitedById: string;
+  invitedBy?: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface User {
   id: string;
@@ -26,10 +44,10 @@ export interface User {
   employmentType: EmploymentType;
   isActive: boolean;
   systemRole: SystemRole;
-  primaryRole?: RoleType;
-  secondaryRole?: RoleType;
-  tertiaryRole?: RoleType;
-  minorRole?: RoleType;
+  primaryRole?: string | null;
+  secondaryRole?: string | null;
+  tertiaryRole?: string | null;
+  minorRole?: string | null;
   teamId?: string;
   teamName?: string;
 }
@@ -69,6 +87,8 @@ export interface List {
   folderId?: string;
   columns?: any[];
   tasks?: Task[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Doc {
@@ -111,13 +131,22 @@ export interface Task {
   dueDate?: string;
   startDate?: string;
   listId: string;
-  assigneeId?: string;
-  assignee?: User;
+  assigneeId?: string | null;
+  assignee?: User | null;
+  assignees?: User[];
+  assigneeIds?: string[];
   creatorId: string;
+  creator?: User;
   subtasks: Subtask[];
   checklists: Checklist[];
   attachments: Attachment[];
   comments: TaskComment[];
+  list?: {
+    id: string;
+    name: string;
+    space?: { id: string; name: string };
+    folder?: { id: string; name: string };
+  };
   createdAt: string;
 }
 
@@ -134,6 +163,21 @@ export interface Checklist {
   name: string;
   taskId: string;
   items: ChecklistItem[];
+  createdAt: string;
+}
+
+export interface TaskChecklistItem {
+  id: string;
+  checklistId: string;
+  content: string;
+  isCompleted: boolean;
+  position: number;
+}
+
+export interface WorkspaceRole {
+  id: string;
+  name: string;
+  color?: string | null;
   createdAt: string;
 }
 

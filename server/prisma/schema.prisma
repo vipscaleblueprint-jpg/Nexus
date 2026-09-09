@@ -16,14 +16,14 @@ enum SystemRole {
   MEMBER
 }
 
-enum RoleType {
-  PM
-  DESIGNER
-  TECH
-  CRM
-  AUDITOR
-  ADMIN
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
 }
+
+
 
 enum EmploymentType {
   FULL_TIME
@@ -87,6 +87,13 @@ model Team {
   @@index([name])
 }
 
+model WorkspaceRole {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  color       String?
+  createdAt   DateTime @default(now())
+}
+
 // -----------------------------------------------------------------------------
 // USER & MULTI-ROLE AUTHORIZATION
 // -----------------------------------------------------------------------------
@@ -109,16 +116,17 @@ model User {
 
   systemRole SystemRole @default(MEMBER)
 
-  primaryRole   RoleType?
-  secondaryRole RoleType?
-  tertiaryRole  RoleType?
-  minorRole     RoleType?
+  primaryRole   String?
+  secondaryRole String?
+  tertiaryRole  String?
+  minorRole     String?
 
   teamId String?
   team   Team?   @relation(fields: [teamId], references: [id])
 
   ownedSpaces         Space[]               @relation("SpaceOwner")
   assignedTasks       Task[]                @relation("TaskAssignee")
+  assignedTasksMulti  Task[]                @relation("TaskMultiAssignees")
   createdTasks        Task[]                @relation("TaskCreator")
   checkedItems        ChecklistItem[]       @relation("ItemChecker")
   favorites           Favorite[]
@@ -131,8 +139,11 @@ model User {
   readReceipts        MessageReadReceipt[]
   savedMessages       SavedMessage[]
   notifications       MessageNotification[]
+  taskNotifications   TaskNotification[]    @relation("UserNotification")
+  taskNotificationsSent TaskNotification[]  @relation("ActorNotification")
   pinnedMessages      Message[]             @relation("MessagePinnedBy")
   createdChannels     Channel[]             @relation("ChannelCreatedBy")
+  sentInvitations     Invitation[]          @relation("UserInvitations")
 
   @@index([email])
   @@index([systemRole])
@@ -193,9 +204,23 @@ model List {
   space  Space?  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   folder Folder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
   tasks  Task[]
+  statuses ListStatus[]
 
   @@index([spaceId])
   @@index([folderId])
+}
+
+model ListStatus {
+  id           String   @id @default(uuid())
+  name         String
+  color        String   @default("zinc")
+  allowedRoles String[] @default([]) 
+  listId       String
+  createdAt    DateTime @default(now())
+
+  list         List     @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@index([listId])
 }
 
 model Doc {
@@ -271,12 +296,14 @@ model Task {
 
   list        List           @relation(fields: [listId], references: [id], onDelete: Cascade)
   assignee    User?          @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  assignees   User[]         @relation("TaskMultiAssignees")
   creator     User           @relation("TaskCreator", fields: [creatorId], references: [id])
   team        Team?          @relation(fields: [teamId], references: [id])
   subtasks    Subtask[]
   checklists  Checklist[]
   comments    TaskComment[]
   attachments Attachment[]
+  notifications TaskNotification[]
 
   @@index([listId])
   @@index([status])
@@ -527,6 +554,30 @@ model MessageNotification {
 }
 
 // -----------------------------------------------------------------------------
+// TASK NOTIFICATIONS (INBOX)
+// -----------------------------------------------------------------------------
+
+model TaskNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  actorId   String?
+  taskId    String?
+  type      String   // "ASSIGNMENT" or "MENTION"
+  title     String
+  content   String?
+  isRead    Boolean  @default(false)
+  isCleared Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user  User  @relation("UserNotification", fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("ActorNotification", fields: [actorId], references: [id], onDelete: SetNull)
+  task  Task? @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isCleared])
+  @@index([taskId])
+}
+
+// -----------------------------------------------------------------------------
 // AUDIT LOGS
 // -----------------------------------------------------------------------------
 
@@ -544,4 +595,26 @@ model AuditLog {
   @@index([userId])
   @@index([entity, entityId])
   @@index([createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// INVITATIONS
+// -----------------------------------------------------------------------------
+
+model Invitation {
+  id             String           @id @default(uuid())
+  email          String
+  role           SystemRole       @default(MEMBER)
+  employmentType EmploymentType   @default(FULL_TIME)
+  token          String           @unique @default(uuid())
+  status         InvitationStatus @default(PENDING)
+  invitedById    String
+  invitedBy      User             @relation("UserInvitations", fields: [invitedById], references: [id], onDelete: Cascade)
+  expiresAt      DateTime
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([email])
+  @@index([status])
+  @@index([invitedById])
 }

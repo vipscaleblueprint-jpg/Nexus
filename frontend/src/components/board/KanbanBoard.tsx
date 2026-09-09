@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -12,10 +12,14 @@ import {
   DragEndEvent,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import { Task } from '@/lib/types';
+import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
 import { Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { getRoles } from '@/api/roles';
+import { canUserMoveTask } from '@/lib/permissions';
+import { useAppStore } from '@/lib/store';
+import { toast } from '@/lib/toast';
 
 interface Props {
   tasks: Task[];
@@ -25,6 +29,8 @@ interface Props {
   onTaskClick?: (task: Task) => void;
   customGroups: string[];
   onAddGroup: (group: string) => void;
+  listStatuses?: any[];
+  onStatusChange?: (statusName: string, data: { name?: string; color?: string; allowedRoles?: string[] }) => void;
 }
 
 const CATEGORIES = [
@@ -65,8 +71,9 @@ const CATEGORIES = [
 
 const ALL_CONFIGURED_STATUSES = CATEGORIES.flatMap((c) => c.statuses);
 
-export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup }: Props) {
+export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup, listStatuses = [], onStatusChange }: Props) {
   const boardContainerRef = useRef<HTMLDivElement>(null);
+  const currentUser = useAppStore((s) => s.currentUser);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   // Local visual override: tracks which status to SHOW the dragged card in during drag
   // This does NOT call any API — it's purely for visual feedback.
@@ -92,6 +99,22 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
   const [isAddingGroup, setIsAddingGroup] = useState(false);
   const [newGroup, setNewGroup] = useState('');
   const [columnThemes, setColumnThemes] = useState<Record<string, string>>({});
+  const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
+
+  useEffect(() => {
+    getRoles()
+      .then(setWorkspaceRoles)
+      .catch((err) => console.error('Failed to load roles in board:', err));
+  }, []);
+
+  const roleMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    workspaceRoles.forEach((r) => {
+      map[r.id] = r.name;
+      map[r.name] = r.name;
+    });
+    return map;
+  }, [workspaceRoles]);
 
   const toggleCategory = (categoryId: string) => {
     setCollapsedCategories((prev) => {
@@ -228,6 +251,11 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     const { active } = event;
     const task = tasks.find((t) => t.id === active.id);
     if (task) {
+      const check = canUserMoveTask(task, listStatuses, currentUser, workspaceRoles);
+      if (!check.allowed) {
+        toast.error(check.reason || 'You do not have permission to move tasks from this status');
+        return;
+      }
       setActiveTask(task);
       // Initialize the override to the task's current status
       setDragOverride({ taskId: task.id, status: task.status });
@@ -270,6 +298,13 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     if (!originalTask) return;
 
     const activeId = active.id as string;
+
+    // Check permissions on the original task
+    const check = canUserMoveTask(originalTask, listStatuses, currentUser, workspaceRoles);
+    if (!check.allowed) {
+      toast.error(check.reason || 'You do not have permission to move tasks from this status');
+      return;
+    }
 
     // PRIMARY: use the last column the card was hovering over (dragOverride)
     // This is the most reliable signal — wherever the card visually "was" is where it should go.
@@ -420,6 +455,15 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                          }
                       };
 
+                      const dbStatus = listStatuses.find(s => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
+
+                      const permissionCheck = canUserMoveTask(
+                        { status } as any,
+                        listStatuses,
+                        currentUser,
+                        workspaceRoles
+                      );
+
                       return (
                         <div key={status} className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''}`}>
                           <KanbanColumn
@@ -429,10 +473,36 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                             collapsedGroupCount={groupRunCount}
                             isCollapsedGroupLeader={isCollapsedGroupLeader}
                             onToggleCollapse={handleToggle}
-                            customTheme={columnThemes[status]}
-                            onThemeChange={(themeId) => setColumnThemes((prev) => ({ ...prev, [status]: themeId }))}
+                            customTheme={dbStatus?.color || columnThemes[status]}
+                            roleMap={roleMap}
+                            allowedRoles={dbStatus?.allowedRoles}
+                            isColumnRestrictedForUser={!permissionCheck.allowed}
+                            columnRestrictionReason={permissionCheck.reason}
+                            onUpdateColumn={(statusName, data) => {
+                              if (onStatusChange) {
+                                onStatusChange(statusName, {
+                                  name: data.name,
+                                  color: data.color || dbStatus?.color || columnThemes[statusName],
+                                  allowedRoles: data.allowedRoles ?? dbStatus?.allowedRoles ?? [],
+                                });
+                              }
+                              if (data.color) {
+                                setColumnThemes((prev) => ({ ...prev, [statusName]: data.color! }));
+                              }
+                            }}
+                            onThemeChange={(themeId) => {
+                              if (onStatusChange) {
+                                onStatusChange(status, { color: themeId, allowedRoles: dbStatus?.allowedRoles });
+                              }
+                              setColumnThemes((prev) => ({ ...prev, [status]: themeId }));
+                            }}
                             onAddTaskClick={onAddTaskClick}
                             onTaskClick={onTaskClick}
+                            onRoleChange={(roles) => {
+                              if (onStatusChange) {
+                                onStatusChange(status, { color: dbStatus?.color || columnThemes[status], allowedRoles: roles });
+                              }
+                            }}
                           />
                         </div>
                       );

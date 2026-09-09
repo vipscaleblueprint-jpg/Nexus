@@ -13,8 +13,12 @@ import { authRouter } from './routes/auth.routes';
 import { userRouter } from './routes/user.routes';
 import { spaceRouter } from './routes/space.routes';
 import { listRouter } from './routes/list.routes';
+import notificationRoutes from './routes/notification.routes';
 import { taskRouter } from './routes/task.routes';
 import { chatRouter } from './routes/chat.routes';
+import { invitationRouter } from './routes/invitation.routes';
+import { rolesRouter } from './routes/roles.routes';
+import { uploadRouter } from './routes/upload.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -83,8 +87,12 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', userRouter);
 app.use('/api/spaces', spaceRouter);
 app.use('/api/lists', listRouter);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/tasks', taskRouter);
 app.use('/api/chat', chatRouter);
+app.use('/api/invitations', invitationRouter);
+app.use('/api/roles', rolesRouter);
+app.use('/api/upload', uploadRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -119,6 +127,16 @@ io.on('connection', (socket) => {
   socket.on('join_list', (listId: string) => {
     socket.join(`list:${listId}`);
     socketLog.debug({ socketId: socket.id, listId }, 'Client joined list room');
+  });
+
+  // User Real-time Notifications
+  socket.on('join_user', (userId: string) => {
+    socket.join(`user:${userId}`);
+    socketLog.debug({ socketId: socket.id, userId }, 'Client joined user room');
+  });
+
+  socket.on('leave_user', (userId: string) => {
+    socket.leave(`user:${userId}`);
   });
 
   socket.on('leave_list', (listId: string) => {

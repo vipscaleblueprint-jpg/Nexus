@@ -5,18 +5,19 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { User } from '@/lib/types';
 import { authApi } from '@/api';
-import { ExternalLink, LogOut, ChevronDown } from 'lucide-react';
+import { ExternalLink, LogOut, ChevronDown, PanelLeft } from 'lucide-react';
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Nexus Workspace',
   '/team': 'Member Directory',
   '/settings': 'Account Settings',
+  '/settings/users': 'Users & Permissions',
 };
 
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
-  const { currentUser, setCurrentUser } = useAppStore();
+  const { currentUser, setCurrentUser, isSidebarCollapsed, toggleSidebar } = useAppStore();
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
@@ -40,7 +41,15 @@ export function Header() {
   if (!currentUser) {
     return (
       <header className="bg-zinc-950/90 border-b border-zinc-800/60 px-6 py-3 backdrop-blur-md relative z-30">
-        <span className="text-xs font-semibold text-zinc-200">{title}</span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggleSidebar}
+            className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            <PanelLeft className="w-5 h-5" />
+          </button>
+          <span className="text-xs font-semibold text-zinc-200">{title}</span>
+        </div>
       </header>
     );
   }
@@ -50,7 +59,16 @@ export function Header() {
   return (
     <header className="bg-zinc-950/90 border-b border-zinc-800/60 text-zinc-100 backdrop-blur-md relative z-30">
       <div className="px-6 py-3 flex items-center justify-between">
-        <span className="text-xs font-semibold text-zinc-200">{title}</span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggleSidebar}
+            className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors -ml-2"
+          >
+            <PanelLeft className="w-5 h-5" />
+          </button>
+          <div className="h-4 w-px bg-zinc-800 mx-1"></div>
+          <span className="text-xs font-semibold text-zinc-200">{title}</span>
+        </div>
 
         <div className="relative text-xs">
           <button
@@ -130,8 +148,28 @@ export function Header() {
 
               <div className="pt-2 space-y-1.5 border-t border-zinc-800/60">
                 <button
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    router.push('/settings');
+                  }}
+                  className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                >
+                  <span className="truncate">Account Settings</span>
+                </button>
+                {activeUser.systemRole === 'ADMIN' && (
+                  <button
+                    onClick={() => {
+                      setIsProfileOpen(false);
+                      router.push('/settings/users');
+                    }}
+                    className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                  >
+                    <span className="truncate text-yellow-400">Users & Permissions</span>
+                  </button>
+                )}
+                <button
                   onClick={handleLogout}
-                  className="w-full flex items-center justify-center gap-2 p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-900/50 font-semibold transition-colors text-xs cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-900/50 font-semibold transition-colors text-xs cursor-pointer mt-2"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>Sign Out</span>

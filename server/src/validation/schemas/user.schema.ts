@@ -1,14 +1,18 @@
 import { z } from 'zod';
-import { ROLE_TYPES, SYSTEM_ROLES } from '../../types';
+import { EMPLOYMENT_TYPES, SYSTEM_ROLES } from '../../types';
 import { httpUrl } from './common';
 
 export const updateUserSchema = z
   .object({
     dailySheetUrl: httpUrl.nullable().optional(),
     starRating: z.number().int().min(1).max(3).optional(),
-    primaryRole: z.enum(ROLE_TYPES).optional(),
-    secondaryRole: z.enum(ROLE_TYPES).optional(),
+    primaryRole: z.string().nullable().optional(),
+    secondaryRole: z.string().nullable().optional(),
+    tertiaryRole: z.string().nullable().optional(),
+    minorRole: z.string().nullable().optional(),
     systemRole: z.enum(SYSTEM_ROLES).optional(),
+    employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
+    isActive: z.boolean().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

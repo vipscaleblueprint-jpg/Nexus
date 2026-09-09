@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Plus, MoreHorizontal, Archive, Trash2, Link2, Hash, ExternalLink, Star, Edit2, Bell, Clock, ArrowRight, Merge, Copy, RefreshCw, LayoutTemplate, Share2, Target, Play, Mail } from 'lucide-react';
+import { Plus, MoreHorizontal, Archive, Trash2, Link2, Hash, ExternalLink, Star, Edit2, Bell, Clock, ArrowRight, Merge, Copy, RefreshCw, LayoutTemplate, Share2, Target, Play, Mail, Lock } from 'lucide-react';
 import { Task } from '@/lib/types';
 import { ActionMenu } from '../ui/ActionMenu';
 import { KanbanCard } from './KanbanCard';
+import { EditColumnModal } from '../modals/EditColumnModal';
 
 interface Props {
   status: string;
@@ -17,9 +18,15 @@ interface Props {
   onThemeChange?: (themeId: string) => void;
   onAddTaskClick?: (status: string) => void;
   onTaskClick?: (task: Task) => void;
+  allowedRoles?: string[];
+  onRoleChange?: (allowedRoles: string[]) => void;
+  onUpdateColumn?: (status: string, data: { name?: string; color?: string; allowedRoles?: string[] }) => Promise<void> | void;
+  roleMap?: Record<string, string>;
+  onRename?: (newName: string) => void;
+  isColumnRestrictedForUser?: boolean;
+  columnRestrictionReason?: string;
 }
 
-// ... unchanged STATUS_LABELS and THEMES code ...
 const STATUS_LABELS: Record<string, string> = {
   KYC: 'KYC',
   'Pin Board': 'Pin Board',
@@ -54,7 +61,7 @@ const STATUS_LABELS: Record<string, string> = {
   CANCELLED: 'Cancelled',
 };
 
-const THEMES: Record<string, { badge: string; bg: string; text: string; scrollThumb: string }> = {
+export const THEMES: Record<string, { badge: string; bg: string; text: string; scrollThumb: string }> = {
   cyan: { badge: 'bg-cyan-500 text-black', bg: 'bg-cyan-500/10', text: 'text-cyan-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-cyan-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-cyan-500/50' },
   blue: { badge: 'bg-blue-500 text-white', bg: 'bg-blue-500/10', text: 'text-blue-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-blue-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-blue-500/50' },
   indigo: { badge: 'bg-indigo-500 text-white', bg: 'bg-indigo-500/10', text: 'text-indigo-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-indigo-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-indigo-500/50' },
@@ -108,7 +115,25 @@ const getStatusTheme = (status: string, customTheme?: string) => {
   return THEMES[defaultThemeId];
 };
 
-export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, isCollapsedGroupLeader, onToggleCollapse, customTheme, onThemeChange, onAddTaskClick, onTaskClick }: Props) {
+export function KanbanColumn({
+  status,
+  tasks,
+  isCollapsed,
+  collapsedGroupCount,
+  isCollapsedGroupLeader,
+  onToggleCollapse,
+  customTheme,
+  onThemeChange,
+  onAddTaskClick,
+  onTaskClick,
+  allowedRoles = [],
+  onRoleChange,
+  onUpdateColumn,
+  roleMap = {},
+  onRename,
+  isColumnRestrictedForUser = false,
+  columnRestrictionReason,
+}: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: status,
     data: {
@@ -117,8 +142,12 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
     },
   });
 
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
   const label = STATUS_LABELS[status] || status;
   const colors = getStatusTheme(status, customTheme);
+  
+  const displayRoles = allowedRoles.map((r) => roleMap[r] || r);
 
   if (isCollapsed && collapsedGroupCount && collapsedGroupCount > 1) {
     if (isCollapsedGroupLeader) {
@@ -160,9 +189,9 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
       <button 
         className={`absolute inset-0 flex flex-col items-center py-4 gap-4 transition-opacity duration-300 ${isCollapsed ? 'opacity-100 z-10 cursor-pointer hover:brightness-125' : 'opacity-0 pointer-events-none'}`}
         onClick={onToggleCollapse}
-        title={`Expand ${label}`}
+        title={`Expand ${label}${displayRoles.length > 0 ? ` (Restricted to: ${displayRoles.join(', ')})` : ''}`}
       >
-        <div className={`flex flex-col items-center rounded-full py-3 w-8 gap-3 shadow-sm ${colors.badge} h-32 shrink-0`}>
+        <div className={`flex flex-col items-center rounded-full py-3 w-8 gap-3 shadow-sm ${colors.badge} h-32 shrink-0 relative`}>
           <div className="w-3.5 h-3.5 rounded-full border-2 border-current relative opacity-80 shrink-0">
             <div className="absolute inset-0 m-auto w-1 h-1 bg-current rounded-full" />
           </div>
@@ -172,6 +201,11 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
           >
             {label}
           </span>
+          {displayRoles.length > 0 && (
+            <div className="mt-auto mb-1 p-1 bg-black/40 rounded-full text-amber-400" title={`Restricted to: ${displayRoles.join(', ')}`}>
+              <Lock className="w-2.5 h-2.5" />
+            </div>
+          )}
         </div>
         <span className={`text-sm font-bold ${colors.text} shrink-0`}>
           {tasks.length}
@@ -182,17 +216,28 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="flex flex-col px-3 pt-3 pb-2 shrink-0">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${colors.badge}`}>
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0 pr-1">
+              <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 ${colors.badge}`}>
                 <div className="w-2 h-2 rounded-full bg-black/70" />
                 {label}
               </span>
-              <span className={`${colors.text} text-sm font-semibold ml-1`}>
+
+              {displayRoles.length > 0 && (
+                <span 
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-xs shrink-0"
+                  title={`Restricted to: ${displayRoles.join(', ')} (Only these roles and Admins can move tasks out of this column)`}
+                >
+                  <Lock className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                  <span className="truncate max-w-[120px]">{displayRoles.join(', ')}</span>
+                </span>
+              )}
+
+              <span className={`${colors.text} text-sm font-semibold ml-0.5 shrink-0`}>
                 {tasks.length}
               </span>
             </div>
             
-            <div className={`flex items-center gap-1 ${colors.text}`}>
+            <div className={`flex items-center gap-1 ${colors.text} shrink-0`}>
               <button 
                 className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
                 onClick={onToggleCollapse}
@@ -200,60 +245,13 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
               >
                 <span className="text-lg leading-none select-none -mt-1 block">‹</span>
               </button>
-              <ActionMenu icon={<MoreHorizontal className="w-4 h-4" />} width="w-56">
-                <div className="flex px-1 gap-1 border-b border-zinc-700/50 pb-1 mb-1">
-                  <button className="flex-1 flex justify-center py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs transition-colors"><Link2 className="w-3.5 h-3.5" /></button>
-                  <button className="flex-1 flex justify-center py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs transition-colors"><Hash className="w-3.5 h-3.5" /></button>
-                  <button className="flex-1 flex justify-center py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs transition-colors"><ExternalLink className="w-3.5 h-3.5" /></button>
-                </div>
-                <div className="px-1 space-y-0.5">
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Star className="w-3.5 h-3.5" /> Favorite</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Edit2 className="w-3.5 h-3.5" /> Rename</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Bell className="w-3.5 h-3.5" /> Follow task</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Clock className="w-3.5 h-3.5" /> Remind me</button>
-                </div>
-                <div className="border-t border-zinc-700/50 my-1"></div>
-                <div className="px-1 space-y-0.5">
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><ArrowRight className="w-3.5 h-3.5" /> Move to</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Plus className="w-3.5 h-3.5" /> Add to</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Merge className="w-3.5 h-3.5" /> Merge</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Copy className="w-3.5 h-3.5" /> Duplicate</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><RefreshCw className="w-3.5 h-3.5" /> Convert to</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><LayoutTemplate className="w-3.5 h-3.5" /> Templates</button>
-                </div>
-                <div className="border-t border-zinc-700/50 my-1"></div>
-                <div className="px-1 space-y-0.5">
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Share2 className="w-3.5 h-3.5" /> Relationships</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Target className="w-3.5 h-3.5" /> Task Type</button>
-                </div>
-                <div className="border-t border-zinc-700/50 my-1"></div>
-                <div className="px-1 space-y-0.5">
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Play className="w-3.5 h-3.5" /> Start timer</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-300 text-xs text-left transition-colors"><Mail className="w-3.5 h-3.5" /> Send email to task</button>
-                </div>
-                <div className="border-t border-zinc-700/50 my-1"></div>
-                <div className="px-1 space-y-0.5">
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white text-xs text-left transition-colors"><Archive className="w-3.5 h-3.5" /> Archive</button>
-                  <button className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 text-xs text-left transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
-                </div>
-                <div className="border-t border-zinc-700/50 my-1"></div>
-                <div className="px-2 py-1.5 flex items-center justify-between">
-                  <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Color</span>
-                  <div className="flex gap-1">
-                    {Object.keys(THEMES).map((t) => (
-                      <button 
-                        key={t} 
-                        onClick={() => onThemeChange?.(t)}
-                        className={`w-3.5 h-3.5 rounded-full ${THEMES[t].badge.split(' ')[0]} ${
-                          (customTheme === t || (!customTheme && DEFAULT_STATUS_THEMES[status] === t)) 
-                            ? 'ring-2 ring-zinc-300 ring-offset-1 ring-offset-zinc-800' 
-                            : 'opacity-70 hover:opacity-100'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </ActionMenu>
+              <button 
+                onClick={() => setIsEditModalOpen(true)}
+                className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
+                title="Edit column settings"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+              </button>
               <button 
                 onClick={() => onAddTaskClick?.(status)}
                 className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
@@ -273,7 +271,13 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
         >
           <SortableContext items={tasks.map(t => t.id)} strategy={verticalListSortingStrategy}>
             {tasks.map((task) => (
-              <KanbanCard key={task.id} task={task} onClick={onTaskClick} />
+              <KanbanCard
+                key={task.id}
+                task={task}
+                onClick={onTaskClick}
+                isMoveDisabled={isColumnRestrictedForUser}
+                moveLockReason={columnRestrictionReason}
+              />
             ))}
           </SortableContext>
           
@@ -286,6 +290,27 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
           </button>
         </div>
       </div>
+      
+      <EditColumnModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        status={label}
+        theme={customTheme || Object.keys(THEMES).find(t => THEMES[t] === colors) || DEFAULT_STATUS_THEMES[status] || 'zinc'}
+        allowedRoles={allowedRoles}
+        onSave={async (data) => {
+          if (onUpdateColumn) {
+            await onUpdateColumn(status, data);
+          } else {
+            if (data.name && onRename) onRename(data.name);
+            if (data.color && onThemeChange) onThemeChange(data.color);
+            if (onRoleChange && data.allowedRoles) onRoleChange(data.allowedRoles);
+          }
+        }}
+        onRename={onRename}
+        onRoleChange={onRoleChange}
+        onThemeChange={onThemeChange}
+        onDelete={() => console.log('Delete column:', status)}
+      />
     </div>
   );
 }

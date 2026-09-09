@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EMPLOYMENT_TYPES, ROLE_TYPES, SYSTEM_ROLES } from '../../types';
+import { EMPLOYMENT_TYPES, SYSTEM_ROLES } from '../../types';
 import { httpUrl, shortText, uuid } from './common';
 
 const email = z.string().trim().toLowerCase().email('must be a valid email address');
@@ -10,10 +10,10 @@ export const signupSchema = z.object({
   password,
   name: shortText('name').min(2, 'name must be at least 2 characters'),
   systemRole: z.enum(SYSTEM_ROLES).optional(),
-  primaryRole: z.enum(ROLE_TYPES).optional(),
-  secondaryRole: z.enum(ROLE_TYPES).optional(),
-  tertiaryRole: z.enum(ROLE_TYPES).optional(),
-  minorRole: z.enum(ROLE_TYPES).optional(),
+  primaryRole: z.string().optional().nullable(),
+  secondaryRole: z.string().optional().nullable(),
+  tertiaryRole: z.string().optional().nullable(),
+  minorRole: z.string().optional().nullable(),
   employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
   dailySheetUrl: httpUrl.optional(),
   starRating: z.number().int().min(1).max(3).optional(),

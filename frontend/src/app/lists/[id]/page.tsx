@@ -23,6 +23,10 @@ import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { arrayMove } from '@dnd-kit/sortable';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
+import { toast } from '@/lib/toast';
+import { canUserMoveTask } from '@/lib/permissions';
+import { getRoles } from '@/api/roles';
+import type { WorkspaceRole } from '@/lib/types';
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400 bg-zinc-800',
@@ -50,6 +54,13 @@ export default function BoardPage() {
   const [taskModalStatus, setTaskModalStatus] = useState<string>('TODO');
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
+
+  useEffect(() => {
+    getRoles()
+      .then(setWorkspaceRoles)
+      .catch((err) => console.error('Failed to load roles in page:', err));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,6 +210,15 @@ export default function BoardPage() {
   ].filter(Boolean).join(' / ');
 
   const handleTaskMove = async (taskId: string, newStatus: string) => {
+    const task = list?.tasks?.find((t: any) => t.id === taskId);
+    if (task) {
+      const check = canUserMoveTask(task, list?.statuses, currentUser, workspaceRoles);
+      if (!check.allowed) {
+        toast.error(check.reason || 'You do not have permission to move tasks from this status');
+        return;
+      }
+    }
+
     // Optimistically update UI
     setList((prev: any) => ({
       ...prev,
@@ -209,11 +229,12 @@ export default function BoardPage() {
 
     try {
       await tasksApi.moveTask(taskId, newStatus, id as string);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to move task:', err);
       // Revert on failure by refetching
       const listRes = await spacesApi.getList(id as string);
       setList(listRes.list);
+      toast.error(err.message || 'You do not have permission to move tasks from this status');
     }
   };
 
@@ -280,29 +301,34 @@ export default function BoardPage() {
             onClose={() => setSelectedTask(null)}
             task={selectedTask}
             socket={socket}
+            listStatuses={list?.statuses || []}
+            workspaceRoles={workspaceRoles}
             onStatusChange={(newStatus) => {
               if (selectedTask) {
+                const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
+                if (!check.allowed) {
+                  toast.error(check.reason || 'You do not have permission to move tasks from this status');
+                  return;
+                }
                 handleTaskMove(selectedTask.id, newStatus);
                 setSelectedTask({ ...selectedTask, status: newStatus });
               }
             }}
             onUpdateTask={async (updatedTask) => {
-              // Optimistic update
+              if (selectedTask && updatedTask.status !== selectedTask.status) {
+                const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
+                if (!check.allowed) {
+                  toast.error(check.reason || 'You do not have permission to move tasks from this status');
+                  return;
+                }
+              }
+
+              // Sync board and modal state
               setSelectedTask(updatedTask);
               setList((prev: any) => ({
                 ...prev,
                 tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
               }));
-              // API call
-              try {
-                await tasksApi.updateTask(updatedTask.id, {
-                  ...updatedTask,
-                  assigneeId: updatedTask.assignee?.id,
-                  currentListId: id
-                } as any);
-              } catch (e) {
-                console.error('Update failed', e);
-              }
             }}
           />
         </div>
@@ -349,6 +375,56 @@ export default function BoardPage() {
                 }}
                 onTaskClick={setSelectedTask}
                 customGroups={customGroups}
+                listStatuses={list?.statuses || []}
+                onStatusChange={async (statusName, data) => {
+                  try {
+                    const existingStatus = list?.statuses?.find((s: any) => s.name === statusName);
+                    const payload = {
+                      name: data.name || statusName,
+                      color: data.color || existingStatus?.color || 'zinc',
+                      allowedRoles: data.allowedRoles !== undefined ? data.allowedRoles : (existingStatus?.allowedRoles || []),
+                    };
+                    
+                    if (existingStatus) {
+                      const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${existingStatus.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      if (res.ok) {
+                        const updated = await res.json();
+                        setList((prev: any) => ({
+                          ...prev,
+                          statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s)
+                        }));
+                        toast.success(`Column "${payload.name}" updated successfully!`);
+                      } else {
+                        const errData = await res.json().catch(() => ({}));
+                        toast.error(errData.error || 'Failed to update column');
+                      }
+                    } else {
+                      const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      if (res.ok) {
+                        const created = await res.json();
+                        setList((prev: any) => ({
+                          ...prev,
+                          statuses: [...(prev.statuses || []), created.status]
+                        }));
+                        toast.success(`Column "${payload.name}" updated successfully!`);
+                      } else {
+                        const errData = await res.json().catch(() => ({}));
+                        toast.error(errData.error || 'Failed to save column settings');
+                      }
+                    }
+                  } catch (e: any) {
+                    console.error('Failed to update status', e);
+                    toast.error(e.message || 'Failed to update status');
+                  }
+                }}
                 onAddGroup={(group) => {
                   setCustomGroups(prev => {
                     const newGroups = [...prev, group];

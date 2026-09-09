@@ -21,6 +21,7 @@ export const createTaskSchema = z.object({
   priority: z.enum(PRIORITIES).default('MEDIUM'),
   listId: uuid,
   assigneeId: nullableUuid,
+  assigneeIds: z.array(uuid).optional(),
   teamId: nullableUuid,
   creatorId: uuid,
   dueDate: nullableIsoDate,
@@ -35,15 +36,22 @@ export const updateTaskSchema = z
     priority: z.enum(PRIORITIES).optional(),
     listId: uuid.optional(),
     assigneeId: nullableUuid,
+    assigneeIds: z.array(uuid).optional(),
     teamId: nullableUuid,
     dueDate: nullableIsoDate,
     startDate: nullableIsoDate,
+    currentListId: uuid.optional(),
+    userId: uuid.optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',
   });
 
-export const moveTaskSchema = z.object({ status });
+export const moveTaskSchema = z.object({
+  status,
+  currentListId: z.string().uuid().optional(),
+  userId: z.string().uuid().optional(),
+});
 
 export const attachmentUrlSchema = z.object({
   fileName: shortText('fileName', 255),

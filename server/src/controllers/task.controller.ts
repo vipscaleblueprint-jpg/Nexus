@@ -314,6 +314,25 @@ export async function updateTask(req: Request, res: Response) {
             details: { assigneeName: names, assigneeNames: assignedUsers.map((u) => u.name), count: assignedUsers.length },
           },
         });
+        const newlyAssigned = assigneeIds.filter((id: string) => !currentTask.assignees.some(a => a.id === id));
+        if (newlyAssigned.length > 0) {
+          const newAssigneesToNotify = newlyAssigned.filter((id: string) => id !== actingUserId);
+          if (newAssigneesToNotify.length > 0) {
+            await prisma.taskNotification.createMany({
+              data: newAssigneesToNotify.map((id: string) => ({
+                userId: id,
+                actorId: actingUserId,
+                taskId,
+                type: 'ASSIGNMENT',
+                title: `${user?.name || 'Someone'} assigned this task to you`,
+              })),
+            });
+            newAssigneesToNotify.forEach((id: string) => {
+              io.to(`user:${id}`).emit('notification_received');
+            });
+          }
+        }
+
         activity = {
           id: log.id,
           type: 'assignment',
@@ -336,6 +355,19 @@ export async function updateTask(req: Request, res: Response) {
             details: { assigneeName: assignedUser?.name || 'Unassigned' },
           },
         });
+        if (assigneeId && assigneeId !== actingUserId) {
+          await prisma.taskNotification.create({
+            data: {
+              userId: assigneeId,
+              actorId: actingUserId,
+              taskId,
+              type: 'ASSIGNMENT',
+              title: `${user?.name || 'Someone'} assigned this task to you`,
+            },
+          });
+          io.to(`user:${assigneeId}`).emit('notification_received');
+        }
+
         activity = {
           id: log.id,
           type: 'assignment',
@@ -500,7 +532,7 @@ export async function moveTask(req: Request, res: Response) {
 export async function createTaskComment(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
-    const { content, userId, listId } = req.body;
+    const { content, userId, listId, mentionedUserIds } = req.body;
     const authReq = req as any;
     const effectiveUserId = userId || authReq.user?.id || (await prisma.user.findFirst())?.id;
 
@@ -524,6 +556,25 @@ export async function createTaskComment(req: Request, res: Response) {
       where: { id: effectiveUserId },
       select: { id: true, name: true, avatarUrl: true, email: true },
     });
+
+    if (mentionedUserIds && Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0) {
+      const usersToNotify = mentionedUserIds.filter(id => id !== effectiveUserId);
+      if (usersToNotify.length > 0) {
+        await prisma.taskNotification.createMany({
+          data: usersToNotify.map((id: string) => ({
+            userId: id,
+            actorId: effectiveUserId,
+            taskId,
+            type: 'MENTION',
+            title: `${user?.name || 'Someone'} mentioned you in a comment`,
+            content: content.trim().substring(0, 100),
+          })),
+        });
+        usersToNotify.forEach((id: string) => {
+          io.to(`user:${id}`).emit('notification_received');
+        });
+      }
+    }
 
     const log = await prisma.auditLog.create({
       data: {

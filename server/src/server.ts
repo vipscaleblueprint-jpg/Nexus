@@ -13,6 +13,7 @@ import { authRouter } from './routes/auth.routes';
 import { userRouter } from './routes/user.routes';
 import { spaceRouter } from './routes/space.routes';
 import { listRouter } from './routes/list.routes';
+import notificationRoutes from './routes/notification.routes';
 import { taskRouter } from './routes/task.routes';
 import { chatRouter } from './routes/chat.routes';
 import { invitationRouter } from './routes/invitation.routes';
@@ -86,6 +87,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', userRouter);
 app.use('/api/spaces', spaceRouter);
 app.use('/api/lists', listRouter);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/tasks', taskRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/invitations', invitationRouter);
@@ -125,6 +127,16 @@ io.on('connection', (socket) => {
   socket.on('join_list', (listId: string) => {
     socket.join(`list:${listId}`);
     socketLog.debug({ socketId: socket.id, listId }, 'Client joined list room');
+  });
+
+  // User Real-time Notifications
+  socket.on('join_user', (userId: string) => {
+    socket.join(`user:${userId}`);
+    socketLog.debug({ socketId: socket.id, userId }, 'Client joined user room');
+  });
+
+  socket.on('leave_user', (userId: string) => {
+    socket.leave(`user:${userId}`);
   });
 
   socket.on('leave_list', (listId: string) => {

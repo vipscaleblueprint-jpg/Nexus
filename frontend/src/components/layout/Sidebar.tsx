@@ -260,7 +260,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const isMyTasksActive = pathname === '/tasks' && filterParam === 'my';
   const isAllTasksActive = (pathname === '/' || pathname === '/tasks') && filterParam !== 'my';
 
-  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed } = useAppStore();
+  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
 
@@ -445,11 +445,20 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
           {/* Nexus nav */}
           <div className="flex-1 overflow-y-auto px-2 py-2 space-y-px">
-            <div className="flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]">
+            <Link
+              href="/activity"
+              className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${
+                pathname === '/activity' ? 'bg-[hsl(240,3.7%,15.9%)] text-white font-medium' : 'text-[hsl(240,4.8%,95.9%)]'
+              }`}
+            >
               <Activity className="size-4 shrink-0 text-zinc-400" />
               <span className="truncate">Activity</span>
-              <span className="ml-auto text-[10px] font-bold bg-pink-500 text-white px-1.5 py-0.5 rounded-full">99+</span>
-            </div>
+              {unreadNotifications > 0 && (
+                <span className="ml-auto text-[10px] font-bold bg-pink-500 text-white px-1.5 py-0.5 rounded-full">
+                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                </span>
+              )}
+            </Link>
 
 
             {/* Spaces Section */}

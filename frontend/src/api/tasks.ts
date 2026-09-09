@@ -41,10 +41,10 @@ export const tasksApi = {
     });
   },
 
-  async addComment(id: string, content: string, userId: string, listId?: string): Promise<{ comment: any; activity?: any }> {
-    return apiClient<{ comment: any; activity?: any }>(`/api/tasks/${id}/comments`, {
+  async addComment(taskId: string, content: string, userId: string, listId?: string, mentionedUserIds?: string[]): Promise<{ comment: any; activity?: any }> {
+    return apiClient<{ comment: any; activity?: any }>(`/api/tasks/${taskId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ content, userId, listId }),
+      body: JSON.stringify({ content, userId, listId, mentionedUserIds }),
     });
   },
 

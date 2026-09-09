@@ -21,7 +21,7 @@ export const tasksApi = {
     });
   },
 
-  async updateTask(id: string, data: Partial<Task>): Promise<{ task: Task }> {
+  async updateTask(id: string, data: Partial<Task> & { assigneeId?: string | null; assigneeIds?: string[]; currentListId?: string; userId?: string }): Promise<{ task: Task }> {
     return apiClient<{ task: Task }>(`/api/tasks/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -34,17 +34,23 @@ export const tasksApi = {
     });
   },
 
-  async moveTask(id: string, status: string, currentListId?: string): Promise<{ task: Task }> {
-    return apiClient<{ task: Task }>(`/api/tasks/${id}/move`, {
+  async moveTask(id: string, status: string, currentListId?: string, userId?: string): Promise<{ task: Task; activity?: any }> {
+    return apiClient<{ task: Task; activity?: any }>(`/api/tasks/${id}/move`, {
       method: 'PATCH',
-      body: JSON.stringify({ status, currentListId }),
+      body: JSON.stringify({ status, currentListId, userId }),
     });
   },
 
-  async addComment(id: string, content: string, userId: string, listId?: string): Promise<{ comment: any }> {
-    return apiClient<{ comment: any }>(`/api/tasks/${id}/comments`, {
+  async addComment(id: string, content: string, userId: string, listId?: string): Promise<{ comment: any; activity?: any }> {
+    return apiClient<{ comment: any; activity?: any }>(`/api/tasks/${id}/comments`, {
       method: 'POST',
       body: JSON.stringify({ content, userId, listId }),
+    });
+  },
+
+  async getActivities(id: string): Promise<{ activities: any[]; taskCreatedAt?: string; creator?: any }> {
+    return apiClient<{ activities: any[]; taskCreatedAt?: string; creator?: any }>(`/api/tasks/${id}/activities`, {
+      method: 'GET',
     });
   },
 };

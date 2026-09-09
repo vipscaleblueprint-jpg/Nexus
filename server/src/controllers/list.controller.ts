@@ -50,6 +50,7 @@ export async function getList(req: Request, res: Response) {
             comments: { select: { id: true } },
             attachments: { select: { id: true } },
             assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true } },
             creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
           },
         },
@@ -139,14 +140,46 @@ export async function deleteList(req: Request, res: Response) {
   }
 }
 
+const DEFAULT_STATUS_THEMES: Record<string, string> = {
+  KYC: 'cyan',
+  'Pin Board': 'blue',
+  PIN_BOARD: 'blue',
+  Daily: 'purple',
+  Weekly: 'indigo',
+  Monthly: 'violet',
+  DAILY: 'purple',
+  WEEKLY: 'indigo',
+  MONTHLY: 'violet',
+  Pending: 'amber',
+  PENDING: 'amber',
+  'In Progress': 'blue',
+  IN_PROGRESS: 'blue',
+  Revision: 'rose',
+  REVISION: 'rose',
+  Waiting: 'orange',
+  WAITING: 'orange',
+  'In Review': 'purple',
+  IN_REVIEW: 'purple',
+  Checking: 'teal',
+  CHECKING: 'teal',
+  'On-Hold': 'zinc',
+  ON_HOLD: 'zinc',
+  Closed: 'emerald',
+  CLOSED: 'emerald',
+  TODO: 'teal',
+  DONE: 'emerald',
+  CANCELLED: 'rose',
+};
+
 // POST /api/lists/:id/statuses
 export async function createStatus(req: Request, res: Response) {
   try {
     const { name, color, allowedRoles } = req.body;
+    const defaultColor = DEFAULT_STATUS_THEMES[name] || 'zinc';
     const status = await prisma.listStatus.create({
       data: {
         name,
-        color: color || 'zinc',
+        color: color || defaultColor,
         allowedRoles: allowedRoles || [],
         listId: req.params.id,
       },

@@ -126,6 +126,7 @@ model User {
 
   ownedSpaces         Space[]               @relation("SpaceOwner")
   assignedTasks       Task[]                @relation("TaskAssignee")
+  assignedTasksMulti  Task[]                @relation("TaskMultiAssignees")
   createdTasks        Task[]                @relation("TaskCreator")
   checkedItems        ChecklistItem[]       @relation("ItemChecker")
   favorites           Favorite[]
@@ -293,6 +294,7 @@ model Task {
 
   list        List           @relation(fields: [listId], references: [id], onDelete: Cascade)
   assignee    User?          @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  assignees   User[]         @relation("TaskMultiAssignees")
   creator     User           @relation("TaskCreator", fields: [creatorId], references: [id])
   team        Team?          @relation(fields: [teamId], references: [id])
   subtasks    Subtask[]

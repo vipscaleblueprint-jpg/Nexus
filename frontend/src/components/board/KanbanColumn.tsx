@@ -20,9 +20,13 @@ interface Props {
   onTaskClick?: (task: Task) => void;
   allowedRoles?: string[];
   onRoleChange?: (allowedRoles: string[]) => void;
+  onUpdateColumn?: (status: string, data: { name?: string; color?: string; allowedRoles?: string[] }) => Promise<void> | void;
+  roleMap?: Record<string, string>;
+  onRename?: (newName: string) => void;
+  isColumnRestrictedForUser?: boolean;
+  columnRestrictionReason?: string;
 }
 
-// ... unchanged STATUS_LABELS and THEMES code ...
 const STATUS_LABELS: Record<string, string> = {
   KYC: 'KYC',
   'Pin Board': 'Pin Board',
@@ -111,7 +115,25 @@ const getStatusTheme = (status: string, customTheme?: string) => {
   return THEMES[defaultThemeId];
 };
 
-export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, isCollapsedGroupLeader, onToggleCollapse, customTheme, onThemeChange, onAddTaskClick, onTaskClick, allowedRoles = [], onRoleChange }: Props) {
+export function KanbanColumn({
+  status,
+  tasks,
+  isCollapsed,
+  collapsedGroupCount,
+  isCollapsedGroupLeader,
+  onToggleCollapse,
+  customTheme,
+  onThemeChange,
+  onAddTaskClick,
+  onTaskClick,
+  allowedRoles = [],
+  onRoleChange,
+  onUpdateColumn,
+  roleMap = {},
+  onRename,
+  isColumnRestrictedForUser = false,
+  columnRestrictionReason,
+}: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: status,
     data: {
@@ -124,6 +146,8 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
 
   const label = STATUS_LABELS[status] || status;
   const colors = getStatusTheme(status, customTheme);
+  
+  const displayRoles = allowedRoles.map((r) => roleMap[r] || r);
 
   if (isCollapsed && collapsedGroupCount && collapsedGroupCount > 1) {
     if (isCollapsedGroupLeader) {
@@ -165,9 +189,9 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
       <button 
         className={`absolute inset-0 flex flex-col items-center py-4 gap-4 transition-opacity duration-300 ${isCollapsed ? 'opacity-100 z-10 cursor-pointer hover:brightness-125' : 'opacity-0 pointer-events-none'}`}
         onClick={onToggleCollapse}
-        title={`Expand ${label}`}
+        title={`Expand ${label}${displayRoles.length > 0 ? ` (Restricted to: ${displayRoles.join(', ')})` : ''}`}
       >
-        <div className={`flex flex-col items-center rounded-full py-3 w-8 gap-3 shadow-sm ${colors.badge} h-32 shrink-0`}>
+        <div className={`flex flex-col items-center rounded-full py-3 w-8 gap-3 shadow-sm ${colors.badge} h-32 shrink-0 relative`}>
           <div className="w-3.5 h-3.5 rounded-full border-2 border-current relative opacity-80 shrink-0">
             <div className="absolute inset-0 m-auto w-1 h-1 bg-current rounded-full" />
           </div>
@@ -177,6 +201,11 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
           >
             {label}
           </span>
+          {displayRoles.length > 0 && (
+            <div className="mt-auto mb-1 p-1 bg-black/40 rounded-full text-amber-400" title={`Restricted to: ${displayRoles.join(', ')}`}>
+              <Lock className="w-2.5 h-2.5" />
+            </div>
+          )}
         </div>
         <span className={`text-sm font-bold ${colors.text} shrink-0`}>
           {tasks.length}
@@ -187,18 +216,28 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="flex flex-col px-3 pt-3 pb-2 shrink-0">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${colors.badge}`}>
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0 pr-1">
+              <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 ${colors.badge}`}>
                 <div className="w-2 h-2 rounded-full bg-black/70" />
                 {label}
-                {allowedRoles.length > 0 && <Lock className="w-3 h-3 ml-0.5 opacity-80" />}
               </span>
-              <span className={`${colors.text} text-sm font-semibold ml-1`}>
+
+              {displayRoles.length > 0 && (
+                <span 
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-xs shrink-0"
+                  title={`Restricted to: ${displayRoles.join(', ')} (Only these roles and Admins can move tasks out of this column)`}
+                >
+                  <Lock className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                  <span className="truncate max-w-[120px]">{displayRoles.join(', ')}</span>
+                </span>
+              )}
+
+              <span className={`${colors.text} text-sm font-semibold ml-0.5 shrink-0`}>
                 {tasks.length}
               </span>
             </div>
             
-            <div className={`flex items-center gap-1 ${colors.text}`}>
+            <div className={`flex items-center gap-1 ${colors.text} shrink-0`}>
               <button 
                 className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
                 onClick={onToggleCollapse}
@@ -232,7 +271,13 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
         >
           <SortableContext items={tasks.map(t => t.id)} strategy={verticalListSortingStrategy}>
             {tasks.map((task) => (
-              <KanbanCard key={task.id} task={task} onClick={onTaskClick} />
+              <KanbanCard
+                key={task.id}
+                task={task}
+                onClick={onTaskClick}
+                isMoveDisabled={isColumnRestrictedForUser}
+                moveLockReason={columnRestrictionReason}
+              />
             ))}
           </SortableContext>
           
@@ -250,14 +295,19 @@ export function KanbanColumn({ status, tasks, isCollapsed, collapsedGroupCount, 
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
         status={label}
-        theme={customTheme || Object.keys(THEMES).find(t => THEMES[t] === colors) || 'zinc'}
+        theme={customTheme || Object.keys(THEMES).find(t => THEMES[t] === colors) || DEFAULT_STATUS_THEMES[status] || 'zinc'}
         allowedRoles={allowedRoles}
-        // These callbacks are stubs to be implemented at the board level later
-        onRename={(newName) => console.log('Rename column:', newName)}
-        onRoleChange={(newRoles) => {
-          console.log('Roles changed:', newRoles);
-          if (onRoleChange) onRoleChange(newRoles);
+        onSave={async (data) => {
+          if (onUpdateColumn) {
+            await onUpdateColumn(status, data);
+          } else {
+            if (data.name && onRename) onRename(data.name);
+            if (data.color && onThemeChange) onThemeChange(data.color);
+            if (onRoleChange && data.allowedRoles) onRoleChange(data.allowedRoles);
+          }
         }}
+        onRename={onRename}
+        onRoleChange={onRoleChange}
         onThemeChange={onThemeChange}
         onDelete={() => console.log('Delete column:', status)}
       />

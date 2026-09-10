@@ -264,27 +264,37 @@ export default function BoardPage() {
   const handleAddTask = async (task: any) => {
     // Optimistic ID for UI
     const tempId = `temp-${Date.now()}`;
-    const newTask = { ...task, id: tempId, listId: id, creatorId: currentUser?.id, createdAt: new Date().toISOString() };
+    const targetListId = task.listId || id;
+    const isCurrentBoard = targetListId === id;
+    
+    const newTask = { ...task, id: tempId, listId: targetListId, creatorId: currentUser?.id, createdAt: new Date().toISOString() };
 
-    setList((prev: any) => ({
-      ...prev,
-      tasks: [...(prev.tasks || []), newTask],
-    }));
+    if (isCurrentBoard) {
+      setList((prev: any) => ({
+        ...prev,
+        tasks: [...(prev.tasks || []), newTask],
+      }));
+    }
 
     try {
-      const res = await tasksApi.createTask({ ...task, listId: id, creatorId: currentUser?.id });
-      // Replace temp task with real task
-      setList((prev: any) => ({
-        ...prev,
-        tasks: prev.tasks.map((t: any) => t.id === tempId ? res.task : t),
-      }));
+      const res = await tasksApi.createTask({ ...task, listId: targetListId, creatorId: currentUser?.id });
+      
+      if (isCurrentBoard) {
+        // Replace temp task with real task
+        setList((prev: any) => ({
+          ...prev,
+          tasks: prev.tasks.map((t: any) => t.id === tempId ? res.task : t),
+        }));
+      }
     } catch (err) {
       console.error('Failed to add task:', err);
-      // Revert optimistic update
-      setList((prev: any) => ({
-        ...prev,
-        tasks: prev.tasks.filter((t: any) => t.id !== tempId),
-      }));
+      if (isCurrentBoard) {
+        // Revert optimistic update
+        setList((prev: any) => ({
+          ...prev,
+          tasks: prev.tasks.filter((t: any) => t.id !== tempId),
+        }));
+      }
     }
   };
 

@@ -60,7 +60,7 @@ export const spacesApi = {
     });
   },
 
-  async createDoc(data: { title: string; spaceId?: string; folderId?: string }): Promise<{ doc: Doc }> {
+  async createDoc(data: { title: string; spaceId?: string; folderId?: string; isDailyRollover?: boolean }): Promise<{ doc: Doc }> {
     return apiClient<{ doc: Doc }>('/api/spaces/docs', {
       method: 'POST',
       body: JSON.stringify(data),

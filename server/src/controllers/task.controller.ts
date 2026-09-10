@@ -532,7 +532,7 @@ export async function moveTask(req: Request, res: Response) {
 export async function createTaskComment(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
-    const { content, userId, listId, mentionedUserIds } = req.body;
+    const { content, userId, listId, mentionedUserIds, parentCommentId } = req.body;
     const authReq = req as any;
     const effectiveUserId = userId || authReq.user?.id || (await prisma.user.findFirst())?.id;
 
@@ -549,8 +549,25 @@ export async function createTaskComment(req: Request, res: Response) {
         content: content.trim(),
         taskId,
         userId: effectiveUserId,
+        ...(parentCommentId ? { parentCommentId } : {}),
+      },
+      include: {
+        reactions: { include: { user: { select: { id: true, name: true } } } },
+        replies: {
+          include: {
+            reactions: { include: { user: { select: { id: true, name: true } } } },
+          },
+        },
       },
     });
+
+    // Increment replyCount on parent comment
+    if (parentCommentId) {
+      await prisma.taskComment.update({
+        where: { id: parentCommentId },
+        data: { replyCount: { increment: 1 } },
+      });
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: effectiveUserId },
@@ -578,21 +595,23 @@ export async function createTaskComment(req: Request, res: Response) {
 
     const log = await prisma.auditLog.create({
       data: {
-        action: 'COMMENT',
+        action: parentCommentId ? 'REPLY' : 'COMMENT',
         entity: 'TASK',
         entityId: taskId,
         userId: effectiveUserId,
-        details: { text: content.trim() },
+        details: { text: content.trim(), commentId: comment.id, parentCommentId: parentCommentId || null },
       },
     });
 
     const activity = {
       id: log.id,
-      type: 'comment',
+      commentId: comment.id,
+      type: parentCommentId ? 'reply' : 'comment',
       author: user?.name || 'Someone',
       text: content.trim(),
       date: log.createdAt,
       user,
+      parentCommentId: parentCommentId || null,
     };
 
     const payload = { taskId, comment, activity };
@@ -609,6 +628,85 @@ export async function createTaskComment(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// POST /api/tasks/:id/comments/:commentId/reactions - toggle (add or remove)
+export async function toggleCommentReaction(req: Request, res: Response) {
+  try {
+    const { commentId } = req.params;
+    const { userId, emoji } = req.body;
+    const authReq = req as any;
+    const effectiveUserId = userId || authReq.user?.id || (await prisma.user.findFirst())?.id;
+
+    if (!effectiveUserId || !emoji) {
+      return res.status(400).json({ error: 'userId and emoji are required' });
+    }
+
+    const existing = await (prisma as any).taskCommentReaction.findUnique({
+      where: { commentId_userId_emoji: { commentId, userId: effectiveUserId, emoji } },
+    });
+
+    if (existing) {
+      await (prisma as any).taskCommentReaction.delete({ where: { id: existing.id } });
+    } else {
+      await (prisma as any).taskCommentReaction.create({
+        data: { commentId, userId: effectiveUserId, emoji },
+      });
+    }
+
+    const reactions = await (prisma as any).taskCommentReaction.findMany({
+      where: { commentId },
+      include: { user: { select: { id: true, name: true } } },
+    });
+
+    return res.json({ reactions, toggled: existing ? 'removed' : 'added' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/tasks/:id/comments - get comments with reactions and replies
+export async function getTaskComments(req: Request, res: Response) {
+  try {
+    const taskId = req.params.id;
+    const comments = await prisma.taskComment.findMany({
+      where: { taskId, parentCommentId: null },
+      include: {
+        reactions: { include: { user: { select: { id: true, name: true } } } },
+        replies: {
+          include: {
+            reactions: { include: { user: { select: { id: true, name: true } } } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        attachments: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Fetch user info for each comment
+    const userIds = [...new Set([
+      ...comments.map(c => c.userId),
+      ...comments.flatMap(c => c.replies.map((r: any) => r.userId)),
+    ])];
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, avatarUrl: true },
+    });
+    const userMap = Object.fromEntries(users.map(u => [u.id, u]));
+
+    const enriched = comments.map(c => ({
+      ...c,
+      user: userMap[c.userId],
+      replies: c.replies.map((r: any) => ({ ...r, user: userMap[r.userId] })),
+    }));
+
+    return res.json({ comments: enriched });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+
 
 // GET /api/tasks/:id/activities
 export async function getTaskActivities(req: Request, res: Response) {
@@ -709,6 +807,130 @@ export async function createAttachmentUrl(req: Request, res: Response) {
     const { fileName, fileType } = req.body;
     const upload = getR2PresignedUrl(fileName || 'file.dat', fileType || 'application/octet-stream');
     return res.json(upload);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/tasks/live-blocks
+export async function getLiveBlocksData(req: Request, res: Response) {
+  try {
+    const { assigneeName, type, reportDate, listId } = req.query as Record<string, string>;
+
+    let assigneeId = undefined;
+    if (assigneeName) {
+      const user = await prisma.user.findFirst({
+        where: { name: { contains: assigneeName, mode: 'insensitive' } }
+      });
+      if (user) assigneeId = user.id;
+    }
+
+    const filters: any = {};
+    if (reportDate && type === 'newtasks') {
+      filters.createdAt = { gte: new Date(reportDate) };
+    }
+    if (listId) {
+      filters.listId = listId;
+    }
+
+    const tasks = await prisma.task.findMany({
+      where: {
+        ...filters,
+        ...(assigneeId
+          ? {
+              OR: [
+                { assigneeId },
+                { assignees: { some: { id: assigneeId } } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        subtasks: true,
+        checklists: { include: { items: true } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true } },
+        creator: { select: { id: true, name: true, email: true } },
+        list: {
+          select: {
+            id: true,
+            name: true,
+            space: { select: { id: true, name: true } },
+            folder: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (type === 'daily-report') {
+      const activeTasks = await prisma.task.findMany({
+        where: { status: { not: 'Closed' } },
+        include: {
+          assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
+          list: { select: { id: true, name: true } }
+        },
+        orderBy: { title: 'asc' }
+      });
+
+      const priorities: Record<string, any[]> = {};
+      const clients: Record<string, any[]> = {};
+
+      // Get start of today in UTC+8
+      const now = new Date();
+      const utc8Time = now.getTime() + (8 * 60 * 60 * 1000);
+      const utc8Date = new Date(utc8Time);
+      utc8Date.setUTCHours(0, 0, 0, 0);
+      const startOfTodayUtc8 = new Date(utc8Date.getTime() - (8 * 60 * 60 * 1000));
+
+      for (const task of activeTasks) {
+        // Only put TODAY's tasks in Priorities for Today
+        if (new Date(task.createdAt) >= startOfTodayUtc8) {
+          const assigneeNames = new Set<string>();
+          if (task.assignee) assigneeNames.add(task.assignee.name);
+          if (task.assignees && task.assignees.length > 0) {
+            task.assignees.forEach((a: any) => assigneeNames.add(a.name));
+          }
+
+          assigneeNames.forEach(name => {
+            if (!priorities[name]) priorities[name] = [];
+            priorities[name].push(task);
+          });
+        }
+
+        if (task.list) {
+          if (!clients[task.list.name]) clients[task.list.name] = [];
+          clients[task.list.name].push(task);
+        }
+      }
+
+      // Sort alphabetically
+      const sortedPriorities = Object.keys(priorities).sort().reduce((acc: any, key) => {
+        acc[key] = priorities[key];
+        return acc;
+      }, {});
+
+      const sortedClients = Object.keys(clients).sort().reduce((acc: any, key) => {
+        acc[key] = clients[key];
+        return acc;
+      }, {});
+
+      return res.json({ blocks: { priorities: sortedPriorities, clients: sortedClients } });
+    }
+
+    if (type === 'statuses') {
+      const groupedTasks = tasks.reduce((acc: any, task: any) => {
+        const status = task.status || 'Pending';
+        if (!acc[status]) acc[status] = [];
+        acc[status].push(task);
+        return acc;
+      }, {});
+      return res.json({ blocks: groupedTasks });
+    }
+
+    return res.json({ blocks: { 'New Tasks': tasks } });
+
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

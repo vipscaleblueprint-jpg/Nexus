@@ -8,7 +8,10 @@ import {
   moveTask,
   createAttachmentUrl,
   createTaskComment,
+  getTaskComments,
+  toggleCommentReaction,
   getTaskActivities,
+  getLiveBlocksData,
 } from '../controllers/task.controller';
 import { idParams, validate } from '../validation';
 import {
@@ -22,6 +25,7 @@ import { optionalAuthenticateToken } from '../middleware/auth.middleware';
 
 export const taskRouter = Router();
 
+taskRouter.get('/live-blocks', getLiveBlocksData);
 taskRouter.get('/', validate({ query: listTasksQuery }), listTasks);
 taskRouter.post('/', validate({ body: createTaskSchema }), createTask);
 
@@ -33,6 +37,8 @@ taskRouter.post(
   createAttachmentUrl
 );
 taskRouter.post('/:id/comments', validate({ params: idParams }), createTaskComment);
+taskRouter.get('/:id/comments', validate({ params: idParams }), getTaskComments);
+taskRouter.post('/:id/comments/:commentId/reactions', toggleCommentReaction);
 taskRouter.get('/:id/activities', validate({ params: idParams }), getTaskActivities);
 
 taskRouter.get('/:id', validate({ params: idParams }), getTask);

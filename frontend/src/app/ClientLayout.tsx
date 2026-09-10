@@ -59,6 +59,22 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('notification_received'));
     });
 
+    s.on('task_activity', () => {
+      window.dispatchEvent(new CustomEvent('task_activity'));
+    });
+
+    s.on('task:created', (task) => {
+      window.dispatchEvent(new CustomEvent('task:created', { detail: { task } }));
+    });
+
+    s.on('task:updated', (task) => {
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task } }));
+    });
+
+    s.on('task:deleted', ({ id }) => {
+      window.dispatchEvent(new CustomEvent('task:deleted', { detail: { id } }));
+    });
+
     return () => {
       s.disconnect();
     };

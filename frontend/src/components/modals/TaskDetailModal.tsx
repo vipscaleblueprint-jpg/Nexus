@@ -110,13 +110,22 @@ export function TaskDetailModal({
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: string; name: string }[]>([]);
 
+  // Comments with reactions + replies
+  const [richComments, setRichComments] = useState<any[]>([]);
+  const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [isSubmittingReply, setIsSubmittingReply] = useState(false);
+  const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
+
+  const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'];
+
   const markdownComponents = React.useMemo(() => ({
     a: (props: any) => {
       const { node, ...rest } = props;
       const href = rest.href || '';
       if (href.match(/\.(mp4|webm|ogg|mov)$/i)) {
         return (
-          <div className="mt-2 mb-2 inline-block">
+          <span className="mt-2 mb-2 inline-block">
             <video 
               src={href} 
               className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity bg-black/50"
@@ -125,12 +134,12 @@ export function TaskDetailModal({
                 setLightboxImage(href);
               }}
             ></video>
-          </div>
+          </span>
         );
       }
       if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
         return (
-          <div className="mt-2 mb-2 inline-block">
+          <span className="mt-2 mb-2 inline-block">
             <img 
               src={href} 
               alt="attachment" 
@@ -140,18 +149,30 @@ export function TaskDetailModal({
                 setLightboxImage(href);
               }}
             />
-          </div>
+          </span>
         );
       }
       if (href.startsWith('mention://')) {
-        return <span className="bg-indigo-500/20 text-indigo-400 font-medium px-1 rounded">{rest.children}</span>;
+        const userId = href.replace('mention://', '');
+        return (
+          <a 
+            href={`/profile/${userId}`} 
+            onClick={(e) => {
+              // Just a dummy action for now, usually navigates to user profile
+              e.stopPropagation();
+            }}
+            className="bg-blue-500/10 text-blue-400 hover:text-blue-300 font-medium px-1 rounded hover:underline cursor-pointer"
+          >
+            {rest.children}
+          </a>
+        );
       }
       return <a {...rest} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{rest.children}</a>;
     },
     img: (props: any) => {
       const { node, ...rest } = props;
       return (
-        <div className="mt-2 mb-2 inline-block">
+        <span className="mt-2 mb-2 inline-block">
           <img 
             {...rest}
             className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity" 
@@ -160,7 +181,7 @@ export function TaskDetailModal({
               setLightboxImage(rest.src);
             }}
           />
-        </div>
+        </span>
       );
     }
   }), []);
@@ -190,16 +211,48 @@ export function TaskDetailModal({
     if (!task?.id) return;
     try {
       setLoadingActivities(true);
-      const res = await tasksApi.getActivities(task.id);
-      if (res?.activities) {
-        setActivities(res.activities);
-      }
+      const [actRes, commentRes] = await Promise.all([
+        tasksApi.getActivities(task.id),
+        tasksApi.getComments(task.id),
+      ]);
+      if (actRes?.activities) setActivities(actRes.activities);
+      if (commentRes?.comments) setRichComments(commentRes.comments);
     } catch (err) {
       console.error('Failed to load task activities:', err);
     } finally {
       setLoadingActivities(false);
     }
   }, [task?.id]);
+
+  const handleToggleReaction = async (commentId: string, emoji: string) => {
+    if (!task?.id || !currentUser?.id) return;
+    try {
+      const res = await tasksApi.toggleCommentReaction(task.id, commentId, emoji, currentUser.id);
+      setRichComments(prev => prev.map(c => {
+        if (c.id === commentId) return { ...c, reactions: res.reactions };
+        // also check replies
+        return { ...c, replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, reactions: res.reactions } : r) };
+      }));
+      setShowEmojiPickerFor(null);
+    } catch (err) { console.error('Reaction failed:', err); }
+  };
+
+  const handleSubmitReply = async (parentCommentId: string) => {
+    if (!replyText.trim() || !task?.id || !currentUser?.id || isSubmittingReply) return;
+    setIsSubmittingReply(true);
+    try {
+      await tasksApi.addComment(task.id, replyText.trim(), currentUser.id, undefined, [], parentCommentId);
+      setReplyText('');
+      setReplyingToId(null);
+      // Refresh comments
+      const res = await tasksApi.getComments(task.id);
+      if (res?.comments) setRichComments(res.comments);
+    } catch (err) { 
+      console.error('Reply failed:', err); 
+    } finally {
+      setIsSubmittingReply(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen && task?.id) {
@@ -591,9 +644,9 @@ export function TaskDetailModal({
           if (prev.some(a => a.id === res.activity.id)) return prev;
           return [...prev, res.activity];
         });
-      } else {
-        loadActivities();
       }
+      // Always reload to get fresh richComments + reactions
+      loadActivities();
     } catch (err: any) {
       toast.error(err.message || 'Failed to post comment');
     } finally {
@@ -1095,50 +1148,133 @@ export function TaskDetailModal({
                         </>
                       )}
 
-                      {/* Render comments ALWAYS visible at the bottom */}
-                      {comments.map(act => {
-                        const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                        return (
-                          <div key={act.id} className="flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm">
-                            <div className="flex items-center gap-3 w-full">
-                              <div className="w-8 h-8 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center text-white text-[11px] font-bold">
-                                {(act.author || 'U').charAt(0).toUpperCase()}
+                      {/* Rich comments with reactions + replies */}
+                      {richComments.map(c => {
+                        const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        // Group reactions by emoji
+                        const reactionGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
+                        (c.reactions || []).forEach((r: any) => {
+                          if (!reactionGroups[r.emoji]) reactionGroups[r.emoji] = { count: 0, users: [], hasMe: false };
+                          reactionGroups[r.emoji].count++;
+                          reactionGroups[r.emoji].users.push(r.user?.name || '?');
+                          if (r.userId === currentUser?.id) reactionGroups[r.emoji].hasMe = true;
+                        });
+
+                        const renderComment = (comment: any, isReply = false) => {
+                          const cTimeStr = new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                          const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
+                          (comment.reactions || []).forEach((r: any) => {
+                            if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
+                            cGroups[r.emoji].count++;
+                            cGroups[r.emoji].users.push(r.user?.name || '?');
+                            if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
+                          });
+                          return (
+                            <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-[#1a1a1e]' : ''}`}>
+                              <div className="flex items-center gap-3 w-full">
+                                {comment.user?.avatarUrl ? (
+                                  <img src={comment.user.avatarUrl} alt={comment.user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center text-white text-[11px] font-bold">
+                                    {(comment.user?.name || 'U').charAt(0).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="flex-1 flex items-center gap-2">
+                                  <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
+                                  <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
+                                </div>
                               </div>
-                              <div className="flex-1 flex items-center gap-2">
-                                <span className="text-zinc-200 font-medium text-[13px]">{act.author || 'Someone'}</span>
-                                <span className="text-[11px] text-zinc-500">{new Date(act.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {timeStr}</span>
+                              <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
+                                  {(() => {
+                                    let text = comment.content || '';
+                                    dbUsers.forEach(u => {
+                                      if (text.includes(`@${u.name}`)) {
+                                        text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
+                                      }
+                                    });
+                                    return text;
+                                  })()}
+                                </ReactMarkdown>
                               </div>
+                              {/* Reaction pills */}
+                              {Object.keys(cGroups).length > 0 && (
+                                <div className="flex flex-wrap gap-1 pl-11">
+                                  {Object.entries(cGroups).map(([emoji, data]) => (
+                                    <button
+                                      key={emoji}
+                                      title={data.users.join(', ')}
+                                      onClick={() => handleToggleReaction(comment.id, emoji)}
+                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
+                                    >
+                                      {emoji} <span className="font-medium">{data.count}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {/* Action row */}
+                              <div className="flex items-center gap-1 mt-1 pl-11 relative">
+                                <button
+                                  onClick={() => handleToggleReaction(comment.id, '👍')}
+                                  className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                  title="Like"
+                                >
+                                  <ThumbsUp className="w-3.5 h-3.5" />
+                                </button>
+                                <div className="relative">
+                                  <button
+                                    onClick={() => setShowEmojiPickerFor(showEmojiPickerFor === comment.id ? null : comment.id)}
+                                    className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
+                                    title="React"
+                                  >
+                                    <SmilePlus className="w-3.5 h-3.5" />
+                                  </button>
+                                  {showEmojiPickerFor === comment.id && (
+                                    <div className="absolute bottom-8 left-0 bg-[#202024] border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
+                                      {QUICK_EMOJIS.map(e => (
+                                        <button key={e} onClick={() => handleToggleReaction(comment.id, e)} className="text-lg hover:scale-125 cursor-pointer transition-transform p-0.5">
+                                          {e}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                {!isReply && (
+                                  <button
+                                    onClick={() => setReplyingToId(replyingToId === comment.id ? null : comment.id)}
+                                    className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
+                                  >
+                                    <MessageSquare className="w-3 h-3" /> Reply {comment.replyCount > 0 && `(${comment.replyCount})`}
+                                  </button>
+                                )}
+                              </div>
+                              {/* Reply input */}
+                              {!isReply && replyingToId === comment.id && (
+                                <div className="pl-11 flex gap-2 mt-1">
+                                  <input
+                                    value={replyText}
+                                    onChange={e => setReplyText(e.target.value)}
+                                    disabled={isSubmittingReply}
+                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); }}}
+                                    placeholder="Write a reply..."
+                                    className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
+                                  />
+                                  <button onClick={() => handleSubmitReply(comment.id)} disabled={isSubmittingReply || !replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
+                                    <Send className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                              {/* Replies */}
+                              {!isReply && comment.replies?.length > 0 && (
+                                <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800">
+                                  {comment.replies.map((r: any) => renderComment(r, true))}
+                                </div>
+                              )}
                             </div>
-                            <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                              <ReactMarkdown 
-                                remarkPlugins={[remarkGfm]} 
-                                rehypePlugins={[rehypeRaw]}
-                                components={markdownComponents}
-                              >
-                                {(() => {
-                                  let text = act.text || '';
-                                  dbUsers.forEach(u => {
-                                    if (text.includes(`@${u.name}`)) {
-                                      text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
-                                    }
-                                  });
-                                  return text;
-                                })()}
-                              </ReactMarkdown>
-                            </div>
-                            <div className="flex items-center gap-3 mt-1 pl-11">
-                              <button className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-800/80 text-zinc-500 hover:text-zinc-300 transition-colors">
-                                <ThumbsUp className="w-3.5 h-3.5" />
-                              </button>
-                              <button className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-800/80 text-zinc-500 hover:text-zinc-300 transition-colors">
-                                <SmilePlus className="w-3.5 h-3.5" />
-                              </button>
-                              <button className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-800/80 text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1">
-                                <MessageSquare className="w-3 h-3" /> Reply
-                              </button>
-                            </div>
-                          </div>
-                        );
+                          );
+                        };
+
+                        return renderComment(c);
                       })}
                     </>
                   );

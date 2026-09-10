@@ -41,15 +41,39 @@ export const tasksApi = {
     });
   },
 
-  async addComment(taskId: string, content: string, userId: string, listId?: string, mentionedUserIds?: string[]): Promise<{ comment: any; activity?: any }> {
+  async getComments(id: string): Promise<{ comments: any[] }> {
+    return apiClient<{ comments: any[] }>(`/api/tasks/${id}/comments`, {
+      method: 'GET',
+    });
+  },
+
+  async addComment(taskId: string, content: string, userId: string, listId?: string, mentionedUserIds?: string[], parentCommentId?: string): Promise<{ comment: any; activity?: any }> {
     return apiClient<{ comment: any; activity?: any }>(`/api/tasks/${taskId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ content, userId, listId, mentionedUserIds }),
+      body: JSON.stringify({ content, userId, listId, mentionedUserIds, parentCommentId }),
+    });
+  },
+
+  async toggleCommentReaction(taskId: string, commentId: string, emoji: string, userId: string): Promise<{ reactions: any[]; toggled: string }> {
+    return apiClient<{ reactions: any[]; toggled: string }>(`/api/tasks/${taskId}/comments/${commentId}/reactions`, {
+      method: 'POST',
+      body: JSON.stringify({ emoji, userId }),
     });
   },
 
   async getActivities(id: string): Promise<{ activities: any[]; taskCreatedAt?: string; creator?: any }> {
     return apiClient<{ activities: any[]; taskCreatedAt?: string; creator?: any }>(`/api/tasks/${id}/activities`, {
+      method: 'GET',
+    });
+  },
+
+  async getLiveBlocksData(type: string, assigneeName?: string, reportDate?: string, listId?: string): Promise<{ blocks: Record<string, Task[]> }> {
+    const params = new URLSearchParams();
+    if (type) params.append('type', type);
+    if (assigneeName) params.append('assigneeName', assigneeName);
+    if (reportDate) params.append('reportDate', reportDate);
+    if (listId) params.append('listId', listId);
+    return apiClient<{ blocks: Record<string, Task[]> }>(`/api/tasks/live-blocks?${params.toString()}`, {
       method: 'GET',
     });
   },

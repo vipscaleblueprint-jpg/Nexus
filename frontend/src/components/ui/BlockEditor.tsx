@@ -4,10 +4,15 @@ import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import TextStyle from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
+import TaskItem from '@tiptap/extension-task-item';
+import TaskList from '@tiptap/extension-task-list';
+import { TaskMention } from '../editor/extensions/TaskMention';
+import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
+import { taskSuggestion } from '../editor/suggestions/taskSuggestion';
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
-  List, ListOrdered, Palette, X
+  List, ListOrdered, Palette, X, CheckSquare
 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
@@ -17,21 +22,31 @@ interface BlockEditorProps {
   onBlur: () => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
   autoFocus?: boolean;
+  editable?: boolean;
 }
 
-export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus }: BlockEditorProps) {
+export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, editable = true }: BlockEditorProps) {
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const editor = useEditor({
+    editable,
     immediatelyRender: false,
     extensions: [
       StarterKit,
       Underline,
       TextStyle,
       Color,
+      TaskList,
+      TaskItem.configure({
+        nested: true,
+      }),
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),
+      TaskMention.configure({
+        suggestion: taskSuggestion,
+      }),
+      LiveKanbanBlock,
     ],
     content: content || '',
     onUpdate: ({ editor }) => {
@@ -83,6 +98,88 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus }:
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const STATUS_COLORS: Record<string, string> = {
+      'KYC': '#06b6d4',
+      'Pin Board': '#06b6d4',
+      'Daily': '#a855f7',
+      'Weekly': '#a855f7',
+      'Monthly': '#a855f7',
+      'Pending': '#6366f1',
+      'In Progress': '#eab308',
+      'Revision': '#6366f1',
+      'Waiting': '#f97316',
+      'In Review': '#6366f1',
+      'Checking': '#6366f1',
+      'On-Hold': '#ef4444',
+      'Closed': '#10b981',
+    };
+    const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
+
+    const handleTaskUpdated = (e: any) => {
+      const task = e.detail?.task;
+      if (!task) return;
+
+      const { state, view } = editor;
+      const { tr } = state;
+      let modified = false;
+
+      state.doc.descendants((node, pos) => {
+        if (node.type.name === 'mention' && node.attrs.id === task.id) {
+          tr.setNodeMarkup(pos, null, {
+            ...node.attrs,
+            label: task.title,
+            taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
+            taskAssignees: JSON.stringify(task.assignees || []),
+            taskPriority: task.priority || '',
+            taskDueDate: task.dueDate || ''
+          });
+          modified = true;
+        }
+      });
+
+      if (modified) {
+        view.dispatch(tr);
+      }
+    };
+
+    const handleTaskDeleted = (e: any) => {
+      const id = e.detail?.id;
+      if (!id) return;
+
+      const { state, view } = editor;
+      const { tr } = state;
+      let modified = false;
+
+      const positions: number[] = [];
+      const nodeSizes: number[] = [];
+      
+      state.doc.descendants((node, pos) => {
+        if (node.type.name === 'mention' && node.attrs.id === id) {
+          positions.push(pos);
+          nodeSizes.push(node.nodeSize);
+        }
+      });
+
+      for (let i = positions.length - 1; i >= 0; i--) {
+        tr.delete(positions[i], positions[i] + nodeSizes[i]);
+        modified = true;
+      }
+
+      if (modified) {
+        view.dispatch(tr);
+      }
+    };
+
+    window.addEventListener('task:updated', handleTaskUpdated);
+
+    return () => {
+      window.removeEventListener('task:updated', handleTaskUpdated);
+    };
+  }, [editor]);
 
   if (!editor) {
     return <div className="flex-1 min-w-0 min-h-[24px]" />;
@@ -171,6 +268,13 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus }:
           title="Numbered List"
         >
           <ListOrdered className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => editor.chain().focus().toggleTaskList().run()}
+          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('taskList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+          title="Task List"
+        >
+          <CheckSquare className="w-3.5 h-3.5" />
         </button>
         
         <div className="w-px h-4 bg-zinc-700 mx-1" />

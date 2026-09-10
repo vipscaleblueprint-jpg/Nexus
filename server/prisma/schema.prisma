@@ -141,6 +141,7 @@ model User {
   notifications       MessageNotification[]
   taskNotifications   TaskNotification[]    @relation("UserNotification")
   taskNotificationsSent TaskNotification[]  @relation("ActorNotification")
+  taskCommentReactions  TaskCommentReaction[]
   pinnedMessages      Message[]             @relation("MessagePinnedBy")
   createdChannels     Channel[]             @relation("ChannelCreatedBy")
   sentInvitations     Invitation[]          @relation("UserInvitations")
@@ -224,13 +225,15 @@ model ListStatus {
 }
 
 model Doc {
-  id        String   @id @default(uuid())
-  title     String
-  docDate   DateTime @default(now())
-  spaceId   String?
-  folderId  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String   @id @default(uuid())
+  title            String
+  docDate          DateTime @default(now())
+  spaceId          String?
+  folderId         String?
+  isDailyRollover  Boolean  @default(false)
+  rolloverTimezone String   @default("Asia/Singapore")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   space  Space?  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   folder Folder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
@@ -246,6 +249,8 @@ model Page {
   content      String   @default("")
   docId        String
   parentPageId String?
+  isClosed     Boolean  @default(false)
+  reportDate   DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -255,6 +260,7 @@ model Page {
 
   @@index([docId])
   @@index([parentPageId])
+  @@index([reportDate])
 }
 
 // -----------------------------------------------------------------------------
@@ -354,16 +360,37 @@ model ChecklistItem {
 }
 
 model TaskComment {
-  id        String   @id @default(uuid())
-  content   String
-  taskId    String
-  userId    String
-  createdAt DateTime @default(now())
+  id              String   @id @default(uuid())
+  content         String
+  taskId          String
+  userId          String
+  parentCommentId String?
+  replyCount      Int      @default(0)
+  createdAt       DateTime @default(now())
 
-  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attachments Attachment[]
+  task          Task                    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attachments   Attachment[]
+  reactions     TaskCommentReaction[]
+  parentComment TaskComment?            @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies       TaskComment[]           @relation("CommentReplies")
 
   @@index([taskId])
+  @@index([userId])
+  @@index([parentCommentId])
+}
+
+model TaskCommentReaction {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  comment TaskComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@index([commentId])
   @@index([userId])
 }
 

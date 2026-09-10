@@ -22,9 +22,21 @@ import { uploadRouter } from './routes/upload.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
+import { dailyRolloverQueue } from './queues/dailyRollover.queue';
+import './workers/dailyRollover.worker';
 
 const app = express();
 const server = http.createServer(app);
+
+// Initialize daily rollover cron job
+(async () => {
+  await dailyRolloverQueue.add('checkRollovers', {}, {
+    repeat: {
+      pattern: '0 0 * * *', // Every day at midnight
+      tz: 'Asia/Singapore'
+    }
+  });
+})();
 
 // Hocuspocus WebSocket Server for Collaborative Editing
 const hocuspocus = new Hocuspocus();

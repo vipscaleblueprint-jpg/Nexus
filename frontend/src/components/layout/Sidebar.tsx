@@ -592,9 +592,10 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
               <button onClick={() => onAction('delete', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
             </ActionMenu>
           )}
-          <ActionMenu>
+          <ActionMenu icon={<Plus className="size-3.5" />}>
             <button onClick={(e) => { e.stopPropagation(); onAddFolder(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>
             <button onClick={(e) => { e.stopPropagation(); onAddDoc(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Doc</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddList(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><ListIcon className="size-3.5 text-cyan-400" />Board</button>
           </ActionMenu>
         </div>
       </div>
@@ -636,6 +637,11 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
           <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
             <button onClick={() => onAction('rename', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
             <button onClick={() => onAction('delete', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
+          </ActionMenu>
+          <ActionMenu icon={<Plus className="size-3.5" />}>
+            <button onClick={(e) => { e.stopPropagation(); onAddFolder(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddDoc(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Doc</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddList(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><ListIcon className="size-3.5 text-cyan-400" />Board</button>
           </ActionMenu>
         </div>
       </div>

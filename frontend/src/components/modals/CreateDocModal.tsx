@@ -39,6 +39,7 @@ export function CreateDocModal({
   const [title, setTitle] = useState('');
   const [spaceId, setSpaceId] = useState<string>(defaultSpaceId || '');
   const [folderId, setFolderId] = useState<string>(defaultFolderId || '');
+  const [isDailyRollover, setIsDailyRollover] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +49,7 @@ export function CreateDocModal({
     if (defaultSpaceId) setSpaceId(defaultSpaceId);
     if (defaultFolderId) setFolderId(defaultFolderId);
     setTitle('');
+    setIsDailyRollover(false);
     setError(null);
   }, [isOpen, defaultSpaceId, defaultFolderId]);
 
@@ -67,9 +69,11 @@ export function CreateDocModal({
         title: title.trim(),
         spaceId: spaceId && spaceId !== 'root-space' ? spaceId : undefined,
         folderId: folderId || undefined,
+        isDailyRollover
       });
       setLoading(false);
       setTitle('');
+      setIsDailyRollover(false);
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -155,6 +159,22 @@ export function CreateDocModal({
               </select>
             </div>
           )}
+
+          <div className="flex items-center gap-3 bg-zinc-900/50 p-3 rounded-xl border border-zinc-700/50">
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isDailyRollover}
+                onChange={(e) => setIsDailyRollover(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-500"></div>
+            </label>
+            <div>
+              <p className="text-xs font-semibold text-zinc-200">Daily Auto Rollover</p>
+              <p className="text-[10px] text-zinc-400">Automatically creates a new daily page (UTC+8) and transfers active content.</p>
+            </div>
+          </div>
 
           <div className="pt-2 flex justify-end gap-2">
             <button

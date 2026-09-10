@@ -332,13 +332,14 @@ export async function deleteFolder(req: Request, res: Response) {
 // POST /api/spaces/docs (Doc container for Pages)
 export async function createDoc(req: Request, res: Response) {
   try {
-    const { title, docDate, spaceId, folderId } = req.body;
+    const { title, docDate, spaceId, folderId, isDailyRollover } = req.body;
     const doc = await prisma.doc.create({
       data: {
         title,
         docDate: docDate ? new Date(docDate) : new Date(),
         spaceId: spaceId || null,
         folderId: folderId || null,
+        isDailyRollover: isDailyRollover || false,
       },
     });
     await invalidateCache('spaces:all', 'dashboard:all');

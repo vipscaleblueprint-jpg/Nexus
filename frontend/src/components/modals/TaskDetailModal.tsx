@@ -100,6 +100,7 @@ export function TaskDetailModalContent({
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [localDescription, setLocalDescription] = useState(task?.description || '');
+  const [localTitle, setLocalTitle] = useState(task?.title || '');
   const [isActivityExpanded, setIsActivityExpanded] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -279,6 +280,25 @@ export function TaskDetailModalContent({
   useEffect(() => {
     setLocalDescription(task?.description || '');
   }, [task?.description]);
+
+  // Keep localTitle in sync with task prop changes
+  useEffect(() => {
+    setLocalTitle(task?.title || '');
+  }, [task?.title]);
+
+  const handleTitleBlur = () => {
+    const trimmed = localTitle.trim();
+    if (!trimmed) { setLocalTitle(task?.title || ''); return; }
+    if (trimmed !== task?.title && task) {
+      tasksApi.updateTask(task.id, {
+        title: trimmed,
+        currentListId: task.listId,
+        userId: currentUser?.id,
+      }).catch(err => console.error('Failed to save title:', err));
+      if (onUpdateTask) onUpdateTask({ ...task, title: trimmed });
+    }
+  };
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleDescChange = (html: string) => {
@@ -726,7 +746,14 @@ export function TaskDetailModalContent({
           <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
             <div className="p-8">
               
-              <h1 className="text-2xl font-bold text-zinc-100 mb-8">{task.title}</h1>
+              <input
+                type="text"
+                value={localTitle}
+                onChange={(e) => setLocalTitle(e.target.value)}
+                onBlur={handleTitleBlur}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                className="text-2xl font-bold text-zinc-100 mb-8 bg-transparent border-b border-transparent hover:border-zinc-700 focus:border-zinc-500 focus:outline-none w-full transition-colors cursor-text rounded-sm px-0.5"
+              />
               
               {/* Properties Grid */}
               <div className="flex flex-col gap-5 mb-10 w-full max-w-sm">

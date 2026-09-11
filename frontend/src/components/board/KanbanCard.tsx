@@ -1,5 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { memo, useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
 import { CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil } from 'lucide-react';
@@ -19,9 +20,49 @@ interface Props {
   moveLockReason?: string;
 }
 
+// Renders a dropdown via portal so it escapes overflow-hidden columns
+function PortalDropdown({ triggerRef, children, onClose }: { triggerRef: React.RefObject<HTMLElement | null>; children: React.ReactNode; onClose: () => void }) {
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setCoords({ top: rect.bottom + window.scrollY + 4, left: rect.left + window.scrollX });
+    }
+
+    const close = (e: MouseEvent) => {
+      if (triggerRef.current && !triggerRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  if (!coords || typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      className="fixed bg-zinc-800 border border-zinc-700 rounded-lg shadow-2xl z-[9999] p-1"
+      style={{ top: coords.top, left: coords.left }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+}
+
 const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void }) => {
   const [isDescOpen, setIsDescOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'status'|'assignee'|'date'|'priority'|null>(null);
+  const statusTriggerRef = useRef<HTMLDivElement>(null);
+  const assigneeTriggerRef = useRef<HTMLDivElement>(null);
+  const dateTriggerRef = useRef<HTMLDivElement>(null);
+  const priorityTriggerRef = useRef<HTMLDivElement>(null);
+  const descTriggerRef = useRef<HTMLDivElement>(null);
+
+  const closeDropdown = () => setOpenDropdown(null);
 
   useEffect(() => {
     onDropdownOpenChange?.(openDropdown !== null);
@@ -79,24 +120,20 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
       {/* Description Icon */}
       {plainTextDescription && (
         <div className="mt-2 relative inline-flex">
-          <div 
+          <div
+            ref={descTriggerRef}
             className="flex items-center text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 p-1 -ml-1 rounded cursor-pointer transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsDescOpen(!isDescOpen);
-            }}
+            onClick={(e) => { e.stopPropagation(); setIsDescOpen(!isDescOpen); }}
           >
             <AlignLeft className="w-3.5 h-3.5" />
           </div>
-          
           {isDescOpen && (
-            <div 
-              className="absolute left-0 top-full mt-1 w-64 p-3 bg-zinc-800 border border-zinc-700 text-zinc-300 text-[11px] rounded-lg shadow-xl z-50 origin-top-left"
-              onClick={(e) => e.stopPropagation()}
-            >
-               <div className="font-semibold mb-1.5 text-xs text-zinc-100">Deliverables:</div>
-               <div className="line-clamp-6 leading-relaxed">{plainTextDescription}</div>
-            </div>
+            <PortalDropdown triggerRef={descTriggerRef} onClose={() => setIsDescOpen(false)}>
+              <div className="w-64 p-3">
+                <div className="font-semibold mb-1.5 text-xs text-zinc-100">Deliverables:</div>
+                <div className="line-clamp-6 leading-relaxed text-zinc-300 text-[11px]">{plainTextDescription}</div>
+              </div>
+            </PortalDropdown>
           )}
         </div>
       )}
@@ -104,7 +141,8 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
       <div className="flex flex-col gap-0.5 mt-2.5">
         {/* Status */}
         <div className="relative">
-          <div 
+          <div
+            ref={statusTriggerRef}
             className={`${fieldHoverClass} text-zinc-300`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >
@@ -116,14 +154,16 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
             <span className="uppercase font-semibold">{statusStr}</span>
           </div>
           {openDropdown === 'status' && (
-            <div className="absolute left-0 top-full mt-1 w-36 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-1" onClick={e => e.stopPropagation()}>
-               <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Change Status</div>
-               {['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
-                 <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium" onClick={() => setOpenDropdown(null)}>
-                   {s}
-                 </div>
-               ))}
-            </div>
+            <PortalDropdown triggerRef={statusTriggerRef} onClose={closeDropdown}>
+              <div className="w-36">
+                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Change Status</div>
+                {['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
+                  <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium" onClick={closeDropdown}>
+                    {s}
+                  </div>
+                ))}
+              </div>
+            </PortalDropdown>
           )}
         </div>
 
@@ -137,7 +177,8 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
 
         {/* Assignees */}
         <div className="relative">
-          <div 
+          <div
+            ref={assigneeTriggerRef}
             className={`${fieldHoverClass} text-zinc-400`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
           >
@@ -161,16 +202,19 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
             )}
           </div>
           {openDropdown === 'assignee' && (
-            <div className="absolute left-0 top-full mt-1 w-48 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-1" onClick={e => e.stopPropagation()}>
-               <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Assign To</div>
-               <div className="px-2 py-2 text-xs text-zinc-400 italic">User list would appear here...</div>
-            </div>
+            <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
+              <div className="w-48">
+                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Assign To</div>
+                <div className="px-2 py-2 text-xs text-zinc-400 italic">User list would appear here...</div>
+              </div>
+            </PortalDropdown>
           )}
         </div>
 
         {/* Due Date */}
         <div className="relative">
-          <div 
+          <div
+            ref={dateTriggerRef}
             className={`${fieldHoverClass} text-zinc-400`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
           >
@@ -180,16 +224,19 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
             </span>
           </div>
           {openDropdown === 'date' && (
-            <div className="absolute left-0 top-full mt-1 w-48 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-3" onClick={e => e.stopPropagation()}>
-               <div className="text-[11px] text-zinc-500 font-semibold uppercase mb-2">Set Due Date</div>
-               <div className="text-xs text-zinc-400 italic">Date picker would appear here...</div>
-            </div>
+            <PortalDropdown triggerRef={dateTriggerRef} onClose={closeDropdown}>
+              <div className="w-48 p-2">
+                <div className="text-[11px] text-zinc-500 font-semibold uppercase mb-2">Set Due Date</div>
+                <div className="text-xs text-zinc-400 italic">Date picker would appear here...</div>
+              </div>
+            </PortalDropdown>
           )}
         </div>
 
         {/* Priority */}
         <div className="relative">
-          <div 
+          <div
+            ref={priorityTriggerRef}
             className={`${fieldHoverClass} text-zinc-400`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           >
@@ -197,17 +244,19 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
             <span>{('priority' in task && task.priority) ? task.priority : '-'}</span>
           </div>
           {openDropdown === 'priority' && (
-            <div className="absolute left-0 top-full mt-1 w-32 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-1" onClick={e => e.stopPropagation()}>
-               <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Set Priority</div>
-               {Object.keys(PRIORITY_COLORS).map(p => (
-                 <div key={p} className={`px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={() => setOpenDropdown(null)}>
-                   {p}
-                 </div>
-               ))}
-               <div className="px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-400" onClick={() => setOpenDropdown(null)}>
-                 CLEAR
-               </div>
-            </div>
+            <PortalDropdown triggerRef={priorityTriggerRef} onClose={closeDropdown}>
+              <div className="w-32">
+                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Set Priority</div>
+                {Object.keys(PRIORITY_COLORS).map(p => (
+                  <div key={p} className={`px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={closeDropdown}>
+                    {p}
+                  </div>
+                ))}
+                <div className="px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-400" onClick={closeDropdown}>
+                  CLEAR
+                </div>
+              </div>
+            </PortalDropdown>
           )}
         </div>
         

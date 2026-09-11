@@ -880,14 +880,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
           )}
         </div>
 
-        {!addingSubtask && localSubtasks.length > 0 && (
-          <button
-            onClick={() => setAddingSubtask(true)}
-            className="mt-3 text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1"
-          >
-            <Plus className="w-3.5 h-3.5" /> Add subtask
-          </button>
-        )}
+
       </div>
 
     </>

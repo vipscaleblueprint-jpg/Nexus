@@ -806,11 +806,9 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
         title: newSubtaskTitle.trim(),
         priority: 'MEDIUM',
       });
-      setLocalSubtasks(prev => {
-        const updated = [...prev, subtask];
-        onUpdateTask({ ...task, subtasks: updated });
-        return updated;
-      });
+      const updated = [...localSubtasks, subtask];
+      setLocalSubtasks(updated);
+      onUpdateTask({ ...task, subtasks: updated });
       setNewSubtaskTitle('');
       setAddingSubtask(false);
       setShowAllSubtasks(true); // Auto-expand when adding a new subtask

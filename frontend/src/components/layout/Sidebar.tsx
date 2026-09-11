@@ -676,9 +676,17 @@ function PageTreeItem({ page, onAction }: {
   const hasSubpages = page.subpages && page.subpages.length > 0;
   return (
     <div className="space-y-px">
-      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="flex items-center gap-2 rounded-md px-2 py-0.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
-        <FileText className="size-3 text-emerald-400 shrink-0 opacity-80" />
-        <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1"><span className="truncate">{page.title}</span></Link>
+      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="group flex items-center justify-between rounded-md px-2 py-0.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
+        <div className="flex items-center gap-2 truncate flex-1">
+          <FileText className="size-3 text-emerald-400 shrink-0 opacity-80" />
+          <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1"><span className="truncate">{page.title}</span></Link>
+        </div>
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0" onClick={(e) => e.stopPropagation()}>
+          <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
+            <button onClick={() => onAction('rename', 'page', page.id, page.title)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
+            <button onClick={() => onAction('delete', 'page', page.id, page.title)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
+          </ActionMenu>
+        </div>
       </div>
       {isOpen && hasSubpages && (
         <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-2 space-y-px">

@@ -59,7 +59,6 @@ export async function getList(req: Request, res: Response) {
             creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
             subtasks: { 
               include: { 
-                assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
                 checklists: { select: { id: true, items: { select: { id: true, completed: true } } } }
               } 
             },

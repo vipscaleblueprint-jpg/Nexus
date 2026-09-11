@@ -1,7 +1,14 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 
 // Loaded here so every module that reads env vars gets them, regardless of import order.
-dotenv.config();
+const envLocalPath = path.resolve(process.cwd(), '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  dotenv.config({ path: envLocalPath });
+} else {
+  dotenv.config();
+}
 
 /**
  * Reads a required environment variable.

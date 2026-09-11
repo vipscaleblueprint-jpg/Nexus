@@ -771,9 +771,17 @@ export default function DocPage() {
           <h2 className="text-base font-bold text-zinc-100 group-hover:text-white transition-colors truncate">{doc?.title || 'Priorities for Today'}</h2>
         </div>
 
-        <div className="flex items-center justify-between mb-2 px-1">
+        <div className="flex items-center justify-between mb-2 px-1 group/pages-header">
           <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Pages</span>
-          <span className="text-[10px] text-zinc-600 font-mono">{totalPages}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-zinc-600 font-mono group-hover/pages-header:hidden">{totalPages}</span>
+            <div className="hidden group-hover/pages-header:flex items-center justify-center transition-colors">
+              <ActionMenu icon={<Plus className="size-4 cursor-pointer rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 p-0.5" />}>
+                <button onClick={(e) => { e.stopPropagation(); handleCreatePage(); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Folder className="size-3.5 text-amber-400" />Folder</button>
+                <button onClick={(e) => { e.stopPropagation(); handleCreatePage(); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Page</button>
+              </ActionMenu>
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 space-y-1">

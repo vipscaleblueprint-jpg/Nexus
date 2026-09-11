@@ -41,16 +41,17 @@ export const tasksApi = {
     });
   },
 
-  async getComments(id: string): Promise<{ comments: any[] }> {
-    return apiClient<{ comments: any[] }>(`/api/tasks/${id}/comments`, {
+  async getComments(id: string, subtaskId?: string): Promise<{ comments: any[] }> {
+    const url = subtaskId ? `/api/tasks/${id}/comments?subtaskId=${subtaskId}` : `/api/tasks/${id}/comments`;
+    return apiClient<{ comments: any[] }>(url, {
       method: 'GET',
     });
   },
 
-  async addComment(taskId: string, content: string, userId: string, listId?: string, mentionedUserIds?: string[], parentCommentId?: string): Promise<{ comment: any; activity?: any }> {
+  async addComment(taskId: string, content: string, userId: string, listId?: string, mentionedUserIds?: string[], parentCommentId?: string, subtaskId?: string): Promise<{ comment: any; activity?: any }> {
     return apiClient<{ comment: any; activity?: any }>(`/api/tasks/${taskId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ content, userId, listId, mentionedUserIds, parentCommentId }),
+      body: JSON.stringify({ content, userId, listId, mentionedUserIds, parentCommentId, subtaskId }),
     });
   },
 
@@ -75,6 +76,26 @@ export const tasksApi = {
     if (listId) params.append('listId', listId);
     return apiClient<{ blocks: Record<string, Task[]> }>(`/api/tasks/live-blocks?${params.toString()}`, {
       method: 'GET',
+    });
+  },
+
+  async createSubtask(taskId: string, data: Partial<any>): Promise<{ subtask: any }> {
+    return apiClient<{ subtask: any }>(`/api/tasks/${taskId}/subtasks`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateSubtask(taskId: string, subtaskId: string, data: Partial<any>): Promise<{ subtask: any }> {
+    return apiClient<{ subtask: any }>(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteSubtask(taskId: string, subtaskId: string): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+      method: 'DELETE',
     });
   },
 };

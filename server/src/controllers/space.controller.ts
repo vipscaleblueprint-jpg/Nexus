@@ -2,6 +2,62 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
 
+function collectAllLists(spaces: any[]): { list: any; spaceName?: string; folderName?: string }[] {
+  const result: { list: any; spaceName?: string; folderName?: string }[] = [];
+
+  function processFolders(folders: any[], spaceName?: string, parentFolderName?: string) {
+    folders.forEach((f) => {
+      const currentFolderName = parentFolderName ? `${parentFolderName} / ${f.name}` : f.name;
+      if (f.lists) {
+        f.lists.forEach((l: any) => result.push({ list: l, spaceName, folderName: currentFolderName }));
+      }
+      if (f.subfolders) {
+        processFolders(f.subfolders, spaceName, currentFolderName);
+      }
+    });
+  }
+
+  spaces.forEach((s) => {
+    const effectiveSpaceName = s.id === 'root-space' ? undefined : s.name;
+    if (s.lists) {
+      s.lists.forEach((l: any) => result.push({ list: l, spaceName: effectiveSpaceName }));
+    }
+    if (s.folders) {
+      processFolders(s.folders, effectiveSpaceName);
+    }
+  });
+
+  return result;
+}
+
+function collectAllDocs(spaces: any[]): { doc: any; spaceName?: string; folderName?: string }[] {
+  const result: { doc: any; spaceName?: string; folderName?: string }[] = [];
+
+  function processFolders(folders: any[], spaceName?: string, parentFolderName?: string) {
+    folders.forEach((f) => {
+      const currentFolderName = parentFolderName ? `${parentFolderName} / ${f.name}` : f.name;
+      if (f.docs) {
+        f.docs.forEach((d: any) => result.push({ doc: d, spaceName, folderName: currentFolderName }));
+      }
+      if (f.subfolders) {
+        processFolders(f.subfolders, spaceName, currentFolderName);
+      }
+    });
+  }
+
+  spaces.forEach((s) => {
+    const effectiveSpaceName = s.id === 'root-space' ? undefined : s.name;
+    if (s.docs) {
+      s.docs.forEach((d: any) => result.push({ doc: d, spaceName: effectiveSpaceName }));
+    }
+    if (s.folders) {
+      processFolders(s.folders, effectiveSpaceName);
+    }
+  });
+
+  return result;
+}
+
 // Helper for recursive folder inclusion
 const folderIncludeConfig: any = {
   orderBy: { createdAt: 'asc' },
@@ -41,9 +97,12 @@ const folderIncludeConfig: any = {
 // GET /api/spaces - full hierarchy with Redis Cache-Aside
 export async function listSpaces(req: Request, res: Response) {
   try {
-    const cachedSpaces = await getCache<any[]>('spaces:all');
+    const cachedSpaces = await getCache<any>('spaces:all');
     if (cachedSpaces) {
-      return res.json({ spaces: cachedSpaces, cached: true });
+      if (Array.isArray(cachedSpaces)) {
+        return res.json({ spaces: cachedSpaces, allLists: collectAllLists(cachedSpaces), allDocs: collectAllDocs(cachedSpaces), cached: true });
+      }
+      return res.json({ ...cachedSpaces, cached: true });
     }
 
     const spaces = await prisma.space.findMany({
@@ -105,9 +164,15 @@ export async function listSpaces(req: Request, res: Response) {
       } as any);
     }
 
-    await setCache('spaces:all', resultSpaces, 300);
+    const payload = {
+      spaces: resultSpaces,
+      allLists: collectAllLists(resultSpaces),
+      allDocs: collectAllDocs(resultSpaces),
+    };
 
-    return res.json({ spaces: resultSpaces, cached: false });
+    await setCache('spaces:all', payload, 300);
+
+    return res.json({ ...payload, cached: false });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -189,7 +254,12 @@ export async function getDashboardData(req: Request, res: Response) {
       orderBy: { name: 'asc' },
     });
 
-    const payload = { spaces: resultSpaces, users };
+    const payload = {
+      spaces: resultSpaces,
+      users,
+      allLists: collectAllLists(resultSpaces),
+      allDocs: collectAllDocs(resultSpaces),
+    };
     await setCache('dashboard:all', payload, 300);
 
     return res.json({ ...payload, cached: false });

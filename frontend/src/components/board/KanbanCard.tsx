@@ -1,13 +1,14 @@
 import { useSortable } from '@dnd-kit/sortable';
+import { memo, useState, useMemo, useRef, useEffect } from 'react';
 import { CSS } from '@dnd-kit/utilities';
-import { Task } from '@/lib/types';
-import { CheckSquare, Calendar, User, Flag, GripVertical, AlignLeft, CircleDashed, Lock } from 'lucide-react';
+import { Task, Subtask } from '@/lib/types';
+import { CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil } from 'lucide-react';
 
 const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400 bg-zinc-800',
-  MEDIUM: 'text-blue-400 bg-blue-500/20',
-  HIGH: 'text-orange-400 bg-orange-500/20',
-  URGENT: 'text-red-400 bg-red-500/20',
+  LOW: 'text-zinc-400',
+  MEDIUM: 'text-blue-400',
+  HIGH: 'text-orange-400',
+  URGENT: 'text-red-400',
 };
 
 interface Props {
@@ -18,13 +19,217 @@ interface Props {
   moveLockReason?: string;
 }
 
-export function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason }: Props) {
+const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void }) => {
+  const [isDescOpen, setIsDescOpen] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState<'status'|'assignee'|'date'|'priority'|null>(null);
+
+  useEffect(() => {
+    onDropdownOpenChange?.(openDropdown !== null);
+  }, [openDropdown, onDropdownOpenChange]);
+
+  const plainTextDescription = useMemo(() => {
+    if (!task.description) return '';
+    return task.description.replace(/<[^>]*>?/gm, '').trim();
+  }, [task.description]);
+
+  let checklistTotal = 0;
+  let checklistCompleted = 0;
+  if ('checklists' in task && task.checklists) {
+    task.checklists.forEach((c: any) => {
+      checklistTotal += c.items?.length || 0;
+      checklistCompleted += c.items?.filter((i: any) => i.completed).length || 0;
+    });
+  }
+
+  const breadcrumbs = 'list' in task && task.list ? `In ${task.list.space?.name || 'Space'} | ${task.list.folder?.name || 'Folder'} | ${task.list.name}` : '';
+  const assignees = 'assignees' in task && task.assignees?.length ? task.assignees : task.assignee ? [task.assignee] : [];
+  const statusStr = 'status' in task ? task.status : (task.completed ? 'CLOSED' : 'PENDING');
+  const isClosed = statusStr.toUpperCase() === 'CLOSED' || ('completed' in task && task.completed);
+
+  // Field hover class
+  const fieldHoverClass = "flex items-center gap-2 text-[11px] hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors";
+
+  return (
+    <div className="flex flex-col w-full text-left">
+      <div className="flex items-start justify-between gap-2">
+        <h4 className="text-[13px] font-semibold text-zinc-200 leading-tight">
+          {task.title}
+        </h4>
+        {!isSubtask && (
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800/80 border border-zinc-700 text-zinc-400 rounded-md px-1 py-0.5 shadow-sm">
+            <Plus className="w-3 h-3 hover:text-zinc-200 cursor-pointer" />
+            <Pencil className="w-3 h-3 hover:text-zinc-200 cursor-pointer" />
+            <MoreHorizontal className="w-3 h-3 hover:text-zinc-200 cursor-pointer" />
+          </div>
+        )}
+      </div>
+
+      {!isSubtask && breadcrumbs && (
+        <div className="text-[11px] text-zinc-500 truncate mt-1">
+          {breadcrumbs}
+        </div>
+      )}
+
+      {isSubtask && breadcrumbs && (
+        <div className="text-[11px] text-zinc-500 truncate mt-1">
+          {breadcrumbs}
+        </div>
+      )}
+
+      {/* Description Icon */}
+      {plainTextDescription && (
+        <div className="mt-2 relative inline-flex">
+          <div 
+            className="flex items-center text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 p-1 -ml-1 rounded cursor-pointer transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsDescOpen(!isDescOpen);
+            }}
+          >
+            <AlignLeft className="w-3.5 h-3.5" />
+          </div>
+          
+          {isDescOpen && (
+            <div 
+              className="absolute left-0 top-full mt-1 w-64 p-3 bg-zinc-800 border border-zinc-700 text-zinc-300 text-[11px] rounded-lg shadow-xl z-50 origin-top-left"
+              onClick={(e) => e.stopPropagation()}
+            >
+               <div className="font-semibold mb-1.5 text-xs text-zinc-100">Deliverables:</div>
+               <div className="line-clamp-6 leading-relaxed">{plainTextDescription}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-0.5 mt-2.5">
+        {/* Status */}
+        <div className="relative">
+          <div 
+            className={`${fieldHoverClass} text-zinc-300`}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
+          >
+            {isClosed ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+            ) : (
+              <CircleDashed className="w-3.5 h-3.5 text-emerald-500" />
+            )}
+            <span className="uppercase font-semibold">{statusStr}</span>
+          </div>
+          {openDropdown === 'status' && (
+            <div className="absolute left-0 top-full mt-1 w-36 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-1" onClick={e => e.stopPropagation()}>
+               <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Change Status</div>
+               {['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
+                 <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium" onClick={() => setOpenDropdown(null)}>
+                   {s}
+                 </div>
+               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Checklists */}
+        {checklistTotal > 0 && (
+          <div className={`${fieldHoverClass} text-zinc-400`}>
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span>{checklistCompleted}/{checklistTotal}</span>
+          </div>
+        )}
+
+        {/* Assignees */}
+        <div className="relative">
+          <div 
+            className={`${fieldHoverClass} text-zinc-400`}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
+          >
+            <User className="w-3.5 h-3.5" />
+            {assignees.length > 0 ? (
+              <div className="flex items-center -space-x-1">
+                {assignees.slice(0, 2).map((a: any) => (
+                  <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
+                    {a.avatarUrl ? (
+                      <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
+                        {(a.name || 'U').charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span>-</span>
+            )}
+          </div>
+          {openDropdown === 'assignee' && (
+            <div className="absolute left-0 top-full mt-1 w-48 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-1" onClick={e => e.stopPropagation()}>
+               <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Assign To</div>
+               <div className="px-2 py-2 text-xs text-zinc-400 italic">User list would appear here...</div>
+            </div>
+          )}
+        </div>
+
+        {/* Due Date */}
+        <div className="relative">
+          <div 
+            className={`${fieldHoverClass} text-zinc-400`}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            <span>
+              {('dueDate' in task && task.dueDate) ? new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '-'}
+            </span>
+          </div>
+          {openDropdown === 'date' && (
+            <div className="absolute left-0 top-full mt-1 w-48 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-3" onClick={e => e.stopPropagation()}>
+               <div className="text-[11px] text-zinc-500 font-semibold uppercase mb-2">Set Due Date</div>
+               <div className="text-xs text-zinc-400 italic">Date picker would appear here...</div>
+            </div>
+          )}
+        </div>
+
+        {/* Priority */}
+        <div className="relative">
+          <div 
+            className={`${fieldHoverClass} text-zinc-400`}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
+          >
+            <Flag className="w-3.5 h-3.5" />
+            <span>{('priority' in task && task.priority) ? task.priority : '-'}</span>
+          </div>
+          {openDropdown === 'priority' && (
+            <div className="absolute left-0 top-full mt-1 w-32 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 p-1" onClick={e => e.stopPropagation()}>
+               <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Set Priority</div>
+               {Object.keys(PRIORITY_COLORS).map(p => (
+                 <div key={p} className={`px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={() => setOpenDropdown(null)}>
+                   {p}
+                 </div>
+               ))}
+               <div className="px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-400" onClick={() => setOpenDropdown(null)}>
+                 CLEAR
+               </div>
+            </div>
+          )}
+        </div>
+        
+        {children}
+      </div>
+    </div>
+  );
+};
+
+export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason }: Props) {
+  const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
+  const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
+  const pointerPosRef = useRef<{x: number, y: number} | null>(null);
+
+  const sortableData = useMemo(() => ({
+    type: 'Task',
+    task,
+  }), [task]);
+
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
-    data: {
-      type: 'Task',
-      task,
-    },
+    data: sortableData,
     disabled: isMoveDisabled,
   });
 
@@ -33,46 +238,7 @@ export function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockR
     transition,
   };
 
-  if (isDragging) {
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className="bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none"
-      >
-        <div className="opacity-0 pointer-events-none flex flex-col gap-3">
-          <div className="pr-6">
-            <h4 className="text-[13px] font-semibold text-zinc-200 mb-0.5 leading-tight">
-              {task.title}
-            </h4>
-            <p className="text-[11px] text-zinc-500">
-              In {task.listId || 'List'}
-            </p>
-          </div>
-          <div className="flex flex-col gap-2.5 mt-1">
-            <div className="flex items-center gap-2 text-[12px]"><AlignLeft className="w-3.5 h-3.5" /></div>
-            <div className="flex items-center gap-2 text-[12px]"><User className="w-3.5 h-3.5" /></div>
-            <div className="flex items-center gap-2 text-[12px]"><Calendar className="w-3.5 h-3.5" /></div>
-            <div className="flex items-center gap-2 text-[12px]"><Flag className="w-3.5 h-3.5" /></div>
-            <div className="flex items-center gap-2 text-[12px]"><CircleDashed className="w-3.5 h-3.5" /></div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const hasDescription = !!task.description;
-  const commentsCount = task.comments?.length || 0;
-  const attachmentsCount = task.attachments?.length || 0;
   const subtasksCount = task.subtasks?.length || 0;
-  const completedSubtasks = task.subtasks?.filter(s => s.completed).length || 0;
-  
-  let checklistTotal = 0;
-  let checklistCompleted = 0;
-  task.checklists?.forEach(c => {
-    checklistTotal += c.items?.length || 0;
-    checklistCompleted += c.items?.filter(i => i.completed).length || 0;
-  });
 
   return (
     <div
@@ -80,126 +246,65 @@ export function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockR
       style={style}
       {...attributes}
       {...listeners}
-      onClick={() => onClick && onClick(task)}
-      className={`bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col gap-3 transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
+      onPointerDown={(e) => {
+        pointerPosRef.current = { x: e.clientX, y: e.clientY };
+        if (listeners?.onPointerDown) {
+          listeners.onPointerDown(e as any);
+        }
+      }}
+      onClick={(e) => {
+        if (!pointerPosRef.current) return;
+        const dx = Math.abs(e.clientX - pointerPosRef.current.x);
+        const dy = Math.abs(e.clientY - pointerPosRef.current.y);
+        if (dx < 5 && dy < 5 && onClick) {
+          onClick(task);
+        }
+        pointerPosRef.current = null;
+      }}
+      className={isDragging 
+        ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3" 
+        : `bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
         isMoveDisabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
       } ${
         isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
-      }`}
+      } ${hasOpenDropdown ? 'z-50' : 'z-10'}`}
     >
-      <div className="pr-6">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <h4 className="text-[13px] font-semibold text-zinc-200 leading-tight">
-            {task.title}
-          </h4>
-          {isMoveDisabled && (
-            <span title={moveLockReason || 'Status transition restricted'} className="text-amber-400 shrink-0">
-              <Lock className="w-3.5 h-3.5" />
-            </span>
-          )}
-        </div>
-        <p className="text-[11px] text-zinc-500">
-          In {task.listId || 'List'}
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-2.5 mt-1">
-        {/* Indicators Row */}
-        <div className="flex flex-wrap items-center gap-3 text-[12px] text-zinc-500">
-          {hasDescription && (
-            <div className="flex items-center gap-1" title="Has Description">
-              <AlignLeft className="w-3.5 h-3.5" />
-            </div>
-          )}
-          
-          {commentsCount > 0 && (
-            <div className="flex items-center gap-1" title={`${commentsCount} Comments`}>
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-              <span>{commentsCount}</span>
-            </div>
-          )}
-
-          {attachmentsCount > 0 && (
-            <div className="flex items-center gap-1" title={`${attachmentsCount} Attachments`}>
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-              <span>{attachmentsCount}</span>
-            </div>
-          )}
-
+      <div className={isDragging ? 'opacity-0 pointer-events-none flex flex-col gap-3 w-full h-full' : 'contents'}>
+        <CardContent task={task} onDropdownOpenChange={setHasOpenDropdown}>
           {subtasksCount > 0 && (
-            <div className="flex items-center gap-1" title={`${completedSubtasks}/${subtasksCount} Subtasks`}>
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h22M3 12h22M3 17h22M3 22h22"></path></svg>
-              <span>{completedSubtasks}/{subtasksCount}</span>
-            </div>
+             <div 
+               className="flex items-center gap-2 text-[11px] text-zinc-400 hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
+               onClick={(e) => { e.stopPropagation(); setIsSubtasksExpanded(!isSubtasksExpanded); }}
+             >
+                {!isSubtasksExpanded && (
+                  <CornerDownRight className="w-3.5 h-3.5 block group-hover/subtasks:hidden shrink-0" />
+                )}
+                <ChevronRight 
+                  className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${
+                    isSubtasksExpanded 
+                      ? 'rotate-90 block' 
+                      : 'hidden group-hover/subtasks:block'
+                  }`} 
+                />
+                <span>{subtasksCount} subtask{subtasksCount > 1 ? 's' : ''}</span>
+             </div>
           )}
-
-          {checklistTotal > 0 && (
-            <div className="flex items-center gap-1" title={`${checklistCompleted}/${checklistTotal} Checklist Items`}>
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span>{checklistCompleted}/{checklistTotal}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between text-[12px] text-zinc-500 mt-1 pt-2 border-t border-zinc-700/50">
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 shrink-0" />
-              {task.assignees && task.assignees.length > 0 ? (
-                <div className="flex items-center gap-1">
-                  <div className="flex items-center -space-x-1">
-                    {task.assignees.slice(0, 2).map((a) => (
-                      <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
-                        {a.avatarUrl ? (
-                          <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
-                        ) : (
-                          <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
-                            {(a.name || 'U').charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                    {task.assignees.length > 2 && (
-                      <div className="relative ring-1 ring-[#18181b] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold px-1 h-4 flex items-center justify-center shrink-0">
-                        +{task.assignees.length - 2}
-                      </div>
-                    )}
-                  </div>
-                  <span className="truncate max-w-[110px]">
-                    {task.assignees.length === 1 ? task.assignees[0].name : `${task.assignees.length} assignees`}
-                  </span>
-                </div>
-              ) : task.assignee ? (
-                <span className="truncate max-w-[110px]">{task.assignee.name}</span>
-              ) : (
-                <span>Unassigned</span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Calendar className="w-3.5 h-3.5" />
-              <span>
-                {task.startDate ? new Date(task.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' - ' : ''}
-                {task.dueDate ? new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No due date'}
-              </span>
-            </div>
-          </div>
-          
-          <div className="flex flex-col items-end gap-1.5">
-            <div className="flex items-center gap-1">
-              <Flag className="w-3.5 h-3.5" />
-              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium uppercase ${task.priority ? PRIORITY_COLORS[task.priority] : 'text-zinc-400 bg-zinc-800'}`}>
-                {task.priority || 'NONE'}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1 text-[11px] text-zinc-400 font-medium">
-              <CircleDashed className="w-3 h-3" />
-              <span>{task.status || 'Pending'}</span>
-            </div>
-          </div>
-        </div>
+        </CardContent>
+        
+        {subtasksCount > 0 && isSubtasksExpanded && (
+           <div className="flex flex-col gap-3 mt-3 pt-3 border-t border-zinc-700/50">
+              {task.subtasks.map(sub => (
+                 <div key={sub.id} className="flex flex-col relative before:absolute before:-left-3 before:top-0 before:bottom-0 before:w-px before:bg-zinc-700/50 pl-1" onClick={(e) => {
+                   e.stopPropagation();
+                   // In future, click on subtask card inside Kanban
+                 }}>
+                    {/* We inject the breadcrumb context from parent since subtasks might not have list resolved */}
+                    <CardContent task={{...sub, list: task.list} as any} isSubtask={true} />
+                 </div>
+              ))}
+           </div>
+        )}
       </div>
     </div>
   );
-}
+});

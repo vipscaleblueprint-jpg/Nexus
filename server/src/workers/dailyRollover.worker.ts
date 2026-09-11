@@ -43,8 +43,8 @@ export const dailyRolloverWorker = new Worker(
       if (new Date(task.createdAt) >= startOfTodayUtc8) {
         const assigneeNames = new Set<string>();
         if (task.assignee) assigneeNames.add(task.assignee.name);
-        if (task.assignees && task.assignees.length > 0) {
-          task.assignees.forEach((a: any) => assigneeNames.add(a.name));
+        if ((task as any).assignees && (task as any).assignees.length > 0) {
+          (task as any).assignees.forEach((a: any) => assigneeNames.add(a.name));
         }
 
         assigneeNames.forEach(name => {

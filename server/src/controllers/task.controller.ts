@@ -6,7 +6,13 @@ import { taskUpdatesQueue } from '../queues/task.queue';
 import { io } from '../server';
 
 const taskInclude = {
-  subtasks: true,
+  subtasks: {
+    include: {
+      assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+      comments: { select: { id: true } },
+      checklists: { select: { id: true, items: { select: { id: true, completed: true } } } },
+    }
+  },
   checklists: { include: { items: true } },
   assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
   assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true } },
@@ -267,8 +273,6 @@ export async function updateTask(req: Request, res: Response) {
       include: taskInclude,
     });
 
-    // Enqueue write-behind
-    await taskUpdatesQueue.add('updateTask', { taskId, data: updateData });
     await invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
 
     // Create AuditLog activity entry if status or assignee changed
@@ -472,8 +476,6 @@ export async function moveTask(req: Request, res: Response) {
       include: taskInclude,
     });
 
-    // Enqueue write-behind DB persistence
-    await taskUpdatesQueue.add('updateTask', { taskId: id, data: { status } });
     await invalidateCache(`task:${id}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
 
     // Create AuditLog activity entry
@@ -532,7 +534,7 @@ export async function moveTask(req: Request, res: Response) {
 export async function createTaskComment(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
-    const { content, userId, listId, mentionedUserIds, parentCommentId } = req.body;
+    const { content, userId, listId, mentionedUserIds, parentCommentId, subtaskId } = req.body;
     const authReq = req as any;
     const effectiveUserId = userId || authReq.user?.id || (await prisma.user.findFirst())?.id;
 
@@ -550,6 +552,7 @@ export async function createTaskComment(req: Request, res: Response) {
         taskId,
         userId: effectiveUserId,
         ...(parentCommentId ? { parentCommentId } : {}),
+        ...(subtaskId ? { subtaskId } : {}),
       },
       include: {
         reactions: { include: { user: { select: { id: true, name: true } } } },
@@ -599,7 +602,7 @@ export async function createTaskComment(req: Request, res: Response) {
         entity: 'TASK',
         entityId: taskId,
         userId: effectiveUserId,
-        details: { text: content.trim(), commentId: comment.id, parentCommentId: parentCommentId || null },
+        details: { text: content.trim(), commentId: comment.id, parentCommentId: parentCommentId || null, subtaskId: subtaskId || null },
       },
     });
 
@@ -612,9 +615,10 @@ export async function createTaskComment(req: Request, res: Response) {
       date: log.createdAt,
       user,
       parentCommentId: parentCommentId || null,
+      subtaskId: subtaskId || null,
     };
 
-    const payload = { taskId, comment, activity };
+    const payload = { taskId, comment, activity, subtaskId };
     if (listId) {
       io.to(`list:${listId}`).emit('task:comment_added', payload);
       io.to(`list:${listId}`).emit('task_activity', { listId, taskId, activity });
@@ -668,8 +672,17 @@ export async function toggleCommentReaction(req: Request, res: Response) {
 export async function getTaskComments(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
+    const { subtaskId } = req.query;
+
+    const whereClause: any = { taskId, parentCommentId: null };
+    if (subtaskId) {
+      whereClause.subtaskId = String(subtaskId);
+    } else {
+      whereClause.subtaskId = null;
+    }
+
     const comments = await prisma.taskComment.findMany({
-      where: { taskId, parentCommentId: null },
+      where: whereClause,
       include: {
         reactions: { include: { user: { select: { id: true, name: true } } } },
         replies: {
@@ -931,6 +944,75 @@ export async function getLiveBlocksData(req: Request, res: Response) {
 
     return res.json({ blocks: { 'New Tasks': tasks } });
 
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+
+export async function createSubtask(req: Request, res: Response) {
+  try {
+    const { id: taskId } = req.params;
+    const { title, description, assigneeId, priority, dueDate } = req.body;
+    const subtask = await prisma.subtask.create({
+      data: {
+        title,
+        description,
+        assigneeId,
+        priority,
+        dueDate: dueDate ? new Date(dueDate) : null,
+        taskId,
+      },
+      include: { assignee: { select: { id: true, name: true, email: true, avatarUrl: true } } }
+    });
+    await invalidateCache(`task:${taskId}`);
+
+    const task = await prisma.task.findUnique({ where: { id: taskId }, include: taskInclude });
+    if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+
+    return res.json({ subtask });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function updateSubtask(req: Request, res: Response) {
+  try {
+    const { id: taskId, subtaskId } = req.params;
+    const { title, description, completed, assigneeId, priority, dueDate } = req.body;
+    const subtask = await prisma.subtask.update({
+      where: { id: subtaskId },
+      data: {
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        ...(completed !== undefined && { completed }),
+        ...(assigneeId !== undefined && { assigneeId }),
+        ...(priority !== undefined && { priority }),
+        ...(dueDate !== undefined && { dueDate: dueDate ? new Date(dueDate) : null }),
+      },
+      include: { assignee: { select: { id: true, name: true, email: true, avatarUrl: true } } }
+    });
+    await invalidateCache(`task:${taskId}`);
+
+    const task = await prisma.task.findUnique({ where: { id: taskId }, include: taskInclude });
+    if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+
+    return res.json({ subtask });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function deleteSubtask(req: Request, res: Response) {
+  try {
+    const { id: taskId, subtaskId } = req.params;
+    await prisma.subtask.delete({ where: { id: subtaskId } });
+    await invalidateCache(`task:${taskId}`);
+
+    const task = await prisma.task.findUnique({ where: { id: taskId }, include: taskInclude });
+    if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+
+    return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

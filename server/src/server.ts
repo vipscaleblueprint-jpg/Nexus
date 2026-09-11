@@ -183,7 +183,19 @@ io.on('connection', (socket) => {
 
   // Handle task description editing unlock + broadcast new content
   socket.on('task_editing_stop', (data: { listId: string; taskId: string; description: string }) => {
-    socket.to(`list:${data.listId}`).emit('task_editing_stop', { taskId: data.taskId, description: data.description });
+    socket.to(`list:${data.listId}`).emit('task_editing_stop', data);
+  });
+
+  socket.on('subtask_editing_start', (data: { listId: string; taskId: string; subtaskId: string; userName: string }) => {
+    socket.to(`list:${data.listId}`).emit('subtask_editing_start', data);
+  });
+
+  socket.on('subtask_editing_content', (data: { listId: string; taskId: string; subtaskId: string; content: string }) => {
+    socket.to(`list:${data.listId}`).emit('subtask_editing_content', data);
+  });
+
+  socket.on('subtask_editing_stop', (data: { listId: string; taskId: string; subtaskId: string }) => {
+    socket.to(`list:${data.listId}`).emit('subtask_editing_stop', data);
   });
 
   // --- Document Real-time Sync ---

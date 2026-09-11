@@ -44,14 +44,32 @@ export async function getList(req: Request, res: Response) {
         statuses: true,
         tasks: {
           orderBy: { createdAt: 'asc' },
-          include: {
-            subtasks: { orderBy: { createdAt: 'asc' } },
-            checklists: { include: { items: { orderBy: { createdAt: 'asc' } } } },
-            comments: { select: { id: true } },
-            attachments: { select: { id: true } },
+          select: {
+            id: true,
+            title: true,
+            description: true, // Needed if UI shows hasDescription icon
+            status: true,
+            priority: true,
+            dueDate: true,
+            createdAt: true,
+            listId: true,
+            creatorId: true,
             assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
             assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true } },
             creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            subtasks: { 
+              include: { 
+                assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+                checklists: { select: { id: true, items: { select: { id: true, completed: true } } } }
+              } 
+            },
+            checklists: { select: { id: true, items: { select: { id: true, completed: true } } } },
+            _count: {
+              select: {
+                comments: true,
+                attachments: true,
+              }
+            }
           },
         },
       },

@@ -12,23 +12,10 @@ import { useAppStore } from '@/lib/store';
 import { authApi } from '@/api';
 import { Space, Folder, Doc } from '@/lib/types';
 
-function getAllDocs(spaces: Space[]): Doc[] {
-  const docs: Doc[] = [];
-  function collectFromFolders(fList: Folder[]) {
-    fList.forEach((f) => {
-      if (f.docs) docs.push(...f.docs);
-      if (f.subfolders) collectFromFolders(f.subfolders);
-    });
-  }
-  spaces.forEach((s) => {
-    if (s.docs) docs.push(...s.docs);
-    if (s.folders) collectFromFolders(s.folders);
-  });
-  return docs;
-}
+
 
 export default function DocsPage() {
-  const { currentUser, setCurrentUser, spaces, loadSpaces, loadingSpaces } = useAppStore();
+  const { currentUser, setCurrentUser, spaces, allDocs, loadSpaces, loadingSpaces } = useAppStore();
 
   // Individual Modals State
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
@@ -68,7 +55,7 @@ export default function DocsPage() {
     else if (type === 'PAGE') setIsCreatePageOpen(true);
   };
 
-  const allDocs = getAllDocs(spaces);
+  const flatDocs = allDocs.map((item: any) => item.doc);
 
   return (
     <>
@@ -113,7 +100,7 @@ export default function DocsPage() {
         isOpen={isCreatePageOpen}
         onClose={() => setIsCreatePageOpen(false)}
         onSuccess={loadSpaces}
-        allDocs={allDocs}
+        allDocs={flatDocs}
         defaultDocId={targetDocId}
       />
     </>

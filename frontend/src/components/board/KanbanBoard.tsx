@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -71,13 +71,104 @@ const CATEGORIES = [
 
 const ALL_CONFIGURED_STATUSES = CATEGORIES.flatMap((c) => c.statuses);
 
+const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
+  status,
+  category,
+  tasks,
+  isCollapsed,
+  setCollapsedColumns,
+  toggleColumnCollapse,
+  listStatuses,
+  currentUser,
+  workspaceRoles,
+  roleMap,
+  columnThemes,
+  setColumnThemes,
+  onStatusChange,
+  onAddTaskClick,
+  onTaskClick,
+  hasMarginRight,
+  groupRunCount,
+  isCollapsedGroupLeader,
+  statusesInRun
+}: any) {
+  const dbStatus = listStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
+  const permissionCheck = canUserMoveTask({ status } as any, listStatuses, currentUser, workspaceRoles);
+
+  const handleToggle = useCallback(() => {
+    if (isCollapsed && groupRunCount > 1 && isCollapsedGroupLeader) {
+      setCollapsedColumns((prev: any) => {
+        const next = { ...prev };
+        statusesInRun.forEach((s: string) => { next[s] = false; });
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+    } else {
+      toggleColumnCollapse(status, category.id);
+    }
+  }, [isCollapsed, groupRunCount, isCollapsedGroupLeader, setCollapsedColumns, statusesInRun, toggleColumnCollapse, status, category.id]);
+
+  const handleUpdateColumn = useCallback((statusName: string, data: any) => {
+    if (onStatusChange) {
+      onStatusChange(statusName, {
+        name: data.name,
+        color: data.color || dbStatus?.color || columnThemes[statusName],
+        allowedRoles: data.allowedRoles ?? dbStatus?.allowedRoles ?? [],
+      });
+    }
+    if (data.color) {
+      setColumnThemes((prev: any) => ({ ...prev, [statusName]: data.color! }));
+    }
+  }, [onStatusChange, dbStatus, columnThemes, setColumnThemes]);
+
+  const handleThemeChange = useCallback((themeId: string) => {
+    if (onStatusChange) {
+      onStatusChange(status, { color: themeId, allowedRoles: dbStatus?.allowedRoles });
+    }
+    setColumnThemes((prev: any) => ({ ...prev, [status]: themeId }));
+  }, [onStatusChange, status, dbStatus, setColumnThemes]);
+
+  const handleRoleChange = useCallback((roles: string[]) => {
+    if (onStatusChange) {
+      onStatusChange(status, { color: dbStatus?.color || columnThemes[status], allowedRoles: roles });
+    }
+  }, [onStatusChange, status, dbStatus, columnThemes]);
+
+  return (
+    <div className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''}`}>
+      <KanbanColumn
+        status={status}
+        tasks={tasks}
+        isCollapsed={isCollapsed}
+        collapsedGroupCount={groupRunCount}
+        isCollapsedGroupLeader={isCollapsedGroupLeader}
+        onToggleCollapse={handleToggle}
+        customTheme={dbStatus?.color || columnThemes[status]}
+        roleMap={roleMap}
+        allowedRoles={dbStatus?.allowedRoles}
+        isColumnRestrictedForUser={!permissionCheck.allowed}
+        columnRestrictionReason={permissionCheck.reason}
+        onUpdateColumn={handleUpdateColumn}
+        onThemeChange={handleThemeChange}
+        onAddTaskClick={onAddTaskClick}
+        onTaskClick={onTaskClick}
+        onRoleChange={handleRoleChange}
+      />
+    </div>
+  );
+});
+
 export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup, listStatuses = [], onStatusChange }: Props) {
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAppStore((s) => s.currentUser);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
-  // Local visual override: tracks which status to SHOW the dragged card in during drag
-  // This does NOT call any API — it's purely for visual feedback.
-  const [dragOverride, setDragOverride] = useState<{ taskId: string; status: string } | null>(null);
+  const [localTasks, setLocalTasks] = useState(tasks);
+
+  useEffect(() => {
+    setLocalTasks(tasks);
+  }, [tasks]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -100,8 +191,10 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
   const [newGroup, setNewGroup] = useState('');
   const [columnThemes, setColumnThemes] = useState<Record<string, string>>({});
   const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
     getRoles()
       .then(setWorkspaceRoles)
       .catch((err) => console.error('Failed to load roles in board:', err));
@@ -168,16 +261,15 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     })
   );
 
-  // Group tasks by status, applying the local drag override for visual preview
+  // Group tasks by status
   const tasksByStatus = useMemo(() => {
-    return tasks.reduce((acc: Record<string, Task[]>, task) => {
-      // If this task is being dragged, show it in the override column instead
-      const status = (dragOverride?.taskId === task.id ? dragOverride.status : task.status) || 'Pending';
+    return localTasks.reduce((acc: Record<string, Task[]>, task) => {
+      const status = task.status || 'Pending';
       if (!acc[status]) acc[status] = [];
       acc[status].push(task);
       return acc;
     }, {});
-  }, [tasks, dragOverride]);
+  }, [localTasks]);
 
   // Group columns into configured categories + any custom/extra columns
   const categorizedColumns = useMemo(() => {
@@ -239,13 +331,13 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     });
   };
 
-  const handleAddGroup = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleAddGroup = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && newGroup.trim()) {
       onAddGroup(newGroup.trim());
       setNewGroup('');
       setIsAddingGroup(false);
     }
-  };
+  }, [newGroup, onAddGroup]);
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
@@ -257,43 +349,46 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
         return;
       }
       setActiveTask(task);
-      // Initialize the override to the task's current status
-      setDragOverride({ taskId: task.id, status: task.status });
     }
   };
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (!over || !activeTask) return;
+    if (!over) return;
 
     const activeId = active.id as string;
     const overId = over.id as string;
 
     if (activeId === overId) return;
 
-    // Determine the target column status from the over element
-    let targetStatus = over.data?.current?.status;
-    if (!targetStatus) {
-      // Hovering over another task — use that task's current status
-      const overTask = tasks.find((t) => t.id === overId);
-      if (overTask) targetStatus = overTask.status;
+    const activeTaskIndex = localTasks.findIndex(t => t.id === activeId);
+    if (activeTaskIndex === -1) return;
+    const activeTask = localTasks[activeTaskIndex];
+
+    let overStatus = over.data?.current?.status;
+    if (!overStatus) {
+      const overTask = localTasks.find((t) => t.id === overId);
+      if (overTask) overStatus = overTask.status;
     }
 
-    // Only update the LOCAL visual override — NO API call here
-    if (targetStatus && dragOverride?.status !== targetStatus) {
-      setDragOverride({ taskId: activeId, status: targetStatus });
+    if (overStatus && activeTask.status !== overStatus) {
+      setLocalTasks((prev) => {
+        const newTasks = [...prev];
+        const idx = newTasks.findIndex(t => t.id === activeId);
+        if (idx > -1) {
+          newTasks[idx] = { ...newTasks[idx], status: overStatus };
+        }
+        return newTasks;
+      });
     }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     const originalTask = activeTask;
-    // Capture the last known hover target BEFORE clearing state
-    const lastOverrideStatus = dragOverride?.status ?? null;
 
     // Clear drag state
     setActiveTask(null);
-    setDragOverride(null);
 
     if (!originalTask) return;
 
@@ -306,12 +401,9 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
       return;
     }
 
-    // PRIMARY: use the last column the card was hovering over (dragOverride)
-    // This is the most reliable signal — wherever the card visually "was" is where it should go.
-    // FALLBACK: use the dnd-kit over target if dragOverride is unavailable.
-    let finalStatus: string | undefined = lastOverrideStatus ?? undefined;
+    let finalStatus: string | undefined;
 
-    if (!finalStatus && over) {
+    if (over) {
       const overId = over.id as string;
       finalStatus = over.data?.current?.status;
       if (!finalStatus) {
@@ -333,22 +425,31 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
 
   const handleDragCancel = () => {
     setActiveTask(null);
-    setDragOverride(null);
+    setLocalTasks(tasks);
   };
 
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={rectIntersection}
+      autoScroll={{
+        layoutShiftCompensation: false,
+        acceleration: 1.5, // Slow down auto-scroll (default is often 10+)
+      }}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
+      {!isMounted ? (
+        <div className="flex h-full w-full items-center justify-center pt-20 text-zinc-500">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
+        </div>
+      ) : (
       <div 
         ref={boardContainerRef}
         onWheel={handleWheelScroll}
-        className="flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 pb-4 px-2 custom-scrollbar snap-x snap-mandatory transition-all duration-300"
+        className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 pb-4 px-2 custom-scrollbar transition-all duration-300 ${!activeTask ? 'snap-x snap-mandatory' : ''}`}
       >
         {categorizedColumns.map((category) => {
           const isCollapsed = Boolean(collapsedCategories[category.id]);
@@ -439,72 +540,29 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                       const isLast = index === category.statuses.length - 1;
                       const hasMarginRight = !isLast && !isCollapsedFollower;
 
-                      const handleToggle = () => {
-                         if (isCollapsed && groupRunCount > 1 && isCollapsedGroupLeader) {
-                            // Expand all in this run
-                            setCollapsedColumns(prev => {
-                               const next = { ...prev };
-                               statusesInRun.forEach(s => { next[s] = false; });
-                               if (typeof window !== 'undefined') {
-                                 try { localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next)); } catch {}
-                               }
-                               return next;
-                            });
-                         } else {
-                            toggleColumnCollapse(status, category.id);
-                         }
-                      };
-
-                      const dbStatus = listStatuses.find(s => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
-
-                      const permissionCheck = canUserMoveTask(
-                        { status } as any,
-                        listStatuses,
-                        currentUser,
-                        workspaceRoles
-                      );
-
                       return (
-                        <div key={status} className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''}`}>
-                          <KanbanColumn
-                            status={status}
-                            tasks={tasksByStatus[status] || []}
-                            isCollapsed={isCollapsed}
-                            collapsedGroupCount={groupRunCount}
-                            isCollapsedGroupLeader={isCollapsedGroupLeader}
-                            onToggleCollapse={handleToggle}
-                            customTheme={dbStatus?.color || columnThemes[status]}
-                            roleMap={roleMap}
-                            allowedRoles={dbStatus?.allowedRoles}
-                            isColumnRestrictedForUser={!permissionCheck.allowed}
-                            columnRestrictionReason={permissionCheck.reason}
-                            onUpdateColumn={(statusName, data) => {
-                              if (onStatusChange) {
-                                onStatusChange(statusName, {
-                                  name: data.name,
-                                  color: data.color || dbStatus?.color || columnThemes[statusName],
-                                  allowedRoles: data.allowedRoles ?? dbStatus?.allowedRoles ?? [],
-                                });
-                              }
-                              if (data.color) {
-                                setColumnThemes((prev) => ({ ...prev, [statusName]: data.color! }));
-                              }
-                            }}
-                            onThemeChange={(themeId) => {
-                              if (onStatusChange) {
-                                onStatusChange(status, { color: themeId, allowedRoles: dbStatus?.allowedRoles });
-                              }
-                              setColumnThemes((prev) => ({ ...prev, [status]: themeId }));
-                            }}
-                            onAddTaskClick={onAddTaskClick}
-                            onTaskClick={onTaskClick}
-                            onRoleChange={(roles) => {
-                              if (onStatusChange) {
-                                onStatusChange(status, { color: dbStatus?.color || columnThemes[status], allowedRoles: roles });
-                              }
-                            }}
-                          />
-                        </div>
+                        <MemoizedColumnWrapper
+                          key={status}
+                          status={status}
+                          category={category}
+                          tasks={tasksByStatus[status] || []}
+                          isCollapsed={isCollapsed}
+                          setCollapsedColumns={setCollapsedColumns}
+                          toggleColumnCollapse={toggleColumnCollapse}
+                          listStatuses={listStatuses}
+                          currentUser={currentUser}
+                          workspaceRoles={workspaceRoles}
+                          roleMap={roleMap}
+                          columnThemes={columnThemes}
+                          setColumnThemes={setColumnThemes}
+                          onStatusChange={onStatusChange}
+                          onAddTaskClick={onAddTaskClick}
+                          onTaskClick={onTaskClick}
+                          hasMarginRight={hasMarginRight}
+                          groupRunCount={groupRunCount}
+                          isCollapsedGroupLeader={isCollapsedGroupLeader}
+                          statusesInRun={statusesInRun}
+                        />
                       );
                     })}
                   </div>
@@ -549,6 +607,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
           </div>
         </div>
       </div>
+      )}
 
       <DragOverlay>
         {activeTask ? <KanbanCard task={activeTask} isOverlay /> : null}

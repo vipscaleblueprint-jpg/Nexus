@@ -51,61 +51,7 @@ export interface WorkspaceDashboardProps {
   onOpenCreate: (type: EntityType, spaceId?: string, folderId?: string, docId?: string) => void;
 }
 
-function collectAllLists(spaces: Space[]): { list: List; spaceName?: string; folderName?: string }[] {
-  const result: { list: List; spaceName?: string; folderName?: string }[] = [];
 
-  function processFolders(folders: Folder[], spaceName?: string, parentFolderName?: string) {
-    folders.forEach((f) => {
-      const currentFolderName = parentFolderName ? `${parentFolderName} / ${f.name}` : f.name;
-      if (f.lists) {
-        f.lists.forEach((l) => result.push({ list: l, spaceName, folderName: currentFolderName }));
-      }
-      if (f.subfolders) {
-        processFolders(f.subfolders, spaceName, currentFolderName);
-      }
-    });
-  }
-
-  spaces.forEach((s) => {
-    const effectiveSpaceName = s.id === 'root-space' ? undefined : s.name;
-    if (s.lists) {
-      s.lists.forEach((l) => result.push({ list: l, spaceName: effectiveSpaceName }));
-    }
-    if (s.folders) {
-      processFolders(s.folders, effectiveSpaceName);
-    }
-  });
-
-  return result;
-}
-
-function collectAllDocs(spaces: Space[]): { doc: Doc; spaceName?: string; folderName?: string }[] {
-  const result: { doc: Doc; spaceName?: string; folderName?: string }[] = [];
-
-  function processFolders(folders: Folder[], spaceName?: string, parentFolderName?: string) {
-    folders.forEach((f) => {
-      const currentFolderName = parentFolderName ? `${parentFolderName} / ${f.name}` : f.name;
-      if (f.docs) {
-        f.docs.forEach((d) => result.push({ doc: d, spaceName, folderName: currentFolderName }));
-      }
-      if (f.subfolders) {
-        processFolders(f.subfolders, spaceName, currentFolderName);
-      }
-    });
-  }
-
-  spaces.forEach((s) => {
-    const effectiveSpaceName = s.id === 'root-space' ? undefined : s.name;
-    if (s.docs) {
-      s.docs.forEach((d) => result.push({ doc: d, spaceName: effectiveSpaceName }));
-    }
-    if (s.folders) {
-      processFolders(s.folders, effectiveSpaceName);
-    }
-  });
-
-  return result;
-}
 
 const isRecentItem = (dateStr?: string, maxDays = 30) => {
   if (!dateStr) return false;
@@ -203,7 +149,7 @@ function WorkspaceDashboardContent({
 }: WorkspaceDashboardProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentUser } = useAppStore();
+  const { currentUser, allLists, allDocs } = useAppStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentTab, setCurrentTab] = useState<'all' | 'my'>(
@@ -245,8 +191,6 @@ function WorkspaceDashboardContent({
     };
   }, []);
 
-  const allLists = useMemo(() => collectAllLists(spaces), [spaces]);
-  const allDocs = useMemo(() => collectAllDocs(spaces), [spaces]);
 
   // Set default list for inline task creation
   useEffect(() => {

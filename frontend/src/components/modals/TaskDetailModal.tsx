@@ -1,11 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, Pencil, Lock, Send, ThumbsUp, SmilePlus, MessageSquare } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, Pencil, Lock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
-import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
+import { BlockEditor } from '../ui/BlockEditor';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -15,6 +12,7 @@ import { useAppStore } from '@/lib/store';
 import { canUserMoveTask } from '@/lib/permissions';
 import { toast } from '@/lib/toast';
 import { usersApi, tasksApi } from '@/api';
+import { SubtasksSection } from './SubtasksSection';
 
 interface Props {
   isOpen: boolean;
@@ -78,7 +76,7 @@ const STATUS_COLORS: Record<string, string> = {
   CANCELLED: 'bg-red-700/60 text-red-200',
 };
 
-export function TaskDetailModal({
+export function TaskDetailModalContent({
   isOpen,
   onClose,
   task,
@@ -96,9 +94,10 @@ export function TaskDetailModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+  const [activeSubtask, setActiveSubtask] = useState<any>(null);
   const [editingUser, setEditingUser] = useState<string | null>(null); // Name of user currently editing
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [addingSubtask, setAddingSubtask] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [localDescription, setLocalDescription] = useState(task?.description || '');
   const [isActivityExpanded, setIsActivityExpanded] = useState(false);
@@ -206,21 +205,37 @@ export function TaskDetailModal({
     };
   }, []);
 
+  const onUpdateTaskRef = useRef(onUpdateTask);
+  useEffect(() => {
+    onUpdateTaskRef.current = onUpdateTask;
+  }, [onUpdateTask]);
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   // Fetch persistent activities and comments from DB
   const loadActivities = useCallback(async () => {
     if (!task?.id) return;
     try {
       setLoadingActivities(true);
-      const [actRes, commentRes] = await Promise.all([
+      const [actRes, commentRes, taskRes] = await Promise.all([
         tasksApi.getActivities(task.id),
         tasksApi.getComments(task.id),
+        tasksApi.getTask(task.id),
       ]);
+      if (!isMountedRef.current) return;
       if (actRes?.activities) setActivities(actRes.activities);
       if (commentRes?.comments) setRichComments(commentRes.comments);
+      if (taskRes?.task && onUpdateTaskRef.current) {
+        onUpdateTaskRef.current(taskRes.task);
+      }
     } catch (err) {
-      console.error('Failed to load task activities:', err);
+      console.error('Failed to load task data:', err);
     } finally {
-      setLoadingActivities(false);
+      if (isMountedRef.current) setLoadingActivities(false);
     }
   }, [task?.id]);
 
@@ -262,56 +277,45 @@ export function TaskDetailModal({
 
   // Keep localDescription in sync with task prop changes (e.g. from socket updates)
   useEffect(() => {
-    if (!isEditing) {
-      setLocalDescription(task?.description || '');
-    }
-  }, [task?.description, isEditing]);
+    setLocalDescription(task?.description || '');
+  }, [task?.description]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const editor = useEditor({
-    immediatelyRender: false,
-    extensions: [
-      StarterKit,
-      Image.configure({ inline: true }),
-      Link.configure({ openOnClick: true, autolink: true })
-    ],
-    editable: isEditing,
-    content: localDescription || '',
-    editorProps: {
-      attributes: {
-        class: 'prose prose-sm prose-invert prose-zinc max-w-none focus:outline-none min-h-[60px] text-zinc-300',
-      },
-    },
-    onUpdate: ({ editor: ed }) => {
-      // Broadcast live content to other users while editing
-      if (!socket || !task) return;
+  const handleDescChange = (html: string) => {
+    setLocalDescription(html);
+    if (socket && task) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         socket.emit('task_editing_content', {
           listId: task.listId,
           taskId: task.id,
-          content: ed.getHTML(),
+          content: html,
         });
       }, 150);
-    },
-  });
-
-  // Update editor editable state when isEditing changes
-  useEffect(() => {
-    if (editor) {
-      editor.setEditable(isEditing);
     }
-  }, [editor, isEditing]);
+  };
 
-  // Sync editor content when localDescription changes and not editing
-  useEffect(() => {
-    if (editor && !isEditing && !editor.isFocused) {
-      const currentContent = editor.getHTML();
-      if (currentContent !== localDescription) {
-        editor.commands.setContent(localDescription || '');
+  const handleDescBlur = () => {
+    if (localDescription !== task?.description && task) {
+      tasksApi.updateTask(task.id, {
+        description: localDescription,
+        currentListId: task.listId,
+        userId: currentUser?.id,
+      }).catch(err => console.error('Failed to save description:', err));
+      
+      if (onUpdateTask) {
+        onUpdateTask({ ...task, description: localDescription });
       }
     }
-  }, [editor, localDescription, isEditing]);
+      
+    if (socket && task) {
+      socket.emit('task_editing_stop', {
+        listId: task.listId,
+        taskId: task.id,
+        description: localDescription,
+      });
+    }
+  };
 
   // Socket: listen for editing lock and description updates
   useEffect(() => {
@@ -373,7 +377,6 @@ export function TaskDetailModal({
 
   // Start editing: lock the description for this user
   const handleStartEditing = useCallback(() => {
-    setIsEditing(true);
     if (socket && task) {
       socket.emit('task_editing_start', {
         listId: task.listId,
@@ -381,37 +384,7 @@ export function TaskDetailModal({
         userName: currentUser?.name || 'Someone',
       });
     }
-    // Focus the editor after a tick
-    setTimeout(() => editor?.commands.focus('end'), 50);
-  }, [socket, task, currentUser, editor]);
-
-  // Stop editing: save and unlock
-  const handleStopEditing = useCallback(() => {
-    if (!editor || !task) return;
-    const html = editor.getHTML();
-    setIsEditing(false);
-    setLocalDescription(html);
-
-    // Persist to DB
-    tasksApi.updateTask(task.id, {
-      description: html,
-      currentListId: task.listId,
-      userId: currentUser?.id,
-    }).catch(err => console.error('Failed to save description:', err));
-
-    if (onUpdateTask) {
-      onUpdateTask({ ...task, description: html });
-    }
-
-    // Broadcast stop + new description to other users
-    if (socket) {
-      socket.emit('task_editing_stop', {
-        listId: task.listId,
-        taskId: task.id,
-        description: html,
-      });
-    }
-  }, [editor, task, onUpdateTask, socket]);
+  }, [socket, task, currentUser]);
 
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
@@ -660,11 +633,25 @@ export function TaskDetailModal({
       try {
         setIsUploading(true);
         const res = await uploadApi.uploadFile(file, 'description');
-        if (editor) {
-          if (file.type.startsWith('image/')) {
-            editor.chain().focus().setImage({ src: res.url }).run();
-          } else {
-            editor.commands.insertContent(`<a href="${res.url}" target="_blank" class="text-blue-400 hover:underline">${file.name}</a>`);
+        let newContent = '';
+        if (file.type.startsWith('image/')) {
+          newContent = `<img src="${res.url}" />`;
+        } else {
+          newContent = `<a href="${res.url}" target="_blank" class="text-blue-400 hover:underline">${file.name}</a>`;
+        }
+        
+        const updatedDesc = localDescription ? localDescription + '<br/>' + newContent : newContent;
+        setLocalDescription(updatedDesc);
+        
+        if (socket && task.listId) {
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          socket.emit('task_editing_content', {
+            listId: task.listId,
+            taskId: task.id,
+            content: updatedDesc,
+          });
+          if (onUpdateTask) {
+            onUpdateTask({ ...task, description: updatedDesc });
           }
         }
         toast.success('File attached');
@@ -685,12 +672,22 @@ export function TaskDetailModal({
       commentFileInputRef.current.value = '';
     }
   };
+  if (activeSubtask) {
+    return (
+      <SubtaskDetailView
+        subtask={activeSubtask}
+        parentTask={task}
+        onClose={() => setActiveSubtask(null)}
+        currentUser={currentUser}
+        socket={socket}
+      />
+    );
+  }
 
   return (
     <>
       <div 
-
-      className="w-full h-full bg-[#121212] flex flex-col overflow-hidden"
+      className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
       onClick={e => e.stopPropagation()}
     >
         {/* Header */}
@@ -706,7 +703,7 @@ export function TaskDetailModal({
                 setCopiedLink(true);
                 setTimeout(() => setCopiedLink(false), 2000);
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-md text-xs transition-colors border border-zinc-700/50"
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-md text-xs transition-colors border border-zinc-700/50 cursor-pointer"
             >
               <Link2 className="w-3.5 h-3.5 text-purple-400" />
               <span>{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
@@ -715,7 +712,7 @@ export function TaskDetailModal({
           <div className="flex items-center gap-2">
             <button 
               onClick={onClose} 
-              className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors"
+              className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -954,9 +951,7 @@ export function TaskDetailModal({
 
               </div>
 
-              {/* Description */}
               <div className="mt-8 relative group">
-                {/* Edit button + lock indicator */}
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Description</span>
                   <div className="flex items-center gap-2">
@@ -966,60 +961,49 @@ export function TaskDetailModal({
                         {editingUser} is editing...
                       </span>
                     )}
-                    {isEditing ? (
-                      <button
-                        onClick={handleStopEditing}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        Save
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleStartEditing}
-                        disabled={!!editingUser}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-zinc-800 disabled:hover:text-zinc-300 cursor-pointer"
-                        title={editingUser ? `${editingUser} is currently editing` : 'Edit description'}
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                        Edit
-                      </button>
-                    )}
                   </div>
                 </div>
 
                 <div 
-                  className={`relative p-2 -ml-2 rounded-lg transition-colors ${isEditing ? 'bg-zinc-800/40 ring-1 ring-zinc-700/50' : 'hover:bg-zinc-800/20'} ${!isDescExpanded ? 'max-h-[250px] overflow-hidden' : ''}`}
-                  onClick={() => isEditing && editor?.commands.focus()}
+                  className={`relative p-2 -ml-2 rounded-lg transition-colors hover:bg-zinc-800/20 cursor-text`}
+                  onFocus={handleStartEditing}
+                  onClick={() => handleStartEditing()}
                 >
-                  <EditorContent editor={editor} />
+                  <BlockEditor 
+                    content={localDescription}
+                    onChange={handleDescChange}
+                    onBlur={handleDescBlur}
+                    editable={!editingUser}
+                  />
                   
-                  {!editor?.getText() && !isEditing && (
+                  {!localDescription && (
                     <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-                      Add description...
+                      Write a text...
                     </div>
                   )}
-
-                  {!isDescExpanded && (editor?.getText().length || 0) > 300 && (
-                    <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] to-transparent pointer-events-none" />
-                  )}
                 </div>
-                {(editor?.getText().length || 0) > 300 && (
-                  <button 
-                    onClick={() => setIsDescExpanded(!isDescExpanded)}
-                    className="mt-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1 bg-zinc-800/50 hover:bg-zinc-800 px-2 py-1 rounded"
-                  >
-                    <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isDescExpanded ? '-rotate-90' : 'rotate-90'}`} />
-                    {isDescExpanded ? 'Collapse' : 'Expand'}
-                  </button>
-                )}
               </div>
 
+              <SubtasksSection 
+                task={task} 
+                onUpdateTask={(updatedTask) => {
+                  if (onUpdateTask) onUpdateTask(updatedTask);
+                }} 
+                users={dbUsers} 
+                addingSubtask={addingSubtask}
+                setAddingSubtask={setAddingSubtask}
+                socket={socket}
+                currentUser={currentUser}
+                onOpenSubtask={(subtask) => setActiveSubtask(subtask)}
+              />
+
               {/* Action Buttons (Notes, Attachments, etc) */}
-              <div className="mt-12 flex flex-col gap-2 max-w-md">
-                <button className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer">
-                  <CheckSquare className="w-4 h-4 shrink-0" /> Add subtask
-                </button>
+              <div className="mt-8 flex flex-col gap-2 max-w-md">
+                {(!task.subtasks || task.subtasks.length === 0) && !addingSubtask && (
+                  <button onClick={() => setAddingSubtask(true)} className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer">
+                    <Plus className="w-4 h-4 shrink-0" /> Add subtask
+                  </button>
+                )}
                 <button className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer">
                   <Link2 className="w-4 h-4 shrink-0" /> Relate items or add dependencies
                 </button>
@@ -1398,38 +1382,448 @@ export function TaskDetailModal({
           </div>
           
         </div>
-    </div>
+      </div>
     
-    {/* Lightbox Modal */}
-    {lightboxImage && (
-      <div 
-        className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm"
-        onClick={() => setLightboxImage(null)}
-      >
-        <button 
-          className="absolute top-6 right-6 p-2 rounded-full bg-black/50 text-white hover:bg-white/20 transition-colors"
+      {/* Lightbox Modal */}
+      {lightboxImage && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
-          <X className="w-6 h-6" />
-        </button>
-        {lightboxImage.match(/\.(mp4|webm|ogg|mov)$/i) ? (
-          <video 
-            controls 
-            autoPlay
-            src={lightboxImage} 
-            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
-            onClick={e => e.stopPropagation()}
-          />
-        ) : (
-          <img 
-            src={lightboxImage} 
-            alt="Expanded view" 
-            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
-            onClick={e => e.stopPropagation()}
-          />
-        )}
-      </div>
-    )}
+          <button 
+            className="absolute top-6 right-6 p-2 rounded-full bg-black/50 text-white hover:bg-white/20 transition-colors"
+            onClick={() => setLightboxImage(null)}
+          >
+            <X className="w-6 h-6" />
+          </button>
+          {lightboxImage.match(/\.(mp4|webm|ogg|mov)$/i) ? (
+            <video 
+              controls 
+              autoPlay
+              src={lightboxImage} 
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default" 
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <img 
+              src={lightboxImage} 
+              alt="Expanded view" 
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default" 
+              onClick={e => e.stopPropagation()}
+            />
+          )}
+        </div>
+      )}
     </>
+  );
+}
+
+// ─── Subtask Detail View (Replaces Parent View) ─────────────────────────────
+function SubtaskDetailView({
+  subtask,
+  parentTask,
+  onClose,
+  currentUser,
+  socket,
+}: {
+  subtask: any;
+  parentTask: any;
+  onClose: () => void;
+  currentUser?: any;
+  socket?: any;
+}) {
+  const [richComments, setRichComments] = useState<any[]>([]);
+  const [comment, setComment] = useState('');
+  const [localDesc, setLocalDesc] = useState(subtask.description || '');
+  const [editingUser, setEditingUser] = useState<string | null>(null);
+  const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setLocalDesc(subtask.description || '');
+  }, [subtask.description]);
+
+  useEffect(() => {
+    if (!socket || !subtask) return;
+
+    const handleEditingStart = (data: { taskId: string; userName: string }) => {
+      if (data.taskId === subtask.id && data.userName !== currentUser?.name) {
+        setEditingUser(data.userName);
+      }
+    };
+    
+    const handleEditingStop = (data: { taskId: string; description: string }) => {
+      if (data.taskId === subtask.id) {
+        setEditingUser(null);
+        setLocalDesc(data.description);
+      }
+    };
+
+    const handleEditingContent = (data: { taskId: string; content: string }) => {
+      if (data.taskId === subtask.id) {
+        setLocalDesc(data.content);
+      }
+    };
+
+    socket.on('task_editing_start', handleEditingStart);
+    socket.on('task_editing_stop', handleEditingStop);
+    socket.on('task_editing_content', handleEditingContent);
+
+    return () => {
+      socket.off('task_editing_start', handleEditingStart);
+      socket.off('task_editing_stop', handleEditingStop);
+      socket.off('task_editing_content', handleEditingContent);
+    };
+  }, [socket, subtask?.id, currentUser?.name]);
+
+  const handleStartEditing = () => {
+    if (socket && subtask) {
+      socket.emit('task_editing_start', {
+        listId: parentTask.listId,
+        taskId: subtask.id,
+        userName: currentUser?.name || 'Someone',
+      });
+    }
+  };
+
+  const handleDescBlur = () => {
+    if (localDesc !== subtask.description) {
+      tasksApi.updateTask(subtask.id, { description: localDesc }).catch(err => console.error(err));
+    }
+    if (socket) {
+      socket.emit('task_editing_stop', {
+        listId: parentTask.listId,
+        taskId: subtask.id,
+        description: localDesc,
+      });
+    }
+  };
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const commentRes = await tasksApi.getComments(parentTask.id, subtask.id);
+        if (commentRes?.comments) setRichComments(commentRes.comments);
+      } catch (err) {
+        console.error('Failed to load comments:', err);
+      }
+    };
+    load();
+  }, [parentTask.id, subtask.id]);
+
+  const handleAddComment = async () => {
+    const trimmed = comment.trim();
+    if (!trimmed || !currentUser?.id) return;
+    try {
+      await tasksApi.addComment(parentTask.id, trimmed, currentUser.id, parentTask.listId, [], undefined, subtask.id);
+      setComment('');
+      const res = await tasksApi.getComments(parentTask.id, subtask.id);
+      if (res?.comments) setRichComments(res.comments);
+    } catch (err) {
+      console.error('Failed to post comment:', err);
+    }
+  };
+
+  const assignee = subtask.assignee;
+
+  return (
+    <div
+      className="w-full h-full bg-[#0f0f11] flex flex-col overflow-hidden cursor-default"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 bg-[#18181b] shrink-0">
+        <div className="flex items-center gap-3">
+          <span className="text-[14px] text-purple-400 font-medium flex items-center gap-2">
+            <span className="text-zinc-500 font-normal">Subtask of</span>
+            <div className="flex items-center gap-1.5 text-zinc-300 hover:text-white transition-colors cursor-pointer" onClick={onClose}>
+              <CheckSquare className="w-4 h-4 text-emerald-500" />
+              {parentTask.title}
+            </div>
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Content area: Split layout matching main task */}
+      <div className="flex flex-1 overflow-hidden">
+        
+        {/* Left Panel: Details & Description */}
+        <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
+          <div className="p-8">
+            <h1 className="text-2xl font-bold text-zinc-100 mb-8">{subtask.title}</h1>
+            
+            {/* Properties Grid */}
+            <div className="flex flex-col gap-5 mb-10 w-full max-w-sm">
+              
+              {/* Status */}
+              <div className="grid grid-cols-[120px_1fr] items-center">
+                <div className="flex items-center gap-2 text-zinc-500">
+                  <CircleDashed className="w-4 h-4" />
+                  <span className="text-sm font-medium">Status</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center">
+                    <div className={`flex items-center rounded-sm overflow-hidden bg-indigo-600 text-white`}>
+                      <span className="text-[11px] font-bold px-2.5 py-1 uppercase tracking-wide flex items-center gap-1">
+                        {subtask.completed ? 'DONE' : subtask.status || 'OPEN'}
+                      </span>
+                      <div className="w-[1px] h-3 bg-black/20" />
+                      <button className="px-1.5 py-1 transition-colors flex items-center justify-center hover:bg-black/10 cursor-pointer">
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <button className="w-5 h-5 ml-1.5 rounded-sm flex items-center justify-center transition-colors shadow-sm bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer">
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Assignee */}
+              <div className="grid grid-cols-[120px_1fr] items-center">
+                <div className="flex items-center gap-2 text-zinc-500">
+                  <User className="w-4 h-4" />
+                  <span className="text-sm font-medium">Assignee</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="group/assignee cursor-pointer inline-flex items-center gap-2 hover:bg-zinc-800/60 px-2 py-1 -ml-2 rounded-md transition-colors border border-transparent hover:border-zinc-700/50">
+                    {assignee ? (
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center -space-x-1.5">
+                          <div className="relative ring-2 ring-[#121212] rounded-full shrink-0">
+                            {assignee.avatarUrl ? (
+                              <img src={assignee.avatarUrl} alt={assignee.name} className="w-6 h-6 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold">
+                                {assignee.name.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-xs text-zinc-300 max-w-[120px] truncate">{assignee.name}</span>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-zinc-500 border border-dashed border-zinc-700 px-2.5 py-1 rounded-sm hover:border-zinc-500 hover:text-zinc-400 transition-colors">
+                        Unassigned
+                      </span>
+                    )}
+                  </div>
+                  {assignee && (
+                    <button className="p-1 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Priority */}
+              <div className="grid grid-cols-[120px_1fr] items-center">
+                <div className="flex items-center gap-2 text-zinc-500">
+                  <Flag className="w-4 h-4" />
+                  <span className="text-sm font-medium">Priority</span>
+                </div>
+                <div>
+                  <div className="cursor-pointer inline-flex items-center hover:bg-zinc-800/50 p-1 -ml-1 rounded transition-colors">
+                    {subtask.priority ? (
+                      <span className={`text-[11px] font-bold px-2.5 py-1 rounded-sm uppercase ${PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400 bg-zinc-800'}`}>
+                        {subtask.priority}
+                      </span>
+                    ) : (
+                      <span className="text-sm text-zinc-500 border border-dashed border-zinc-700 px-2.5 py-1 rounded-sm hover:border-zinc-500 hover:text-zinc-400 transition-colors">
+                        Empty
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="mb-12">
+              <div className="flex items-center justify-between mb-4 shrink-0">
+                <span className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+                  <AlignLeft className="w-5 h-5" />
+                  Description
+                </span>
+                {editingUser && (
+                  <span className="text-xs text-amber-400/80 flex items-center gap-1.5 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                    {editingUser} is editing...
+                  </span>
+                )}
+              </div>
+              
+              <div 
+                className="flex-1 relative group hover:bg-zinc-800/20 rounded-lg p-2 -mx-2 transition-colors"
+                onFocus={handleStartEditing}
+              >
+                <BlockEditor 
+                  content={localDesc}
+                  onChange={(html) => {
+                    setLocalDesc(html);
+                    if (socket && subtask) {
+                      if (debounceRef.current) clearTimeout(debounceRef.current);
+                      debounceRef.current = setTimeout(() => {
+                        socket.emit('task_editing_content', {
+                          listId: parentTask.listId,
+                          taskId: subtask.id,
+                          content: html,
+                        });
+                      }, 150);
+                    }
+                  }}
+                  onBlur={handleDescBlur}
+                  editable={!editingUser}
+                />
+                
+                {!localDesc && (
+                  <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+                    Add description...
+                  </div>
+                )}
+              </div>
+              
+              {/* Action Buttons (Notes, Attachments, etc) */}
+              <div className="mt-8 flex flex-col gap-2 max-w-md">
+                <button className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer">
+                  <Link2 className="w-4 h-4 shrink-0" /> Relate items or add dependencies
+                </button>
+                <button className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer">
+                  <ListTodo className="w-4 h-4 shrink-0" /> Create checklist
+                </button>
+                <button className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer disabled:opacity-50">
+                  <Paperclip className="w-4 h-4 shrink-0" /> Attach file or image
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Panel: Activity Log */}
+        <div className="w-[380px] bg-[#18181b] flex flex-col border-l border-zinc-800/60 shrink-0 z-10">
+          <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
+            <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
+            <div className="flex gap-3">
+              <span className="text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
+            </div>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <div className="space-y-5">
+              
+              {/* Initial Creation item */}
+              <div className="flex gap-4 text-sm text-zinc-400 items-start">
+                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                <div className="flex-1 leading-snug">
+                  <span className="text-zinc-200 font-medium">{subtask.creator?.name || 'System'}</span> created this subtask
+                </div>
+                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                  {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}
+                </span>
+              </div>
+              
+              {/* Rich comments with reactions + replies */}
+              {richComments.map(c => {
+                const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return (
+                  <div key={c.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                    {c.user?.avatarUrl ? (
+                      <img src={c.user.avatarUrl} alt={c.user?.name} className="mt-1 w-6 h-6 rounded-full shrink-0 object-cover" />
+                    ) : (
+                      <div className="mt-1 w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[9px] font-bold shrink-0">
+                        {(c.user?.name || 'U').charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2 mb-0.5">
+                        <span className="text-zinc-200 font-medium text-sm">{c.user?.name || 'Someone'}</span>
+                        <span className="text-xs text-zinc-500">{timeStr}</span>
+                      </div>
+                      <div className="text-zinc-300 bg-zinc-800/40 border border-zinc-700/50 rounded-lg p-3 text-sm leading-relaxed mt-1 prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-800">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                          {c.content}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="p-4 bg-[#18181b] border-t border-zinc-800/60">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddComment(); } }}
+                placeholder="Write a comment..."
+                className="flex-1 bg-[#121212] border border-zinc-700/50 rounded-lg px-3 py-2.5 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 transition-colors"
+              />
+              <button
+                onClick={handleAddComment}
+                disabled={!comment.trim()}
+                className="p-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white transition-colors disabled:opacity-40 disabled:hover:bg-indigo-600 cursor-pointer shadow-sm"
+              >
+                <Send className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function TaskDetailModal(props: Props) {
+  const [fullTask, setFullTask] = useState<Task | null>(props.task);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (props.isOpen && props.task?.id) {
+      setFullTask(props.task);
+      const loadFull = async () => {
+        setIsLoading(true);
+        try {
+          const res = await tasksApi.getTask(props.task!.id);
+          if (res?.task) setFullTask(res.task);
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      loadFull();
+    } else if (!props.isOpen) {
+      setFullTask(null);
+    }
+  }, [props.isOpen, props.task?.id]);
+
+  useEffect(() => {
+    if (props.isOpen && props.task && fullTask && props.task.id === fullTask.id) {
+       setFullTask(prev => ({ ...prev!, ...props.task! }));
+    }
+  }, [props.task]);
+
+  const handleUpdateTask = (updatedTask: Task) => {
+    setFullTask(updatedTask);
+    if (props.onUpdateTask) props.onUpdateTask(updatedTask);
+  };
+
+  if (!props.isOpen && !fullTask) return null;
+
+  return (
+    <TaskDetailModalContent 
+      {...props} 
+      task={fullTask} 
+      onUpdateTask={handleUpdateTask} 
+    />
   );
 }

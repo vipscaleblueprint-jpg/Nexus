@@ -167,21 +167,6 @@ const oldItems = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getAllDocs(spaces: Space[]): Doc[] {
-  const seen = new Set<string>();
-  const docs: Doc[] = [];
-  function collectFromFolders(fList: Folder[]) {
-    fList.forEach((f) => {
-      if (f.docs) f.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); } });
-      if (f.subfolders) collectFromFolders(f.subfolders);
-    });
-  }
-  spaces.forEach((s) => {
-    if (s.docs) s.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); } });
-    if (s.folders) collectFromFolders(s.folders);
-  });
-  return docs;
-}
 
 // ─── VIPScale-style collapsible row ──────────────────────────────────────────
 
@@ -260,7 +245,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const isMyTasksActive = pathname === '/tasks' && filterParam === 'my';
   const isAllTasksActive = (pathname === '/' || pathname === '/tasks') && filterParam !== 'my';
 
-  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications } = useAppStore();
+  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
 
@@ -318,7 +303,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     loadSpaces();
   };
 
-  const allDocs = getAllDocs(spaces);
+  const flatDocs = allDocs.map((item: any) => item.doc);
 
   return (
     <div className="flex h-screen shrink-0 z-20">
@@ -552,7 +537,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       <CreateFolderModal isOpen={isCreateFolderOpen} onClose={() => setIsCreateFolderOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} />
       <CreateListModal isOpen={isCreateListOpen} onClose={() => setIsCreateListOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
       <CreateDocModal isOpen={isCreateDocOpen} onClose={() => setIsCreateDocOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
-      <CreatePageModal isOpen={isCreatePageOpen} onClose={() => setIsCreatePageOpen(false)} onSuccess={loadSpaces} allDocs={allDocs} defaultDocId={activeDocId} />
+      <CreatePageModal isOpen={isCreatePageOpen} onClose={() => setIsCreatePageOpen(false)} onSuccess={loadSpaces} allDocs={flatDocs} defaultDocId={activeDocId} />
       <RenameModal isOpen={isRenameOpen} onClose={() => setIsRenameOpen(false)} onConfirm={handleConfirmRename} title={`Rename ${actionEntity?.type}`} initialName={actionEntity?.name || ''} />
       <ConfirmDeleteModal isOpen={isDeleteOpen} onClose={() => setIsDeleteOpen(false)} onConfirm={handleConfirmDelete} title={`Delete ${actionEntity?.type}`} itemName={actionEntity?.name || ''} />
     </div>

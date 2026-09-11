@@ -12,8 +12,11 @@ import {
   toggleCommentReaction,
   getTaskActivities,
   getLiveBlocksData,
+  createSubtask,
+  updateSubtask,
+  deleteSubtask,
 } from '../controllers/task.controller';
-import { idParams, validate } from '../validation';
+import { idParams, idAndSubtaskIdParams, validate } from '../validation';
 import {
   attachmentUrlSchema,
   createTaskSchema,
@@ -40,6 +43,10 @@ taskRouter.post('/:id/comments', validate({ params: idParams }), createTaskComme
 taskRouter.get('/:id/comments', validate({ params: idParams }), getTaskComments);
 taskRouter.post('/:id/comments/:commentId/reactions', toggleCommentReaction);
 taskRouter.get('/:id/activities', validate({ params: idParams }), getTaskActivities);
+
+taskRouter.post('/:id/subtasks', optionalAuthenticateToken, validate({ params: idParams }), createSubtask);
+taskRouter.patch('/:id/subtasks/:subtaskId', optionalAuthenticateToken, validate({ params: idAndSubtaskIdParams }), updateSubtask);
+taskRouter.delete('/:id/subtasks/:subtaskId', optionalAuthenticateToken, validate({ params: idAndSubtaskIdParams }), deleteSubtask);
 
 taskRouter.get('/:id', validate({ params: idParams }), getTask);
 taskRouter.patch('/:id', optionalAuthenticateToken, validate({ params: idParams, body: updateTaskSchema }), updateTask);

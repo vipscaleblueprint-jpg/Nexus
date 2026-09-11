@@ -1108,7 +1108,7 @@ export default function DocPage() {
       {/* ── Task Detail Modal Trigger ── */}
       {isTaskModalOpen && selectedTaskForModal && (
         <div 
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
           onClick={(e) => { if (e.target === e.currentTarget) setIsTaskModalOpen(false); }}
         >
           <div className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col">

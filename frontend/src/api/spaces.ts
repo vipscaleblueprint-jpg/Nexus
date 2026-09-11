@@ -2,8 +2,8 @@ import { apiClient } from './client';
 import { Space, Folder, Doc, Page } from '@/lib/types';
 
 export const spacesApi = {
-  async getSpaces(): Promise<{ spaces: Space[] }> {
-    return apiClient<{ spaces: Space[] }>('/api/spaces', {
+  async getSpaces(): Promise<{ spaces: Space[], allLists?: any[], allDocs?: any[] }> {
+    return apiClient<{ spaces: Space[], allLists?: any[], allDocs?: any[] }>('/api/spaces', {
       method: 'GET',
     });
   },

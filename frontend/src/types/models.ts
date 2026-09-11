@@ -153,15 +153,23 @@ export interface Task {
 export interface Subtask {
   id: string;
   title: string;
+  description?: string | null;
   completed: boolean;
   taskId: string;
+  assigneeId?: string | null;
+  assignee?: User | null;
+  priority: Priority;
+  dueDate?: string | null;
   createdAt: string;
+  comments?: TaskComment[];
+  checklists?: Checklist[];
 }
 
 export interface Checklist {
   id: string;
   name: string;
   taskId: string;
+  subtaskId?: string;
   items: ChecklistItem[];
   createdAt: string;
 }
@@ -194,6 +202,7 @@ export interface TaskComment {
   id: string;
   content: string;
   taskId: string;
+  subtaskId?: string;
   userId: string;
   user?: User;
   createdAt: string;

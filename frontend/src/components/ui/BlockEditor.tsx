@@ -100,6 +100,16 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
   }, []);
 
   useEffect(() => {
+    if (editor && content !== undefined && content !== null) {
+      if (!editor.isFocused) {
+        if (editor.getHTML() !== content) {
+          editor.commands.setContent(content, false);
+        }
+      }
+    }
+  }, [editor, content]);
+
+  useEffect(() => {
     if (!editor) return;
 
     const STATUS_COLORS: Record<string, string> = {

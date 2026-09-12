@@ -10,6 +10,7 @@ export const createListSchema = z.object({
 export const updateListSchema = z
   .object({
     name: shortText('name').optional(),
+    customGroups: z.array(z.string()).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

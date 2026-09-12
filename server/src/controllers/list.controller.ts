@@ -15,7 +15,9 @@ export async function listLists(req: Request, res: Response) {
         statuses: true,
         tasks: {
           include: {
-            subtasks: true,
+            subtasks: {
+              include: { checklists: { include: { items: true } } }
+            },
             checklists: { include: { items: true } },
             comments: { select: { id: true } },
             attachments: { select: { id: true } },
@@ -44,14 +46,31 @@ export async function getList(req: Request, res: Response) {
         statuses: true,
         tasks: {
           orderBy: { createdAt: 'asc' },
-          include: {
-            subtasks: { orderBy: { createdAt: 'asc' } },
-            checklists: { include: { items: { orderBy: { createdAt: 'asc' } } } },
-            comments: { select: { id: true } },
-            attachments: { select: { id: true } },
+          select: {
+            id: true,
+            title: true,
+            description: true, // Needed if UI shows hasDescription icon
+            status: true,
+            priority: true,
+            dueDate: true,
+            createdAt: true,
+            listId: true,
+            creatorId: true,
             assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
             assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true } },
             creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            subtasks: { 
+              include: { 
+                checklists: { include: { items: true } }
+              } 
+            },
+            checklists: { include: { items: true } },
+            _count: {
+              select: {
+                comments: true,
+                attachments: true,
+              }
+            }
           },
         },
       },
@@ -174,13 +193,14 @@ const DEFAULT_STATUS_THEMES: Record<string, string> = {
 // POST /api/lists/:id/statuses
 export async function createStatus(req: Request, res: Response) {
   try {
-    const { name, color, allowedRoles } = req.body;
+    const { name, color, allowedRoles, groupName } = req.body;
     const defaultColor = DEFAULT_STATUS_THEMES[name] || 'zinc';
     const status = await prisma.listStatus.create({
       data: {
         name,
         color: color || defaultColor,
         allowedRoles: allowedRoles || [],
+        groupName: groupName || null,
         listId: req.params.id,
       },
     });
@@ -193,13 +213,14 @@ export async function createStatus(req: Request, res: Response) {
 // PATCH /api/lists/:id/statuses/:statusId
 export async function updateStatus(req: Request, res: Response) {
   try {
-    const { name, color, allowedRoles } = req.body;
+    const { name, color, allowedRoles, groupName } = req.body;
     const status = await prisma.listStatus.update({
       where: { id: req.params.statusId },
       data: {
         ...(name && { name }),
         ...(color && { color }),
         ...(allowedRoles && { allowedRoles }),
+        ...(groupName !== undefined && { groupName }),
       },
     });
     return res.json({ status });

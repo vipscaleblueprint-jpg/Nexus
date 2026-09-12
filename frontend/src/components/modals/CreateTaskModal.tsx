@@ -3,6 +3,8 @@ import { X, Calendar, User, Flag, Loader2, RotateCw, Link2, Sparkles, ChevronDow
 import { Priority, Task } from '@/lib/types';
 import { usersApi } from '@/api/users';
 
+import { useAppStore } from '@/lib/store';
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
@@ -45,9 +47,9 @@ function DropdownField({ label, placeholder, value, options, onSelect, optional,
         <div className="absolute left-0 top-full mt-1 w-full bg-[#18181b] border border-zinc-800 rounded shadow-xl z-50 py-1 max-h-48 overflow-y-auto">
           {options.length === 0 ? (
             <div className="px-3 py-2 text-xs text-zinc-500">No options</div>
-          ) : options.map((opt: any) => (
+          ) : options.map((opt: any, idx: number) => (
             <button 
-              key={opt.id || opt.value} 
+              key={`${opt.id || opt.value}-${idx}`} 
               onClick={() => { onSelect(opt); setOpen(false); }} 
               className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white transition-colors truncate capitalize"
             >
@@ -92,18 +94,41 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
     }
   }, [isOpen]);
 
+  const spaces = useAppStore(s => s.spaces);
+  const realLists = spaces.flatMap(s => (s.folders || []).flatMap(f => (f.lists || []).map(l => ({ value: l.id, label: l.name }))));
+  
+  // Try to find real lists for Acme Global and Globex, fallback to current listId so it doesn't crash the DB
+  const acmeId = realLists.find(l => l.label.toLowerCase().includes('acme'))?.value || listId;
+  const globexId = realLists.find(l => l.label.toLowerCase().includes('globex'))?.value || (realLists.length > 0 ? realLists[0].value : listId);
+
+  const clientOptions = [
+    { value: acmeId, label: 'Acme Global' },
+    { value: globexId, label: 'Globex' }
+  ];
+
+  // Initialize selected client if not set
+  useEffect(() => {
+    if (isOpen && !client) {
+      const defaultClient = clientOptions.find(c => c.value === listId) || clientOptions[0];
+      setClient(defaultClient);
+    }
+  }, [isOpen, listId, clientOptions, client]);
+
   if (!isOpen) return null;
 
   const handleSave = async () => {
-    // In this mocked UI, we'll map "Prompt" to description and "Task Title" to title.
     if (!description.trim() && !title.trim()) return;
+    if (!client) {
+      console.error('Client is required');
+      return;
+    }
     setIsSaving(true);
     try {
       await onSave({
         title: title.trim() || 'New Task',
         description: description.trim(),
         status,
-        listId,
+        listId: client.value, // USE THE SELECTED CLIENT
         assigneeId: assignee?.id,
         priority: priority || ('LOW' as Priority),
       });
@@ -115,8 +140,9 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
     }
   };
 
+
+
   const priorityOptions = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'].map(p => ({ value: p, label: p.toLowerCase() }));
-  const dummyClientOptions = [{ value: 'client1', label: 'Acme Corp' }, { value: 'client2', label: 'Globex' }];
   const dummyComplexityOptions = [{ value: '1', label: '1 - Easy' }, { value: '2', label: '2 - Medium' }, { value: '3', label: '3 - Hard' }];
 
   return (
@@ -148,7 +174,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
             required 
             value={client?.label}
             placeholder="Select a client"
-            options={dummyClientOptions}
+            options={clientOptions}
             onSelect={(c: any) => setClient(c)}
             rightAction={<RotateCw className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors" />}
           />

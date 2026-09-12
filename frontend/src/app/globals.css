@@ -88,3 +88,103 @@ body {
   user-select: none;
   white-space: nowrap;
 }
+
+/* Tiptap Task List Styles - Ultra Bulletproof */
+.prose ul[data-type="taskList"],
+.prose ul:has(input[type="checkbox"]) {
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.prose ul[data-type="taskList"] p,
+.prose ul:has(input[type="checkbox"]) p {
+  margin: 0 !important;
+  display: inline-block;
+}
+
+.prose li[data-type="taskItem"],
+.prose li:has(input[type="checkbox"]) {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: flex-start !important;
+  margin-top: 0.5rem !important;
+  margin-bottom: 0.5rem !important;
+  padding-left: 0 !important;
+  white-space: normal !important;
+  list-style-type: none !important;
+}
+
+/* Hide Tailwind's default bullet point/marker */
+.prose li[data-type="taskItem"]::before,
+.prose li[data-type="taskItem"]::marker,
+.prose li:has(input[type="checkbox"])::before,
+.prose li:has(input[type="checkbox"])::marker {
+  display: none !important;
+  content: "" !important;
+  color: transparent !important;
+}
+
+/* Label wrapper (if present) */
+.prose li[data-type="taskItem"] > label,
+.prose li:has(input[type="checkbox"]) > label {
+  margin-top: 0.2rem !important;
+  margin-right: 0.75rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  flex-shrink: 0 !important;
+}
+
+/* The actual checkbox - target any checkbox inside the prose editor */
+.prose input[type="checkbox"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 50% !important;
+  border: 1.5px solid #52525b !important; /* zinc-600 */
+  background-color: transparent !important;
+  transition: all 0.2s ease-in-out !important;
+  cursor: pointer !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: inline-block !important;
+  flex-shrink: 0 !important;
+  position: static !important;
+  opacity: 1 !important;
+  vertical-align: middle !important;
+}
+
+/* Hover state */
+.prose input[type="checkbox"]:hover {
+  border-color: #a1a1aa !important; /* zinc-400 */
+}
+
+/* Checked state */
+.prose input[type="checkbox"]:checked,
+.prose li[data-checked="true"] input[type="checkbox"] {
+  background-color: #10b981 !important; /* emerald-500 */
+  border-color: #10b981 !important;
+  background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e") !important;
+  background-position: center !important;
+  background-size: 100% 100% !important;
+  background-repeat: no-repeat !important;
+}
+
+/* Content wrapper */
+.prose li[data-type="taskItem"] > div,
+.prose li:has(input[type="checkbox"]) > div {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+/* Dim text when checked */
+.prose li[data-type="taskItem"][data-checked="true"] > div > p,
+.prose li:has(input[type="checkbox"]:checked) > div > p {
+  color: #71717a !important; /* zinc-500 */
+  text-decoration: line-through !important;
+}

@@ -16,6 +16,28 @@ import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
 import { spacesApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
+
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
+  defaultDropAnimationSideEffects,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
 import {
   Home,
   Users,
@@ -167,21 +189,91 @@ const oldItems = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getAllDocs(spaces: Space[]): Doc[] {
-  const seen = new Set<string>();
-  const docs: Doc[] = [];
-  function collectFromFolders(fList: Folder[]) {
-    fList.forEach((f) => {
-      if (f.docs) f.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); } });
-      if (f.subfolders) collectFromFolders(f.subfolders);
-    });
-  }
-  spaces.forEach((s) => {
-    if (s.docs) s.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); } });
-    if (s.folders) collectFromFolders(s.folders);
-  });
-  return docs;
+
+
+
+function SortableWrapper({ id, children, disabled = false }: { id: string; children: React.ReactNode; disabled?: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition: transition || undefined,
+  };
+  return (
+    <div 
+      ref={setNodeRef} 
+      style={style} 
+      {...attributes} 
+      {...listeners} 
+      className={isDragging ? "relative z-50 opacity-50 ring-2 ring-indigo-500/50 rounded-md bg-[hsl(240,3.7%,15.9%)]" : ""}
+    >
+      {children}
+    </div>
+  );
 }
+
+function ActiveDragItem({ id, spaces }: { id: string; spaces: Space[] }) {
+  const parentType = id.split('-')[0];
+  const parentId = id.split('-')[1];
+  const itemType = id.split('-')[2];
+  const itemId = id.split('-')[3];
+
+  let item = null;
+  if (parentType === 'space') {
+    const space = spaces.find(s => s.id === parentId);
+    if (space) {
+      if (itemType === 'folder') item = space.folders?.find(f => f.id === itemId);
+      if (itemType === 'list') item = space.lists?.find(l => l.id === itemId);
+      if (itemType === 'doc') item = space.docs?.find(d => d.id === itemId);
+    }
+  } else if (parentType === 'folder') {
+     for (const s of spaces) {
+       const findFolder = (folders: any[]): any => {
+         for (const f of folders) {
+           if (f.id === parentId) return f;
+           if (f.subfolders) {
+             const found = findFolder(f.subfolders);
+             if (found) return found;
+           }
+         }
+         return null;
+       };
+       const found = findFolder(s.folders || []);
+       if (found) {
+          if (itemType === 'folder') item = found.subfolders?.find((f: any) => f.id === itemId);
+          if (itemType === 'list') item = found.lists?.find((l: any) => l.id === itemId);
+          if (itemType === 'doc') item = found.docs?.find((d: any) => d.id === itemId);
+          break;
+       }
+     }
+  }
+
+  if (!item) return null;
+
+  return (
+    <div className="bg-[hsl(240,5.9%,10%)] rounded-md shadow-2xl border border-[hsl(240,3.7%,25.9%)] scale-105 cursor-grabbing pointer-events-none ring-1 ring-white/10 w-full overflow-hidden">
+      {itemType === 'folder' && (
+        <div className="flex items-center gap-2 px-2 py-1.5 text-sm bg-[hsl(240,3.7%,15.9%)]">
+          <FolderIcon className="size-3.5 text-amber-400 shrink-0" />
+          <span className="truncate text-xs text-[hsl(240,4.8%,95.9%)]">{item.name}</span>
+        </div>
+      )}
+      {itemType === 'list' && (
+        <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-[hsl(240,4.8%,95.9%)] bg-[hsl(240,3.7%,15.9%)]">
+          <ListIcon className="size-3.5 text-blue-400 shrink-0" />
+          <span className="truncate">{item.name}</span>
+        </div>
+      )}
+      {itemType === 'doc' && (
+        <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-[hsl(240,4.8%,95.9%)] bg-[hsl(240,3.7%,15.9%)]">
+          <FileText className="size-3.5 text-purple-400 shrink-0" />
+          <span className="truncate">{item.title}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 
 // ─── VIPScale-style collapsible row ──────────────────────────────────────────
 
@@ -254,14 +346,104 @@ function GroupLabel({ children, collapsed }: { children: React.ReactNode; collap
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: SidebarProps) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(String(event.active.id));
+  };
+  
+  const handleDragCancel = () => {
+    setActiveId(null);
+  };
+
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const filterParam = searchParams?.get('filter');
   const isMyTasksActive = pathname === '/tasks' && filterParam === 'my';
   const isAllTasksActive = (pathname === '/' || pathname === '/tasks') && filterParam !== 'my';
 
-  const { currentUser, spaces: globalSpaces, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications } = useAppStore();
+  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeStr = String(active.id);
+    const overStr = String(over.id);
+    
+    const getParentKey = (id: string) => id.split('-').slice(0, 2).join('-');
+    if (getParentKey(activeStr) !== getParentKey(overStr)) return;
+
+    const parentType = activeStr.split('-')[0];
+    const parentId = activeStr.split('-')[1];
+
+    let itemsArray: any[] = [];
+    if (parentType === 'space') {
+      const space = spaces.find(s => s.id === parentId);
+      if (space) {
+        itemsArray = [
+          ...(space.folders?.map(f => ({ ...f, itemType: 'folder' })) || []),
+          ...(space.lists?.filter(l => !l.folderId).map(l => ({ ...l, itemType: 'list' })) || []),
+          ...(space.docs?.filter(d => !d.folderId).map(d => ({ ...d, itemType: 'doc' })) || [])
+        ].sort((a, b) => (a.order || 0) - (b.order || 0));
+      }
+    } else if (parentType === 'folder') {
+       for (const s of spaces) {
+         const findFolder = (folders: any[]): any => {
+           for (const f of folders) {
+             if (f.id === parentId) return f;
+             if (f.subfolders) {
+               const found = findFolder(f.subfolders);
+               if (found) return found;
+             }
+           }
+           return null;
+         };
+         const found = findFolder(s.folders || []);
+         if (found) {
+           itemsArray = [
+             ...(found.subfolders?.map((f: any) => ({ ...f, itemType: 'folder' })) || []),
+             ...(found.lists?.map((l: any) => ({ ...l, itemType: 'list' })) || []),
+             ...(found.docs?.map((d: any) => ({ ...d, itemType: 'doc' })) || [])
+           ].sort((a, b) => (a.order || 0) - (b.order || 0));
+           break;
+         }
+       }
+    }
+
+    const oldIndex = itemsArray.findIndex(i => `${parentType}-${parentId}-${i.itemType}-${i.id}` === activeStr);
+    const newIndex = itemsArray.findIndex(i => `${parentType}-${parentId}-${i.itemType}-${i.id}` === overStr);
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const newItems = arrayMove(itemsArray, oldIndex, newIndex);
+      
+      const updates = newItems.map((item, index) => ({
+        itemType: item.itemType,
+        id: item.id,
+        order: index
+      }));
+      
+      const foldersToUpdate = updates.filter(u => u.itemType === 'folder').map(u => ({ id: u.id, order: u.order }));
+      const listsToUpdate = updates.filter(u => u.itemType === 'list').map(u => ({ id: u.id, order: u.order }));
+      const docsToUpdate = updates.filter(u => u.itemType === 'doc').map(u => ({ id: u.id, order: u.order }));
+      
+      try {
+        if (foldersToUpdate.length) await spacesApi.reorderFolders(foldersToUpdate);
+        if (listsToUpdate.length) await spacesApi.reorderLists(listsToUpdate);
+        if (docsToUpdate.length) await spacesApi.reorderDocs(docsToUpdate);
+        globalLoadSpaces();
+      } catch (err) {
+        console.error('Failed to reorder', err);
+      }
+    }
+  };
+
 
 
 
@@ -318,7 +500,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     loadSpaces();
   };
 
-  const allDocs = getAllDocs(spaces);
+  const flatDocs = allDocs.map((item: any) => item.doc);
 
   return (
     <div className="flex h-screen shrink-0 z-20">
@@ -459,10 +641,22 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 </span>
               )}
             </Link>
+            <div className="space-y-px">
+              <Link
+                href="/activity/priorities"
+                className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${
+                  pathname.startsWith('/activity/priorities') ? 'bg-[hsl(240,3.7%,15.9%)] text-white font-medium' : 'text-[hsl(240,4.8%,95.9%)]'
+                }`}
+              >
+                <Target className="size-4 shrink-0 text-rose-500" />
+                <span className="truncate">Priorities Journal</span>
+              </Link>
+            </div>
 
 
             {/* Spaces Section */}
-            <div className="pt-2 space-y-px">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={handleDragCancel}>
+              <div className="pt-2 space-y-px">
               <div className="flex items-center justify-between mb-1 px-2 pt-1">
                 <span className="text-[10px] font-semibold text-[hsl(0,0%,63.9%)] uppercase tracking-wide">Spaces</span>
                 <button onClick={() => setIsCreateSpaceOpen(true)} className="text-[hsl(0,0%,63.9%)] hover:text-white transition-colors cursor-pointer" title="New Space">
@@ -484,7 +678,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               </Link>
 
               {/* Spaces & Root Folders */}
-              {spaces.map((space) => {
+              {spaces.filter(s => s.name !== 'Member Directory').map((space) => {
                 if (space.id === 'root-space') {
                   return (
                     <div key="root-items" className="space-y-px">
@@ -502,7 +696,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                       {space.lists?.filter((l) => !l.folderId).map((list) => (
                         <ListTreeItem key={list.id} list={list} onAction={handleAction} />
                       ))}
-                      {space.docs?.filter((d) => !d.folderId).map((doc) => (
+                      {space.docs?.filter((d) => !d.folderId && d.title !== 'Priorities Journal').map((doc) => (
                         <DocTreeItem key={doc.id} doc={doc} onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }} onAction={handleAction} />
                       ))}
                     </div>
@@ -525,12 +719,12 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 <Plus className="size-3.5" />
                 <span>New Space</span>
               </button>
-            </div>
-
-            <Link href="/team" className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${pathname === '/team' ? 'bg-[hsl(240,3.7%,15.9%)] font-medium text-[hsl(240,4.8%,95.9%)]' : 'text-[hsl(240,4.8%,95.9%)]'}`}>
-              <Users className="size-4 shrink-0 text-zinc-400" />
-              <span className="truncate">Member Directory</span>
-            </Link>
+                <DragOverlay dropAnimation={{ sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: "0.4" } } }) }}>
+                  {activeId ? <ActiveDragItem id={activeId} spaces={spaces.filter(s => s.name !== 'Member Directory')} /> : null}
+                </DragOverlay>
+              </div>
+            </DndContext>
+            
           </div>
 
           {/* Nexus footer */}
@@ -552,12 +746,13 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       <CreateFolderModal isOpen={isCreateFolderOpen} onClose={() => setIsCreateFolderOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} />
       <CreateListModal isOpen={isCreateListOpen} onClose={() => setIsCreateListOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
       <CreateDocModal isOpen={isCreateDocOpen} onClose={() => setIsCreateDocOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
-      <CreatePageModal isOpen={isCreatePageOpen} onClose={() => setIsCreatePageOpen(false)} onSuccess={loadSpaces} allDocs={allDocs} defaultDocId={activeDocId} />
+      <CreatePageModal isOpen={isCreatePageOpen} onClose={() => setIsCreatePageOpen(false)} onSuccess={loadSpaces} allDocs={flatDocs} defaultDocId={activeDocId} />
       <RenameModal isOpen={isRenameOpen} onClose={() => setIsRenameOpen(false)} onConfirm={handleConfirmRename} title={`Rename ${actionEntity?.type}`} initialName={actionEntity?.name || ''} />
       <ConfirmDeleteModal isOpen={isDeleteOpen} onClose={() => setIsDeleteOpen(false)} onConfirm={handleConfirmDelete} title={`Delete ${actionEntity?.type}`} itemName={actionEntity?.name || ''} />
     </div>
   );
 }
+
 
 
 
@@ -570,6 +765,13 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  
+  const combinedItems = [
+    ...(space.folders?.map(f => ({ ...f, itemType: 'folder' })) || []),
+    ...(space.lists?.filter(l => !l.folderId).map(l => ({ ...l, itemType: 'list' })) || []),
+    ...(space.docs?.filter(d => !d.folderId && d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
+  ].sort((a, b) => (a.order || 0) - (b.order || 0));
+
   return (
     <div className="space-y-px text-xs">
       <div className="group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-[hsl(240,3.7%,15.9%)] cursor-pointer transition-colors">
@@ -592,17 +794,30 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
               <button onClick={() => onAction('delete', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
             </ActionMenu>
           )}
-          <ActionMenu>
+          <ActionMenu icon={<Plus className="size-3.5" />}>
             <button onClick={(e) => { e.stopPropagation(); onAddFolder(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>
             <button onClick={(e) => { e.stopPropagation(); onAddDoc(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Doc</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddList(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><ListIcon className="size-3.5 text-cyan-400" />Board</button>
           </ActionMenu>
         </div>
       </div>
       {isOpen && (
         <div className="pl-4 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px">
-          {space.folders?.map((folder) => <FolderTreeItem key={folder.id} folder={folder} spaceId={space.id} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} />)}
-          {space.lists?.filter(l => !l.folderId).map((list) => <ListTreeItem key={list.id} list={list} onAction={onAction} />)}
-          {space.docs?.filter(d => !d.folderId).map((doc) => <DocTreeItem key={doc.id} doc={doc} onAddPage={onAddPage} onAction={onAction} />)}
+          <SortableContext items={combinedItems.map(i => `space-${space.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
+            {combinedItems.map((item) => {
+              const sortableId = `space-${space.id}-${item.itemType}-${item.id}`;
+              if (item.itemType === 'folder') {
+                return <SortableWrapper key={sortableId} id={sortableId}><FolderTreeItem folder={item as Folder} spaceId={space.id} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} /></SortableWrapper>
+              }
+              if (item.itemType === 'list') {
+                return <SortableWrapper key={sortableId} id={sortableId}><ListTreeItem list={item as List} onAction={onAction} /></SortableWrapper>
+              }
+              if (item.itemType === 'doc') {
+                return <SortableWrapper key={sortableId} id={sortableId}><DocTreeItem doc={item as Doc} onAddPage={onAddPage} onAction={onAction} /></SortableWrapper>
+              }
+              return null;
+            })}
+          </SortableContext>
         </div>
       )}
     </div>
@@ -618,6 +833,13 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  
+  const combinedItems = [
+    ...(folder.subfolders?.map(f => ({ ...f, itemType: 'folder' })) || []),
+    ...(folder.lists?.map(l => ({ ...l, itemType: 'list' })) || []),
+    ...(folder.docs?.filter(d => d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
+  ].sort((a, b) => (a.order || 0) - (b.order || 0));
+
   return (
     <div className="space-y-px">
       <div className="group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-[hsl(240,3.7%,15.9%)] cursor-pointer transition-colors">
@@ -637,19 +859,35 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
             <button onClick={() => onAction('rename', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
             <button onClick={() => onAction('delete', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
           </ActionMenu>
+          <ActionMenu icon={<Plus className="size-3.5" />}>
+            <button onClick={(e) => { e.stopPropagation(); onAddFolder(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddDoc(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Doc</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddList(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><ListIcon className="size-3.5 text-cyan-400" />Board</button>
+          </ActionMenu>
         </div>
       </div>
       {isOpen && (
         <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px">
-          {folder.subfolders?.map((sub) => <FolderTreeItem key={sub.id} folder={sub} spaceId={spaceId} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} />)}
-          {folder.lists?.map((list) => <ListTreeItem key={list.id} list={list} onAction={onAction} />)}
-          {folder.docs?.map((doc) => <DocTreeItem key={doc.id} doc={doc} onAddPage={onAddPage} onAction={onAction} />)}
+          <SortableContext items={combinedItems.map(i => `folder-${folder.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
+            {combinedItems.map((item) => {
+              const sortableId = `folder-${folder.id}-${item.itemType}-${item.id}`;
+              if (item.itemType === 'folder') {
+                return <SortableWrapper key={sortableId} id={sortableId}><FolderTreeItem folder={item as Folder} spaceId={spaceId} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} /></SortableWrapper>
+              }
+              if (item.itemType === 'list') {
+                return <SortableWrapper key={sortableId} id={sortableId}><ListTreeItem list={item as List} onAction={onAction} /></SortableWrapper>
+              }
+              if (item.itemType === 'doc') {
+                return <SortableWrapper key={sortableId} id={sortableId}><DocTreeItem doc={item as Doc} onAddPage={onAddPage} onAction={onAction} /></SortableWrapper>
+              }
+              return null;
+            })}
+          </SortableContext>
         </div>
       )}
     </div>
   );
 }
-
 function DocTreeItem({ doc, onAddPage, onAction }: {
   doc: Doc;
   onAddPage: (docId: string) => void;
@@ -669,7 +907,7 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
         </div>
       </div>
       {isOpen && hasPages && (
-        <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px">
+        <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px mt-0.5">
           {doc.pages?.map((page) => <PageTreeItem key={page.id} page={page} onAction={onAction} />)}
         </div>
       )}
@@ -685,12 +923,20 @@ function PageTreeItem({ page, onAction }: {
   const hasSubpages = page.subpages && page.subpages.length > 0;
   return (
     <div className="space-y-px">
-      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="flex items-center gap-2 rounded-md px-2 py-0.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
-        <FileText className="size-3 text-emerald-400 shrink-0 opacity-80" />
-        <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1"><span className="truncate">{page.title}</span></Link>
+      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="group flex items-center justify-between rounded-md px-2 py-0.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
+        <div className="flex items-center gap-2 truncate flex-1">
+          <FileText className="size-3 text-emerald-400 shrink-0 opacity-80" />
+          <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1"><span className="truncate">{page.title}</span></Link>
+        </div>
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0" onClick={(e) => e.stopPropagation()}>
+          <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
+            <button onClick={() => onAction('rename', 'page', page.id, page.title)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
+            <button onClick={() => onAction('delete', 'page', page.id, page.title)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
+          </ActionMenu>
+        </div>
       </div>
       {isOpen && hasSubpages && (
-        <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-2 space-y-px">
+        <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-2 space-y-px mt-0.5">
           {page.subpages?.map((sub) => <PageTreeItem key={sub.id} page={sub} onAction={onAction} />)}
         </div>
       )}

@@ -74,3 +74,19 @@ export function validateBody(schema: ZodSchema) {
 export const idParams = z.object({
   id: z.string().uuid('must be a valid uuid'),
 });
+
+export const idAndSubtaskIdParams = z.object({
+  id: z.string().uuid('must be a valid uuid'),
+  subtaskId: z.string().uuid('must be a valid uuid'),
+});
+
+export const idAndChecklistIdParams = z.object({
+  id: z.string().uuid('must be a valid uuid'),
+  checklistId: z.string().uuid('must be a valid uuid'),
+});
+
+export const idChecklistIdItemIdParams = z.object({
+  id: z.string().uuid('must be a valid uuid'),
+  checklistId: z.string().uuid('must be a valid uuid'),
+  itemId: z.string().uuid('must be a valid uuid'),
+});

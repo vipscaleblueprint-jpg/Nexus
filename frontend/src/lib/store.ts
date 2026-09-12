@@ -4,19 +4,24 @@ import { spacesApi } from '@/api';
 
 const SPACES_CACHE_KEY = 'nexus_spaces_cache';
 
-function getCachedSpaces(): Space[] {
-  if (typeof window === 'undefined') return [];
+function getCachedSpaces(): { spaces: Space[], allLists: any[], allDocs: any[] } {
+  if (typeof window === 'undefined') return { spaces: [], allLists: [], allDocs: [] };
   try {
     const raw = localStorage.getItem(SPACES_CACHE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return { spaces: [], allLists: [], allDocs: [] };
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return { spaces: parsed, allLists: [], allDocs: [] };
+    }
+    return parsed;
   } catch {
-    return [];
+    return { spaces: [], allLists: [], allDocs: [] };
   }
 }
 
-function setCachedSpaces(spaces: Space[]) {
+function setCachedSpaces(spaces: Space[], allLists?: any[], allDocs?: any[]) {
   try {
-    localStorage.setItem(SPACES_CACHE_KEY, JSON.stringify(spaces));
+    localStorage.setItem(SPACES_CACHE_KEY, JSON.stringify({ spaces, allLists, allDocs }));
   } catch {}
 }
 
@@ -27,6 +32,8 @@ interface AppState {
   
   // Spaces
   spaces: Space[];
+  allLists: any[];
+  allDocs: any[];
   loadingSpaces: boolean;
   hasLoadedSpaces: boolean;
   hydrateFromCache: () => void;
@@ -49,19 +56,23 @@ export const useAppStore = create<AppState>((set) => ({
   // Always start with [] to avoid SSR/client hydration mismatch.
   // Call hydrateFromCache() in a client-side useEffect to get instant data.
   spaces: [],
+  allLists: [],
+  allDocs: [],
   loadingSpaces: false,
   hasLoadedSpaces: false,
   hydrateFromCache: () => {
     const cached = getCachedSpaces();
-    if (cached.length > 0) set({ spaces: cached });
+    if (cached.spaces && cached.spaces.length > 0) {
+      set({ spaces: cached.spaces, allLists: cached.allLists || [], allDocs: cached.allDocs || [] });
+    }
   },
   loadSpaces: async () => {
     set({ loadingSpaces: true });
     try {
       const res = await spacesApi.getSpaces();
       if (res.spaces) {
-        setCachedSpaces(res.spaces);
-        set({ spaces: res.spaces });
+        setCachedSpaces(res.spaces, res.allLists, res.allDocs);
+        set({ spaces: res.spaces, allLists: res.allLists || [], allDocs: res.allDocs || [] });
       }
     } catch (e) {
       console.error('Failed to fetch spaces', e);

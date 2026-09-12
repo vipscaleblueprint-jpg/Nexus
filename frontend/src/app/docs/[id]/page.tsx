@@ -39,6 +39,8 @@ import {
   Save,
   Edit2,
   Folder,
+  Circle,
+  Flag,
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 
@@ -186,8 +188,9 @@ const getTaskStatusBadgeColor = (status?: string) => {
   }
 };
 
-export default function DocPage() {
-  const { id } = useParams<{ id: string }>();
+export default function DocPage({ docId }: { docId?: string }) {
+  const params = useParams<{ id: string }>();
+  const id = docId || params?.id;
   const { currentUser, setCurrentUser } = useAppStore();
   const [doc, setDoc] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -207,14 +210,249 @@ export default function DocPage() {
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [subpageLimit, setSubpageLimit] = useState(10);
 
+  // Global hover card state
+  const [hoverCardData, setHoverCardData] = useState<any>(null);
+  const [hoverCardPos, setHoverCardPos] = useState<{ x: number, y: number } | null>(null);
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     setSubpageLimit(10);
   }, [activePage?.id]);
+
+  useEffect(() => {
+    const handleMouseOver = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const mentionNode = target.closest('span[data-type="mention"]');
+      if (mentionNode) {
+        if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+        const rect = mentionNode.getBoundingClientRect();
+        setHoverCardPos({ x: rect.left, y: rect.bottom + 4 });
+        setHoverCardData({
+          id: mentionNode.getAttribute('data-id'),
+          label: mentionNode.getAttribute('data-label'),
+          mentionType: mentionNode.getAttribute('data-mention-type') || 'task',
+          taskStatus: mentionNode.getAttribute('data-task-status'),
+          tasks: mentionNode.getAttribute('data-tasks'),
+          taskAssignees: mentionNode.getAttribute('data-task-assignees'),
+          taskPriority: mentionNode.getAttribute('data-task-priority'),
+          taskDueDate: mentionNode.getAttribute('data-task-due-date'),
+        });
+      } else {
+        const hoverCardElement = document.getElementById('global-task-hover-card');
+        if (hoverCardElement && hoverCardElement.contains(target)) {
+          // Hovering over the card itself, do not close
+          if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+          return;
+        }
+        if (hoverCardPos) {
+          if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+          hoverTimeoutRef.current = setTimeout(() => {
+            setHoverCardPos(null);
+            setHoverCardData(null);
+          }, 150);
+        }
+      }
+    };
+
+    document.addEventListener('mouseover', handleMouseOver);
+    return () => document.removeEventListener('mouseover', handleMouseOver);
+  }, [hoverCardPos]);
 
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [tasksMap, setTasksMap] = useState<Record<string, Task>>({});
   const [selectedTaskForModal, setSelectedTaskForModal] = useState<Task | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+
+  // Native click handler for mention nodes — works even in read-only BlockEditor
+  useEffect(() => {
+    const handleDocClick = async (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const mentionSpan = target.closest('span[data-type="mention"]');
+      if (!mentionSpan) return;
+      const taskId = mentionSpan.getAttribute('data-id');
+      if (!taskId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const foundTask = tasksMap[taskId] || allTasks.find((t: any) => t.id === taskId);
+      if (foundTask) {
+        setSelectedTaskForModal(foundTask);
+        setIsTaskModalOpen(true);
+      } else {
+        try {
+          const res = await tasksApi.getTask(taskId);
+          if (res.task) {
+            setSelectedTaskForModal(res.task);
+            setIsTaskModalOpen(true);
+          }
+        } catch (err) {
+          console.error('Could not load task detail:', err);
+        }
+      }
+    };
+    document.addEventListener('click', handleDocClick);
+    return () => document.removeEventListener('click', handleDocClick);
+  }, [tasksMap, allTasks]);
+
+  useEffect(() => {
+    const handleOpenTaskDetail = async (e: any) => {
+      const taskId = e.detail?.taskId;
+      if (!taskId) return;
+      const foundTask = tasksMap[taskId] || allTasks.find((t: any) => t.id === taskId);
+      if (foundTask) {
+        setSelectedTaskForModal(foundTask);
+        setIsTaskModalOpen(true);
+      } else {
+        try {
+          const res = await tasksApi.getTask(taskId);
+          if (res.task) {
+            setSelectedTaskForModal(res.task);
+            setIsTaskModalOpen(true);
+          }
+        } catch (err) {
+          console.error('Could not load task detail:', err);
+        }
+      }
+    };
+    window.addEventListener('open-task-detail', handleOpenTaskDetail as any);
+
+    const handleTaskCreated = (e: any) => {
+      const task = e.detail?.task;
+      
+      setBlocks(prevBlocks => {
+        if (!task || !task.list?.name) return prevBlocks;
+
+        const exists = prevBlocks.some(b => b.content && b.content.includes(`data-id="${task.id}"`));
+        if (exists) return prevBlocks;
+
+        if (!activePageRef.current) return prevBlocks;
+
+        const STATUS_COLORS: Record<string, string> = {
+          'KYC': '#06b6d4',
+          'Pin Board': '#06b6d4',
+          'Daily': '#a855f7',
+          'Weekly': '#a855f7',
+          'Monthly': '#a855f7',
+          'Pending': '#6366f1',
+          'In Progress': '#eab308',
+          'Revision': '#6366f1',
+          'Waiting': '#f97316',
+          'In Review': '#6366f1',
+          'Checking': '#6366f1',
+          'On-Hold': '#ef4444',
+          'Closed': '#10b981',
+        };
+        const statusColor = STATUS_COLORS[task.status] || '#3b82f6';
+        const escapedTitle = task.title.replace(/"/g, '&quot;');
+        const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
+        const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
+
+        const mentionHTML = `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}"></span></p>`;
+        
+        const newMentionBlock = {
+          id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          type: 'text' as any,
+          content: mentionHTML
+        };
+
+        let newBlocks = [...prevBlocks];
+        let foundBlockIdx = -1;
+
+        for (let i = 0; i < newBlocks.length; i++) {
+           const b = newBlocks[i];
+           // Ignore task blocks when searching for the client heading to prevent matching task names
+           if (b.content && 
+               b.content.toLowerCase().includes(task.list.name.toLowerCase()) && 
+               !b.content.includes('data-type="mention"')) {
+              foundBlockIdx = i;
+           }
+        }
+
+        if (foundBlockIdx !== -1) {
+           let taskBlockIdx = foundBlockIdx;
+           if (foundBlockIdx + 1 < newBlocks.length) {
+              const nextBlock = newBlocks[foundBlockIdx + 1];
+              if (nextBlock.content.includes('data-type="mention"')) {
+                 taskBlockIdx = foundBlockIdx + 1;
+              }
+           }
+           
+           if (taskBlockIdx === foundBlockIdx) {
+              if (newBlocks[foundBlockIdx].content.includes('data-type="mention"')) {
+                 newBlocks[foundBlockIdx].content += mentionHTML;
+              } else {
+                 newBlocks.splice(foundBlockIdx + 1, 0, newMentionBlock);
+              }
+           } else {
+              newBlocks[taskBlockIdx] = {
+                 ...newBlocks[taskBlockIdx],
+                 content: newBlocks[taskBlockIdx].content + mentionHTML
+              };
+           }
+        } else {
+           const clientHeadings = [];
+           for (let i = 0; i < newBlocks.length; i++) {
+             const b = newBlocks[i];
+             if (b.content && b.content.startsWith('<h3>') && b.content.endsWith('</h3>')) {
+               const clientName = b.content.replace('<h3>', '').replace('</h3>', '').trim();
+               clientHeadings.push({ index: i, name: clientName });
+             }
+           }
+
+           let insertIdx = newBlocks.length;
+           if (clientHeadings.length > 0) {
+             const nextClient = clientHeadings.find(h => h.name.toLowerCase() > task.list.name.toLowerCase());
+             if (nextClient) {
+               insertIdx = nextClient.index;
+             }
+           }
+
+           const blocksToInsert = [];
+           if (insertIdx > 0 && newBlocks[insertIdx - 1].content.trim() !== '') {
+             blocksToInsert.push({
+               id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+               type: 'text' as any,
+               content: ''
+             });
+           }
+           blocksToInsert.push({
+             id: `blk-h-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+             type: 'text' as any,
+             content: `<h3>${task.list.name}</h3>`
+           });
+           blocksToInsert.push({
+             ...newMentionBlock,
+             id: `blk-t-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+           });
+           
+           if (insertIdx < newBlocks.length && newBlocks[insertIdx].content.trim() !== '') {
+              blocksToInsert.push({
+                 id: `blk-s-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                 type: 'text' as any,
+                 content: ''
+              });
+           }
+
+           newBlocks.splice(insertIdx, 0, ...blocksToInsert);
+        }
+
+        // Delay the save slightly to allow block state to settle
+        setTimeout(() => {
+          spacesApi.updatePage(activePageRef.current.id, {
+            title: activePageRef.current.title || 'Untitled Page',
+            content: blocksToMarkdown(newBlocks),
+          }).catch(err => console.error('Failed to auto-save new task block:', err));
+        }, 100);
+
+        return newBlocks;
+      });
+    };
+    window.addEventListener('task:created', handleTaskCreated as any);
+
+    return () => {
+      window.removeEventListener('open-task-detail', handleOpenTaskDetail as any);
+      window.removeEventListener('task:created', handleTaskCreated as any);
+    };
+  }, [tasksMap, allTasks]);
 
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
@@ -534,9 +772,17 @@ export default function DocPage() {
           <h2 className="text-base font-bold text-zinc-100 group-hover:text-white transition-colors truncate">{doc?.title || 'Priorities for Today'}</h2>
         </div>
 
-        <div className="flex items-center justify-between mb-2 px-1">
+        <div className="flex items-center justify-between mb-2 px-1 group/pages-header">
           <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Pages</span>
-          <span className="text-[10px] text-zinc-600 font-mono">{totalPages}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-zinc-600 font-mono group-hover/pages-header:hidden">{totalPages}</span>
+            <div className="hidden group-hover/pages-header:flex items-center justify-center transition-colors">
+              <ActionMenu icon={<Plus className="size-4 cursor-pointer rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 p-0.5" />}>
+                <button onClick={(e) => { e.stopPropagation(); handleCreatePage(); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Folder className="size-3.5 text-amber-400" />Folder</button>
+                <button onClick={(e) => { e.stopPropagation(); handleCreatePage(); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Page</button>
+              </ActionMenu>
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 space-y-1">
@@ -679,13 +925,71 @@ export default function DocPage() {
                         ) : (
                           <div
                             key={`viewer-${block.id}`}
-                            onClick={() => {
+                            onClick={(e) => {
+                              const target = e.target as HTMLElement;
+                              // Intercept checkbox clicks so we can toggle them without focusing the block
+                              if (target.tagName === 'INPUT' && target.getAttribute('type') === 'checkbox') {
+                                const input = target as HTMLInputElement;
+                                const isChecked = input.checked;
+                                
+                                // Find the index of this checkbox among all checkboxes in this block's DOM
+                                const checkboxesInBlock = Array.from(e.currentTarget.querySelectorAll('input[type="checkbox"]'));
+                                const checkboxIndex = checkboxesInBlock.indexOf(input);
+                                
+                                if (checkboxIndex !== -1) {
+                                  // Parse the actual HTML content to update it
+                                  const tempDiv = document.createElement('div');
+                                  tempDiv.innerHTML = block.content;
+                                  
+                                  const tempCheckboxes = tempDiv.querySelectorAll('input[type="checkbox"]');
+                                  const tempCheckbox = tempCheckboxes[checkboxIndex] as HTMLInputElement;
+                                  
+                                  if (tempCheckbox) {
+                                    if (isChecked) {
+                                      tempCheckbox.setAttribute('checked', 'checked');
+                                    } else {
+                                      tempCheckbox.removeAttribute('checked');
+                                    }
+                                    
+                                    // Also update the parent li data-checked attribute for Tiptap
+                                    const li = tempCheckbox.closest('li[data-type="taskItem"]');
+                                    if (li) {
+                                      li.setAttribute('data-checked', isChecked ? 'true' : 'false');
+                                    }
+                                    
+                                    const newContent = tempDiv.innerHTML;
+                                    
+                                    // Update blocks state and save
+                                    const updated = blocks.map(b => b.id === block.id ? { ...b, content: newContent } : b);
+                                    setBlocks(updated);
+                                    handleSavePage(updated);
+                                    
+                                    if (socket) {
+                                      socket.emit('block_content_update', { docId: id, blockId: block.id, content: newContent });
+                                    }
+                                  }
+                                }
+                                return; // Prevent focusing the block
+                              }
+
                               if (!isLockedBySomeoneElse) handleFocusBlock(block.id);
                             }}
-                            className={`flex-1 ${!isLockedBySomeoneElse ? 'cursor-text select-text' : 'cursor-not-allowed text-zinc-500 select-none'} min-h-[24px] prose prose-invert max-w-none text-sm text-zinc-100 prose-p:my-0 prose-headings:my-0 prose-ul:my-0 prose-ol:my-0 ${block.content ? '' : 'text-zinc-600 italic'
-                              }`}
-                            dangerouslySetInnerHTML={{ __html: block.content || 'Write text...' }}
-                          />
+                            className={`flex-1 ${!isLockedBySomeoneElse ? 'cursor-text select-text' : 'cursor-not-allowed text-zinc-500 select-none'} min-h-[24px]`}
+                          >
+                            {block.content?.includes('data-type="live-kanban-block"') || block.content?.includes('data-type="mention"') ? (
+                              <BlockEditor
+                                editable={false}
+                                content={block.content}
+                                onChange={() => {}}
+                                onBlur={() => {}}
+                              />
+                            ) : (
+                              <div
+                                className={`prose prose-invert max-w-none text-sm text-zinc-100 prose-p:my-0 prose-headings:my-0 prose-ul:my-0 prose-ol:my-0 ${block.content ? '' : 'text-zinc-600 italic'}`}
+                                dangerouslySetInnerHTML={{ __html: block.content || 'Write text...' }}
+                              />
+                            )}
+                          </div>
                         )}
                       </div>
 
@@ -789,7 +1093,7 @@ export default function DocPage() {
                     onClick={() => handleLinkTaskToDoc(task)}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-zinc-800/80 cursor-pointer transition-colors group"
                   >
-                    <div className="flex items-center gap-2 min-w-0">
+                                        <div className="flex items-center gap-2 min-w-0">
                       <CheckSquare className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                       <span className="text-xs text-zinc-200 font-medium truncate group-hover:text-white">
                         {task.title}
@@ -812,15 +1116,160 @@ export default function DocPage() {
 
       {/* ── Task Detail Modal Trigger ── */}
       {isTaskModalOpen && selectedTaskForModal && (
-        <TaskDetailModal
-          isOpen={isTaskModalOpen}
-          onClose={() => setIsTaskModalOpen(false)}
-          task={selectedTaskForModal}
-          onUpdateTask={(updatedTask) => {
-            setSelectedTaskForModal(updatedTask);
-            setTasksMap((prev) => ({ ...prev, [updatedTask.id]: updatedTask }));
-          }}
-        />
+        <div 
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
+          onClick={(e) => { if (e.target === e.currentTarget) setIsTaskModalOpen(false); }}
+        >
+          <div className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col">
+            <TaskDetailModal
+              isOpen={isTaskModalOpen}
+              onClose={() => setIsTaskModalOpen(false)}
+              task={selectedTaskForModal}
+              onUpdateTask={(updatedTask) => {
+                setSelectedTaskForModal(updatedTask);
+                setTasksMap((prev) => ({ ...prev, [updatedTask.id]: updatedTask }));
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Global Task Hover Card */}
+      {hoverCardPos && hoverCardData && (
+        <div 
+          id="global-task-hover-card"
+          className="fixed z-[99999]"
+          style={{ left: Math.min(hoverCardPos.x, window.innerWidth - 330), top: Math.min(hoverCardPos.y, window.innerHeight - 250) }}
+        >
+          <div className="w-[320px] bg-white dark:bg-[#1a1a1a] border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl overflow-hidden flex flex-col text-sm text-zinc-900 dark:text-zinc-100">
+            <div className="p-3 border-b border-zinc-200 dark:border-zinc-700">
+              <h3 className="font-semibold text-base truncate">{hoverCardData.label}</h3>
+              <div className="flex items-center text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                <Circle className="w-3 h-3 mr-1" />
+                <span>Task Mention</span>
+              </div>
+            </div>
+            
+            <div className="flex flex-col p-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+              {hoverCardData.mentionType === 'status' ? (
+                (() => {
+                  try {
+                    const tasks = hoverCardData.tasks ? JSON.parse(hoverCardData.tasks) : [];
+                    return (
+                      <div className="flex flex-col gap-1.5">
+                        {tasks.length === 0 ? (
+                          <div className="text-zinc-500 italic p-2 text-center text-xs">No tasks in this column</div>
+                        ) : (
+                          tasks.map((task: any) => (
+                            <div key={task.id} className="flex flex-col bg-zinc-50 dark:bg-zinc-800/60 p-2 rounded border border-zinc-100 dark:border-zinc-800">
+                              <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate">{task.title}</span>
+                              <div className="flex items-center justify-between mt-1.5">
+                                <div className="flex items-center gap-1">
+                                  {task.assignees?.slice(0, 3).map((user: any) => (
+                                    <div key={user.id} className="w-4 h-4 rounded-full overflow-hidden shrink-0 border border-zinc-200 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center">
+                                      {user.avatarUrl ? (
+                                        <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <span className="text-[7px] font-medium text-zinc-700 dark:text-zinc-300">
+                                          {user.name?.charAt(0).toUpperCase()}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                                <span className="text-[9px] text-zinc-500 dark:text-zinc-400">
+                                  {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : ''}
+                                </span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                        <div className="mt-2">
+                           <input 
+                             type="text" 
+                             placeholder={`Add task to ${hoverCardData.label}...`}
+                             className="w-full text-xs px-2 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+                             onKeyDown={async (e) => {
+                               if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                                 const title = e.currentTarget.value.trim();
+                                 e.currentTarget.value = 'Adding...';
+                                 e.currentTarget.disabled = true;
+                                 try {
+                                   await tasksApi.createTask({
+                                     title,
+                                     status: hoverCardData.label,
+                                     priority: 'MEDIUM'
+                                   });
+                                   // Note: To see the new task, the user can re-open the hover card or refresh.
+                                   // A full state sync would be better, but this handles the automated input!
+                                   setHoverCardPos(null);
+                                 } catch (err) {
+                                   console.error('Failed to create task', err);
+                                   e.currentTarget.value = title;
+                                   e.currentTarget.disabled = false;
+                                 }
+                               }
+                             }}
+                           />
+                        </div>
+                      </div>
+                    );
+                  } catch (e) {
+                    return <div className="text-red-500 text-xs p-2">Failed to load tasks</div>;
+                  }
+                })()
+              ) : (
+                // Task Mention UI
+                <div className="flex flex-col">
+                  <div className="flex border-b border-zinc-200 dark:border-zinc-700">
+                    <div className="w-1/3 p-2 px-3 text-zinc-500 dark:text-zinc-400 flex items-center border-r border-zinc-200 dark:border-zinc-700">Status</div>
+                    <div className="w-2/3 p-2 px-3 flex items-center">
+                      <span className="px-2 py-0.5 rounded text-xs font-semibold uppercase truncate max-w-full bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200">
+                        {hoverCardData.taskStatus || 'Pending'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex border-b border-zinc-200 dark:border-zinc-700">
+                    <div className="w-1/3 p-2 px-3 text-zinc-500 dark:text-zinc-400 flex items-center border-r border-zinc-200 dark:border-zinc-700">Assignees</div>
+                    <div className="w-2/3 p-2 px-3 flex items-center gap-1 overflow-x-auto">
+                      {(() => {
+                        try {
+                          const assignees = hoverCardData.taskAssignees ? JSON.parse(hoverCardData.taskAssignees) : [];
+                          if (assignees.length > 0) {
+                            return assignees.map((user: any) => (
+                              <div key={user.id} className="w-5 h-5 rounded-full overflow-hidden shrink-0 border border-zinc-300 dark:border-zinc-600 bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center">
+                                {user.avatarUrl ? (
+                                  <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <span className="text-[9px] font-medium text-zinc-700 dark:text-zinc-300">
+                                    {user.name?.charAt(0).toUpperCase()}
+                                  </span>
+                                )}
+                              </div>
+                            ));
+                          }
+                        } catch (e) {}
+                        return <span className="text-zinc-500 italic">Unassigned</span>;
+                      })()}
+                    </div>
+                  </div>
+                  <div className="flex border-b border-zinc-200 dark:border-zinc-700">
+                    <div className="w-1/3 p-2 px-3 text-zinc-500 dark:text-zinc-400 flex items-center border-r border-zinc-200 dark:border-zinc-700">Due Date</div>
+                    <div className="w-2/3 p-2 px-3 flex items-center">
+                       {hoverCardData.taskDueDate ? new Date(hoverCardData.taskDueDate).toLocaleDateString() : <span className="text-zinc-500 italic">Not set</span>}
+                    </div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-1/3 p-2 px-3 text-zinc-500 dark:text-zinc-400 flex items-center border-r border-zinc-200 dark:border-zinc-700">Priority</div>
+                    <div className="w-2/3 p-2 px-3 flex items-center gap-1.5">
+                       <span>{hoverCardData.taskPriority || 'None'}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modals */}

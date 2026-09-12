@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, memo, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Plus, MoreHorizontal, Archive, Trash2, Link2, Hash, ExternalLink, Star, Edit2, Bell, Clock, ArrowRight, Merge, Copy, RefreshCw, LayoutTemplate, Share2, Target, Play, Mail, Lock } from 'lucide-react';
@@ -25,6 +25,7 @@ interface Props {
   onRename?: (newName: string) => void;
   isColumnRestrictedForUser?: boolean;
   columnRestrictionReason?: string;
+  listStatuses?: any[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -115,7 +116,7 @@ const getStatusTheme = (status: string, customTheme?: string) => {
   return THEMES[defaultThemeId];
 };
 
-export function KanbanColumn({
+export const KanbanColumn = memo(function KanbanColumn({
   status,
   tasks,
   isCollapsed,
@@ -133,16 +134,30 @@ export function KanbanColumn({
   onRename,
   isColumnRestrictedForUser = false,
   columnRestrictionReason,
+  listStatuses = [],
 }: Props) {
+  const droppableData = useMemo(() => ({
+    type: 'Column',
+    status,
+  }), [status]);
+
   const { setNodeRef, isOver } = useDroppable({
     id: status,
-    data: {
-      type: 'Column',
-      status,
-    },
+    data: droppableData,
   });
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [renderLimit, setRenderLimit] = useState(5);
+
+  // Progressive rendering to prevent initial mount freeze
+  useEffect(() => {
+    if (renderLimit < tasks.length) {
+      const timer = setTimeout(() => {
+        setRenderLimit((prev) => Math.min(prev + 20, tasks.length));
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [renderLimit, tasks.length]);
 
   const label = STATUS_LABELS[status] || status;
   const colors = getStatusTheme(status, customTheme);
@@ -269,14 +284,15 @@ export function KanbanColumn({
             isOver ? 'bg-black/5' : ''
           }`}
         >
-          <SortableContext items={tasks.map(t => t.id)} strategy={verticalListSortingStrategy}>
-            {tasks.map((task) => (
+          <SortableContext items={Array.from(new Set(tasks.slice(0, renderLimit).map(t => t.id)))} strategy={verticalListSortingStrategy}>
+            {tasks.slice(0, renderLimit).filter((t, index, self) => index === self.findIndex((task) => task.id === t.id)).map((task) => (
               <KanbanCard
                 key={task.id}
                 task={task}
                 onClick={onTaskClick}
                 isMoveDisabled={isColumnRestrictedForUser}
                 moveLockReason={columnRestrictionReason}
+                listStatuses={listStatuses}
               />
             ))}
           </SortableContext>
@@ -313,4 +329,4 @@ export function KanbanColumn({
       />
     </div>
   );
-}
+});

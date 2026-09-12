@@ -2,8 +2,8 @@ import { apiClient } from './client';
 import { Space, Folder, Doc, Page } from '@/lib/types';
 
 export const spacesApi = {
-  async getSpaces(): Promise<{ spaces: Space[] }> {
-    return apiClient<{ spaces: Space[] }>('/api/spaces', {
+  async getSpaces(): Promise<{ spaces: Space[], allLists?: any[], allDocs?: any[] }> {
+    return apiClient<{ spaces: Space[], allLists?: any[], allDocs?: any[] }>('/api/spaces', {
       method: 'GET',
     });
   },
@@ -60,7 +60,7 @@ export const spacesApi = {
     });
   },
 
-  async createDoc(data: { title: string; spaceId?: string; folderId?: string }): Promise<{ doc: Doc }> {
+  async createDoc(data: { title: string; spaceId?: string; folderId?: string; isDailyRollover?: boolean }): Promise<{ doc: Doc }> {
     return apiClient<{ doc: Doc }>('/api/spaces/docs', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -147,6 +147,34 @@ export const spacesApi = {
   async deleteList(id: string): Promise<{ message: string }> {
     return apiClient<{ message: string }>(`/api/lists/${id}`, {
       method: 'DELETE',
+    });
+  },
+
+  async reorderSpaces(items: { id: string; order: number }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  async reorderFolders(items: { id: string; order: number; spaceId?: string; parentFolderId?: string }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/folders/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  async reorderLists(items: { id: string; order: number; spaceId?: string; folderId?: string }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/lists/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  async reorderDocs(items: { id: string; order: number; spaceId?: string; folderId?: string }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/docs/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
     });
   },
 };

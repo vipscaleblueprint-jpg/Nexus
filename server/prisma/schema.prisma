@@ -23,8 +23,6 @@ enum InvitationStatus {
   REVOKED
 }
 
-
-
 enum EmploymentType {
   FULL_TIME
   PART_TIME
@@ -88,10 +86,10 @@ model Team {
 }
 
 model WorkspaceRole {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  color       String?
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  name      String   @unique
+  color     String?
+  createdAt DateTime @default(now())
 }
 
 // -----------------------------------------------------------------------------
@@ -124,26 +122,30 @@ model User {
   teamId String?
   team   Team?   @relation(fields: [teamId], references: [id])
 
-  ownedSpaces         Space[]               @relation("SpaceOwner")
-  assignedTasks       Task[]                @relation("TaskAssignee")
-  assignedTasksMulti  Task[]                @relation("TaskMultiAssignees")
-  createdTasks        Task[]                @relation("TaskCreator")
-  checkedItems        ChecklistItem[]       @relation("ItemChecker")
-  favorites           Favorite[]
-  uploadedAttachments Attachment[]
-  auditLogs           AuditLog[]
-  channelMemberships  ChannelMember[]
-  messagesSent        Message[]
-  messageReactions    MessageReaction[]
-  messageMentions     MessageMention[]      @relation("UserMentions")
-  readReceipts        MessageReadReceipt[]
-  savedMessages       SavedMessage[]
-  notifications       MessageNotification[]
-  taskNotifications   TaskNotification[]    @relation("UserNotification")
-  taskNotificationsSent TaskNotification[]  @relation("ActorNotification")
-  pinnedMessages      Message[]             @relation("MessagePinnedBy")
-  createdChannels     Channel[]             @relation("ChannelCreatedBy")
-  sentInvitations     Invitation[]          @relation("UserInvitations")
+  ownedSpaces            Space[]               @relation("SpaceOwner")
+  assignedTasks          Task[]                @relation("TaskAssignee")
+  assignedTasksMulti     Task[]                @relation("TaskMultiAssignees")
+  createdTasks           Task[]                @relation("TaskCreator")
+  assignedSubtasks       Subtask[]
+  checkedItems           ChecklistItem[]       @relation("ItemChecker")
+  assignedChecklistItems ChecklistItem[]       @relation("ItemAssignee")
+  favorites              Favorite[]
+  uploadedAttachments    Attachment[]
+  auditLogs              AuditLog[]
+  channelMemberships     ChannelMember[]
+  messagesSent           Message[]
+  messageReactions       MessageReaction[]
+  messageMentions        MessageMention[]      @relation("UserMentions")
+  readReceipts           MessageReadReceipt[]
+  savedMessages          SavedMessage[]
+  notifications          MessageNotification[]
+  taskNotifications      TaskNotification[]    @relation("UserNotification")
+  taskNotificationsSent  TaskNotification[]    @relation("ActorNotification")
+  taskComments           TaskComment[]
+  taskCommentReactions   TaskCommentReaction[]
+  pinnedMessages         Message[]             @relation("MessagePinnedBy")
+  createdChannels        Channel[]             @relation("ChannelCreatedBy")
+  sentInvitations        Invitation[]          @relation("UserInvitations")
 
   @@index([email])
   @@index([systemRole])
@@ -161,6 +163,7 @@ model Space {
   icon      String?
   color     String?
   ownerId   String
+  order     Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -179,6 +182,7 @@ model Folder {
   name           String
   spaceId        String?
   parentFolderId String?
+  order          Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -198,12 +202,13 @@ model List {
   spaceId      String?
   folderId     String?
   customGroups String[] @default([])
+  order        Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  space  Space?  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  folder Folder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  tasks  Task[]
+  space    Space?       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  folder   Folder?      @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  tasks    Task[]
   statuses ListStatus[]
 
   @@index([spaceId])
@@ -214,23 +219,27 @@ model ListStatus {
   id           String   @id @default(uuid())
   name         String
   color        String   @default("zinc")
-  allowedRoles String[] @default([]) 
+  allowedRoles String[] @default([])
+  groupName    String?
   listId       String
   createdAt    DateTime @default(now())
 
-  list         List     @relation(fields: [listId], references: [id], onDelete: Cascade)
+  list List @relation(fields: [listId], references: [id], onDelete: Cascade)
 
   @@index([listId])
 }
 
 model Doc {
-  id        String   @id @default(uuid())
-  title     String
-  docDate   DateTime @default(now())
-  spaceId   String?
-  folderId  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String   @id @default(uuid())
+  title            String
+  docDate          DateTime @default(now())
+  spaceId          String?
+  folderId         String?
+  isDailyRollover  Boolean  @default(false)
+  rolloverTimezone String   @default("Asia/Singapore")
+  order            Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   space  Space?  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   folder Folder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
@@ -241,13 +250,15 @@ model Doc {
 }
 
 model Page {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   title        String
-  content      String   @default("")
+  content      String    @default("")
   docId        String
   parentPageId String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isClosed     Boolean   @default(false)
+  reportDate   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   doc        Doc    @relation(fields: [docId], references: [id], onDelete: Cascade)
   parentPage Page?  @relation("PageHierarchy", fields: [parentPageId], references: [id], onDelete: Cascade)
@@ -255,6 +266,7 @@ model Page {
 
   @@index([docId])
   @@index([parentPageId])
+  @@index([reportDate])
 }
 
 // -----------------------------------------------------------------------------
@@ -294,15 +306,15 @@ model Task {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  list        List           @relation(fields: [listId], references: [id], onDelete: Cascade)
-  assignee    User?          @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  assignees   User[]         @relation("TaskMultiAssignees")
-  creator     User           @relation("TaskCreator", fields: [creatorId], references: [id])
-  team        Team?          @relation(fields: [teamId], references: [id])
-  subtasks    Subtask[]
-  checklists  Checklist[]
-  comments    TaskComment[]
-  attachments Attachment[]
+  list          List               @relation(fields: [listId], references: [id], onDelete: Cascade)
+  assignee      User?              @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  assignees     User[]             @relation("TaskMultiAssignees")
+  creator       User               @relation("TaskCreator", fields: [creatorId], references: [id])
+  team          Team?              @relation(fields: [teamId], references: [id])
+  subtasks      Subtask[]
+  checklists    Checklist[]
+  comments      TaskComment[]
+  attachments   Attachment[]
   notifications TaskNotification[]
 
   @@index([listId])
@@ -315,27 +327,38 @@ model Task {
 }
 
 model Subtask {
-  id        String   @id @default(uuid())
-  title     String
-  completed Boolean  @default(false)
-  taskId    String
-  createdAt DateTime @default(now())
+  id          String    @id @default(uuid())
+  title       String
+  description String?   @db.Text
+  completed   Boolean   @default(false)
+  taskId      String
+  assigneeId  String?
+  priority    Priority  @default(MEDIUM)
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
 
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task       Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  assignee   User?         @relation(fields: [assigneeId], references: [id])
+  comments   TaskComment[]
+  checklists Checklist[]
 
   @@index([taskId])
+  @@index([assigneeId])
 }
 
 model Checklist {
-  id        String          @id @default(uuid())
+  id        String   @id @default(uuid())
   name      String
   taskId    String
-  createdAt DateTime        @default(now())
+  subtaskId String?
+  createdAt DateTime @default(now())
 
-  task  Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  items ChecklistItem[]
+  task    Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  subtask Subtask?        @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
+  items   ChecklistItem[]
 
   @@index([taskId])
+  @@index([subtaskId])
 }
 
 model ChecklistItem {
@@ -344,26 +367,55 @@ model ChecklistItem {
   completed   Boolean  @default(false)
   checklistId String
   checkedById String?
+  assigneeId  String?
   createdAt   DateTime @default(now())
 
   checklist Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
   checkedBy User?     @relation("ItemChecker", fields: [checkedById], references: [id])
+  assignee  User?     @relation("ItemAssignee", fields: [assigneeId], references: [id])
 
   @@index([checklistId])
   @@index([checkedById])
+  @@index([assigneeId])
 }
 
 model TaskComment {
-  id        String   @id @default(uuid())
-  content   String
-  taskId    String
-  userId    String
-  createdAt DateTime @default(now())
+  id              String   @id @default(uuid())
+  content         String
+  taskId          String
+  subtaskId       String?
+  userId          String
+  parentCommentId String?
+  replyCount      Int      @default(0)
+  createdAt       DateTime @default(now())
 
-  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attachments Attachment[]
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  task          Task                  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  subtask       Subtask?              @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
+  attachments   Attachment[]
+  reactions     TaskCommentReaction[]
+  parentComment TaskComment?          @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies       TaskComment[]         @relation("CommentReplies")
 
   @@index([taskId])
+  @@index([subtaskId])
+  @@index([userId])
+  @@index([parentCommentId])
+}
+
+model TaskCommentReaction {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  comment TaskComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@index([commentId])
   @@index([userId])
 }
 
@@ -449,11 +501,11 @@ model Message {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  channel       Channel              @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  sender        User                 @relation(fields: [senderId], references: [id])
-  parentMessage Message?             @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: Cascade)
-  replies       Message[]            @relation("MessageReplies")
-  pinnedBy      User?                @relation("MessagePinnedBy", fields: [pinnedById], references: [id])
+  channel       Channel               @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  sender        User                  @relation(fields: [senderId], references: [id])
+  parentMessage Message?              @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: Cascade)
+  replies       Message[]             @relation("MessageReplies")
+  pinnedBy      User?                 @relation("MessagePinnedBy", fields: [pinnedById], references: [id])
   attachments   MessageAttachment[]
   reactions     MessageReaction[]
   mentions      MessageMention[]
@@ -562,7 +614,7 @@ model TaskNotification {
   userId    String
   actorId   String?
   taskId    String?
-  type      String   // "ASSIGNMENT" or "MENTION"
+  type      String // "ASSIGNMENT" or "MENTION"
   title     String
   content   String?
   isRead    Boolean  @default(false)

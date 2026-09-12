@@ -1851,7 +1851,7 @@ function SubtaskDetailView({
                             ? 'opacity-50 cursor-not-allowed hover:bg-transparent'
                             : 'hover:bg-black/10 cursor-pointer'
                         }`}
-                        title={!permission?.allowed ? (permission.reason || 'Status transition restricted') : 'Next status'}
+                        title={!permission?.allowed ? (permission?.reason || 'Status transition restricted') : 'Next status'}
                       >
                         <ChevronRight className="w-3.5 h-3.5" />
                       </button>
@@ -1862,7 +1862,7 @@ function SubtaskDetailView({
                           ? 'bg-emerald-600/50 cursor-not-allowed'
                           : 'bg-emerald-600 hover:bg-emerald-500 cursor-pointer'
                       }`}
-                      title={!permission?.allowed ? (permission.reason || 'Status transition restricted') : 'Mark Complete'}
+                      title={!permission?.allowed ? (permission?.reason || 'Status transition restricted') : 'Mark Complete'}
                     >
                       <Check className="w-3.5 h-3.5" />
                     </button>

@@ -205,8 +205,8 @@ async function checkCanMoveFromStatus(
     }
 
     const workspaceRoles = await prisma.workspaceRole.findMany();
-    const allowedNames = sourceStatusRule.allowedRoles.map((r) => {
-      const match = workspaceRoles.find((wr) => wr.id === r || wr.name.toUpperCase() === r.toUpperCase());
+    const allowedNames = sourceStatusRule.allowedRoles.map((r: any) => {
+      const match = workspaceRoles.find((wr: any) => wr.id === r || wr.name.toUpperCase() === r.toUpperCase());
       return match ? match.name.toUpperCase() : r.toUpperCase();
     });
 
@@ -335,7 +335,7 @@ export async function updateTask(req: Request, res: Response) {
             details: { assigneeName: names, assigneeNames: assignedUsers.map((u) => u.name), count: assignedUsers.length },
           },
         });
-        const newlyAssigned = assigneeIds.filter((id: string) => !currentTask.assignees.some(a => a.id === id));
+        const newlyAssigned = assigneeIds.filter((id: string) => !currentTask.assignees.some((a: any) => a.id === id));
         if (newlyAssigned.length > 0) {
           const newAssigneesToNotify = newlyAssigned.filter((id: string) => id !== actingUserId);
           if (newAssigneesToNotify.length > 0) {
@@ -359,7 +359,7 @@ export async function updateTask(req: Request, res: Response) {
           type: 'assignment',
           author: user?.name || 'Someone',
           assigneeName: names,
-          assignees: assignedUsers,
+          assignees: assignedUsers.map((u: any) => u.name),
           date: log.createdAt,
           user,
         };
@@ -767,7 +767,7 @@ export async function getTaskActivities(req: Request, res: Response) {
       orderBy: { createdAt: 'asc' },
     });
 
-    const activities = logs.map((log) => {
+    const activities = logs.map((log: any) => {
       const details = (log.details as any) || {};
       if (log.action === 'STATUS_CHANGE') {
         return {

@@ -385,13 +385,13 @@ function SubtaskRow({
 
   const handleAddComment = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!commentText.trim() || !currentUser?.id) return;
+    if (!commentText.trim() || !currentUser?.id || !taskId) return;
     setIsSubmittingComment(true);
     try {
-      await tasksApi.addComment(taskId, commentText.trim(), currentUser.id, listId, [], undefined, subtask.id);
+      await tasksApi.addComment(taskId!, commentText.trim(), currentUser.id, listId, [], undefined, subtask.id);
       setCommentText('');
       
-      const commentsRes = await tasksApi.getComments(taskId, subtask.id);
+      const commentsRes = await tasksApi.getComments(taskId!, subtask.id);
       if (commentsRes?.comments) {
         onUpdate(subtask.id, { comments: commentsRes.comments });
       }

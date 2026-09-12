@@ -25,6 +25,7 @@ interface Props {
   onRename?: (newName: string) => void;
   isColumnRestrictedForUser?: boolean;
   columnRestrictionReason?: string;
+  listStatuses?: any[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -133,6 +134,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   onRename,
   isColumnRestrictedForUser = false,
   columnRestrictionReason,
+  listStatuses = [],
 }: Props) {
   const droppableData = useMemo(() => ({
     type: 'Column',
@@ -290,6 +292,7 @@ export const KanbanColumn = memo(function KanbanColumn({
                 onClick={onTaskClick}
                 isMoveDisabled={isColumnRestrictedForUser}
                 moveLockReason={columnRestrictionReason}
+                listStatuses={listStatuses}
               />
             ))}
           </SortableContext>

@@ -57,6 +57,14 @@ export const TaskMention = Mention.extend({
           if (!attributes.taskDueDate) return {};
           return { 'data-task-due-date': attributes.taskDueDate };
         },
+      },
+      taskHasDescription: {
+        default: false,
+        parseHTML: element => element.getAttribute('data-task-has-description') === 'true',
+        renderHTML: attributes => {
+          if (!attributes.taskHasDescription) return {};
+          return { 'data-task-has-description': 'true' };
+        },
       }
     };
   },
@@ -85,7 +93,8 @@ export const TaskMention = Mention.extend({
           'data-tasks': node.attrs.tasks || '',
           'data-task-assignees': node.attrs.taskAssignees || '',
           'data-task-priority': node.attrs.taskPriority || '',
-          'data-task-due-date': node.attrs.taskDueDate || ''
+          'data-task-due-date': node.attrs.taskDueDate || '',
+          'data-task-has-description': node.attrs.taskHasDescription ? 'true' : ''
         }
       ),
       node.attrs.label || node.attrs.id

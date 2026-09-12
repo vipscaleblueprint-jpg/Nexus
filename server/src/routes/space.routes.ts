@@ -20,6 +20,10 @@ import {
   deletePage,
   duplicatePage,
   listDocTaskSubtab,
+  reorderSpaces,
+  reorderFolders,
+  reorderLists,
+  reorderDocs,
 } from '../controllers/space.controller';
 import { idParams, validate } from '../validation';
 import {
@@ -36,6 +40,12 @@ import {
 export const spaceRouter = Router();
 
 spaceRouter.get('/dashboard', getDashboardData);
+
+// Reorder routes (must come before generic /:id routes)
+spaceRouter.put('/reorder', reorderSpaces);
+spaceRouter.put('/folders/reorder', reorderFolders);
+spaceRouter.put('/lists/reorder', reorderLists);
+spaceRouter.put('/docs/reorder', reorderDocs);
 
 spaceRouter.post('/folders', validate({ body: createFolderSchema }), createFolder);
 spaceRouter.patch('/folders/:id', validate({ params: idParams, body: updateFolderSchema }), updateFolder);

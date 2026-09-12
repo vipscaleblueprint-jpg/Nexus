@@ -149,7 +149,7 @@ function SubtaskDescription({
               />
             ) : (
               <p
-                className={`text-xs leading-relaxed break-words cursor-text min-h-[16px] ${expanded ? 'whitespace-pre-wrap' : 'line-clamp-2'} ${editingUser ? 'text-zinc-500' : (!desc ? 'text-zinc-500 italic opacity-0 group-hover/desc-inner:opacity-100' : 'text-zinc-300 group-hover/desc-wrapper:text-zinc-200')} transition-colors`}
+                className={`text-xs leading-relaxed break-words cursor-text min-h-[16px] ${expanded ? 'whitespace-pre-wrap' : 'line-clamp-2'} ${editingUser ? 'text-zinc-500' : (!desc ? 'text-zinc-500 italic' : 'text-zinc-300 group-hover/desc-wrapper:text-zinc-200')} transition-colors`}
                 onClick={handleStartEditing}
               >
                 {desc || 'Write a text...'}
@@ -388,9 +388,13 @@ function SubtaskRow({
     if (!commentText.trim() || !currentUser?.id) return;
     setIsSubmittingComment(true);
     try {
-      await tasksApi.addComment(subtask.id, commentText.trim(), currentUser.id);
+      await tasksApi.addComment(taskId, commentText.trim(), currentUser.id, listId, [], undefined, subtask.id);
       setCommentText('');
-      toast.success('Comment added');
+      
+      const commentsRes = await tasksApi.getComments(taskId, subtask.id);
+      if (commentsRes?.comments) {
+        onUpdate(subtask.id, { comments: commentsRes.comments });
+      }
     } catch (err) {
       console.error(err);
       toast.error('Failed to add comment');
@@ -476,7 +480,7 @@ function SubtaskRow({
         {/* Collapse Toggle Button */}
         <button 
           onClick={() => setIsCollapsed(!isCollapsed)} 
-          className="p-1 hover:bg-zinc-800/80 rounded-md text-zinc-500 hover:text-zinc-300 transition-colors shrink-0 ml-2"
+          className="p-1 hover:bg-zinc-800/80 rounded-md text-zinc-500 hover:text-zinc-300 transition-colors shrink-0 ml-2 cursor-pointer"
           title={isCollapsed ? "Expand subtask" : "Collapse subtask"}
         >
           <ChevronUp className={`w-4 h-4 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : 'rotate-0'}`} />
@@ -634,19 +638,19 @@ function SubtaskRow({
         </div>
 
         {/* Column 3: Checklists & Comments (Right) */}
-        <div className="w-[240px] flex flex-col shrink-0">
+        <div className="w-[320px] flex flex-col shrink-0">
           {/* Internal Tabs */}
           <div className="flex items-center gap-4 border-b border-zinc-800/60 mb-4 shrink-0">
             <button
               onClick={() => setActiveTab('checklist')}
-              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative ${activeTab === 'checklist' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
+              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'checklist' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
               <span className="flex items-center gap-1.5"><CheckSquare className="w-3.5 h-3.5" /> Checklist</span>
               {activeTab === 'checklist' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t-full" />}
             </button>
             <button
               onClick={() => setActiveTab('comments')}
-              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative ${activeTab === 'comments' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
+              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'comments' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
               <span className="flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Comments</span>
               {activeTab === 'comments' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t-full" />}
@@ -655,38 +659,75 @@ function SubtaskRow({
 
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden pb-2">
             {activeTab === 'checklist' && (
-              <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col items-center justify-center text-center pb-4">
-                <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center mb-2">
-                  <ListChecks className="w-4 h-4 text-zinc-400" />
+              <div className="flex-1 flex flex-col relative h-full">
+                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
+                  {subtask.checklists && subtask.checklists.length > 0 ? (
+                    subtask.checklists.map((checklist: any) => (
+                      <div key={checklist.id} className="flex flex-col gap-1.5">
+                        <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">{checklist.name}</div>
+                        {checklist.items?.map((item: any) => (
+                          <div key={item.id} className="flex items-start gap-2 group/item">
+                            <div className={`mt-0.5 w-3 h-3 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${item.completed ? 'bg-blue-600 border-blue-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
+                              {item.completed && <Check className="w-2.5 h-2.5 text-white" />}
+                            </div>
+                            <span className={`text-[11px] leading-snug break-words ${item.completed ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
+                              {item.text}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center">
+                      <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center mb-2">
+                        <ListChecks className="w-4 h-4 text-zinc-400" />
+                      </div>
+                      <h3 className="text-[13px] font-medium text-zinc-300 mb-1">No Checklist</h3>
+                      <p className="text-[11px] text-zinc-500 mb-4 max-w-[160px] leading-relaxed">
+                        Break this subtask down into smaller steps.
+                      </p>
+                      <button onClick={() => onOpenSubtask(subtask)} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium rounded-lg transition-colors shadow-sm cursor-pointer">
+                        Create Checklist
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <h3 className="text-[13px] font-medium text-zinc-300 mb-1">No Checklist</h3>
-                <p className="text-[11px] text-zinc-500 mb-4 max-w-[160px] leading-relaxed">
-                  Break this subtask down into smaller steps.
-                </p>
-                <button className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium rounded-lg transition-colors shadow-sm cursor-pointer">
-                  Create Checklist
-                </button>
               </div>
             )}
 
             {activeTab === 'comments' && (
               <div className="flex-1 flex flex-col relative h-full">
-                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col items-center justify-center text-center pb-4 min-h-[120px]">
-                  <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center mb-2">
-                    <MessageSquare className="w-4 h-4 text-zinc-400" />
-                  </div>
-                  <h3 className="text-[13px] font-medium text-zinc-300 mb-1">
-                    {commentCount ? `${commentCount} Comment${commentCount !== 1 ? 's' : ''}` : 'No Comments'}
-                  </h3>
-                  <p className="text-[11px] text-zinc-500 mb-4 max-w-[150px] leading-relaxed">
-                    Click the button below to view the full thread.
-                  </p>
-                  <button
-                    onClick={() => onOpenSubtask(subtask)}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium rounded-lg transition-colors shadow-sm cursor-pointer"
-                  >
-                    Open Thread
-                  </button>
+                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-3 min-h-[120px]">
+                  {subtask.comments && subtask.comments.length > 0 ? (
+                    subtask.comments.map((comment: any) => (
+                      <div key={comment.id} className="flex gap-2">
+                        {comment.user?.avatarUrl ? (
+                          <img src={comment.user.avatarUrl} alt="" className="w-5 h-5 rounded-full shrink-0" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[10px] font-bold shrink-0">
+                            {comment.user?.name?.charAt(0).toUpperCase() || 'U'}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <span className="text-[11px] font-medium text-zinc-300 truncate">{comment.user?.name || 'Unknown'}</span>
+                            <span className="text-[9px] text-zinc-500 shrink-0">{new Date(comment.createdAt).toLocaleDateString()}</span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400 leading-relaxed break-words">{comment.content}</p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center">
+                      <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center mb-2">
+                        <MessageSquare className="w-4 h-4 text-zinc-400" />
+                      </div>
+                      <h3 className="text-[13px] font-medium text-zinc-300 mb-1">No Comments</h3>
+                      <p className="text-[11px] text-zinc-500 mb-4 max-w-[150px] leading-relaxed">
+                        Be the first to share your thoughts.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Inline Comment Input */}
@@ -732,6 +773,7 @@ function SubtaskRow({
 
 export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
+  const [isSubmittingSubtask, setIsSubmittingSubtask] = useState(false);
   const [showAllSubtasks, setShowAllSubtasks] = useState(false);
   // Local optimistic state — seeded from task.subtasks
   const [localSubtasks, setLocalSubtasks] = useState<Subtask[]>(task.subtasks || []);
@@ -782,7 +824,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
     try {
       const { subtask: resSubtask } = await tasksApi.updateSubtask(task.id, subtaskId, data);
       if (!isMounted.current) return; // Modal was closed — do nothing
-      const updated = localSubtasksRef.current.map(s => s.id === subtaskId ? resSubtask : s);
+      const updated = localSubtasksRef.current.map(s => s.id === subtaskId ? { ...s, ...resSubtask } : s);
       setLocalSubtasks(updated);
       onUpdateTask({ ...task, subtasks: updated });
     } catch (err) {
@@ -800,7 +842,8 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   }, [optimisticUpdate]);
 
   const handleAddSubtask = async () => {
-    if (!newSubtaskTitle.trim()) { setAddingSubtask(false); return; }
+    if (!newSubtaskTitle.trim() || isSubmittingSubtask) { setAddingSubtask(false); return; }
+    setIsSubmittingSubtask(true);
     try {
       const { subtask } = await tasksApi.createSubtask(task.id, {
         title: newSubtaskTitle.trim(),
@@ -814,6 +857,8 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
       setShowAllSubtasks(true); // Auto-expand when adding a new subtask
     } catch (err) {
       console.error('Failed to create subtask', err);
+    } finally {
+      setIsSubmittingSubtask(false);
     }
   };
 
@@ -864,15 +909,19 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               <input
                 type="text"
                 value={newSubtaskTitle}
+                disabled={isSubmittingSubtask}
                 onChange={(e) => setNewSubtaskTitle(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleAddSubtask();
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddSubtask();
+                  }
                   if (e.key === 'Escape') setAddingSubtask(false);
                 }}
-                onBlur={() => newSubtaskTitle ? handleAddSubtask() : setAddingSubtask(false)}
+                onBlur={() => newSubtaskTitle && !isSubmittingSubtask ? handleAddSubtask() : setAddingSubtask(false)}
                 autoFocus={addingSubtask}
-                placeholder="Add a new subtask..."
-                className="bg-transparent border-none outline-none text-sm text-zinc-200 placeholder:text-zinc-600 w-full focus:ring-0 p-0"
+                placeholder={isSubmittingSubtask ? "Adding..." : "Add a new subtask..."}
+                className="bg-transparent border-none outline-none text-sm text-zinc-200 placeholder:text-zinc-600 w-full focus:ring-0 p-0 disabled:opacity-50"
               />
             </div>
           )}

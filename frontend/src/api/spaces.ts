@@ -149,4 +149,32 @@ export const spacesApi = {
       method: 'DELETE',
     });
   },
+
+  async reorderSpaces(items: { id: string; order: number }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  async reorderFolders(items: { id: string; order: number; spaceId?: string; parentFolderId?: string }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/folders/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  async reorderLists(items: { id: string; order: number; spaceId?: string; folderId?: string }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/lists/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  async reorderDocs(items: { id: string; order: number; spaceId?: string; folderId?: string }[]): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/docs/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ items }),
+    });
+  },
 };

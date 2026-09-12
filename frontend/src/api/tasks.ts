@@ -98,4 +98,44 @@ export const tasksApi = {
       method: 'DELETE',
     });
   },
+
+  async createChecklist(taskId: string, data: Partial<any>): Promise<{ checklist: any }> {
+    return apiClient<{ checklist: any }>(`/api/tasks/${taskId}/checklists`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateChecklist(taskId: string, checklistId: string, data: Partial<any>): Promise<{ checklist: any }> {
+    return apiClient<{ checklist: any }>(`/api/tasks/${taskId}/checklists/${checklistId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteChecklist(taskId: string, checklistId: string): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>(`/api/tasks/${taskId}/checklists/${checklistId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async createChecklistItem(taskId: string, checklistId: string, data: Partial<any>): Promise<{ item: any }> {
+    return apiClient<{ item: any }>(`/api/tasks/${taskId}/checklists/${checklistId}/items`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateChecklistItem(taskId: string, checklistId: string, itemId: string, data: Partial<any>): Promise<{ item: any }> {
+    return apiClient<{ item: any }>(`/api/tasks/${taskId}/checklists/${checklistId}/items/${itemId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteChecklistItem(taskId: string, checklistId: string, itemId: string): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>(`/api/tasks/${taskId}/checklists/${checklistId}/items/${itemId}`, {
+      method: 'DELETE',
+    });
+  },
 };

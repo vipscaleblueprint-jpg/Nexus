@@ -65,6 +65,7 @@ export interface Space {
   name: string;
   icon?: string;
   color?: string;
+  order?: number;
   folders?: Folder[];
   lists?: List[];
   docs?: Doc[];
@@ -75,6 +76,7 @@ export interface Folder {
   name: string;
   spaceId?: string;
   parentFolderId?: string;
+  order?: number;
   subfolders?: Folder[];
   lists?: List[];
   docs?: Doc[];
@@ -85,6 +87,7 @@ export interface List {
   name: string;
   spaceId?: string;
   folderId?: string;
+  order?: number;
   columns?: any[];
   tasks?: Task[];
   createdAt?: string;
@@ -97,7 +100,9 @@ export interface Doc {
   docDate?: string;
   spaceId?: string;
   folderId?: string;
+  order?: number;
   pages?: Page[];
+  isDailyRollover?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -195,6 +200,8 @@ export interface ChecklistItem {
   completed: boolean;
   checklistId: string;
   checkedById?: string;
+  assigneeId?: string | null;
+  assignee?: User | null;
   createdAt: string;
 }
 

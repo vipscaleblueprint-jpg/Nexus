@@ -3,7 +3,11 @@ import { memo, useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil } from 'lucide-react';
+import { CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
+import { tasksApi, usersApi } from '@/api';
+import { useAppStore } from '@/lib/store';
+import { toast } from '@/lib/toast';
+import { PortalDropdown } from '@/components/ui/PortalDropdown';
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -18,44 +22,100 @@ interface Props {
   onClick?: (task: Task) => void;
   isMoveDisabled?: boolean;
   moveLockReason?: string;
+  listStatuses?: any[];
 }
 
-// Renders a dropdown via portal so it escapes overflow-hidden columns
-function PortalDropdown({ triggerRef, children, onClose }: { triggerRef: React.RefObject<HTMLElement | null>; children: React.ReactNode; onClose: () => void }) {
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
 
+
+const CardContent = ({ task: initialTask, isSubtask = false, children, onDropdownOpenChange, listStatuses = [] }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void, listStatuses?: any[] }) => {
+  const [task, setTask] = useState(initialTask);
+  
   useEffect(() => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      setCoords({ top: rect.bottom + window.scrollY + 4, left: rect.left + window.scrollX });
-    }
+    setTask(initialTask);
+  }, [initialTask]);
 
-    const close = (e: MouseEvent) => {
-      if (triggerRef.current && !triggerRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, []);
-
-  if (!coords || typeof document === 'undefined') return null;
-  return createPortal(
-    <div
-      className="fixed bg-zinc-800 border border-zinc-700 rounded-lg shadow-2xl z-[9999] p-1"
-      style={{ top: coords.top, left: coords.left }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {children}
-    </div>,
-    document.body
-  );
-}
-
-const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void }) => {
   const [isDescOpen, setIsDescOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'status'|'assignee'|'date'|'priority'|null>(null);
+  const [dbUsers, setDbUsers] = useState<any[]>([]);
+  const currentUser = useAppStore((s) => s.currentUser);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (openDropdown === 'assignee' && dbUsers.length === 0) {
+      usersApi.getUsers().then(res => {
+        if (!cancelled && res?.users) setDbUsers(res.users);
+      }).catch(console.error);
+    }
+    return () => { cancelled = true; };
+  }, [openDropdown, dbUsers.length]);
+
+  const handleStatusChange = async (newStatus: string) => {
+    if (!currentUser) return;
+    try {
+      await tasksApi.moveTask(task.id, newStatus, 'listId' in task ? task.listId : undefined, currentUser.id);
+      toast.success('Status updated');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update status');
+    }
+    closeDropdown();
+  };
+
+  const handlePriorityChange = async (p: string | null) => {
+    if (!currentUser) return;
+    
+    setTask(prev => ({ ...prev, priority: p as any }));
+    closeDropdown();
+    
+    try {
+      await tasksApi.updateTask(task.id, { priority: (p || undefined) as any, userId: currentUser.id });
+      toast.success(p ? `Priority set to ${p}` : 'Priority cleared');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update priority');
+      setTask(initialTask);
+    }
+  };
+
+  const assignees = 'assignees' in task && task.assignees?.length ? task.assignees : ('assignee' in task && task.assignee) ? [task.assignee] : [];
+
+  const handleAssigneeToggle = async (user: any) => {
+    if (!currentUser) return;
+    const currentAssignees = assignees;
+    const isAssigned = currentAssignees.some((a: any) => a.id === user.id);
+    const newAssignees = isAssigned ? currentAssignees.filter((a: any) => a.id !== user.id) : [...currentAssignees, user];
+    const assigneeIds = newAssignees.map(a => a.id);
+    const primaryAssignee = newAssignees.length > 0 ? newAssignees[0] : null;
+
+    setTask(prev => ({ ...prev, assignees: newAssignees, assignee: primaryAssignee, assigneeId: primaryAssignee?.id || null, assigneeIds }));
+
+    try {
+      await tasksApi.updateTask(task.id, {
+        assigneeIds,
+        assigneeId: primaryAssignee?.id || null,
+        userId: currentUser.id,
+      });
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update assignee');
+      setTask(initialTask);
+    }
+  };
+
+  const handleClearAssignees = async () => {
+    if (!currentUser) return;
+    
+    setTask(prev => ({ ...prev, assignees: [], assignee: null, assigneeId: null, assigneeIds: [] }));
+    
+    try {
+      await tasksApi.updateTask(task.id, {
+        assigneeIds: [],
+        assigneeId: null,
+        userId: currentUser.id,
+      });
+      toast.success('Assignees cleared');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to clear assignees');
+      setTask(initialTask);
+    }
+  };
   const statusTriggerRef = useRef<HTMLDivElement>(null);
   const assigneeTriggerRef = useRef<HTMLDivElement>(null);
   const dateTriggerRef = useRef<HTMLDivElement>(null);
@@ -83,8 +143,7 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
   }
 
   const breadcrumbs = 'list' in task && task.list ? `In ${task.list.space?.name || 'Space'} | ${task.list.folder?.name || 'Folder'} | ${task.list.name}` : '';
-  const assignees = 'assignees' in task && task.assignees?.length ? task.assignees : task.assignee ? [task.assignee] : [];
-  const statusStr = 'status' in task ? task.status : (task.completed ? 'CLOSED' : 'PENDING');
+  const statusStr = 'status' in task ? task.status : ('completed' in task && task.completed ? 'CLOSED' : 'PENDING');
   const isClosed = statusStr.toUpperCase() === 'CLOSED' || ('completed' in task && task.completed);
 
   // Field hover class
@@ -118,27 +177,28 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
       )}
 
       {/* Description Icon */}
-      {plainTextDescription && (
-        <div className="mt-2 relative inline-flex">
-          <div
-            ref={descTriggerRef}
-            className="flex items-center text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 p-1 -ml-1 rounded cursor-pointer transition-colors"
-            onClick={(e) => { e.stopPropagation(); setIsDescOpen(!isDescOpen); }}
-          >
-            <AlignLeft className="w-3.5 h-3.5" />
-          </div>
-          {isDescOpen && (
-            <PortalDropdown triggerRef={descTriggerRef} onClose={() => setIsDescOpen(false)}>
-              <div className="w-64 p-3">
-                <div className="font-semibold mb-1.5 text-xs text-zinc-100">Deliverables:</div>
-                <div className="line-clamp-6 leading-relaxed text-zinc-300 text-[11px]">{plainTextDescription}</div>
-              </div>
-            </PortalDropdown>
-          )}
+      <div className="mt-2 relative inline-flex">
+        <div
+          ref={descTriggerRef}
+          className={`flex items-center ${plainTextDescription ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-600 hover:text-zinc-400'} hover:bg-zinc-700/50 p-1 -ml-1 rounded cursor-pointer transition-colors`}
+          onClick={(e) => { e.stopPropagation(); setIsDescOpen(!isDescOpen); }}
+          title={plainTextDescription ? 'View Description' : 'No description'}
+        >
+          <AlignLeft className="w-3.5 h-3.5" />
         </div>
-      )}
+        {isDescOpen && (
+          <PortalDropdown triggerRef={descTriggerRef} onClose={() => setIsDescOpen(false)}>
+            <div className="w-64 p-3">
+              <div className="font-semibold mb-1.5 text-xs text-zinc-100">Deliverables:</div>
+              <div className="line-clamp-6 leading-relaxed text-zinc-300 text-[11px]">
+                {plainTextDescription || <span className="italic text-zinc-500">No description provided.</span>}
+              </div>
+            </div>
+          </PortalDropdown>
+        )}
+      </div>
 
-      <div className="flex flex-col gap-0.5 mt-2.5">
+      <div className="flex flex-col gap-1.5 mt-2.5">
         {/* Status */}
         <div className="relative">
           <div
@@ -155,13 +215,25 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
           </div>
           {openDropdown === 'status' && (
             <PortalDropdown triggerRef={statusTriggerRef} onClose={closeDropdown}>
-              <div className="w-36">
-                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Change Status</div>
-                {['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
-                  <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium" onClick={closeDropdown}>
-                    {s}
-                  </div>
-                ))}
+              <div className="w-36 max-h-64 overflow-y-auto custom-scrollbar">
+                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800">Change Status</div>
+                {listStatuses.length > 0 ? (
+                  listStatuses.map(s => (
+                    <div 
+                      key={s.id || s.name} 
+                      className={`px-2 py-1.5 text-xs rounded cursor-pointer transition-colors font-medium ${statusStr === s.name ? 'bg-indigo-500/20 text-indigo-300' : 'text-zinc-300 hover:bg-zinc-700/50'}`} 
+                      onClick={() => handleStatusChange(s.name)}
+                    >
+                      {s.name}
+                    </div>
+                  ))
+                ) : (
+                  ['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
+                    <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium" onClick={() => handleStatusChange(s)}>
+                      {s}
+                    </div>
+                  ))
+                )}
               </div>
             </PortalDropdown>
           )}
@@ -176,15 +248,15 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
         )}
 
         {/* Assignees */}
-        <div className="relative">
+        <div className="relative flex items-center group/assignee">
           <div
             ref={assigneeTriggerRef}
-            className={`${fieldHoverClass} text-zinc-400`}
+            className={`${fieldHoverClass} text-zinc-400 max-w-[150px]`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
           >
-            <User className="w-3.5 h-3.5" />
+            <User className="w-3.5 h-3.5 shrink-0" />
             {assignees.length > 0 ? (
-              <div className="flex items-center -space-x-1">
+              <div className="flex items-center -space-x-1 overflow-hidden">
                 {assignees.slice(0, 2).map((a: any) => (
                   <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
                     {a.avatarUrl ? (
@@ -196,16 +268,55 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
                     )}
                   </div>
                 ))}
+                {assignees.length > 2 && (
+                  <div className="relative ring-1 ring-[#18181b] rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
+                    +{assignees.length - 2}
+                  </div>
+                )}
               </div>
             ) : (
               <span>-</span>
             )}
           </div>
+          {assignees.length > 0 && (
+             <div 
+               className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
+               onClick={(e) => { e.stopPropagation(); handleClearAssignees(); }}
+               title="Remove all assignees"
+             >
+               <X className="w-3 h-3" />
+             </div>
+          )}
           {openDropdown === 'assignee' && (
             <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
-              <div className="w-48">
-                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Assign To</div>
-                <div className="px-2 py-2 text-xs text-zinc-400 italic">User list would appear here...</div>
+              <div className="w-48 max-h-64 overflow-y-auto custom-scrollbar">
+                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800">Assign To</div>
+                {dbUsers.length > 0 ? (
+                  dbUsers.map(user => {
+                    const isAssigned = assignees.some((a: any) => a.id === user.id);
+                    return (
+                      <div 
+                        key={user.id} 
+                        className="px-2 py-1.5 flex items-center gap-2 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
+                        onClick={() => handleAssigneeToggle(user)}
+                      >
+                        {user.avatarUrl ? (
+                          <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
+                            {(user.name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <span className={`text-xs truncate flex-1 ${isAssigned ? 'text-indigo-400 font-semibold' : 'text-zinc-300'}`}>
+                          {user.name}
+                        </span>
+                        {isAssigned && <CheckSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="px-2 py-2 text-xs text-zinc-400 italic">Loading assignees...</div>
+                )}
               </div>
             </PortalDropdown>
           )}
@@ -248,11 +359,11 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
               <div className="w-32">
                 <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Set Priority</div>
                 {Object.keys(PRIORITY_COLORS).map(p => (
-                  <div key={p} className={`px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={closeDropdown}>
+                  <div key={p} className={`px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={() => handlePriorityChange(p)}>
                     {p}
                   </div>
                 ))}
-                <div className="px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-400" onClick={closeDropdown}>
+                <div className="px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-400" onClick={() => handlePriorityChange(null)}>
                   CLEAR
                 </div>
               </div>
@@ -266,7 +377,7 @@ const CardContent = ({ task, isSubtask = false, children, onDropdownOpenChange }
   );
 };
 
-export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason }: Props) {
+export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason, listStatuses }: Props) {
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
   const pointerPosRef = useRef<{x: number, y: number} | null>(null);
@@ -290,70 +401,85 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
   const subtasksCount = task.subtasks?.length || 0;
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      {...listeners}
-      onPointerDown={(e) => {
-        pointerPosRef.current = { x: e.clientX, y: e.clientY };
-        if (listeners?.onPointerDown) {
-          listeners.onPointerDown(e as any);
-        }
-      }}
-      onClick={(e) => {
-        if (!pointerPosRef.current) return;
-        const dx = Math.abs(e.clientX - pointerPosRef.current.x);
-        const dy = Math.abs(e.clientY - pointerPosRef.current.y);
-        if (dx < 5 && dy < 5 && onClick) {
-          onClick(task);
-        }
-        pointerPosRef.current = null;
-      }}
-      className={isDragging 
-        ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3" 
-        : `bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
-        isMoveDisabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
-      } ${
-        isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
-      } ${hasOpenDropdown ? 'z-50' : 'z-10'}`}
-    >
-      <div className={isDragging ? 'opacity-0 pointer-events-none flex flex-col gap-3 w-full h-full' : 'contents'}>
-        <CardContent task={task} onDropdownOpenChange={setHasOpenDropdown}>
-          {subtasksCount > 0 && (
-             <div 
-               className="flex items-center gap-2 text-[11px] text-zinc-400 hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
-               onClick={(e) => { e.stopPropagation(); setIsSubtasksExpanded(!isSubtasksExpanded); }}
-             >
+    // Outer wrapper owns the DnD ref+style so dnd-kit tracks a single stable DOM node.
+    // Card visuals and subtasks are children — prevents the infinite loop that occurs
+    // when a Fragment is used as the root of a useSortable component.
+    <div ref={setNodeRef} style={style} className="relative">
+      {/* ── Visible card ── */}
+      <div
+        {...attributes}
+        {...listeners}
+        onPointerDown={(e) => {
+          pointerPosRef.current = { x: e.clientX, y: e.clientY };
+          if (listeners?.onPointerDown) {
+            listeners.onPointerDown(e as any);
+          }
+        }}
+        onClick={(e) => {
+          if (!pointerPosRef.current) return;
+          const dx = Math.abs(e.clientX - pointerPosRef.current.x);
+          const dy = Math.abs(e.clientY - pointerPosRef.current.y);
+          if (dx < 5 && dy < 5 && onClick) {
+            onClick(task);
+          }
+          pointerPosRef.current = null;
+        }}
+        className={isDragging
+          ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3"
+          : `bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
+            isMoveDisabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+          } ${
+            isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
+          } ${hasOpenDropdown ? 'z-50' : 'z-10'}`}
+      >
+        <div className={isDragging ? 'opacity-0 pointer-events-none flex flex-col gap-3 w-full h-full' : 'contents'}>
+          <CardContent task={task} listStatuses={listStatuses} onDropdownOpenChange={setHasOpenDropdown}>
+            {subtasksCount > 0 && (
+              <div
+                className="flex items-center gap-2 text-[11px] text-zinc-400 hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
+                onClick={(e) => { e.stopPropagation(); setIsSubtasksExpanded(!isSubtasksExpanded); }}
+              >
                 {!isSubtasksExpanded && (
                   <CornerDownRight className="w-3.5 h-3.5 block group-hover/subtasks:hidden shrink-0" />
                 )}
-                <ChevronRight 
+                <ChevronRight
                   className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${
-                    isSubtasksExpanded 
-                      ? 'rotate-90 block' 
-                      : 'hidden group-hover/subtasks:block'
-                  }`} 
+                    isSubtasksExpanded ? 'rotate-90 block' : 'hidden group-hover/subtasks:block'
+                  }`}
                 />
                 <span>{subtasksCount} subtask{subtasksCount > 1 ? 's' : ''}</span>
-             </div>
-          )}
-        </CardContent>
-        
-        {subtasksCount > 0 && isSubtasksExpanded && (
-           <div className="flex flex-col gap-3 mt-3 pt-3 border-t border-zinc-700/50">
-              {task.subtasks.map(sub => (
-                 <div key={sub.id} className="flex flex-col relative before:absolute before:-left-3 before:top-0 before:bottom-0 before:w-px before:bg-zinc-700/50 pl-1" onClick={(e) => {
-                   e.stopPropagation();
-                   // In future, click on subtask card inside Kanban
-                 }}>
-                    {/* We inject the breadcrumb context from parent since subtasks might not have list resolved */}
-                    <CardContent task={{...sub, list: task.list} as any} isSubtask={true} />
-                 </div>
-              ))}
-           </div>
-        )}
+              </div>
+            )}
+          </CardContent>
+        </div>
       </div>
+
+      {/* ── Subtasks: tree-indented, outside the draggable card ── */}
+      {subtasksCount > 0 && isSubtasksExpanded && !isDragging && (
+        <div className="mt-1 ml-3">
+          {task.subtasks.map((sub, idx) => {
+            const isLast = idx === task.subtasks.length - 1;
+            return (
+              <div key={sub.id} className="relative flex items-start" onClick={(e) => e.stopPropagation()}>
+                {/* Vertical line — stops at elbow midpoint on last item */}
+                <div
+                  className="absolute left-0 w-px bg-zinc-700/50"
+                  style={{ top: 0, bottom: isLast ? '50%' : 0 }}
+                />
+                {/* Horizontal elbow */}
+                <div
+                  className="absolute left-0 h-px bg-zinc-700/50"
+                  style={{ top: '1.25rem', width: 10 }}
+                />
+                {/* Subtask card */}
+                <div className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg px-2.5 py-2 hover:border-zinc-600 hover:bg-zinc-800 transition-all cursor-pointer">
+                  <CardContent task={{...sub, list: task.list} as any} isSubtask={true} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 });

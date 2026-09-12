@@ -58,13 +58,19 @@ function collectAllDocs(spaces: any[]): { doc: any; spaceName?: string; folderNa
   return result;
 }
 
+// Helper for listing lists with task count
+const listsIncludeWithCount = {
+  orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+  include: { _count: { select: { tasks: true } } },
+};
+
 // Helper for recursive folder inclusion
 const folderIncludeConfig: any = {
-  orderBy: { createdAt: 'asc' },
+  orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
   include: {
-    lists: { orderBy: { createdAt: 'asc' } },
+    lists: listsIncludeWithCount,
     docs: {
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         pages: {
           orderBy: { createdAt: 'asc' },
@@ -75,11 +81,11 @@ const folderIncludeConfig: any = {
       },
     },
     subfolders: {
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
-        lists: { orderBy: { createdAt: 'asc' } },
+        lists: listsIncludeWithCount,
         docs: {
-          orderBy: { createdAt: 'asc' },
+          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
           include: {
             pages: {
               orderBy: { createdAt: 'asc' },
@@ -106,13 +112,13 @@ export async function listSpaces(req: Request, res: Response) {
     }
 
     const spaces = await prisma.space.findMany({
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         folders: folderIncludeConfig,
-        lists: { where: { folderId: null }, orderBy: { createdAt: 'asc' } },
+        lists: { where: { folderId: null }, ...listsIncludeWithCount },
         docs: {
           where: { folderId: null },
-          orderBy: { createdAt: 'asc' },
+          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
           include: {
             pages: {
               orderBy: { createdAt: 'asc' },
@@ -128,16 +134,17 @@ export async function listSpaces(req: Request, res: Response) {
     // Also fetch standalone root items (folders/lists/docs with no spaceId)
     const rootFolders = await prisma.folder.findMany({
       where: { spaceId: null, parentFolderId: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: folderIncludeConfig.include,
     });
     const rootLists = await prisma.list.findMany({
       where: { spaceId: null, folderId: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+      include: { _count: { select: { tasks: true } } },
     });
     const rootDocs = await prisma.doc.findMany({
       where: { spaceId: null, folderId: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         pages: {
           orderBy: { createdAt: 'asc' },
@@ -187,13 +194,13 @@ export async function getDashboardData(req: Request, res: Response) {
     }
 
     const spaces = await prisma.space.findMany({
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         folders: folderIncludeConfig,
-        lists: { where: { folderId: null }, orderBy: { createdAt: 'asc' } },
+        lists: { where: { folderId: null }, ...listsIncludeWithCount },
         docs: {
           where: { folderId: null },
-          orderBy: { createdAt: 'asc' },
+          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
           include: {
             pages: {
               orderBy: { createdAt: 'asc' },
@@ -208,16 +215,17 @@ export async function getDashboardData(req: Request, res: Response) {
 
     const rootFolders = await prisma.folder.findMany({
       where: { spaceId: null, parentFolderId: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: folderIncludeConfig.include,
     });
     const rootLists = await prisma.list.findMany({
       where: { spaceId: null, folderId: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+      include: { _count: { select: { tasks: true } } },
     });
     const rootDocs = await prisma.doc.findMany({
       where: { spaceId: null, folderId: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         pages: {
           orderBy: { createdAt: 'asc' },
@@ -582,3 +590,84 @@ export async function listDocTaskSubtab(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// PUT /api/spaces/reorder
+export async function reorderSpaces(req: Request, res: Response) {
+  try {
+    const { items } = req.body; // Array of { id, order }
+    await Promise.all(items.map((item: any) => 
+      prisma.space.update({
+        where: { id: item.id },
+        data: { order: item.order } as any
+      })
+    ));
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// PUT /api/spaces/folders/reorder
+export async function reorderFolders(req: Request, res: Response) {
+  try {
+    const { items } = req.body; // Array of { id, order, spaceId?, parentFolderId? }
+    await Promise.all(items.map((item: any) => {
+      const updateData: any = { order: item.order };
+      if (item.spaceId !== undefined) updateData.spaceId = item.spaceId;
+      if (item.parentFolderId !== undefined) updateData.parentFolderId = item.parentFolderId;
+      
+      return prisma.folder.update({
+        where: { id: item.id },
+        data: updateData
+      });
+    }));
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// PUT /api/spaces/lists/reorder
+export async function reorderLists(req: Request, res: Response) {
+  try {
+    const { items } = req.body; // Array of { id, order, spaceId?, folderId? }
+    await Promise.all(items.map((item: any) => {
+      const updateData: any = { order: item.order };
+      if (item.spaceId !== undefined) updateData.spaceId = item.spaceId;
+      if (item.folderId !== undefined) updateData.folderId = item.folderId;
+      
+      return prisma.list.update({
+        where: { id: item.id },
+        data: updateData
+      });
+    }));
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// PUT /api/spaces/docs/reorder
+export async function reorderDocs(req: Request, res: Response) {
+  try {
+    const { items } = req.body; // Array of { id, order, spaceId?, folderId? }
+    await Promise.all(items.map((item: any) => {
+      const updateData: any = { order: item.order };
+      if (item.spaceId !== undefined) updateData.spaceId = item.spaceId;
+      if (item.folderId !== undefined) updateData.folderId = item.folderId;
+      
+      return prisma.doc.update({
+        where: { id: item.id },
+        data: updateData
+      });
+    }));
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+

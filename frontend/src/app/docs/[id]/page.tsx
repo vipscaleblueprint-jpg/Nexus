@@ -188,8 +188,9 @@ const getTaskStatusBadgeColor = (status?: string) => {
   }
 };
 
-export default function DocPage() {
-  const { id } = useParams<{ id: string }>();
+export default function DocPage({ docId }: { docId?: string }) {
+  const params = useParams<{ id: string }>();
+  const id = docId || params?.id;
   const { currentUser, setCurrentUser } = useAppStore();
   const [doc, setDoc] = useState<any>(null);
   const [loading, setLoading] = useState(true);

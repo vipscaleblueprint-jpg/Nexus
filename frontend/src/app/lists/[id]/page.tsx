@@ -228,7 +228,7 @@ export default function BoardPage() {
     }));
 
     try {
-      await tasksApi.moveTask(taskId, newStatus, id as string);
+      await tasksApi.moveTask(taskId, newStatus, id as string, currentUser?.id);
     } catch (err: any) {
       console.error('Failed to move task:', err);
       // Revert on failure by refetching
@@ -389,11 +389,14 @@ export default function BoardPage() {
                 onStatusChange={async (statusName, data) => {
                   try {
                     const existingStatus = list?.statuses?.find((s: any) => s.name === statusName);
-                    const payload = {
+                    const payload: any = {
                       name: data.name || statusName,
                       color: data.color || existingStatus?.color || 'zinc',
                       allowedRoles: data.allowedRoles !== undefined ? data.allowedRoles : (existingStatus?.allowedRoles || []),
                     };
+                    if (data.groupName !== undefined) {
+                      payload.groupName = data.groupName;
+                    }
                     
                     if (existingStatus) {
                       const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${existingStatus.id}`, {
@@ -407,7 +410,7 @@ export default function BoardPage() {
                           ...prev,
                           statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s)
                         }));
-                        toast.success(`Column "${payload.name}" updated successfully!`);
+
                       } else {
                         const errData = await res.json().catch(() => ({}));
                         toast.error(errData.error || 'Failed to update column');
@@ -424,7 +427,7 @@ export default function BoardPage() {
                           ...prev,
                           statuses: [...(prev.statuses || []), created.status]
                         }));
-                        toast.success(`Column "${payload.name}" updated successfully!`);
+
                       } else {
                         const errData = await res.json().catch(() => ({}));
                         toast.error(errData.error || 'Failed to save column settings');
@@ -443,6 +446,11 @@ export default function BoardPage() {
                     return newGroups;
                   });
                   socket?.emit('add_group', { listId: id, group });
+                }}
+                onGroupReorder={(newGroups) => {
+                  setCustomGroups(newGroups);
+                  spacesApi.updateList(id as string, { customGroups: newGroups }).catch(console.error);
+                  socket?.emit('reorder_groups', { listId: id, customGroups: newGroups });
                 }}
               />
             </div>

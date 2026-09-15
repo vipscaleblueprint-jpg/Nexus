@@ -206,7 +206,7 @@ async function checkCanMoveFromStatus(
     }
 
     const workspaceRoles = await prisma.workspaceRole.findMany();
-    const allowedNames = sourceStatusRule.allowedRoles.map((r) => {
+    const allowedNames = sourceStatusRule.allowedRoles.map((r: any) => {
       const match = workspaceRoles.find((wr) => wr.id === r || wr.name.toUpperCase() === r.toUpperCase());
       return match ? match.name.toUpperCase() : r.toUpperCase();
     });
@@ -215,7 +215,7 @@ async function checkCanMoveFromStatus(
       .filter(Boolean)
       .map((r: any) => r.trim().toUpperCase());
 
-    const hasAccess = allowedNames.some((r) => userRoles.includes(r));
+    const hasAccess = allowedNames.some((r: any) => userRoles.includes(r));
     if (!hasAccess) {
       return {
         allowed: false,
@@ -318,12 +318,12 @@ export async function updateTask(req: Request, res: Response) {
         });
 
         const usersToNotify = currentTask.assignees
-          .map(a => a.id)
-          .filter(id => id !== actingUserId);
+          .map((a: any) => a.id)
+          .filter((id: any) => id !== actingUserId);
 
         if (usersToNotify.length > 0) {
           await prisma.taskNotification.createMany({
-            data: usersToNotify.map(id => ({
+            data: usersToNotify.map((id: any) => ({
               userId: id,
               actorId: actingUserId,
               taskId,
@@ -331,7 +331,7 @@ export async function updateTask(req: Request, res: Response) {
               title: `${user?.name || 'Someone'} changed the status to ${status}`,
             })),
           });
-          usersToNotify.forEach(id => {
+          usersToNotify.forEach((id: any) => {
             io.to(`user:${id}`).emit('notification_received');
           });
         }
@@ -349,14 +349,14 @@ export async function updateTask(req: Request, res: Response) {
         const assignedUsers = assigneeIds.length > 0
           ? await prisma.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true, avatarUrl: true } })
           : [];
-        const names = assignedUsers.length > 0 ? assignedUsers.map((u) => u.name).join(', ') : 'Unassigned';
+        const names = assignedUsers.length > 0 ? assignedUsers.map((u: any) => u.name).join(', ') : 'Unassigned';
         const log = await prisma.auditLog.create({
           data: {
             action: 'ASSIGNMENT',
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { assigneeName: names, assigneeNames: assignedUsers.map((u) => u.name), count: assignedUsers.length },
+            details: { assigneeName: names, assigneeNames: assignedUsers.map((u: any) => u.name), count: assignedUsers.length },
           },
         });
         const newlyAssigned = assigneeIds.filter((id: string) => !currentTask.assignees.some(a => a.id === id));
@@ -619,7 +619,7 @@ export async function createTaskComment(req: Request, res: Response) {
     });
 
     if (mentionedUserIds && Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0) {
-      const usersToNotify = mentionedUserIds.filter(id => id !== effectiveUserId);
+      const usersToNotify = mentionedUserIds.filter((id: any) => id !== effectiveUserId);
       if (usersToNotify.length > 0) {
         await prisma.taskNotification.createMany({
           data: usersToNotify.map((id: string) => ({
@@ -644,12 +644,12 @@ export async function createTaskComment(req: Request, res: Response) {
     });
     if (taskData) {
       const assigneesToNotify = taskData.assignees
-        .map(a => a.id)
-        .filter(id => id !== effectiveUserId && !(mentionedUserIds && mentionedUserIds.includes(id)));
+        .map((a: any) => a.id)
+        .filter((id: any) => id !== effectiveUserId && !(mentionedUserIds && mentionedUserIds.includes(id)));
       
       if (assigneesToNotify.length > 0) {
         await prisma.taskNotification.createMany({
-          data: assigneesToNotify.map(id => ({
+          data: assigneesToNotify.map((id: any) => ({
             userId: id,
             actorId: effectiveUserId,
             taskId,
@@ -658,7 +658,7 @@ export async function createTaskComment(req: Request, res: Response) {
             content: content.trim().substring(0, 100),
           })),
         });
-        assigneesToNotify.forEach(id => {
+        assigneesToNotify.forEach((id: any) => {
           io.to(`user:${id}`).emit('notification_received');
         });
       }
@@ -766,16 +766,16 @@ export async function getTaskComments(req: Request, res: Response) {
 
     // Fetch user info for each comment
     const userIds = [...new Set([
-      ...comments.map(c => c.userId),
-      ...comments.flatMap(c => c.replies.map((r: any) => r.userId)),
+      ...comments.map((c: any) => c.userId),
+      ...comments.flatMap((c: any) => c.replies.map((r: any) => r.userId)),
     ])];
     const users = await prisma.user.findMany({
       where: { id: { in: userIds } },
       select: { id: true, name: true, avatarUrl: true },
     });
-    const userMap = Object.fromEntries(users.map(u => [u.id, u]));
+    const userMap = Object.fromEntries(users.map((u: any) => [u.id, u]));
 
-    const enriched = comments.map(c => ({
+    const enriched = comments.map((c: any) => ({
       ...c,
       user: userMap[c.userId],
       replies: c.replies.map((r: any) => ({ ...r, user: userMap[r.userId] })),

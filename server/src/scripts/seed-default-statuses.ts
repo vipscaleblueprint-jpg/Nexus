@@ -28,7 +28,7 @@ async function main() {
       where: { listId: list.id },
       select: { name: true },
     });
-    const existingNames = new Set(existing.map(s => s.name.toLowerCase()));
+    const existingNames = new Set(existing.map((s: any) => s.name.toLowerCase()));
 
     for (const status of DEFAULT_STATUSES) {
       if (!existingNames.has(status.name.toLowerCase())) {

@@ -16,3 +16,19 @@ dist/
 
 .agents
 .github
+
+# AI Artifacts & Documentation
+implementation_plan.md
+task.md
+walkthrough.md
+AGENTS.md
+GEMINI.md
+
+# Testing
+__tests__/
+tests/
+coverage/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx

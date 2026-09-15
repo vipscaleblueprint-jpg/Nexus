@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { listLists, getList, createList, updateList, duplicateList, deleteList, createStatus, updateStatus, deleteStatus } from '../controllers/list.controller';
-import { idParams, validate } from '../validation';
+import { idParams, idAndStatusIdParams, validate } from '../validation';
 import { createListSchema, updateListSchema } from '../validation/schemas';
 
 export const listRouter = Router();
@@ -13,6 +13,6 @@ listRouter.post('/:id/duplicate', validate({ params: idParams }), duplicateList)
 listRouter.delete('/:id', validate({ params: idParams }), deleteList);
 
 listRouter.post('/:id/statuses', validate({ params: idParams }), createStatus);
-listRouter.patch('/:id/statuses/:statusId', validate({ params: idParams }), updateStatus);
-listRouter.delete('/:id/statuses/:statusId', validate({ params: idParams }), deleteStatus);
+listRouter.patch('/:id/statuses/:statusId', validate({ params: idAndStatusIdParams }), updateStatus);
+listRouter.delete('/:id/statuses/:statusId', validate({ params: idAndStatusIdParams }), deleteStatus);
 

@@ -199,7 +199,6 @@ function WorkspaceDashboardContent({
   const [currentTab, setCurrentTab] = useState<"all" | "my">(
     searchParams?.get("filter") === "my" || activeView === "my" ? "my" : "all",
   );
-  const [isRecentFilter, setIsRecentFilter] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -321,79 +320,26 @@ function WorkspaceDashboardContent({
   };
 
   // Filter & sort lists
+  // Filter & sort lists
   const filteredLists = useMemo(() => {
-    let listItems = allLists.filter((item) =>
+    return allLists.filter((item) =>
       item.list.name.toLowerCase().includes(searchQuery.toLowerCase()),
     );
-
-    if (isRecentFilter) {
-      listItems = listItems
-        .filter((item) =>
-          isRecentItem(item.list.updatedAt || item.list.createdAt, 30),
-        )
-        .sort((a, b) => {
-          const dateA = new Date(
-            a.list.updatedAt || a.list.createdAt || 0,
-          ).getTime();
-          const dateB = new Date(
-            b.list.updatedAt || b.list.createdAt || 0,
-          ).getTime();
-          return dateB - dateA;
-        });
-    }
-
-    return listItems;
-  }, [allLists, searchQuery, isRecentFilter]);
+  }, [allLists, searchQuery]);
 
   // Filter & sort docs
   const filteredDocs = useMemo(() => {
-    let docItems = allDocs.filter((item) =>
+    return allDocs.filter((item) =>
       item.doc.title.toLowerCase().includes(searchQuery.toLowerCase()),
     );
-
-    if (isRecentFilter) {
-      docItems = docItems
-        .filter((item) =>
-          isRecentItem(item.doc.updatedAt || item.doc.createdAt, 30),
-        )
-        .sort((a, b) => {
-          const dateA = new Date(
-            a.doc.updatedAt || a.doc.createdAt || 0,
-          ).getTime();
-          const dateB = new Date(
-            b.doc.updatedAt || b.doc.createdAt || 0,
-          ).getTime();
-          return dateB - dateA;
-        });
-    }
-
-    return docItems;
-  }, [allDocs, searchQuery, isRecentFilter]);
+  }, [allDocs, searchQuery]);
 
   // Filter & sort spaces
   const filteredSpaces = useMemo(() => {
-    let spaceItems = spaces
+    return spaces
       .filter((s) => s.id !== "root-space")
       .filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    if (isRecentFilter) {
-      spaceItems = spaceItems
-        .filter((s) =>
-          isRecentItem((s as any).updatedAt || (s as any).createdAt, 30),
-        )
-        .sort((a, b) => {
-          const dateA = new Date(
-            (a as any).updatedAt || (a as any).createdAt || 0,
-          ).getTime();
-          const dateB = new Date(
-            (b as any).updatedAt || (b as any).createdAt || 0,
-          ).getTime();
-          return dateB - dateA;
-        });
-    }
-
-    return spaceItems;
-  }, [spaces, searchQuery, isRecentFilter]);
+  }, [spaces, searchQuery]);
 
   // User's assigned tasks
   const myTasks = useMemo(() => {
@@ -413,16 +359,57 @@ function WorkspaceDashboardContent({
   }, [tasks, currentUser]);
 
   const filteredMyTasks = useMemo(() => {
-    if (!searchQuery.trim()) return myTasks;
-    const q = searchQuery.toLowerCase();
-    return myTasks.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.description?.toLowerCase().includes(q) ||
-        t.status.toLowerCase().includes(q) ||
-        t.list?.name.toLowerCase().includes(q),
-    );
-  }, [myTasks, searchQuery]);
+    let result = [...myTasks];
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          t.description?.toLowerCase().includes(q) ||
+          t.status.toLowerCase().includes(q) ||
+          t.list?.name.toLowerCase().includes(q),
+      );
+    }
+
+    if (filterPriority !== "all") {
+      result = result.filter(
+        (t) => (t.priority || "NORMAL").toUpperCase() === filterPriority,
+      );
+    }
+
+    if (filterStatus !== "all") {
+      result = result.filter(
+        (t) => (t.status || "TODO").toUpperCase() === filterStatus,
+      );
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      if (sortBy === "recent") {
+        return (
+          new Date((b as any).updatedAt || b.createdAt || 0).getTime() -
+          new Date((a as any).updatedAt || a.createdAt || 0).getTime()
+        );
+      } else if (sortBy === "client") {
+        const clientA = (a.list?.name || "").toLowerCase();
+        const clientB = (b.list?.name || "").toLowerCase();
+        return clientA.localeCompare(clientB);
+      } else if (sortBy === "priority") {
+        const pOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW"];
+        const pA = pOrder.indexOf((a.priority || "NORMAL").toUpperCase());
+        const pB = pOrder.indexOf((b.priority || "NORMAL").toUpperCase());
+        return pA - pB;
+      } else if (sortBy === "status") {
+        const sA = (a.status || "TODO").toUpperCase();
+        const sB = (b.status || "TODO").toUpperCase();
+        return sA.localeCompare(sB);
+      }
+      return 0;
+    });
+
+    return result;
+  }, [myTasks, searchQuery, filterPriority, filterStatus, sortBy]);
 
   // All Tasks filtering and sorting
   const filteredAllTasks = useMemo(() => {
@@ -743,32 +730,32 @@ function WorkspaceDashboardContent({
           </div>
 
           {/* Sort + Filter controls (uniform pill-selects) */}
-          {currentTab === "all" && (
-            <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
 
-              {/* Sort */}
-              <div className="relative flex items-center">
-                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-zinc-400">
-                    <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  </svg>
-                </span>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
-                  className="appearance-none h-8 pl-7 pr-7 bg-[#18181c] border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer"
-                >
-                  <option value="recent">Sort: Recent</option>
-                  <option value="client">Sort: Clients (A–Z)</option>
-                  <option value="priority">Sort: Priority</option>
-                  <option value="status">Sort: Status</option>
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
-              </div>
+            {/* Sort */}
+            <div className="relative flex items-center">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-zinc-400">
+                  <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="appearance-none h-8 pl-7 pr-7 bg-[#18181c] border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer"
+              >
+                <option value="recent">Sort: Recent</option>
+                <option value="client">Sort: Clients (A–Z)</option>
+                <option value="priority">Sort: Priority</option>
+                <option value="status">Sort: Status</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
+            </div>
 
-              <div className="w-px h-5 bg-zinc-800 shrink-0" />
+            <div className="w-px h-5 bg-zinc-800 shrink-0" />
 
-              {/* Filter: Assignee */}
+            {/* Filter: Assignee (Only on All Tasks) */}
+            {currentTab === "all" && (
               <div className="relative flex items-center">
                 <UserIcon className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
                 <select
@@ -792,212 +779,68 @@ function WorkspaceDashboardContent({
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
               </div>
+            )}
 
-              {/* Filter: Priority */}
-              <div className="relative flex items-center">
-                <Flag className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-                <select
-                  value={filterPriority}
-                  onChange={(e) => setFilterPriority(e.target.value)}
-                  className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
-                    filterPriority !== "all" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
-                  }`}
-                >
-                  <option value="all">Priority</option>
-                  <option value="URGENT">Urgent</option>
-                  <option value="HIGH">High</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="LOW">Low</option>
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
-              </div>
-
-              {/* Filter: Status */}
-              <div className="relative flex items-center">
-                <CheckSquare className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
-                    filterStatus !== "all" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
-                  }`}
-                >
-                  <option value="all">Status</option>
-                  <option value="TODO">To Do</option>
-                  <option value="IN PROGRESS">In Progress</option>
-                  <option value="DAILY">Daily</option>
-                  <option value="KYC">KYC</option>
-                  <option value="PENDING">Pending</option>
-                  <option value="REVIEW">Review</option>
-                  <option value="COMPLETED">Completed</option>
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
-              </div>
-
-              {/* Clear filters — only when active */}
-              {(filterAssignee !== "all" || filterPriority !== "all" || filterStatus !== "all") && (
-                <button
-                  onClick={() => { setFilterAssignee("all"); setFilterPriority("all"); setFilterStatus("all"); }}
-                  className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-indigo-500/15 border border-indigo-500/40 text-indigo-300 text-xs font-medium hover:bg-indigo-500/25 transition-all cursor-pointer"
-                >
-                  <X className="w-3 h-3" />
-                  Clear
-                </button>
-              )}
+            {/* Filter: Priority */}
+            <div className="relative flex items-center">
+              <Flag className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+              <select
+                value={filterPriority}
+                onChange={(e) => setFilterPriority(e.target.value)}
+                className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
+                  filterPriority !== "all" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
+                }`}
+              >
+                <option value="all">Priority</option>
+                <option value="URGENT">Urgent</option>
+                <option value="HIGH">High</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="LOW">Low</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
             </div>
-          )}
 
-          {/* My Tasks: Recent toggle */}
-          {currentTab === "my" && (
-            <button
-              onClick={() => setIsRecentFilter(!isRecentFilter)}
-              className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
-                isRecentFilter
-                  ? "bg-indigo-600/25 border-indigo-500/70 text-indigo-300"
-                  : "bg-[#18181c] border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Recent only</span>
-              {isRecentFilter && <span className="size-1.5 rounded-full bg-indigo-400" />}
-            </button>
-          )}
+            {/* Filter: Status */}
+            <div className="relative flex items-center">
+              <CheckSquare className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
+                  filterStatus !== "all" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
+                }`}
+              >
+                <option value="all">Status</option>
+                <option value="TODO">To Do</option>
+                <option value="IN PROGRESS">In Progress</option>
+                <option value="DAILY">Daily</option>
+                <option value="KYC">KYC</option>
+                <option value="PENDING">Pending</option>
+                <option value="REVIEW">Review</option>
+                <option value="COMPLETED">Completed</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
+            </div>
+
+            {/* Clear filters — only when active */}
+            {((currentTab === "all" && filterAssignee !== "all") || filterPriority !== "all" || filterStatus !== "all") && (
+              <button
+                onClick={() => { setFilterAssignee("all"); setFilterPriority("all"); setFilterStatus("all"); }}
+                className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-indigo-500/15 border border-indigo-500/40 text-indigo-300 text-xs font-medium hover:bg-indigo-500/25 transition-all cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+                Clear
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* ─── TAB CONTENT: ALL TASKS (OVERVIEW) ─── */}
       {currentTab === "all" && (
         <>
-          {/* Lists Overview */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ListIcon className="w-4 h-4 text-blue-400" />
-                <h2 className="text-base font-semibold text-zinc-200">
-                  Task Lists ({filteredLists.length})
-                </h2>
-              </div>
-              <button
-                onClick={() => onOpenCreate("LIST")}
-                className="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Create List
-              </button>
-            </div>
-
-            {filteredLists.length === 0 ? (
-              <div className="p-8 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-2">
-                <ListIcon className="w-8 h-8 text-zinc-600 mx-auto" />
-                <p className="text-sm font-medium text-zinc-400">
-                  {searchQuery
-                    ? "No lists match your search"
-                    : "No task lists created yet"}
-                </p>
-                <button
-                  onClick={() => onOpenCreate("LIST")}
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Create First List
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {filteredLists.map(({ list, spaceName, folderName }) => (
-                  <Link
-                    key={list.id}
-                    href={`/lists/${list.id}`}
-                    className="group px-4 py-2.5 rounded-lg bg-[#18181c] border border-zinc-800/40 hover:bg-zinc-800/30 hover:border-blue-500/30 transition-all flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-1.5 rounded-md bg-blue-500/15 text-blue-400">
-                        <ListIcon className="w-3.5 h-3.5" />
-                      </div>
-                      <h3 className="text-sm font-medium text-zinc-200 group-hover:text-blue-400 transition-colors">
-                        {list.name}
-                      </h3>
-                      <p className="text-[11px] text-zinc-500 truncate ml-2 hidden sm:block">
-                        {[spaceName, folderName].filter(Boolean).join(" / ") ||
-                          "Workspace List"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-4 text-[11px] text-zinc-400">
-                      <span>{list._count?.tasks ?? list.tasks?.length ?? 0} tasks</span>
-                      <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-blue-400 group-hover:translate-x-0.5 transition-all" />
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Docs Overview */}
-          <div className="space-y-4 pt-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-purple-400" />
-                <h2 className="text-base font-semibold text-zinc-200">
-                  Documents ({filteredDocs.length})
-                </h2>
-              </div>
-              <button
-                onClick={() => onOpenCreate("DOC")}
-                className="text-xs text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Create Document
-              </button>
-            </div>
-
-            {filteredDocs.length === 0 ? (
-              <div className="p-8 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-2">
-                <FileText className="w-8 h-8 text-zinc-600 mx-auto" />
-                <p className="text-sm font-medium text-zinc-400">
-                  {searchQuery
-                    ? "No documents match your search"
-                    : "No documents created yet"}
-                </p>
-                <button
-                  onClick={() => onOpenCreate("DOC")}
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium transition-colors cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Create First Document
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {filteredDocs.map(({ doc, spaceName, folderName }) => (
-                  <Link
-                    key={doc.id}
-                    href={`/docs/${doc.id}`}
-                    className="group px-4 py-2.5 rounded-lg bg-[#18181c] border border-zinc-800/40 hover:bg-zinc-800/30 hover:border-purple-500/30 transition-all flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-1.5 rounded-md bg-purple-500/15 text-purple-400">
-                        <FileText className="w-3.5 h-3.5" />
-                      </div>
-                      <h3 className="text-sm font-medium text-zinc-200 group-hover:text-purple-400 transition-colors">
-                        {doc.title}
-                      </h3>
-                      <p className="text-[11px] text-zinc-500 truncate ml-2 hidden sm:block">
-                        {[spaceName, folderName].filter(Boolean).join(" / ") ||
-                          "Workspace Doc"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-4 text-[11px] text-zinc-400">
-                      <span>{doc.pages?.length ?? 0} pages</span>
-                      <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-purple-400 group-hover:translate-x-0.5 transition-all" />
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Tasks Overview */}
-          <div className="space-y-4 pt-6">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-indigo-400" />
@@ -1007,77 +850,98 @@ function WorkspaceDashboardContent({
               </div>
             </div>
 
-            <div className="space-y-6">
-              {groupedAllTasksByStatus.map(
-                ({ status, config, tasks: groupTasks }) => (
-                  <div key={status} className="space-y-0.5">
-                    <div className="flex items-center justify-between px-1 pb-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1`}
-                        >
-                          {config.label}
-                          <ChevronDown className="w-3 h-3 opacity-70" />
-                        </span>
-                        <span className="text-xs font-semibold text-zinc-500 ml-1">
-                          {groupTasks.length}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-1 pb-1.5 border-b border-zinc-800/60 w-full">
-                      <span className="w-1/2 text-left pl-8">Name</span>
-                      <div className="flex items-center gap-8 pr-10">
-                        <span className="w-24 text-left">Client / List</span>
-                        <span className="w-20 text-left">Priority</span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col w-full">
-                      {groupTasks.map((task) => {
-                        const priorityConfig =
-                          task.priority && PRIORITY_FLAGS[task.priority]
-                            ? PRIORITY_FLAGS[task.priority]
-                            : {
-                                label: task.priority || "Normal",
-                                color: "text-zinc-500",
-                                iconColor: "text-zinc-500",
-                              };
-                        return (
-                          <div
-                            key={task.id}
-                            onClick={() => setSelectedTask(task)}
-                            className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
+            {loadingTasks ? (
+              <div className="p-12 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-3">
+                <div className="animate-spin size-7 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto" />
+                <p className="text-xs text-zinc-400 font-medium">
+                  Loading tasks...
+                </p>
+              </div>
+            ) : groupedAllTasksByStatus.length === 0 ? (
+              <div className="p-16 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-4 shadow-xl">
+                <CheckSquare className="w-12 h-12 text-zinc-600 mx-auto opacity-40" />
+                <h3 className="text-base font-semibold text-zinc-200">
+                  {searchQuery ? "No matching tasks found" : "No tasks yet"}
+                </h3>
+                <p className="text-xs text-zinc-500 max-w-sm mx-auto leading-relaxed">
+                  {searchQuery
+                    ? `No tasks matched your search query "${searchQuery}".`
+                    : "Tasks across your workspace will appear here."}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {groupedAllTasksByStatus.map(
+                  ({ status, config, tasks: groupTasks }) => (
+                    <div key={status} className="space-y-0.5">
+                      <div className="flex items-center justify-between px-1 pb-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1`}
                           >
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-1 pr-4">
-                              <div className="w-3.5 h-3.5 rounded-[3px] border border-zinc-600 shrink-0 flex items-center justify-center transition-colors shadow-sm" />
-                              <span className="text-[13px] font-medium text-zinc-200 truncate">
-                                {task.title}
-                              </span>
-                            </div>
-                            <div className="hidden sm:flex items-center gap-8 pr-10 shrink-0">
-                              <span className="w-24 text-[11px] text-zinc-400 truncate">
-                                {task.list?.name || "Workspace"}
-                              </span>
-                              <div className="w-20 flex items-center gap-1.5">
-                                <Flag
-                                  className={`w-3 h-3 ${priorityConfig.iconColor}`}
-                                />
-                                <span
-                                  className={`text-[11px] font-medium ${priorityConfig.color}`}
-                                >
-                                  {priorityConfig.label}
+                            {config.label}
+                            <ChevronDown className="w-3 h-3 opacity-70" />
+                          </span>
+                          <span className="text-xs font-semibold text-zinc-500 ml-1">
+                            {groupTasks.length}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-1 pb-1.5 border-b border-zinc-800/60 w-full">
+                        <span className="w-1/2 text-left pl-8">Name</span>
+                        <div className="flex items-center gap-8 pr-10">
+                          <span className="w-24 text-left">Client / List</span>
+                          <span className="w-20 text-left">Priority</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col w-full">
+                        {groupTasks.map((task) => {
+                          const priorityConfig =
+                            task.priority && PRIORITY_FLAGS[task.priority]
+                              ? PRIORITY_FLAGS[task.priority]
+                              : {
+                                  label: task.priority || "Normal",
+                                  color: "text-zinc-500",
+                                  iconColor: "text-zinc-500",
+                                };
+                          return (
+                            <div
+                              key={task.id}
+                              onClick={() => setSelectedTask(task)}
+                              className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-1 pr-4">
+                                <div className="w-3.5 h-3.5 rounded-[3px] border border-zinc-600 shrink-0 flex items-center justify-center transition-colors shadow-sm" />
+                                <span className="text-[13px] font-medium text-zinc-200 truncate">
+                                  {task.title}
                                 </span>
                               </div>
+                              <div className="hidden sm:flex items-center gap-8 pr-10 shrink-0">
+                                <span className="w-24 text-[11px] text-zinc-400 truncate">
+                                  {task.list?.name || "Workspace"}
+                                </span>
+                                <div className="w-20 flex items-center gap-1.5">
+                                  <Flag
+                                    className={`w-3 h-3 ${priorityConfig.iconColor}`}
+                                  />
+                                  <span
+                                    className={`text-[11px] font-medium ${priorityConfig.color}`}
+                                  >
+                                    {priorityConfig.label}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ),
-              )}
-            </div>
+                  ),
+                )}
+              </div>
+            )}
           </div>
         </>
       )}

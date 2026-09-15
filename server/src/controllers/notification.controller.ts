@@ -18,7 +18,7 @@ export async function getNotifications(req: Request, res: Response) {
         isCleared,
       },
       include: {
-        actor: { select: { id: true, name: true, avatarUrl: true } },
+        actor: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
         task: { select: { id: true, title: true, status: true, listId: true } },
       },
       orderBy: { createdAt: 'desc' },

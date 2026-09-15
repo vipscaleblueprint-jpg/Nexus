@@ -95,7 +95,33 @@ export function TaskDetailModalContent({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [activeSubtask, setActiveSubtask] = useState<any>(null);
+  const [activeSubtask, setActiveSubtask] = useState<any>(() => {
+    if (typeof window !== 'undefined' && task?.subtasks) {
+      const url = new URL(window.location.href);
+      const subtaskId = url.searchParams.get('subtask');
+      if (subtaskId) {
+        return task.subtasks.find((s: any) => s.id === subtaskId) || null;
+      }
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !task) return;
+    const url = new URL(window.location.href);
+    if (activeSubtask) {
+      if (url.searchParams.get('subtask') !== activeSubtask.id) {
+        url.searchParams.set('subtask', activeSubtask.id);
+        window.history.replaceState(null, '', url.toString());
+      }
+    } else {
+      if (url.searchParams.has('subtask')) {
+        url.searchParams.delete('subtask');
+        window.history.replaceState(null, '', url.toString());
+      }
+    }
+  }, [activeSubtask, task]);
+
   const [editingUser, setEditingUser] = useState<string | null>(null); // Name of user currently editing
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [addingSubtask, setAddingSubtask] = useState(false);
@@ -105,6 +131,7 @@ export function TaskDetailModalContent({
   const [localTitle, setLocalTitle] = useState(task?.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mentions
@@ -130,8 +157,8 @@ export function TaskDetailModalContent({
       if (href.match(/\.(mp4|webm|ogg|mov)$/i)) {
         return (
           <span className="mt-2 mb-2 inline-block">
-            <video 
-              src={href} 
+            <video
+              src={href}
               className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity bg-black/50"
               onClick={(e) => {
                 e.preventDefault();
@@ -144,10 +171,10 @@ export function TaskDetailModalContent({
       if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
         return (
           <span className="mt-2 mb-2 inline-block">
-            <img 
-              src={href} 
-              alt="attachment" 
-              className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity" 
+            <img
+              src={href}
+              alt="attachment"
+              className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
               onClick={(e) => {
                 e.preventDefault();
                 setLightboxImage(href);
@@ -159,8 +186,8 @@ export function TaskDetailModalContent({
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
         return (
-          <a 
-            href={`/profile/${userId}`} 
+          <a
+            href={`/profile/${userId}`}
             onClick={(e) => {
               // Just a dummy action for now, usually navigates to user profile
               e.stopPropagation();
@@ -177,9 +204,9 @@ export function TaskDetailModalContent({
       const { node, ...rest } = props;
       return (
         <span className="mt-2 mb-2 inline-block">
-          <img 
+          <img
             {...rest}
-            className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity" 
+            className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
             onClick={(e) => {
               e.preventDefault();
               setLightboxImage(rest.src);
@@ -220,6 +247,15 @@ export function TaskDetailModalContent({
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
+
+  // Team Assign logic — controls ALL task editing when the task is in a restricted column
+  const canEditTask = React.useMemo(() => {
+    return canUserMoveTask(task, listStatuses, currentUser, workspaceRoles).allowed;
+  }, [task, currentUser, listStatuses, workspaceRoles]);
+
+  const assignableUsers = React.useMemo(() => {
+    return dbUsers;
+  }, [dbUsers]);
 
   // Fetch persistent activities and comments from DB
   const loadActivities = useCallback(async () => {
@@ -263,8 +299,8 @@ export function TaskDetailModalContent({
       // Refresh comments
       const res = await tasksApi.getComments(task.id);
       if (res?.comments) setRichComments(res.comments);
-    } catch (err) { 
-      console.error('Reply failed:', err); 
+    } catch (err) {
+      console.error('Reply failed:', err);
     } finally {
       setIsSubmittingReply(false);
     }
@@ -322,12 +358,12 @@ export function TaskDetailModalContent({
         currentListId: task.listId,
         userId: currentUser?.id,
       }).catch(err => console.error('Failed to save description:', err));
-      
+
       if (onUpdateTask) {
         onUpdateTask({ ...task, description: localDescription });
       }
     }
-      
+
     if (socket && task) {
       socket.emit('task_editing_stop', {
         listId: task.listId,
@@ -409,7 +445,7 @@ export function TaskDetailModalContent({
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-  
+
   // Resizable activity panel
   const [activityWidth, setActivityWidth] = useState(450);
   const isResizing = useRef(false);
@@ -474,7 +510,9 @@ export function TaskDetailModalContent({
   };
 
   const handleStatusClick = () => {
-    const statuses = ALL_STATUSES;
+    const statuses = (listStatuses && listStatuses.length > 0)
+      ? listStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+      : ALL_STATUSES;
     const currentIndex = statuses.indexOf(task.status || 'Pending');
     const nextIndex = (currentIndex + 1) % statuses.length;
     const newStatus = statuses[nextIndex];
@@ -598,11 +636,11 @@ export function TaskDetailModalContent({
     if (!trimmed && stagedFiles.length === 0) return;
     if (!task) return;
     if (isUploading || isSubmittingComment) return;
-    
+
     setIsSubmittingComment(true);
     setIsUploading(true);
     let finalComment = trimmed;
-    
+
     try {
       if (stagedFiles.length > 0) {
         for (const file of stagedFiles) {
@@ -629,7 +667,7 @@ export function TaskDetailModalContent({
         task.listId,
         mentionedUsers.map(u => u.id)
       );
-      
+
       setComment('');
       setStagedFiles([]);
       setMentionedUsers([]);
@@ -662,10 +700,10 @@ export function TaskDetailModalContent({
         } else {
           newContent = `<a href="${res.url}" target="_blank" class="text-blue-400 hover:underline">${file.name}</a>`;
         }
-        
+
         const updatedDesc = localDescription ? localDescription + '<br/>' + newContent : newContent;
         setLocalDescription(updatedDesc);
-        
+
         if (socket && task.listId) {
           if (debounceRef.current) clearTimeout(debounceRef.current);
           socket.emit('task_editing_content', {
@@ -713,14 +751,14 @@ export function TaskDetailModalContent({
 
   return (
     <>
-      <div 
-      className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
-      onClick={e => e.stopPropagation()}
-    >
+      <div
+        className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-[#18181b]">
           <div className="flex items-center gap-3">
-            <button 
+            <button
               onClick={onClose}
               className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
               title="Go Back"
@@ -729,10 +767,16 @@ export function TaskDetailModalContent({
             </button>
 
             {task.list ? (
-              <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
+              <div 
+                className="flex items-center gap-2 text-xs text-zinc-400 font-medium cursor-pointer transition-all relative after:absolute after:-bottom-0.5 after:left-0 after:w-full after:h-[1px] after:bg-zinc-400 after:opacity-0 hover:after:opacity-100"
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                }}
+                title="Click to copy link"
+              >
                 {task.list.space && (
                   <>
-                    <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-800/50">
+                    <div className="flex items-center gap-1.5">
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
                         <span className="text-[9px] font-bold text-indigo-400">{task.list.space.name.charAt(0).toUpperCase()}</span>
                       </div>
@@ -741,30 +785,45 @@ export function TaskDetailModalContent({
                     <span className="text-zinc-700">/</span>
                   </>
                 )}
-                
+
                 {task.list.folder && (
                   <>
-                    <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-800/50">
+                    <div className="flex items-center gap-1.5">
                       <Folder className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate max-w-[120px]">{task.list.folder.name}</span>
                     </div>
                     <span className="text-zinc-700">/</span>
                   </>
                 )}
-                
-                <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-800/50">
+
+                <div className="flex items-center gap-1.5">
                   <ListTodo className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate max-w-[150px]">{task.list.name}</span>
                 </div>
               </div>
             ) : (
-              <span className="text-xs text-zinc-500 font-mono">Task ID: {task.id.slice(0, 8)}</span>
+              <div className="flex items-center gap-2 text-xs animate-pulse opacity-50 cursor-default">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-4 rounded bg-zinc-800 shrink-0" />
+                  <div className="w-16 h-3 bg-zinc-800 rounded" />
+                </div>
+                <span className="text-zinc-800">/</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3.5 h-3.5 rounded bg-zinc-800 shrink-0" />
+                  <div className="w-16 h-3 bg-zinc-800 rounded" />
+                </div>
+                <span className="text-zinc-800">/</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3.5 h-3.5 rounded bg-zinc-800 shrink-0" />
+                  <div className="w-20 h-3 bg-zinc-800 rounded" />
+                </div>
+              </div>
             )}
 
-            </div>
+          </div>
           <div className="flex items-center gap-2">
-            <button 
-              onClick={onClose} 
+            <button
+              onClick={onClose}
               className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -774,11 +833,11 @@ export function TaskDetailModalContent({
 
         {/* Content area: Split layout */}
         <div className="flex flex-1 overflow-hidden">
-          
+
           {/* Left Panel: Details & Description */}
           <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
             <div className="p-8">
-              
+
               <div className="mb-8 group w-fit">
                 {isEditingTitle ? (
                   <input
@@ -794,8 +853,8 @@ export function TaskDetailModalContent({
                     className="text-2xl font-bold bg-[#18181b] border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
                   />
                 ) : (
-                  <h1 
-                    onClick={() => setIsEditingTitle(true)}
+                  <h1
+                    onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
                     className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit ${(task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE') ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                   >
                     {localTitle}
@@ -803,143 +862,201 @@ export function TaskDetailModalContent({
                   </h1>
                 )}
               </div>
-              
-              {/* Properties Grid */}
-              <div className="flex flex-col gap-5 mb-10 w-full max-w-sm">
-                
-                {/* Status */}
-                <div className="grid grid-cols-[120px_1fr] items-center">
-                  <div className="flex items-center gap-2 text-zinc-500">
-                    <CircleDashed className="w-4 h-4" />
-                    <span className="text-sm font-medium">Status</span>
+
+              {/* Properties Stack — row layout */}
+              <div className="flex flex-col gap-2 mb-8 mt-1">
+
+                {/* Status Row */}
+                <div className="flex items-center gap-3 min-h-[32px]">
+                  <div className="flex items-center gap-2 w-28 shrink-0">
+                    {(() => {
+                      const isClosed = task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE';
+                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" />;
+                    })()}
+                    <span className="text-[12px] text-zinc-500">Status</span>
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center">
-                      <div className={`flex items-center rounded-sm overflow-hidden ${!permission.allowed ? 'bg-zinc-700 text-zinc-400' : (STATUS_COLORS[task.status] ?? 'bg-zinc-700 text-zinc-300')}`}>
-                        <span className="text-[11px] font-bold px-2.5 py-1 uppercase tracking-wide cursor-default flex items-center gap-1">
-                          {task.status.replace('_', ' ')}
-                          {!permission.allowed && <Lock className="w-3 h-3 text-zinc-400 ml-0.5" />}
-                        </span>
-                        <div className="w-[1px] h-3 bg-black/20" />
-                        <button 
-                          onClick={handleStatusClick}
-                          disabled={!permission.allowed}
-                          title={!permission.allowed ? (permission.reason || 'Status transition restricted') : 'Next status'}
-                          className={`px-1.5 py-1 transition-colors flex items-center justify-center ${
-                            !permission.allowed
-                              ? 'opacity-50 cursor-not-allowed hover:bg-transparent'
-                              : 'hover:bg-black/10 cursor-pointer'
+                  <div className="flex items-center gap-1.5">
+                    <div
+                      className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${(!permission.allowed || !canEditTask) ? 'bg-zinc-700/50 text-zinc-400 cursor-not-allowed' : isCheckLocked ? 'bg-zinc-800/50 text-zinc-400 cursor-default' : (STATUS_COLORS[task.status] ?? 'bg-zinc-800/50 text-zinc-400')}`}
+                    >
+                      <Popover.Root open={isStatusOpen && canEditTask} onOpenChange={setIsStatusOpen}>
+                        <Popover.Trigger asChild>
+                          <div
+                            onClick={() => { if (!permission.allowed || !canEditTask || isCheckLocked) return; setIsStatusOpen(true); }}
+                            className={`flex items-center gap-1.5 px-2.5 h-full ${(!permission.allowed || !canEditTask || isCheckLocked) ? '' : 'hover:brightness-110 cursor-pointer'}`}
+                          >
+                            <span className="uppercase">{task.status.replace('_', ' ')}</span>
+                            {(!permission.allowed || !canEditTask) && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                          </div>
+                        </Popover.Trigger>
+                        <Popover.Portal>
+                          <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                            <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                              {((listStatuses && listStatuses.length > 0) ? listStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map(s => (
+                                <div
+                                  key={s}
+                                  onClick={() => {
+                                    if (!permission.allowed || !canEditTask || isCheckLocked) return;
+                                    handleStatusChangeAction(s);
+                                    setIsStatusOpen(false);
+                                  }}
+                                  className={`cursor-pointer flex items-center px-2 py-1.5 text-xs rounded-sm hover:brightness-110 transition-all ${STATUS_COLORS[s] ?? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}
+                                >
+                                  {s}
+                                </div>
+                              ))}
+                            </div>
+                          </Popover.Content>
+                        </Popover.Portal>
+                      </Popover.Root>
+
+                      {(permission.allowed && canEditTask) && (
+                        <div
+                          className={`flex items-center justify-center h-full px-1.5 border-l border-black/20 ${isCheckLocked ? '' : 'hover:brightness-110 cursor-pointer'}`}
+                          onClick={isCheckLocked ? undefined : handleStatusClick}
+                          title="Move to next status"
+                        >
+                          <ChevronRight className={`w-3.5 h-3.5 transition-opacity ${isCheckLocked ? 'opacity-0' : 'opacity-80 hover:opacity-100'}`} />
+                        </div>
+                      )}
+                    </div>
+
+                    {(permission.allowed && canEditTask) && (
+                      <>
+                        <button
+                          onClick={() => handleStatusChangeAction('Closed')}
+                          disabled={isCheckLocked}
+                          title={isCheckLocked ? 'Unlock to close' : 'Mark as Closed'}
+                          className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${isCheckLocked
+                            ? 'bg-zinc-800/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer'
                           }`}
                         >
-                          <ChevronRight className="w-3.5 h-3.5" />
+                          <Check className="w-3.5 h-3.5" />
                         </button>
-                      </div>
-                      {(() => {
-                        const isClosed = task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE';
-                        return (
-                          <>
-                            <button
-                              onClick={() => handleStatusChangeAction(isClosed ? 'To Do' : 'Closed')}
-                              disabled={!permission.allowed || (isCheckLocked && !isClosed)}
-                              title={!permission.allowed ? (permission.reason || 'Status transition restricted') : isClosed ? 'Reopen task' : isCheckLocked ? 'Unlock to close' : 'Mark as Closed'}
-                              className={`w-6 h-6 ml-2 rounded flex items-center justify-center transition-colors shadow-sm border ${
-                                !permission.allowed || (isCheckLocked && !isClosed)
-                                  ? 'bg-zinc-800/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
-                                  : isClosed
-                                  ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-zinc-800 hover:border-zinc-700 hover:text-zinc-400 cursor-pointer'
-                                  : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer'
-                              }`}
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                            
-                            {!isClosed && (
-                              <button
-                                onClick={() => setIsCheckLocked(!isCheckLocked)}
-                                title={isCheckLocked ? 'Click to unlock Quick Close' : 'Click to lock Quick Close'}
-                                className={`w-6 h-6 ml-1.5 rounded flex items-center justify-center transition-colors shadow-sm border ${
-                                  isCheckLocked
-                                    ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/30 hover:text-indigo-300 cursor-pointer'
-                                    : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-200 cursor-pointer'
-                                }`}
-                              >
-                                {isCheckLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
-                              </button>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </div>
-                    {!permission.allowed && (
-                      <p className="text-[10px] text-amber-400/90 leading-tight">
-                        🔒 {permission.reason}
-                      </p>
+
+                        <button
+                          onClick={() => setIsCheckLocked(!isCheckLocked)}
+                          title={isCheckLocked ? 'Click to unlock Quick Close' : 'Click to lock Quick Close'}
+                          className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${isCheckLocked
+                            ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/30 hover:text-indigo-300 cursor-pointer'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 cursor-pointer'
+                          }`}
+                        >
+                          {isCheckLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                        </button>
+                      </>
                     )}
                   </div>
+
                 </div>
 
-                {/* Assignees */}
-                <div className="grid grid-cols-[120px_1fr] items-center">
-                  <div className="flex items-center gap-2 text-zinc-500">
-                    <User className="w-4 h-4" />
-                    <span className="text-sm font-medium">Assignees</span>
+                {/* Assignees Row */}
+                <div className="flex items-center gap-3 min-h-[32px]">
+                  <div className="flex items-center gap-2 w-28 shrink-0">
+                    <User className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                    <span className="text-[12px] text-zinc-500">Assignees</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Popover.Root open={isAssigneeOpen} onOpenChange={setIsAssigneeOpen}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Add role button (Assign Team) — moved to left of Assign */}
+                    <Popover.Root>
+                      <Popover.Trigger asChild>
+                        {(task.assigneeRoleRestrictions && task.assigneeRoleRestrictions.length > 0) ? (
+                          <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                            {task.assigneeRoleRestrictions.map((role, i) => {
+                              const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                              const bgColor = colors[i % colors.length];
+                              return (
+                                <div 
+                                  key={role} 
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
+                                  title={role}
+                                >
+                                  {role.substring(0, 2).toUpperCase()}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <button disabled={!canEditTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none disabled:opacity-50 disabled:cursor-not-allowed">
+                            <Plus className="w-3 h-3" />
+                            Assign Team
+                          </button>
+                        )}
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                          <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+                            <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
+                            {workspaceRoles.map(role => {
+                              const selected = (task.assigneeRoleRestrictions || []).includes(role.name);
+                              return (
+                                <div
+                                  key={role.id}
+                                  onClick={() => {
+                                    const current = task.assigneeRoleRestrictions || [];
+                                    const next = selected
+                                      ? current.filter(r => r !== role.name)
+                                      : [...current, role.name];
+                                    const updatedTask = { ...task, assigneeRoleRestrictions: next };
+                                    if (onUpdateTask) onUpdateTask(updatedTask);
+                                    tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any);
+                                  }}
+                                  className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors"
+                                >
+                                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                    {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                  </div>
+                                  {role.name}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                    <Popover.Root open={isAssigneeOpen && canEditTask} onOpenChange={(open) => canEditTask && setIsAssigneeOpen(open)}>
                       <Popover.Trigger asChild>
                         <div
                           title={currentAssignees.map((u) => u.name).join(', ')}
-                          className="group/assignee cursor-pointer inline-flex items-center gap-2 hover:bg-zinc-800/60 px-2 py-1 -ml-2 rounded-md transition-colors border border-transparent hover:border-zinc-700/50"
+                          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${
+                            canEditTask 
+                              ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200' 
+                              : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
+                          }`}
                         >
                           {currentAssignees.length > 0 ? (
-                            <div className="flex items-center gap-2">
+                            <>
                               <div className="flex items-center -space-x-1.5">
                                 {currentAssignees.slice(0, 2).map((u) => (
                                   <div key={u.id} className="relative ring-2 ring-[#121212] rounded-full shrink-0" title={u.name}>
                                     {u.avatarUrl ? (
-                                      <img
-                                        src={u.avatarUrl}
-                                        alt={u.name}
-                                        className="w-6 h-6 rounded-full object-cover"
-                                      />
+                                      <img src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
                                     ) : (
-                                      <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold">
-                                        {(u.name || 'U').charAt(0).toUpperCase()}
+                                      <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
+                                        {(u.name || 'U').substring(0, 2).toUpperCase()}
                                       </div>
                                     )}
                                   </div>
                                 ))}
                                 {currentAssignees.length > 2 && (
-                                  <div className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[10px] font-bold px-1.5 h-6 flex items-center justify-center shrink-0">
+                                  <div className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0">
                                     +{currentAssignees.length - 2}
                                   </div>
                                 )}
                               </div>
                               {currentAssignees.length === 1 && (
-                                <span className="text-xs text-zinc-300 max-w-[120px] truncate">
-                                  {currentAssignees[0].name}
-                                </span>
+                                <span className="truncate max-w-[100px]">{currentAssignees[0].name}</span>
                               )}
-                            </div>
+                            </>
                           ) : (
-                            <span className="text-sm text-zinc-500 border border-dashed border-zinc-700 px-2.5 py-1 rounded-sm hover:border-zinc-500 hover:text-zinc-400 transition-colors">
-                              Empty
-                            </span>
+                            <span>Assign</span>
                           )}
                         </div>
                       </Popover.Trigger>
-                      {currentAssignees.length > 0 && (
-                        <button
-                          onClick={handleClearAllAssignees}
-                          title="Clear all assignees"
-                          className="p-1 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded transition-colors"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
                       <Popover.Portal>
                         <Popover.Content
-                          className="z-50 w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                          className="z-[200] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                           align="start"
                           sideOffset={4}
                         >
@@ -966,7 +1083,7 @@ export function TaskDetailModalContent({
                                 </Command.Item>
                               )}
 
-                              {dbUsers.map((u) => {
+                              {assignableUsers.map((u) => {
                                 const assigned = isUserAssigned(u.id);
                                 return (
                                   <Command.Item
@@ -977,23 +1094,15 @@ export function TaskDetailModalContent({
                                   >
                                     <div className="flex items-center gap-2 truncate min-w-0">
                                       {u.avatarUrl ? (
-                                        <img
-                                          src={u.avatarUrl}
-                                          alt={u.name}
-                                          className="w-6 h-6 rounded-full object-cover shrink-0"
-                                        />
+                                        <img src={u.avatarUrl} alt={u.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
                                       ) : (
-                                        <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
-                                          {u.name.charAt(0).toUpperCase()}
+                                        <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold shrink-0">
+                                          {(u.name || 'U').substring(0, 2).toUpperCase()}
                                         </div>
                                       )}
                                       <div className="flex flex-col truncate">
-                                        <span className="truncate text-xs font-medium text-zinc-200">
-                                          {u.name}
-                                        </span>
-                                        <span className="truncate text-[10px] text-zinc-500">
-                                          {u.primaryRole || u.email}
-                                        </span>
+                                        <span className="truncate text-xs font-medium text-zinc-200">{u.name}</span>
+                                        <span className="truncate text-[10px] text-zinc-500">{u.primaryRole || u.email}</span>
                                       </div>
                                     </div>
                                     {assigned && (
@@ -1009,50 +1118,123 @@ export function TaskDetailModalContent({
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
+                    {currentAssignees.length > 0 && canEditTask && (
+                      <button
+                        onClick={handleClearAllAssignees}
+                        title="Clear all assignees"
+                        className="p-1 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
                   </div>
                 </div>
 
-                {/* Priority */}
-                <div className="grid grid-cols-[120px_1fr] items-center">
-                  <div className="flex items-center gap-2 text-zinc-500">
-                    <Flag className="w-4 h-4" />
-                    <span className="text-sm font-medium">Priority</span>
-                  </div>
-                  <div>
-                    <Popover.Root open={isPriorityOpen} onOpenChange={setIsPriorityOpen}>
+
+
+                {/* Team Assign Access Row */}
+                {canEditTask && (
+                  <div className="flex items-center gap-3 min-h-[32px]">
+                    <div className="flex items-center gap-2 w-28 shrink-0">
+                      <Lock className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                      <span className="text-[12px] text-zinc-500">Access</span>
+                    </div>
+                    <Popover.Root>
                       <Popover.Trigger asChild>
-                        <div className="cursor-pointer inline-flex items-center hover:bg-zinc-800/50 p-1 -ml-1 rounded transition-colors">
-                          {task.priority ? (
-                            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-sm uppercase ${PRIORITY_COLORS[task.priority] ?? 'text-zinc-400 bg-zinc-800'}`}>
-                              {task.priority}
-                            </span>
-                          ) : (
-                            <span className="text-sm text-zinc-500 border border-dashed border-zinc-700 px-2.5 py-1 rounded-sm">Empty</span>
-                          )}
+                        <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit text-zinc-400 hover:text-zinc-200">
+                          {task.teamAssignAccessRole || 'Anyone'}
                         </div>
                       </Popover.Trigger>
                       <Popover.Portal>
-                        <Popover.Content className="z-50 w-40 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                          {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map(p => (
+                        <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                          <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+                            <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Who can manage assignees</p>
                             <div
-                              key={p}
-                              onClick={() => handlePriorityChange(p)}
-                              className="cursor-pointer flex items-center px-2 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-sm"
+                              onClick={() => {
+                                const updatedTask = { ...task, teamAssignAccessRole: null };
+                                if (onUpdateTask) onUpdateTask(updatedTask);
+                                tasksApi.updateTask(task.id, { teamAssignAccessRole: null } as any);
+                              }}
+                              className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors"
                             >
-                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${PRIORITY_COLORS[p]}`}>{p}</span>
+                              <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${!task.teamAssignAccessRole ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                {!task.teamAssignAccessRole && <Check className="w-2.5 h-2.5 text-white" />}
+                              </div>
+                              Anyone
                             </div>
-                          ))}
+                            {workspaceRoles.map(role => {
+                              const selected = task.teamAssignAccessRole === role.name;
+                              return (
+                                <div
+                                  key={role.id}
+                                  onClick={() => {
+                                    const updatedTask = { ...task, teamAssignAccessRole: role.name };
+                                    if (onUpdateTask) onUpdateTask(updatedTask);
+                                    tasksApi.updateTask(task.id, { teamAssignAccessRole: role.name } as any);
+                                  }}
+                                  className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors"
+                                >
+                                  <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                    {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                  </div>
+                                  {role.name}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
                   </div>
+                )}
+
+
+                {/* Priority Row */}
+                <div className="flex items-center gap-3 min-h-[32px]">
+                  <div className="flex items-center gap-2 w-28 shrink-0">
+                    <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                    <span className="text-[12px] text-zinc-500">Priority</span>
+                  </div>
+                  <Popover.Root open={isPriorityOpen && canEditTask} onOpenChange={setIsPriorityOpen}>
+                    <Popover.Trigger asChild>
+                      <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
+                        {(() => {
+                          const priorityColor = task.priority ? (PRIORITY_COLORS[task.priority]?.split(' ')[0] ?? 'text-zinc-400') : 'text-zinc-500';
+                          return (
+                            <span className={`capitalize ${priorityColor}`}>
+                              {task.priority?.toLowerCase() || 'Empty'}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content className="z-[200] w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
+                        {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map(p => (
+                          <div
+                            key={p}
+                            onClick={() => handlePriorityChange(p)}
+                            className="cursor-pointer flex items-center px-2 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-sm"
+                          >
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${PRIORITY_COLORS[p]}`}>{p}</span>
+                          </div>
+                        ))}
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
                 </div>
 
               </div>
 
-              <div className="mt-8 relative group">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Description</span>
+
+
+              <div className="mt-8 relative group mb-8">
+                <div className="flex items-center justify-between mb-4 shrink-0">
+                  <span className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+                    <AlignLeft className="w-5 h-5" />
+                    Description
+                  </span>
                   <div className="flex items-center gap-2">
                     {editingUser && (
                       <span className="text-xs text-amber-400/80 flex items-center gap-1.5 animate-pulse">
@@ -1063,32 +1245,32 @@ export function TaskDetailModalContent({
                   </div>
                 </div>
 
-                <div 
-                  className={`relative p-2 -ml-2 rounded-lg transition-colors hover:bg-zinc-800/20 cursor-text`}
-                  onFocus={handleStartEditing}
+                <div
+                  className={`relative p-2 -mx-2 rounded-lg transition-colors hover:bg-zinc-800/20 cursor-text`}
+                  onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
                   onClick={() => handleStartEditing()}
                 >
-                  <BlockEditor 
+                  <BlockEditor
                     content={localDescription}
                     onChange={handleDescChange}
                     onBlur={handleDescBlur}
                     editable={!editingUser}
                   />
-                  
-                  {!localDescription && (
+
+                  {(!localDescription || localDescription === '<p></p>' || localDescription === '<p><br></p>') && (
                     <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-                      Write a text...
+                      Add description...
                     </div>
                   )}
                 </div>
               </div>
 
-              <SubtasksSection 
-                task={task} 
+              <SubtasksSection
+                task={task}
                 onUpdateTask={(updatedTask) => {
                   if (onUpdateTask) onUpdateTask(updatedTask);
-                }} 
-                users={dbUsers} 
+                }}
+                users={dbUsers}
                 addingSubtask={addingSubtask}
                 setAddingSubtask={setAddingSubtask}
                 socket={socket}
@@ -1105,7 +1287,7 @@ export function TaskDetailModalContent({
               )}
 
               {/* Action Buttons (Notes, Attachments, etc) */}
-              <div className="mt-8 flex flex-col gap-2 w-full">
+              <div className="mt-2 flex flex-col gap-2 w-full">
                 <ChecklistsSection
                   task={task}
                   users={dbUsers}
@@ -1119,12 +1301,12 @@ export function TaskDetailModalContent({
                   <Paperclip className="w-4 h-4 shrink-0" /> {isUploading ? 'Uploading...' : 'Attach file or image'}
                 </button>
               </div>
-              
+
             </div>
           </div>
 
           {/* Resizer */}
-          <div 
+          <div
             className="w-1 bg-zinc-800/30 hover:bg-indigo-500 cursor-col-resize shrink-0 transition-colors z-10"
             onMouseDown={startResizing}
           />
@@ -1137,10 +1319,10 @@ export function TaskDetailModalContent({
                 <span className="text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
               </div>
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="space-y-5">
-                
+
                 {/* Initial Creation item */}
                 <div className="flex gap-4 text-sm text-zinc-400 items-start">
                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
@@ -1151,11 +1333,11 @@ export function TaskDetailModalContent({
                     {new Date(task.createdAt || Date.now()).toLocaleDateString()}
                   </span>
                 </div>
-                
+
                 {/* Sort activities oldest to newest */}
                 {(() => {
                   const sorted = [...activities].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                  
+
                   // Separate comments from non-comments
                   const comments = sorted.filter(a => a.type === 'comment');
                   const otherActivities = sorted.filter(a => a.type !== 'comment');
@@ -1166,7 +1348,7 @@ export function TaskDetailModalContent({
                       {otherActivities.length > 0 && (
                         <>
                           {otherActivities.length > 3 && (
-                            <button 
+                            <button
                               onClick={() => setIsActivityExpanded(!isActivityExpanded)}
                               className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2"
                             >
@@ -1343,7 +1525,7 @@ export function TaskDetailModalContent({
                                     value={replyText}
                                     onChange={e => setReplyText(e.target.value)}
                                     disabled={isSubmittingReply}
-                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); }}}
+                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); } }}
                                     placeholder="Write a reply..."
                                     className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
                                   />
@@ -1367,7 +1549,7 @@ export function TaskDetailModalContent({
                     </>
                   );
                 })()}
-                
+
               </div>
             </div>
 
@@ -1388,7 +1570,7 @@ export function TaskDetailModalContent({
                         ) : (
                           <span className="text-[10px] text-zinc-400 font-mono truncate px-1">{file.name.slice(-6)}</span>
                         )}
-                        <button 
+                        <button
                           onClick={() => setStagedFiles(prev => prev.filter((_, i) => i !== idx))}
                           className="absolute -top-1 -right-1 p-0.5 bg-red-500 hover:bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
                         >
@@ -1436,17 +1618,17 @@ export function TaskDetailModalContent({
                     </div>
                   </div>
                 )}
-                <textarea 
+                <textarea
                   value={comment}
                   onChange={e => {
                     const val = e.target.value;
                     setComment(val);
-                    
+
                     // Mention logic
                     const cursorPosition = e.target.selectionStart;
                     const textBeforeCursor = val.substring(0, cursorPosition);
                     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-                    
+
                     if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
                       setShowMentionMenu(true);
                       setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
@@ -1474,7 +1656,7 @@ export function TaskDetailModalContent({
                 >
                   <Paperclip className="w-4 h-4" />
                 </button>
-                <button 
+                <button
                   onClick={handleAddComment}
                   disabled={!comment.trim() || isUploading}
                   className="absolute right-3 bottom-3 p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors"
@@ -1485,35 +1667,35 @@ export function TaskDetailModalContent({
               </div>
             </div>
           </div>
-          
+
         </div>
       </div>
-    
+
       {/* Lightbox Modal */}
       {lightboxImage && (
-        <div 
+        <div
           className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
-          <button 
+          <button
             className="absolute top-6 right-6 p-2 rounded-full bg-black/50 text-white hover:bg-white/20 transition-colors"
             onClick={() => setLightboxImage(null)}
           >
             <X className="w-6 h-6" />
           </button>
           {lightboxImage.match(/\.(mp4|webm|ogg|mov)$/i) ? (
-            <video 
-              controls 
+            <video
+              controls
               autoPlay
-              src={lightboxImage} 
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default" 
+              src={lightboxImage}
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
               onClick={e => e.stopPropagation()}
             />
           ) : (
-            <img 
-              src={lightboxImage} 
-              alt="Expanded view" 
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default" 
+            <img
+              src={lightboxImage}
+              alt="Expanded view"
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
               onClick={e => e.stopPropagation()}
             />
           )}
@@ -1556,10 +1738,70 @@ function SubtaskDetailView({
   const [isUploading, setIsUploading] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const canEditTask = permission?.allowed ?? true;
+
+  const handleDescriptionFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        setIsUploading(true);
+        const res = await uploadApi.uploadFile(file, 'description');
+        let newContent = '';
+        if (file.type.startsWith('image/')) {
+          newContent = `<img src="${res.url}" />`;
+        } else {
+          newContent = `<a href="${res.url}" target="_blank" class="text-blue-400 hover:underline">${file.name}</a>`;
+        }
+
+        const updatedDesc = localDesc ? localDesc + '<br/>' + newContent : newContent;
+        setLocalDesc(updatedDesc);
+
+        if (socket && parentTask.listId) {
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          socket.emit('task_editing_content', {
+            listId: parentTask.listId,
+            taskId: subtask.id,
+            content: updatedDesc
+          });
+        }
+      } catch (err) {
+        console.error('Failed to upload file:', err);
+      } finally {
+        setIsUploading(false);
+      }
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const [activityWidth, setActivityWidth] = useState(380);
   const [isResizing, setIsResizing] = useState(false);
+  const [isCheckLocked, setIsCheckLocked] = useState(false);
+
+  const handleStatusChangeAction = async (newStatus: string) => {
+    if (!subtask || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const isCompleted = newStatus === 'Closed' || newStatus === 'CLOSED' || newStatus === 'DONE';
+      const updatedSubtask = { ...subtask, status: newStatus, completed: isCompleted };
+
+      if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+      if (onUpdateTask) {
+        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+        onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+      }
+
+      await tasksApi.updateSubtask(parentTask.id, subtask.id, { status: newStatus, completed: isCompleted });
+    } catch (err) {
+      console.error('Failed to update subtask status', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -1570,7 +1812,7 @@ function SubtaskDetailView({
       }
     };
     const handleMouseUp = () => setIsResizing(false);
-    
+
     if (isResizing) {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
@@ -1599,7 +1841,7 @@ function SubtaskDetailView({
         setEditingUser(data.userName);
       }
     };
-    
+
     const handleEditingStop = (data: { taskId: string; description: string }) => {
       if (data.taskId === subtask.id) {
         setEditingUser(null);
@@ -1673,7 +1915,7 @@ function SubtaskDetailView({
     const trimmed = comment.trim();
     if (!trimmed && stagedFiles.length === 0) return;
     if (!currentUser?.id || isSubmitting || isUploading) return;
-    
+
     setIsSubmitting(true);
     try {
       let content = trimmed;
@@ -1695,7 +1937,7 @@ function SubtaskDetailView({
       setStagedFiles([]);
       const res = await tasksApi.getComments(parentTask.id, subtask.id);
       if (res?.comments) setRichComments(res.comments);
-      
+
       // Reflect comment count in the parent task modal's SubtasksSection
       const updatedSubtask = { ...subtask, comments: [...(subtask.comments || []), { id: Date.now().toString() }] };
       if (setActiveSubtask) setActiveSubtask(updatedSubtask);
@@ -1733,19 +1975,24 @@ function SubtaskDetailView({
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 bg-[#18181b] shrink-0">
         <div className="flex items-center gap-3">
-          <button 
+          <button
             onClick={onClose}
             className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
             title="Go Back"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-
           {parentTask.list ? (
-            <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
+            <div 
+              className="flex items-center gap-2 text-xs text-zinc-400 font-medium cursor-pointer transition-all relative after:absolute after:-bottom-0.5 after:left-0 after:w-full after:h-[1px] after:bg-zinc-400 after:opacity-0 hover:after:opacity-100"
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href);
+              }}
+              title="Click to copy link"
+            >
               {parentTask.list.space && (
                 <>
-                  <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-800/50">
+                  <div className="flex items-center gap-1.5">
                     <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
                       <span className="text-[9px] font-bold text-indigo-400">{parentTask.list.space.name.charAt(0).toUpperCase()}</span>
                     </div>
@@ -1754,40 +2001,51 @@ function SubtaskDetailView({
                   <span className="text-zinc-700">/</span>
                 </>
               )}
-              
               {parentTask.list.folder && (
                 <>
-                  <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-800/50">
+                  <div className="flex items-center gap-1.5">
                     <Folder className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate max-w-[120px]">{parentTask.list.folder.name}</span>
                   </div>
                   <span className="text-zinc-700">/</span>
                 </>
               )}
-              
-              <div className="flex items-center gap-1.5 hover:text-zinc-200 cursor-pointer transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-800/50">
+              <div className="flex items-center gap-1.5">
                 <ListTodo className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate max-w-[150px]">{parentTask.list.name}</span>
               </div>
+              <span className="text-zinc-700">/</span>
+              <span className="truncate max-w-[150px] text-zinc-200">{subtask.title || 'Untitled'}</span>
             </div>
           ) : (
-            <span className="text-xs text-zinc-500 font-mono">Task ID: {subtask.id.slice(0, 8)}</span>
+            <div className="flex items-center gap-2 text-xs animate-pulse opacity-50 cursor-default">
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-4 rounded bg-zinc-800 shrink-0" />
+                <div className="w-16 h-3 bg-zinc-800 rounded" />
+              </div>
+              <span className="text-zinc-800">/</span>
+              <div className="flex items-center gap-1.5">
+                <div className="w-3.5 h-3.5 rounded bg-zinc-800 shrink-0" />
+                <div className="w-16 h-3 bg-zinc-800 rounded" />
+              </div>
+              <span className="text-zinc-800">/</span>
+              <div className="flex items-center gap-1.5">
+                <div className="w-3.5 h-3.5 rounded bg-zinc-800 shrink-0" />
+                <div className="w-20 h-3 bg-zinc-800 rounded" />
+              </div>
+              <span className="text-zinc-800">/</span>
+              <div className="w-24 h-3 bg-zinc-800 rounded" />
+            </div>
           )}
-
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onClose}
-            className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {/* Action buttons could go here */}
         </div>
       </div>
 
       {/* Content area: Split layout matching main task */}
-      <div className="flex flex-1 overflow-hidden">
-        
+      <div className="flex-1 flex overflow-hidden">
+
         {/* Left Panel: Details & Description */}
         <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
           <div className="p-8">
@@ -1800,7 +2058,7 @@ function SubtaskDetailView({
                 {parentTask.title}
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2 mb-8 group w-fit">
               <CornerDownRight className="w-5 h-5 text-zinc-500 shrink-0" />
               {isEditingTitle ? (
@@ -1818,7 +2076,7 @@ function SubtaskDetailView({
                 />
               ) : (
                 <h1 
-                  onClick={() => setIsEditingTitle(true)}
+                  onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
                   className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit ${(subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.completed) ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                 >
                   {localTitle}
@@ -1827,183 +2085,175 @@ function SubtaskDetailView({
               )}
             </div>
             
-            {/* Properties Grid */}
-            <div className="flex flex-col gap-5 mb-10 w-full max-w-sm">
-              
-              {/* Status */}
-              <div className="grid grid-cols-[120px_1fr] items-center">
-                <div className="flex items-center gap-2 text-zinc-500">
-                  <CircleDashed className="w-4 h-4" />
-                  <span className="text-sm font-medium">Status</span>
+            {/* Properties Stack — row layout */}
+            <div className="flex flex-col gap-2 mb-8 mt-1">
+
+              {/* Status Row */}
+              <div className="flex items-center gap-3 min-h-[32px]">
+                <div className="flex items-center gap-2 w-28 shrink-0">
+                  {(() => {
+                    const isClosed = subtask.completed || subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.status === 'DONE';
+                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" />;
+                  })()}
+                  <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center">
-                    <div className={`flex items-center rounded-sm overflow-hidden ${!permission?.allowed ? 'bg-zinc-700 text-zinc-400' : 'bg-indigo-600 text-white'}`}>
-                      <span className="text-[11px] font-bold px-2.5 py-1 uppercase tracking-wide flex items-center gap-1 cursor-default">
-                        {subtask.completed ? 'DONE' : subtask.status || 'OPEN'}
-                        {!permission?.allowed && <Lock className="w-3 h-3 text-zinc-400 ml-0.5" />}
-                      </span>
-                      <div className="w-[1px] h-3 bg-black/20" />
-                      <button 
-                        disabled={!permission?.allowed}
-                        className={`px-1.5 py-1 transition-colors flex items-center justify-center ${
-                          !permission?.allowed
-                            ? 'opacity-50 cursor-not-allowed hover:bg-transparent'
-                            : 'hover:bg-black/10 cursor-pointer'
-                        }`}
-                        title={!permission?.allowed ? (permission.reason || 'Status transition restricted') : 'Next status'}
-                      >
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <button 
-                      className={`w-5 h-5 ml-1.5 rounded-sm flex items-center justify-center transition-colors shadow-sm text-white ${
-                        !permission?.allowed 
-                          ? 'bg-emerald-600/50 cursor-not-allowed'
-                          : 'bg-emerald-600 hover:bg-emerald-500 cursor-pointer'
-                      }`}
-                      title={!permission?.allowed ? (permission.reason || 'Status transition restricted') : 'Mark Complete'}
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
+                <div className="flex items-center gap-1.5">
+                  <div 
+                    className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-medium select-none transition-colors ${!permission?.allowed ? 'bg-zinc-700/50 text-zinc-400 cursor-not-allowed' : isCheckLocked ? 'bg-zinc-800/50 text-zinc-400 cursor-default' : (STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50 cursor-pointer')}`}
+                  >
+                    <span className="uppercase">{subtask.completed ? 'DONE' : subtask.status || 'OPEN'}</span>
+                    {!permission?.allowed && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                    {permission?.allowed && <ChevronRight className={`w-3.5 h-3.5 ml-0.5 shrink-0 transition-opacity ${isCheckLocked ? 'opacity-0' : 'opacity-50'}`} />}
                   </div>
+
+                  {permission?.allowed && (
+                    <>
+                      <button
+                        onClick={() => handleStatusChangeAction('Closed')}
+                        disabled={isCheckLocked}
+                        title={isCheckLocked ? 'Unlock to close' : 'Mark as Closed'}
+                        className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${
+                          isCheckLocked
+                            ? 'bg-zinc-800/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        onClick={() => setIsCheckLocked(!isCheckLocked)}
+                        title={isCheckLocked ? 'Click to unlock Quick Close' : 'Click to lock Quick Close'}
+                        className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${isCheckLocked
+                            ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/30 hover:text-indigo-300 cursor-pointer'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 cursor-pointer'
+                          }`}
+                      >
+                        {isCheckLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                      </button>
+                    </>
+                  )}
                 </div>
+
               </div>
 
-              {/* Assignee */}
-              <div className="grid grid-cols-[120px_1fr] items-center">
-                <div className="flex items-center gap-2 text-zinc-500">
-                  <User className="w-4 h-4" />
-                  <span className="text-sm font-medium">Assignee</span>
+              {/* Assignees Row */}
+              <div className="flex items-center gap-3 min-h-[32px]">
+                <div className="flex items-center gap-2 w-28 shrink-0">
+                  <User className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                  <span className="text-[12px] text-zinc-500">Assignees</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="group/assignee cursor-pointer inline-flex items-center gap-2 hover:bg-zinc-800/60 px-2 py-1 -ml-2 rounded-md transition-colors border border-transparent hover:border-zinc-700/50">
-                    {assignee ? (
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center -space-x-1.5">
-                          <div className="relative ring-2 ring-[#121212] rounded-full shrink-0">
-                            {assignee.avatarUrl ? (
-                              <img src={assignee.avatarUrl} alt={assignee.name} className="w-6 h-6 rounded-full object-cover" />
-                            ) : (
-                              <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold">
-                                {assignee.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
-                          </div>
+                <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] text-zinc-400 hover:text-zinc-200 select-none w-fit">
+                  {assignee ? (
+                    <>
+                      {assignee.avatarUrl ? (
+                        <img src={assignee.avatarUrl} alt={assignee.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                      ) : (
+                        <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
+                          {(assignee.name || 'U').substring(0, 2).toUpperCase()}
                         </div>
-                        <span className="text-xs text-zinc-300 max-w-[120px] truncate">{assignee.name}</span>
-                      </div>
-                    ) : (
-                      <span className="text-sm text-zinc-500 border border-dashed border-zinc-700 px-2.5 py-1 rounded-sm hover:border-zinc-500 hover:text-zinc-400 transition-colors">
-                        Unassigned
-                      </span>
-                    )}
-                  </div>
-                  {assignee && (
-                    <button className="p-1 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded transition-colors">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+                      )}
+                      <span className="truncate max-w-[100px]">{assignee.name}</span>
+                    </>
+                  ) : (
+                    <span>Assign</span>
                   )}
                 </div>
               </div>
 
-              {/* Priority */}
-              <div className="grid grid-cols-[120px_1fr] items-center">
-                <div className="flex items-center gap-2 text-zinc-500">
-                  <Flag className="w-4 h-4" />
-                  <span className="text-sm font-medium">Priority</span>
+              {/* Priority Row */}
+              <div className="flex items-center gap-3 min-h-[32px]">
+                <div className="flex items-center gap-2 w-28 shrink-0">
+                  <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                  <span className="text-[12px] text-zinc-500">Priority</span>
                 </div>
-                <div>
-                  <div className="cursor-pointer inline-flex items-center hover:bg-zinc-800/50 p-1 -ml-1 rounded transition-colors">
-                    {subtask.priority ? (
-                      <span className={`text-[11px] font-bold px-2.5 py-1 rounded-sm uppercase ${PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400 bg-zinc-800'}`}>
-                        {subtask.priority}
+                <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
+                  {(() => {
+                    const priorityColor = subtask.priority ? (PRIORITY_COLORS[subtask.priority]?.split(' ')[0] ?? 'text-zinc-400') : 'text-zinc-500';
+                    return (
+                      <span className={`capitalize ${priorityColor}`}>
+                        {subtask.priority?.toLowerCase() || 'Empty'}
                       </span>
-                    ) : (
-                      <span className="text-sm text-zinc-500 border border-dashed border-zinc-700 px-2.5 py-1 rounded-sm hover:border-zinc-500 hover:text-zinc-400 transition-colors">
-                        Empty
-                      </span>
-                    )}
-                  </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
 
-            {/* Description */}
-            <div className="mb-12">
-              <div className="flex items-center justify-between mb-4 shrink-0">
-                <span className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-                  <AlignLeft className="w-5 h-5" />
-                  Description
-                </span>
-                {editingUser && (
-                  <span className="text-xs text-amber-400/80 flex items-center gap-1.5 animate-pulse">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-                    {editingUser} is editing...
-                  </span>
-                )}
-              </div>
-              
-              <div 
-                className="flex-1 relative group hover:bg-zinc-800/20 rounded-lg p-2 -mx-2 transition-colors"
-                onFocus={handleStartEditing}
-              >
-                <BlockEditor 
-                  content={localDesc}
-                  onChange={(html) => {
-                    setLocalDesc(html);
-                    if (socket && subtask) {
-                      if (debounceRef.current) clearTimeout(debounceRef.current);
-                      debounceRef.current = setTimeout(() => {
-                        socket.emit('task_editing_content', {
-                          listId: parentTask.listId,
-                          taskId: subtask.id,
-                          content: html,
-                        });
-                      }, 150);
-                    }
-                  }}
-                  onBlur={handleDescBlur}
-                  editable={!editingUser}
-                />
-                
-                {!localDesc && (
-                  <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-                    Add description...
-                  </div>
-                )}
-              </div>
-              
-              {/* Action Buttons (Notes, Attachments, etc) */}
-              <div className="mt-8 flex flex-col gap-2 w-full">
-                <ChecklistsSection
-                  task={parentTask}
-                  subtaskId={subtask.id}
-                  users={dbUsers || []}
-                  checklists={subtask.checklists || []}
-                  onUpdateChecklists={(checklists) => {
-                    const updatedSubtask = { ...subtask, checklists };
-                    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-                    if (onUpdateTask) {
-                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-                    }
-                  }}
-                />
-                
-                <button className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer">
-                  <Link2 className="w-4 h-4 shrink-0" /> Relate items or add dependencies
-                </button>
-                <button className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer disabled:opacity-50">
-                  <Paperclip className="w-4 h-4 shrink-0" /> Attach file or image
-                </button>
-              </div>
-            </div>
-          </div>
+            {/* Description */ }
+  <div className="mb-12">
+    <div className="flex items-center justify-between mb-4 shrink-0">
+      <span className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+        <AlignLeft className="w-5 h-5" />
+        Description
+      </span>
+      {editingUser && (
+        <span className="text-xs text-amber-400/80 flex items-center gap-1.5 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+          {editingUser} is editing...
+        </span>
+      )}
+    </div>
+
+    <div
+      className="flex-1 relative group hover:bg-zinc-800/20 rounded-lg p-2 -mx-2 transition-colors cursor-text"
+      onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
+      onClick={() => handleStartEditing()}
+    >
+      <BlockEditor
+        content={localDesc}
+        onChange={(html) => {
+          setLocalDesc(html);
+          if (socket && subtask) {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            debounceRef.current = setTimeout(() => {
+              socket.emit('task_editing_content', {
+                listId: parentTask.listId,
+                taskId: subtask.id,
+                content: html,
+              });
+            }, 150);
+          }
+        }}
+        onBlur={handleDescBlur}
+        editable={!editingUser}
+      />
+
+      {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
+        <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+          Add description...
         </div>
+      )}
+    </div>
 
-        {/* Right Panel: Activity Log */}
-        <div className="w-[380px] bg-[#18181b] flex flex-col border-l border-zinc-800/60 shrink-0 z-10">
+    {/* Action Buttons (Notes, Attachments, etc) */}
+    <div className="mt-8 flex flex-col gap-2 w-full">
+      <ChecklistsSection
+        task={parentTask}
+        subtaskId={subtask.id}
+        users={dbUsers || []}
+        checklists={subtask.checklists || []}
+        onUpdateChecklists={(checklists) => {
+          const updatedSubtask = { ...subtask, checklists };
+          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+          if (onUpdateTask) {
+            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+          }
+        }}
+      />
+
+      <input type="file" ref={fileInputRef} className="hidden" onChange={handleDescriptionFileChange} />
+      <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer disabled:opacity-50">
+        <Paperclip className="w-4 h-4 shrink-0" /> {isUploading ? 'Uploading...' : 'Attach file or image'}
+      </button>
+    </div>
+  </div>
+          </div >
+        </div >
+
+    {/* Right Panel: Activity Log */ }
+    < div className = "w-[380px] bg-[#18181b] flex flex-col border-l border-zinc-800/60 shrink-0 z-10" >
           <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
             <div className="flex gap-3">
@@ -2148,9 +2398,9 @@ function SubtaskDetailView({
               </button>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
+        </div >
+      </div >
+    </div >
   );
 }
 
@@ -2180,7 +2430,7 @@ export function TaskDetailModal(props: Props) {
 
   useEffect(() => {
     if (props.isOpen && props.task && fullTask && props.task.id === fullTask.id) {
-       setFullTask(prev => ({ ...prev!, ...props.task! }));
+      setFullTask(prev => ({ ...prev!, ...props.task! }));
     }
   }, [props.task]);
 
@@ -2192,10 +2442,10 @@ export function TaskDetailModal(props: Props) {
   if (!props.isOpen && !fullTask) return null;
 
   return (
-    <TaskDetailModalContent 
-      {...props} 
-      task={fullTask} 
-      onUpdateTask={handleUpdateTask} 
+    <TaskDetailModalContent
+      {...props}
+      task={fullTask}
+      onUpdateTask={handleUpdateTask}
     />
   );
 }

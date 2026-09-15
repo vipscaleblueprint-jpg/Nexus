@@ -38,8 +38,8 @@ body {
 
 /* Soft Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;

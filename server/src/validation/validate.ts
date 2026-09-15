@@ -90,3 +90,8 @@ export const idChecklistIdItemIdParams = z.object({
   checklistId: z.string().uuid('must be a valid uuid'),
   itemId: z.string().uuid('must be a valid uuid'),
 });
+
+export const idAndStatusIdParams = z.object({
+  id: z.string().uuid('must be a valid uuid'),
+  statusId: z.string().uuid('must be a valid uuid'),
+});

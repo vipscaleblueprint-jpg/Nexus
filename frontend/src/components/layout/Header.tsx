@@ -11,7 +11,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/': 'Nexus Workspace',
   '/team': 'Member Directory',
   '/settings': 'Account Settings',
-  '/settings/users': 'Users & Permissions',
+  '/settings/users': 'Admin Settings',
 };
 
 export function Header() {
@@ -164,7 +164,7 @@ export function Header() {
                     }}
                     className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
                   >
-                    <span className="truncate text-yellow-400">Users & Permissions</span>
+                    <span className="truncate text-yellow-400">Admin Settings</span>
                   </button>
                 )}
                 <button

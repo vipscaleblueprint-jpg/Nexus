@@ -2117,22 +2117,22 @@ function SubtaskDetailView({
                             ? 'bg-zinc-800/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
                             : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer'
                         }`}
+                        title={!permission?.allowed ? (permission?.reason || 'Status transition restricted') : 'Next status'}
                       >
                         <Check className="w-3.5 h-3.5" />
                       </button>
-
-                      <button
-                        onClick={() => setIsCheckLocked(!isCheckLocked)}
-                        title={isCheckLocked ? 'Click to unlock Quick Close' : 'Click to lock Quick Close'}
-                        className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${isCheckLocked
-                            ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/30 hover:text-indigo-300 cursor-pointer'
-                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 cursor-pointer'
-                          }`}
-                      >
-                        {isCheckLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
-                      </button>
-                    </>
-                  )}
+                    </div>
+                    <button 
+                      className={`w-5 h-5 ml-1.5 rounded-sm flex items-center justify-center transition-colors shadow-sm text-white ${
+                        !permission?.allowed 
+                          ? 'bg-emerald-600/50 cursor-not-allowed'
+                          : 'bg-emerald-600 hover:bg-emerald-500 cursor-pointer'
+                      }`}
+                      title={!permission?.allowed ? (permission?.reason || 'Status transition restricted') : 'Mark Complete'}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
               </div>

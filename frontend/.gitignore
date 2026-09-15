@@ -40,3 +40,19 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# AI & Documentation
+*.md
+!README.md
+
+# Testing
+__tests__/
+tests/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# Temporary / Fix scripts
+fix*.js
+fix*.ts

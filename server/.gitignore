@@ -11,4 +11,21 @@ dist/
 
 # Logs & OS artifacts
 *.log
-.DS_Store
+.DS_Store
+
+# AI & Documentation
+*.md
+!README.md
+Agents.md
+AGENTS.md
+
+# Testing & Scripts
+*_test.js
+server_test.js
+test_script*
+trigger*
+updateRole*
+__tests__/
+tests/
+*.test.ts
+*.spec.ts

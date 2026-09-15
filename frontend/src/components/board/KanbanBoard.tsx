@@ -18,7 +18,7 @@ import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
 import { Plus, ChevronDown, ChevronRight, X, GripVertical } from 'lucide-react';
 import { getRoles } from '@/api/roles';
-import { canUserMoveTask } from '@/lib/permissions';
+import { canUserMoveTask, canUserEditTask } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
 
@@ -495,6 +495,12 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
 
     const task = tasks.find((t) => t.id === active.id);
     if (task) {
+      // Check task-level edit restriction (teamAssignAccessRole)
+      const editCheck = canUserEditTask(task, currentUser);
+      if (!editCheck.allowed) {
+        toast.error(editCheck.reason || 'You do not have permission to move this task');
+        return;
+      }
       const check = canUserMoveTask(task, listStatuses, currentUser, workspaceRoles);
       if (!check.allowed) {
         toast.error(check.reason || 'You do not have permission to move tasks from this status');
@@ -574,6 +580,14 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     if (!originalTask) return;
 
     const activeId = active.id as string;
+
+    // Check task-level edit restriction (teamAssignAccessRole) in drag END too
+    const editCheck = canUserEditTask(originalTask, currentUser);
+    if (!editCheck.allowed) {
+      toast.error(editCheck.reason || 'You do not have permission to edit this task.');
+      setLocalTasks(tasks);
+      return;
+    }
 
     // Check permissions on the original task
     const check = canUserMoveTask(originalTask, listStatuses, currentUser, workspaceRoles);
@@ -666,7 +680,6 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                         >
                           {totalCategoryTasks} task{totalCategoryTasks !== 1 ? 's' : ''} · {category.statuses.length} cols
                         </span>
-                        <span className="text-lg mt-2">{category.icon}</span>
                       </div>
                     </button>
 
@@ -732,7 +745,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                         </div>
 
                   {/* Columns inside the group */}
-                  <div className="flex items-start h-full shrink-0 min-w-max">
+                  <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max">
                     {category.statuses.map((status: string, index: number) => {
                       const isCollapsed = collapsedColumns[status];
                       

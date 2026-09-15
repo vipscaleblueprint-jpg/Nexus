@@ -370,19 +370,51 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  const parseSortableId = (idStr: string) => {
+    const firstDash = idStr.indexOf('-');
+    const parentType = idStr.slice(0, firstDash);
+    let itemType = '';
+    let typeIndex = -1;
+    if (idStr.includes('-folder-')) { itemType = 'folder'; typeIndex = idStr.lastIndexOf('-folder-'); }
+    else if (idStr.includes('-list-')) { itemType = 'list'; typeIndex = idStr.lastIndexOf('-list-'); }
+    else if (idStr.includes('-doc-')) { itemType = 'doc'; typeIndex = idStr.lastIndexOf('-doc-'); }
+    
+    const parentId = idStr.slice(firstDash + 1, typeIndex);
+    const itemId = idStr.slice(typeIndex + itemType.length + 2);
+    
+    return { parentType, parentId, itemType, itemId, parentKey: `${parentType}-${parentId}` };
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveId(null);
     const { active, over } = event;
-    if (!over || active.id === over.id) return;
+    
+    if (!over || active.id === over.id) {
+      return;
+    }
 
     const activeStr = String(active.id);
-    const overStr = String(over.id);
+    let overStr = String(over.id);
     
-    const getParentKey = (id: string) => id.split('-').slice(0, 2).join('-');
-    if (getParentKey(activeStr) !== getParentKey(overStr)) return;
+    const activeParsed = parseSortableId(activeStr);
+    let overParsed = parseSortableId(overStr);
 
-    const parentType = activeStr.split('-')[0];
-    const parentId = activeStr.split('-')[1];
+    if (activeParsed.parentKey !== overParsed.parentKey) {
+      if (activeParsed.parentType === 'space' && overParsed.parentType === 'folder') {
+        const space = spaces.find(s => s.folders?.some(f => f.id === overParsed.parentId));
+        if (space) {
+          overStr = `space-${space.id}-folder-${overParsed.parentId}`;
+          overParsed = parseSortableId(overStr);
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    const parentType = activeParsed.parentType;
+    const parentId = activeParsed.parentId;
 
     let itemsArray: any[] = [];
     if (parentType === 'space') {
@@ -391,7 +423,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
         itemsArray = [
           ...(space.folders?.map(f => ({ ...f, itemType: 'folder' })) || []),
           ...(space.lists?.filter(l => !l.folderId).map(l => ({ ...l, itemType: 'list' })) || []),
-          ...(space.docs?.filter(d => !d.folderId).map(d => ({ ...d, itemType: 'doc' })) || [])
+          ...(space.docs?.filter(d => !d.folderId && d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
         ].sort((a, b) => (a.order || 0) - (b.order || 0));
       }
     } else if (parentType === 'folder') {
@@ -411,7 +443,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
            itemsArray = [
              ...(found.subfolders?.map((f: any) => ({ ...f, itemType: 'folder' })) || []),
              ...(found.lists?.map((l: any) => ({ ...l, itemType: 'list' })) || []),
-             ...(found.docs?.map((d: any) => ({ ...d, itemType: 'doc' })) || [])
+             ...(found.docs?.filter((d: any) => d.title !== 'Priorities Journal').map((d: any) => ({ ...d, itemType: 'doc' })) || [])
            ].sort((a, b) => (a.order || 0) - (b.order || 0));
            break;
          }
@@ -420,8 +452,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
     const oldIndex = itemsArray.findIndex(i => `${parentType}-${parentId}-${i.itemType}-${i.id}` === activeStr);
     const newIndex = itemsArray.findIndex(i => `${parentType}-${parentId}-${i.itemType}-${i.id}` === overStr);
+
     if (oldIndex !== -1 && newIndex !== -1) {
       const newItems = arrayMove(itemsArray, oldIndex, newIndex);
+
       
       const updates = newItems.map((item, index) => ({
         itemType: item.itemType,
@@ -429,6 +463,39 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
         order: index
       }));
       
+      // Optimistic update
+      const newSpaces = JSON.parse(JSON.stringify(spaces));
+      if (parentType === 'space') {
+        const space = newSpaces.find((s: any) => s.id === parentId);
+        if (space) {
+          updates.forEach(u => {
+            if (u.itemType === 'folder') { const f = space.folders?.find((x: any) => x.id === u.id); if (f) f.order = u.order; }
+            else if (u.itemType === 'list') { const l = space.lists?.find((x: any) => x.id === u.id); if (l) l.order = u.order; }
+            else if (u.itemType === 'doc') { const d = space.docs?.find((x: any) => x.id === u.id); if (d) d.order = u.order; }
+          });
+        }
+      } else if (parentType === 'folder') {
+        for (const s of newSpaces) {
+          const findFolder = (folders: any[]): any => {
+            for (const f of folders) {
+              if (f.id === parentId) return f;
+              if (f.subfolders) { const found = findFolder(f.subfolders); if (found) return found; }
+            }
+            return null;
+          };
+          const found = findFolder(s.folders || []);
+          if (found) {
+            updates.forEach(u => {
+              if (u.itemType === 'folder') { const f = found.subfolders?.find((x: any) => x.id === u.id); if (f) f.order = u.order; }
+              else if (u.itemType === 'list') { const l = found.lists?.find((x: any) => x.id === u.id); if (l) l.order = u.order; }
+              else if (u.itemType === 'doc') { const d = found.docs?.find((x: any) => x.id === u.id); if (d) d.order = u.order; }
+            });
+            break;
+          }
+        }
+      }
+      useAppStore.setState({ spaces: newSpaces });
+
       const foldersToUpdate = updates.filter(u => u.itemType === 'folder').map(u => ({ id: u.id, order: u.order }));
       const listsToUpdate = updates.filter(u => u.itemType === 'list').map(u => ({ id: u.id, order: u.order }));
       const docsToUpdate = updates.filter(u => u.itemType === 'doc').map(u => ({ id: u.id, order: u.order }));
@@ -437,9 +504,15 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
         if (foldersToUpdate.length) await spacesApi.reorderFolders(foldersToUpdate);
         if (listsToUpdate.length) await spacesApi.reorderLists(listsToUpdate);
         if (docsToUpdate.length) await spacesApi.reorderDocs(docsToUpdate);
-        globalLoadSpaces();
+        
+        // Wait 1.5s before background sync to allow Redis cache invalidation to propagate
+        setTimeout(() => {
+          globalLoadSpaces();
+        }, 1500);
       } catch (err) {
         console.error('Failed to reorder', err);
+        // Revert on failure
+        globalLoadSpaces();
       }
     }
   };

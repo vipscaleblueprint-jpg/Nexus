@@ -1050,7 +1050,7 @@ export function TaskDetailModalContent({
                               )}
                             </>
                           ) : (
-                            <span>Assign</span>
+                            <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
                           )}
                         </div>
                       </Popover.Trigger>
@@ -1133,61 +1133,7 @@ export function TaskDetailModalContent({
 
 
 
-                {/* Team Assign Access Row */}
-                {canEditTask && (
-                  <div className="flex items-center gap-3 min-h-[32px]">
-                    <div className="flex items-center gap-2 w-28 shrink-0">
-                      <Lock className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
-                      <span className="text-[12px] text-zinc-500">Access</span>
-                    </div>
-                    <Popover.Root>
-                      <Popover.Trigger asChild>
-                        <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit text-zinc-400 hover:text-zinc-200">
-                          {task.teamAssignAccessRole || 'Anyone'}
-                        </div>
-                      </Popover.Trigger>
-                      <Popover.Portal>
-                        <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
-                          <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
-                            <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Who can manage assignees</p>
-                            <div
-                              onClick={() => {
-                                const updatedTask = { ...task, teamAssignAccessRole: null };
-                                if (onUpdateTask) onUpdateTask(updatedTask);
-                                tasksApi.updateTask(task.id, { teamAssignAccessRole: null } as any);
-                              }}
-                              className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors"
-                            >
-                              <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${!task.teamAssignAccessRole ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                {!task.teamAssignAccessRole && <Check className="w-2.5 h-2.5 text-white" />}
-                              </div>
-                              Anyone
-                            </div>
-                            {workspaceRoles.map(role => {
-                              const selected = task.teamAssignAccessRole === role.name;
-                              return (
-                                <div
-                                  key={role.id}
-                                  onClick={() => {
-                                    const updatedTask = { ...task, teamAssignAccessRole: role.name };
-                                    if (onUpdateTask) onUpdateTask(updatedTask);
-                                    tasksApi.updateTask(task.id, { teamAssignAccessRole: role.name } as any);
-                                  }}
-                                  className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors"
-                                >
-                                  <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                    {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                  </div>
-                                  {role.name}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </Popover.Content>
-                      </Popover.Portal>
-                    </Popover.Root>
-                  </div>
-                )}
+
 
 
                 {/* Priority Row */}
@@ -2117,11 +2063,11 @@ function SubtaskDetailView({
                             ? 'bg-zinc-800/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
                             : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer'
                         }`}
-                        title={!permission?.allowed ? (permission?.reason || 'Status transition restricted') : 'Next status'}
                       >
                         <Check className="w-3.5 h-3.5" />
                       </button>
-                    </div>
+                    </>
+                  )}
                     <button 
                       className={`w-5 h-5 ml-1.5 rounded-sm flex items-center justify-center transition-colors shadow-sm text-white ${
                         !permission?.allowed 
@@ -2135,7 +2081,7 @@ function SubtaskDetailView({
                   </div>
                 </div>
 
-              </div>
+
 
               {/* Assignees Row */}
               <div className="flex items-center gap-3 min-h-[32px]">
@@ -2156,7 +2102,7 @@ function SubtaskDetailView({
                       <span className="truncate max-w-[100px]">{assignee.name}</span>
                     </>
                   ) : (
-                    <span>Assign</span>
+                    <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
                   )}
                 </div>
               </div>

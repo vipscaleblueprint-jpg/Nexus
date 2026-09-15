@@ -26,7 +26,7 @@ export async function validateTaskStatusTransition(
 
   // Check subtasks completion if moving to DONE
   if (targetStatus === 'DONE') {
-    const hasUnfinishedSubtask = task.subtasks.some((st) => !st.completed);
+    const hasUnfinishedSubtask = task.subtasks.some((st: any) => !st.completed);
     if (hasUnfinishedSubtask) {
       return {
         allowed: false,
@@ -34,8 +34,8 @@ export async function validateTaskStatusTransition(
       };
     }
 
-    const allItems = task.checklists.flatMap((c) => c.items);
-    const hasUncheckedItem = allItems.some((item) => !item.completed);
+    const allItems = task.checklists.flatMap((c: any) => c.items);
+    const hasUncheckedItem = allItems.some((item: any) => !item.completed);
     if (hasUncheckedItem) {
       return {
         allowed: false,

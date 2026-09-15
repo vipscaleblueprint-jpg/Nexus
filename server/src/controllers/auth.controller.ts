@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { SystemRole } from '@prisma/client';
+type SystemRole = 'ADMIN' | 'MEMBER';
 import type {
   ChangePasswordInput,
   ForgotPasswordInput,

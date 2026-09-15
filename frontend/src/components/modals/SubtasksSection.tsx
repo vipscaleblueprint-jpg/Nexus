@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
+import { canUserEditTask } from '@/lib/permissions';
 import { Check, CheckCircle2, Circle, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import * as Popover from '@radix-ui/react-popover';
+import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
 
 interface SubtasksSectionProps {
@@ -30,7 +32,9 @@ function SubtaskDescription({
   socket,
   currentUser,
   listId,
-  taskId
+  taskId,
+  canEditTask
+
 }: {
   subtask: Subtask;
   onSave: (id: string, desc: string) => void;
@@ -38,6 +42,7 @@ function SubtaskDescription({
   currentUser?: any;
   listId?: string;
   taskId?: string;
+  canEditTask?: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [desc, setDesc] = useState(subtask.description || '');
@@ -85,7 +90,7 @@ function SubtaskDescription({
 
   const handleStartEditing = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (editingUser) return; // Locked by someone else
+    if (editingUser || subtask.completed || !canEditTask) return; // Locked by someone else, completed, or no edit permission
     setIsEditing(true);
     if (socket && listId && taskId) {
       socket.emit('subtask_editing_start', {
@@ -119,7 +124,10 @@ function SubtaskDescription({
 
   return (
     <div className="w-full relative group/desc-inner min-w-0">
-      <div className={`flex flex-col gap-1.5 px-2 py-1 rounded-md transition-colors group/desc-wrapper ${isEditing ? 'bg-zinc-800/80 ring-1 ring-zinc-700' : 'hover:bg-zinc-800/50'}`}>
+      <div 
+        onClick={!isEditing ? handleStartEditing : undefined}
+        className={`flex flex-col gap-1.5 px-2 py-1 rounded-md transition-colors group/desc-wrapper ${isEditing ? 'bg-zinc-800/80 ring-1 ring-zinc-700' : `hover:bg-zinc-800/50 ${subtask.completed ? 'cursor-default' : 'cursor-text'}`}`}
+      >
         <div className="flex items-start gap-1.5 min-w-0">
           <div className="flex-1 flex flex-col gap-1 min-w-0">
             {isEditing ? (
@@ -142,17 +150,16 @@ function SubtaskDescription({
                 }}
                 onBlur={handleStopEditing}
                 onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') handleStopEditing(); }}
-                className="w-full bg-transparent text-xs text-zinc-300 leading-relaxed resize-none focus:outline-none m-0 p-0 overflow-hidden"
-                placeholder="Write a text..."
+                className="w-full bg-transparent text-xs text-zinc-300 leading-relaxed resize-none focus:outline-none m-0 p-0 overflow-hidden cursor-text"
+                placeholder="Add description..."
                 style={{ height: 'auto', minHeight: '20px' }}
                 ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
               />
             ) : (
               <p
-                className={`text-xs leading-relaxed break-words cursor-text min-h-[16px] ${expanded ? 'whitespace-pre-wrap' : 'line-clamp-2'} ${editingUser ? 'text-zinc-500' : (!desc ? 'text-zinc-500 italic' : 'text-zinc-300 group-hover/desc-wrapper:text-zinc-200')} transition-colors`}
-                onClick={handleStartEditing}
+                className={`text-xs leading-relaxed break-words min-h-[16px] cursor-text ${expanded ? 'whitespace-pre-wrap' : 'line-clamp-2'} ${editingUser ? 'text-zinc-500' : (!desc ? 'text-zinc-500 italic' : 'text-zinc-300 group-hover/desc-wrapper:text-zinc-200')} transition-colors`}
               >
-                {desc || 'Write a text...'}
+                {desc || 'Add description...'}
               </p>
             )}
 
@@ -230,7 +237,7 @@ function DatePickerPopover({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
-          className="z-50 w-[260px] p-3 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
+          className="z-[200] w-[260px] p-3 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
           side="bottom"
           align="start"
           sideOffset={4}
@@ -320,6 +327,8 @@ function SubtaskRow({
   listId,
   taskId,
   commentCount,
+  onAddCommentLocally,
+  canEditTask,
 }: {
   subtask: Subtask;
   users?: any[];
@@ -331,6 +340,8 @@ function SubtaskRow({
   listId?: string;
   taskId?: string;
   commentCount?: number;
+  onAddCommentLocally?: (subtaskId: string, comments: any[]) => void;
+  canEditTask?: boolean;
 }) {
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
@@ -343,9 +354,49 @@ function SubtaskRow({
   const [activeTab, setActiveTab] = useState<'checklist' | 'comments'>('comments');
   const [isCollapsed, setIsCollapsed] = useState(false);
 
+  // Multi-assignee derived value
+  const currentAssignees: any[] = useMemo(() => {
+    return (subtask.assignees && subtask.assignees.length > 0)
+      ? subtask.assignees
+      : [];
+  }, [subtask.assignees]);
+
+  const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
+
+  const handleToggleAssignee = (u: any) => {
+    const isAssigned = isUserAssigned(u.id);
+    const updatedAssignees = isAssigned
+      ? currentAssignees.filter((a) => a.id !== u.id)
+      : [...currentAssignees, u];
+
+    const updatedIds = updatedAssignees.map((a) => a.id);
+    onUpdate(subtask.id, { assigneeIds: updatedIds } as any);
+  };
+
+  const handleClearAllAssignees = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    onUpdate(subtask.id, { assigneeIds: [] } as any);
+    setAssigneeOpen(false);
+  };
+
   useEffect(() => {
     setTitleVal(subtask.title);
   }, [subtask.title]);
+
+  // Fetch comments when tab is active and not yet loaded
+  useEffect(() => {
+    let cancelled = false;
+    if (activeTab === 'comments' && subtask.comments === undefined && taskId && subtask.id) {
+      tasksApi.getComments(taskId, subtask.id)
+        .then(res => {
+          if (!cancelled && res?.comments && onAddCommentLocally) {
+            onAddCommentLocally(subtask.id, res.comments);
+          }
+        })
+        .catch(err => console.error('Failed to load subtask comments:', err));
+    }
+    return () => { cancelled = true; };
+  }, [activeTab, subtask.comments, taskId, subtask.id, onAddCommentLocally]);
 
   const handleTitleSubmit = () => {
     setIsEditingTitle(false);
@@ -434,9 +485,10 @@ function SubtaskRow({
                 onClick={() => onOpenSubtask(subtask)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
+                  if (subtask.completed) return;
                   setIsEditingTitle(true);
                 }}
-                className={`text-[14px] font-bold truncate cursor-pointer hover:underline decoration-zinc-500 underline-offset-2 transition-colors ${subtask.completed ? 'text-zinc-600 line-through' : 'text-zinc-100 hover:text-white'}`}
+                className={`text-[14px] font-bold truncate transition-colors ${subtask.completed ? 'text-zinc-600 line-through cursor-not-allowed' : 'text-zinc-100 hover:text-white cursor-pointer hover:underline decoration-zinc-500 underline-offset-2'}`}
               >
                 {subtask.title}
               </button>
@@ -450,17 +502,30 @@ function SubtaskRow({
               {subtask.completed ? 'Done' : 'Open'}
             </div>
             
-            <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-zinc-800/50 rounded-md text-[10px] text-zinc-400 max-w-[120px] shrink-0 truncate">
-              {subtask.assignee ? (
+            <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-zinc-800/50 rounded-md text-[10px] text-zinc-400 max-w-[150px] shrink-0 truncate">
+              {currentAssignees.length > 0 ? (
                 <>
-                  {subtask.assignee.avatarUrl ? (
-                    <img src={subtask.assignee.avatarUrl} alt="" className="w-3.5 h-3.5 rounded-full shrink-0" />
-                  ) : (
-                    <div className="w-3.5 h-3.5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[8px] font-bold shrink-0">
-                      {subtask.assignee.name.charAt(0).toUpperCase()}
-                    </div>
+                  <div className="flex items-center -space-x-1.5">
+                    {currentAssignees.slice(0, 2).map((u) => (
+                      <div key={u.id} className="relative ring-1 ring-[#141416] rounded-full shrink-0">
+                        {u.avatarUrl ? (
+                          <img src={u.avatarUrl} alt={u.name} className="w-3.5 h-3.5 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-3.5 h-3.5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[8px] font-bold">
+                            {(u.name || 'U').substring(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {currentAssignees.length > 2 && (
+                      <div className="relative ring-1 ring-[#141416] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[7px] font-bold h-3.5 w-3.5 flex items-center justify-center shrink-0">
+                        +{currentAssignees.length - 2}
+                      </div>
+                    )}
+                  </div>
+                  {currentAssignees.length === 1 && (
+                    <span className="truncate">{currentAssignees[0].name}</span>
                   )}
-                  <span className="truncate">{subtask.assignee.name}</span>
                 </>
               ) : (
                 <>
@@ -487,104 +552,174 @@ function SubtaskRow({
         </button>
       </div>
 
-      {/* Row 2: 3-column Layout mimicking main task */}
+      {/* Row 2: 2-column Layout mimicking main task but fluid */}
       <div className={`grid transition-[grid-template-rows,opacity,margin] duration-300 ease-in-out ${isCollapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'}`}>
         <div className="overflow-hidden">
-          <div className="flex-1 flex items-stretch gap-6 w-full min-h-[280px]">
-
-        {/* Column 1: Properties (Status, Assignee, Priority) */}
-        <div className="w-[200px] flex flex-col shrink-0 gap-5 overflow-y-auto custom-scrollbar pr-2 pt-2">
-
-          {/* Status */}
-          <div className="flex flex-col gap-2">
-            <div className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-medium select-none cursor-pointer transition-colors w-fit ${subtask.completed
-                ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25'
-                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50'
-              }`} onClick={() => onToggle(subtask)}>
-              {subtask.completed ? <CheckCircle2 className="w-3.5 h-3.5" /> : <CircleDashed className="w-3.5 h-3.5" />}
+          <div className="flex items-stretch gap-4 w-full max-h-[300px]">
+        {/* Column 1: Properties Stack — icon + pill rows */}
+        <div className="flex flex-col shrink-0 gap-2 pt-1 w-[140px]">
+          {/* Status row */}
+          <div className="flex items-center gap-3">
+            {subtask.completed
+              ? <CheckCircle2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+              : <CircleDashed className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+            }
+            <div
+              title={subtask.completed ? 'Done — click to reopen' : 'Open — click to close'}
+              onClick={() => { if (canEditTask) onToggle(subtask); }}
+              className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium select-none cursor-pointer transition-all w-fit ${
+                subtask.completed
+                  ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25'
+                  : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60'
+              }`}
+            >
               {subtask.completed ? 'Done' : 'Open'}
+              <ChevronRight className="w-3 h-3 opacity-60" />
             </div>
           </div>
 
-          {/* Assignee */}
-          <div className="flex flex-col gap-2">
-            <Popover.Root open={assigneeOpen} onOpenChange={setAssigneeOpen}>
+          {/* Assignees row */}
+          <div className="flex items-center gap-3">
+            <User className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+            <div className="flex items-center gap-1.5">
+              <Popover.Root open={assigneeOpen} onOpenChange={(open) => { if (!subtask.completed) setAssigneeOpen(open); }}>
               <Popover.Trigger asChild>
-                <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] text-zinc-400 hover:text-zinc-200 select-none w-fit">
-                  {subtask.assignee ? (
+                <div
+                  title={currentAssignees.map((u) => u.name).join(', ')}
+                  className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-all ${
+                    subtask.completed
+                      ? 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed grayscale'
+                      : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {currentAssignees.length > 0 ? (
                     <>
-                      {subtask.assignee.avatarUrl ? (
-                        <img src={subtask.assignee.avatarUrl} alt="" className="w-4 h-4 rounded-full shrink-0" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[8px] font-bold shrink-0">
-                          {subtask.assignee.name.charAt(0).toUpperCase()}
-                        </div>
+                      <div className="flex items-center -space-x-1.5">
+                        {currentAssignees.slice(0, 2).map((u) => (
+                          <div key={u.id} className="relative ring-2 ring-[#121212] rounded-full shrink-0">
+                            {u.avatarUrl ? (
+                              <img src={u.avatarUrl} alt={u.name} className="w-4 h-4 rounded-full object-cover shrink-0" />
+                            ) : (
+                              <div className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[7px] font-bold">
+                                {(u.name || 'U').substring(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {currentAssignees.length > 2 && (
+                          <div className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0">
+                            +{currentAssignees.length - 2}
+                          </div>
+                        )}
+                      </div>
+                      {currentAssignees.length === 1 && (
+                        <span className="truncate max-w-[90px]">{currentAssignees[0].name}</span>
                       )}
-                      <span className="truncate max-w-[100px]">{subtask.assignee.name}</span>
                     </>
                   ) : (
-                    <>
-                      <User className="w-3.5 h-3.5 shrink-0" />
-                      <span>Empty</span>
-                    </>
+                    <span className="text-zinc-500">Empty</span>
                   )}
                 </div>
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content
-                  className="z-50 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
+                  className="z-[200] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden outline-none"
                   side="bottom"
                   align="start"
-                  sideOffset={4}
+                  sideOffset={8}
                 >
-                  <div className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2 px-2 pt-2">Assign to</div>
-                  <div className="max-h-[220px] overflow-y-auto space-y-0.5">
-                    {subtask.assignee && (
-                      <div
-                        className="flex items-center gap-2.5 px-2 py-1.5 hover:bg-zinc-800 rounded-lg cursor-pointer text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-                        onClick={() => { onUpdate(subtask.id, { assigneeId: null }); setAssigneeOpen(false); }}
-                      >
-                        <X className="w-4 h-4 text-zinc-600" />
-                        <span>Clear assignee</span>
-                      </div>
-                    )}
-                    {users?.map((u: any) => (
-                      <div
-                        key={u.id}
-                        className="flex items-center gap-2.5 px-2 py-1.5 hover:bg-zinc-800 rounded-lg cursor-pointer text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
-                        onClick={() => { onUpdate(subtask.id, { assigneeId: u.id }); setAssigneeOpen(false); }}
-                      >
-                        {u.avatarUrl ? (
-                          <img src={u.avatarUrl} className="w-5 h-5 rounded-full shrink-0" />
-                        ) : (
-                          <div className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[10px] font-bold shrink-0">
-                            {u.name.charAt(0).toUpperCase()}
+                  <Command className="flex h-full w-full flex-col overflow-hidden bg-transparent">
+                    <div className="flex items-center border-b border-zinc-800/60 px-3">
+                      <Command.Input 
+                        placeholder="Search assignee..." 
+                        className="flex h-9 w-full rounded-md bg-transparent py-3 text-[13px] outline-none placeholder:text-zinc-500 text-zinc-200"
+                        autoFocus
+                      />
+                    </div>
+                    <Command.List className="max-h-[300px] overflow-y-auto p-1.5 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+                      <Command.Empty className="py-4 text-center text-sm text-zinc-500">
+                        No user found.
+                      </Command.Empty>
+                      {currentAssignees.length > 0 && (
+                        <Command.Item
+                          value="clear all unassigned none"
+                          onSelect={() => handleClearAllAssignees()}
+                          className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 mb-1 border-b border-zinc-800/40"
+                        >
+                          <div className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 mr-2 shrink-0">
+                            <X className="w-3 h-3" />
                           </div>
-                        )}
-                        <span className="truncate flex-1">{u.name}</span>
-                        {subtask.assignee?.id === u.id && <Check className="w-3.5 h-3.5 text-blue-400 shrink-0" />}
-                      </div>
-                    ))}
-                  </div>
+                          <span>Clear all assignees</span>
+                        </Command.Item>
+                      )}
+                      {users?.map((u: any) => {
+                        const isAssigned = isUserAssigned(u.id);
+                        const initials = (u.name || 'U').substring(0, 2).toUpperCase();
+                        const role = u.primaryRole || u.secondaryRole || '';
+                        const avatarColors = ['bg-violet-600','bg-blue-600','bg-emerald-600','bg-rose-600','bg-amber-600','bg-cyan-600','bg-fuchsia-600'];
+                        const avatarBg = avatarColors[(u.name || '').charCodeAt(0) % avatarColors.length];
+                        return (
+                          <Command.Item
+                            key={u.id}
+                            value={`${u.name} ${u.email} ${role}`}
+                            onSelect={() => handleToggleAssignee(u)}
+                            className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
+                          >
+                            {u.avatarUrl ? (
+                              <img src={u.avatarUrl} className="w-8 h-8 rounded-full shrink-0 object-cover" alt="" />
+                            ) : (
+                              <div className={`w-8 h-8 rounded-full ${avatarBg} flex items-center justify-center text-[11px] font-bold text-white shrink-0`}>
+                                {initials}
+                              </div>
+                            )}
+                            <div className="flex flex-col min-w-0 flex-1">
+                              <span className="truncate text-zinc-100 text-[13px] font-medium">{u.name}</span>
+                              {role && <span className="truncate text-[10px] text-zinc-500 uppercase tracking-wide font-medium">{role}</span>}
+                            </div>
+                            <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center transition-all ml-1 ${isAssigned ? 'bg-indigo-600' : 'border border-zinc-700'}`}>
+                              {isAssigned && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
+                            </div>
+                          </Command.Item>
+                        );
+                      })}
+                    </Command.List>
+                  </Command>
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
+            {currentAssignees.length > 0 && !subtask.completed && (
+              <button
+                onClick={handleClearAllAssignees}
+                className="p-0.5 text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer shrink-0"
+                title="Clear assignee"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+            </div>
           </div>
 
-          {/* Priority */}
-          <div className="flex flex-col gap-2">
-            <Popover.Root open={priorityOpen} onOpenChange={setPriorityOpen}>
+          {/* Priority row */}
+          <div className="flex items-center gap-3">
+            <Flag className={`w-3.5 h-3.5 shrink-0 ${subtask.priority ? priorityColor : 'text-zinc-500'}`} />
+            <Popover.Root open={priorityOpen} onOpenChange={(open) => { if (!subtask.completed) setPriorityOpen(open); }}>
               <Popover.Trigger asChild>
-                <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
-                  <Flag className={`w-3.5 h-3.5 shrink-0 ${subtask.priority ? priorityColor : 'text-zinc-500'}`} />
-                  <span className={`capitalize truncate ${subtask.priority ? priorityColor : 'text-zinc-500'}`}>
+                <div
+                  title={subtask.completed ? 'Locked' : (subtask.priority ? subtask.priority.toLowerCase() : 'No priority')}
+                  className={`inline-flex items-center h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-all ${
+                    subtask.completed
+                      ? 'bg-zinc-800/40 cursor-not-allowed opacity-60'
+                      : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50'
+                  }`}
+                >
+                  <span className={`capitalize ${subtask.priority ? priorityColor : 'text-zinc-500'}`}>
                     {subtask.priority?.toLowerCase() || 'Empty'}
                   </span>
                 </div>
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content
-                  className="z-50 w-36 p-1.5 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
+                  className="z-[200] w-36 p-1.5 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
                   side="bottom"
                   align="start"
                   sideOffset={4}
@@ -633,6 +768,7 @@ function SubtaskRow({
               currentUser={currentUser}
               listId={listId}
               taskId={taskId}
+              canEditTask={canEditTask}
             />
           </div>
         </div>
@@ -732,24 +868,23 @@ function SubtaskRow({
 
                 {/* Inline Comment Input */}
                 <div className="pt-3 border-t border-zinc-800/60 mt-auto shrink-0 pb-1">
-                  <form onSubmit={handleAddComment} className="flex flex-col gap-2">
+                  <form onSubmit={handleAddComment} className="relative flex items-center">
                     <input
                       type="text"
                       value={commentText}
+                      disabled={subtask.completed}
                       onChange={(e) => setCommentText(e.target.value)}
-                      placeholder="Write a comment..."
-                      className="w-full bg-[#18181b] border border-zinc-800 focus:border-zinc-700 rounded-lg px-3 py-2 text-[11px] text-zinc-200 placeholder:text-zinc-500 outline-none transition-colors"
+                      placeholder={subtask.completed ? "Locked" : "Write a comment..."}
+                      className="w-full bg-[#18181b] border border-zinc-800 focus:border-zinc-700 rounded-lg pl-3 pr-[70px] py-2 text-[11px] text-zinc-200 placeholder:text-zinc-500 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     />
-                    <div className="flex justify-end">
-                      <button
-                        type="submit"
-                        disabled={!commentText.trim() || isSubmittingComment}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-[11px] font-medium rounded-md transition-colors cursor-pointer"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                        {isSubmittingComment ? 'Sending...' : 'Send'}
-                      </button>
-                    </div>
+                    <button
+                      type="submit"
+                      disabled={!commentText.trim() || isSubmittingComment || subtask.completed}
+                      className="absolute right-1 flex items-center justify-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:bg-transparent disabled:text-zinc-600 text-zinc-300 text-[10px] font-medium rounded transition-colors cursor-pointer"
+                    >
+                      <Send className="w-3 h-3" />
+                      {isSubmittingComment ? '...' : 'Send'}
+                    </button>
                   </form>
                 </div>
               </div>
@@ -781,6 +916,10 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   const localSubtasksRef = useRef<Subtask[]>(localSubtasks);
   useEffect(() => { localSubtasksRef.current = localSubtasks; }, [localSubtasks]);
 
+  const canEditTask = useMemo(() => {
+    return canUserEditTask(task as any, currentUser).allowed;
+  }, [task, currentUser]);
+
   // Track mount state so we never call onUpdateTask after the modal closes
   const isMounted = useRef(true);
   useEffect(() => {
@@ -804,14 +943,11 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
     const optimisticSubtasks = currentLocal.map(s => {
       if (s.id !== subtaskId) return s;
       const merged = { ...s, ...data } as Subtask;
-      // Resolve assignee object from users list when assigneeId changes
-      if ('assigneeId' in data) {
-        if (data.assigneeId === null || data.assigneeId === undefined) {
-          merged.assignee = undefined;
-        } else {
-          const found = users?.find((u: any) => u.id === data.assigneeId);
-          if (found) merged.assignee = found;
-        }
+      // Resolve assignees objects from users list when assigneeIds changes
+      if ('assigneeIds' in data && Array.isArray((data as any).assigneeIds)) {
+        const ids = (data as any).assigneeIds as string[];
+        const found = users?.filter((u: any) => ids.includes(u.id)) ?? [];
+        (merged as any).assignees = found;
       }
       return merged;
     });
@@ -890,6 +1026,13 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               listId={task.listId}
               taskId={task.id}
               commentCount={subtask.comments?.length || 0}
+              onAddCommentLocally={(subtaskId, comments) => {
+                const currentLocal = localSubtasksRef.current;
+                const optimisticSubtasks = currentLocal.map(s => s.id === subtaskId ? { ...s, comments } : s);
+                setLocalSubtasks(optimisticSubtasks);
+                onUpdateTask({ ...task, subtasks: optimisticSubtasks });
+              }}
+              canEditTask={canEditTask}
             />
           ))}
 

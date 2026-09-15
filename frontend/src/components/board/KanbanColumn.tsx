@@ -148,6 +148,7 @@ export const KanbanColumn = memo(function KanbanColumn({
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [renderLimit, setRenderLimit] = useState(5);
+  const [isShaking, setIsShaking] = useState(false);
 
   // Progressive rendering to prevent initial mount freeze
   useEffect(() => {
@@ -199,7 +200,18 @@ export const KanbanColumn = memo(function KanbanColumn({
           ? `w-11 h-full bg-[#141418] rounded-2xl border border-zinc-800/50` 
           : `w-[350px] max-h-full rounded-2xl ${colors.bg} border border-zinc-800/50`
       }`}
+      style={{
+        animation: isShaking ? 'kanban-shake 0.4s cubic-bezier(.36,.07,.19,.97) both' : 'none',
+      }}
     >
+      <style>{`
+        @keyframes kanban-shake {
+          10%, 90% { transform: translate3d(-1px, 0, 0); }
+          20%, 80% { transform: translate3d(2px, 0, 0); }
+          30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+          40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+      `}</style>
       {/* ── COLLAPSED VIEW ── */}
       <button 
         className={`absolute inset-0 flex flex-col items-center py-4 gap-4 transition-opacity duration-300 ${isCollapsed ? 'opacity-100 z-10 cursor-pointer hover:brightness-125' : 'opacity-0 pointer-events-none'}`}
@@ -293,6 +305,10 @@ export const KanbanColumn = memo(function KanbanColumn({
                 isMoveDisabled={isColumnRestrictedForUser}
                 moveLockReason={columnRestrictionReason}
                 listStatuses={listStatuses}
+                onUnauthorizedDragAttempt={() => {
+                  setIsShaking(true);
+                  setTimeout(() => setIsShaking(false), 400);
+                }}
               />
             ))}
           </SortableContext>

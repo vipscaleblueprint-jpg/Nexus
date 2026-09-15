@@ -71,7 +71,7 @@ export async function getList(req: Request, res: Response) {
                 attachments: true,
               }
             }
-          },
+          } as any,
         },
       },
     });
@@ -86,12 +86,36 @@ export async function getList(req: Request, res: Response) {
 
 
 
+
+// Default statuses seeded on every new list — mirrors KanbanBoard CATEGORIES
+const DEFAULT_STATUSES = [
+  { name: 'KYC', color: 'cyan', groupName: 'Client Details' },
+  { name: 'Pin Board', color: 'blue', groupName: 'Client Details' },
+  { name: 'Daily', color: 'purple', groupName: 'Recurring' },
+  { name: 'Weekly', color: 'indigo', groupName: 'Recurring' },
+  { name: 'Monthly', color: 'violet', groupName: 'Recurring' },
+  { name: 'Pending', color: 'amber', groupName: 'Workflow & Progress' },
+  { name: 'In Progress', color: 'blue', groupName: 'Workflow & Progress' },
+  { name: 'Revision', color: 'rose', groupName: 'Workflow & Progress' },
+  { name: 'Waiting', color: 'orange', groupName: 'Workflow & Progress' },
+  { name: 'In Review', color: 'purple', groupName: 'Workflow & Progress' },
+  { name: 'Checking', color: 'teal', groupName: 'Workflow & Progress' },
+  { name: 'On-Hold', color: 'zinc', groupName: 'Workflow & Progress' },
+  { name: 'Closed', color: 'emerald', groupName: 'Workflow & Progress' },
+];
+
 // POST /api/lists
 export async function createList(req: Request, res: Response) {
   try {
     const { name, spaceId, folderId } = req.body;
     const list = await prisma.list.create({
       data: { name, spaceId: spaceId || null, folderId: folderId || null },
+    });
+
+    // Auto-seed default statuses for every new list
+    await prisma.listStatus.createMany({
+      data: DEFAULT_STATUSES.map(s => ({ ...s, allowedRoles: [], listId: list.id })),
+      skipDuplicates: true,
     });
 
     await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
@@ -189,6 +213,7 @@ const DEFAULT_STATUS_THEMES: Record<string, string> = {
   DONE: 'emerald',
   CANCELLED: 'rose',
 };
+
 
 // POST /api/lists/:id/statuses
 export async function createStatus(req: Request, res: Response) {

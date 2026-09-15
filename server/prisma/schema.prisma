@@ -126,7 +126,7 @@ model User {
   assignedTasks          Task[]                @relation("TaskAssignee")
   assignedTasksMulti     Task[]                @relation("TaskMultiAssignees")
   createdTasks           Task[]                @relation("TaskCreator")
-  assignedSubtasks       Subtask[]
+  assignedSubtasks       Subtask[]             @relation("SubtaskMultiAssignees")
   checkedItems           ChecklistItem[]       @relation("ItemChecker")
   assignedChecklistItems ChecklistItem[]       @relation("ItemAssignee")
   favorites              Favorite[]
@@ -302,9 +302,11 @@ model Task {
   listId      String
   assigneeId  String?
   creatorId   String
-  teamId      String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  teamId                   String?
+  assigneeRoleRestrictions String[]
+  teamAssignAccessRole     String?
+  createdAt                DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   list          List               @relation(fields: [listId], references: [id], onDelete: Cascade)
   assignee      User?              @relation("TaskAssignee", fields: [assigneeId], references: [id])
@@ -331,19 +333,19 @@ model Subtask {
   title       String
   description String?   @db.Text
   completed   Boolean   @default(false)
-  taskId      String
-  assigneeId  String?
-  priority    Priority  @default(MEDIUM)
-  dueDate     DateTime?
-  createdAt   DateTime  @default(now())
+  taskId                   String
+  priority                 Priority  @default(MEDIUM)
+  dueDate                  DateTime?
+  assigneeRoleRestrictions String[]
+  teamAssignAccessRole     String?
+  createdAt                DateTime  @default(now())
 
   task       Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  assignee   User?         @relation(fields: [assigneeId], references: [id])
+  assignees  User[]        @relation("SubtaskMultiAssignees")
   comments   TaskComment[]
   checklists Checklist[]
 
   @@index([taskId])
-  @@index([assigneeId])
 }
 
 model Checklist {

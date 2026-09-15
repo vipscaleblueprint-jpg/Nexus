@@ -8,15 +8,16 @@ import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import Link from 'next/link';
 
 export default function ActivityPage() {
-  const [tab, setTab] = useState<'primary' | 'cleared'>('primary');
+  const [tab, setTab] = useState<'all' | 'assigned' | 'status' | 'comments'>('all');
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const { decrementUnreadNotifications } = useAppStore();
 
-  const fetchNotifications = async (currentTab: 'primary' | 'cleared') => {
+  const fetchNotifications = async () => {
     setLoading(true);
     try {
-      const res = await notificationsApi.getNotifications(currentTab);
+      // We always fetch 'primary' (uncleared) notifications now
+      const res = await notificationsApi.getNotifications('primary');
       setNotifications(res.notifications);
     } catch (err) {
       console.error(err);
@@ -26,15 +27,15 @@ export default function ActivityPage() {
   };
 
   useEffect(() => {
-    fetchNotifications(tab);
+    fetchNotifications();
 
     const handleNewNotification = () => {
-      fetchNotifications(tab);
+      fetchNotifications();
     };
 
     window.addEventListener('notification_received', handleNewNotification);
     return () => window.removeEventListener('notification_received', handleNewNotification);
-  }, [tab]);
+  }, []);
 
   const handleClear = async (id: string) => {
     try {
@@ -56,16 +57,7 @@ export default function ActivityPage() {
     }
   };
 
-  const handleClearAll = async () => {
-    try {
-      await notificationsApi.deleteCleared();
-      if (tab === 'cleared') {
-        setNotifications([]);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+
 
   const groupNotificationsByDate = (notifs: TaskNotification[]) => {
     const groups: { [key: string]: TaskNotification[] } = {};
@@ -85,45 +77,60 @@ export default function ActivityPage() {
     return groups;
   };
 
-  const grouped = groupNotificationsByDate(notifications);
+  const filteredNotifications = notifications.filter(n => {
+    if (tab === 'all') return true;
+    if (tab === 'assigned') return n.type === 'ASSIGNMENT';
+    if (tab === 'status') return n.type === 'STATUS_CHANGE';
+    if (tab === 'comments') return n.type === 'MENTION' || n.type === 'COMMENT';
+    return true;
+  });
+
+  const grouped = groupNotificationsByDate(filteredNotifications);
 
   return (
     <div className="flex flex-col h-full bg-[#131316] text-[#e4e4e7] p-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Inbox</h1>
-        <div className="flex items-center gap-2">
-          {tab === 'cleared' && (
-            <button 
-              onClick={handleClearAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 bg-red-400/10 hover:bg-red-400/20 rounded-md transition-colors"
-            >
-              <Trash2 className="size-3.5" />
-              Empty Cleared
-            </button>
-          )}
-        </div>
+        <h1 className="text-2xl font-semibold">Activity</h1>
       </div>
 
       {/* Tabs */}
       <div className="flex items-center gap-6 border-b border-white/5 mb-6">
         <button
-          onClick={() => setTab('primary')}
+          onClick={() => setTab('all')}
           className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
-            tab === 'primary' ? 'border-[#5f5ce6] text-[#5f5ce6]' : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            tab === 'all' ? 'border-[#5f5ce6] text-[#5f5ce6]' : 'border-transparent text-zinc-400 hover:text-zinc-200'
           }`}
         >
           <Inbox className="size-4" />
-          Primary
+          All
         </button>
         <button
-          onClick={() => setTab('cleared')}
+          onClick={() => setTab('assigned')}
           className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
-            tab === 'cleared' ? 'border-[#5f5ce6] text-[#5f5ce6]' : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            tab === 'assigned' ? 'border-[#5f5ce6] text-[#5f5ce6]' : 'border-transparent text-zinc-400 hover:text-zinc-200'
           }`}
         >
           <Check className="size-4" />
-          Cleared
+          Assigned Tasks
+        </button>
+        <button
+          onClick={() => setTab('status')}
+          className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'status' ? 'border-[#5f5ce6] text-[#5f5ce6]' : 'border-transparent text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Clock className="size-4" />
+          Status
+        </button>
+        <button
+          onClick={() => setTab('comments')}
+          className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'comments' ? 'border-[#5f5ce6] text-[#5f5ce6]' : 'border-transparent text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Mail className="size-4" />
+          Comments
         </button>
       </div>
 
@@ -133,7 +140,7 @@ export default function ActivityPage() {
           <div className="flex items-center justify-center h-40">
             <div className="w-6 h-6 border-2 border-[#5f5ce6] border-t-transparent rounded-full animate-spin"></div>
           </div>
-        ) : notifications.length === 0 ? (
+        ) : filteredNotifications.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-zinc-500">
             <MailOpen className="size-10 mb-3 opacity-20" />
             <p>You're all caught up!</p>
@@ -158,8 +165,8 @@ export default function ActivityPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-4 mb-1">
                         <div className="flex items-center gap-2 overflow-hidden">
-                          {n.actor?.avatarUrl ? (
-                            <img src={n.actor.avatarUrl} alt="" className="size-5 rounded-full object-cover shrink-0" />
+                          {n.actor?.imageUrl || n.actor?.avatarUrl ? (
+                            <img src={n.actor.imageUrl || n.actor.avatarUrl || ''} alt="" className="size-5 rounded-full object-cover shrink-0" />
                           ) : (
                             <div className="size-5 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[9px] font-bold shrink-0">
                               {n.actor?.name?.substring(0, 2).toUpperCase() || '?'}
@@ -192,15 +199,13 @@ export default function ActivityPage() {
                     </div>
 
                     <div className="shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {tab === 'primary' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleClear(n.id); }}
-                          className="px-3 py-1.5 text-xs font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5"
-                        >
-                          <Check className="size-3.5" />
-                          Clear
-                        </button>
-                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleClear(n.id); }}
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5"
+                      >
+                        <Check className="size-3.5" />
+                        Clear
+                      </button>
                     </div>
                   </div>
                 ))}

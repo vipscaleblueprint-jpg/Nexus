@@ -9,14 +9,6 @@ export function canUserMoveTask(
   if (!task) return { allowed: true };
   if (!currentUser) return { allowed: false, reason: 'Please sign in to move tasks.' };
 
-  // Admins always have access to move any task from any column
-  const isAdmin =
-    currentUser.systemRole === 'ADMIN' ||
-    currentUser.primaryRole?.trim().toUpperCase() === 'ADMIN';
-
-  if (isAdmin) {
-    return { allowed: true };
-  }
 
   // Normalize task status for comparison
   const taskStatusNorm = (task.status || '').trim().toUpperCase();
@@ -56,9 +48,41 @@ export function canUserMoveTask(
   if (!hasAccess) {
     return {
       allowed: false,
-      reason: `Tasks in "${task.status}" can only be moved by: ${allowedNames.join(', ')}. Admins also have full access.`,
+      reason: `Tasks in "${task.status}" can only be moved by: ${allowedNames.join(', ')}.`,
     };
   }
 
   return { allowed: true };
+}
+
+/**
+ * Checks whether the current user is allowed to EDIT a specific task.
+ * This is controlled by `task.teamAssignAccessRole`:
+ *   - If unset → everyone can edit
+ *   - If set to a role name → only users holding that role (or Admins) can edit
+ */
+export function canUserEditTask(
+  task: Task | null | undefined,
+  currentUser: User | null | undefined
+): { allowed: boolean; reason?: string } {
+  if (!task) return { allowed: true };
+  const t = task as any;
+  if (!t.teamAssignAccessRole) return { allowed: true };
+  if (!currentUser) return { allowed: false, reason: 'Please sign in.' };
+
+  const required = t.teamAssignAccessRole.trim().toUpperCase();
+  const userRoles = [
+    currentUser.primaryRole,
+    currentUser.secondaryRole,
+    currentUser.tertiaryRole,
+    currentUser.minorRole,
+    ...((currentUser as any).roles || []),
+  ].filter(Boolean).map((r: string) => r.trim().toUpperCase());
+
+  if (userRoles.includes(required)) return { allowed: true };
+
+  return {
+    allowed: false,
+    reason: `Only users with the "${t.teamAssignAccessRole}" role can edit this task.`,
+  };
 }

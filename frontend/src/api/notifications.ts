@@ -15,6 +15,7 @@ export interface TaskNotification {
     id: string;
     name: string;
     avatarUrl: string | null;
+    imageUrl?: string | null;
   } | null;
   task?: {
     id: string;

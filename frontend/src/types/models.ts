@@ -140,6 +140,8 @@ export interface Task {
   assignee?: User | null;
   assignees?: User[];
   assigneeIds?: string[];
+  assigneeRoleRestrictions?: string[];
+  teamAssignAccessRole?: string | null;
   creatorId: string;
   creator?: User;
   subtasks: Subtask[];
@@ -161,10 +163,12 @@ export interface Subtask {
   description?: string | null;
   completed: boolean;
   taskId: string;
-  assigneeId?: string | null;
-  assignee?: User | null;
+  assignees?: User[];
+  assigneeIds?: string[];
   priority: Priority;
   dueDate?: string | null;
+  assigneeRoleRestrictions?: string[];
+  teamAssignAccessRole?: string | null;
   createdAt: string;
   comments?: TaskComment[];
   checklists?: Checklist[];

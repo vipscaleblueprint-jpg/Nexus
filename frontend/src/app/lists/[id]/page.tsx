@@ -12,9 +12,11 @@ import {
   User,
   Flag,
   ChevronDown,
+  ChevronLeft,
   Loader2,
   KanbanSquare,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { ListSkeleton } from '@/components/ui/Skeleton';
 import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { tasksApi } from '@/api/tasks';
@@ -44,6 +46,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function BoardPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const { currentUser, setCurrentUser } = useAppStore();
   const [list, setList] = useState<any>(null);
   const [customGroups, setCustomGroups] = useState<string[]>([]);
@@ -346,7 +349,16 @@ export default function BoardPage() {
         <div className="w-full h-full flex flex-col px-6 py-6 overflow-hidden">
           {/* Header */}
           <div className="mb-6">
-            <p className="text-[11px] text-zinc-500 mb-1">{breadcrumb}</p>
+            <div className="flex items-center gap-2 mb-2">
+              <button
+                onClick={() => router.back()}
+                className="p-1 rounded-md bg-zinc-800/50 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                title="Go back"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <p className="text-[11px] text-zinc-500">{breadcrumb}</p>
+            </div>
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-blue-500/15">
                 <ListIcon className="w-5 h-5 text-blue-400" />

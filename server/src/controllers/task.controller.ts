@@ -8,12 +8,12 @@ import { io } from '../server';
 const taskInclude = {
   subtasks: {
     include: {
-      assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+      assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
       comments: { 
         include: {
           user: { select: { id: true, name: true, avatarUrl: true } }
         },
-        orderBy: { createdAt: 'asc' }
+        orderBy: { createdAt: 'asc' } as any
       },
       checklists: { 
         include: { 
@@ -112,6 +112,7 @@ export async function createTask(req: Request, res: Response) {
     const {
       title, description, status, priority, listId,
       assigneeId, assigneeIds, teamId, creatorId, dueDate, startDate,
+      assigneeRoleRestrictions, teamAssignAccessRole,
     } = req.body;
 
     const effectiveAssigneeId = (assigneeIds && assigneeIds.length > 0) ? assigneeIds[0] : (assigneeId || null);
@@ -235,7 +236,8 @@ export async function updateTask(req: Request, res: Response) {
     const authReq = req as any;
     const {
       title, description, status, priority,
-      listId, assigneeId, assigneeIds, teamId, dueDate, startDate, currentListId, userId
+      listId, assigneeId, assigneeIds, teamId, dueDate, startDate, currentListId, userId,
+      assigneeRoleRestrictions, teamAssignAccessRole,
     } = req.body;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
 
@@ -273,6 +275,8 @@ export async function updateTask(req: Request, res: Response) {
       ...(teamId !== undefined ? { teamId } : {}),
       ...(dueDate !== undefined ? { dueDate: dueDate ? new Date(dueDate) : null } : {}),
       ...(startDate !== undefined ? { startDate: startDate ? new Date(startDate) : null } : {}),
+      ...(assigneeRoleRestrictions !== undefined ? { assigneeRoleRestrictions: Array.isArray(assigneeRoleRestrictions) ? assigneeRoleRestrictions : [] } : {}),
+      ...(teamAssignAccessRole !== undefined ? { teamAssignAccessRole: teamAssignAccessRole || null } : {}),
     };
 
     if (assigneeIds !== undefined) {
@@ -312,6 +316,26 @@ export async function updateTask(req: Request, res: Response) {
             details: { oldStatus: currentTask.status, newStatus: status },
           },
         });
+
+        const usersToNotify = currentTask.assignees
+          .map(a => a.id)
+          .filter(id => id !== actingUserId);
+
+        if (usersToNotify.length > 0) {
+          await prisma.taskNotification.createMany({
+            data: usersToNotify.map(id => ({
+              userId: id,
+              actorId: actingUserId,
+              taskId,
+              type: 'STATUS_CHANGE',
+              title: `${user?.name || 'Someone'} changed the status to ${status}`,
+            })),
+          });
+          usersToNotify.forEach(id => {
+            io.to(`user:${id}`).emit('notification_received');
+          });
+        }
+
         activity = {
           id: log.id,
           type: 'status_change',
@@ -608,6 +632,33 @@ export async function createTaskComment(req: Request, res: Response) {
           })),
         });
         usersToNotify.forEach((id: string) => {
+          io.to(`user:${id}`).emit('notification_received');
+        });
+      }
+    }
+
+    // Notify task assignees about the comment (if they weren't mentioned)
+    const taskData = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { assignees: { select: { id: true } } }
+    });
+    if (taskData) {
+      const assigneesToNotify = taskData.assignees
+        .map(a => a.id)
+        .filter(id => id !== effectiveUserId && !(mentionedUserIds && mentionedUserIds.includes(id)));
+      
+      if (assigneesToNotify.length > 0) {
+        await prisma.taskNotification.createMany({
+          data: assigneesToNotify.map(id => ({
+            userId: id,
+            actorId: effectiveUserId,
+            taskId,
+            type: 'COMMENT',
+            title: `${user?.name || 'Someone'} commented on a task you're assigned to`,
+            content: content.trim().substring(0, 100),
+          })),
+        });
+        assigneesToNotify.forEach(id => {
           io.to(`user:${id}`).emit('notification_received');
         });
       }
@@ -970,17 +1021,21 @@ export async function getLiveBlocksData(req: Request, res: Response) {
 export async function createSubtask(req: Request, res: Response) {
   try {
     const { id: taskId } = req.params;
-    const { title, description, assigneeId, priority, dueDate } = req.body;
+    const { title, description, assigneeIds, priority, dueDate } = req.body;
     const subtask = await prisma.subtask.create({
       data: {
         title,
         description,
-        assigneeId,
+        ...(assigneeIds && Array.isArray(assigneeIds) && assigneeIds.length > 0 ? {
+          assignees: {
+            connect: assigneeIds.map((id: string) => ({ id }))
+          }
+        } : {}),
         priority,
         dueDate: dueDate ? new Date(dueDate) : null,
         taskId,
       },
-      include: { assignee: { select: { id: true, name: true, email: true, avatarUrl: true } } }
+      include: { assignees: { select: { id: true, name: true, email: true, avatarUrl: true } } } as any
     });
     await invalidateCache(`task:${taskId}`);
 
@@ -996,18 +1051,22 @@ export async function createSubtask(req: Request, res: Response) {
 export async function updateSubtask(req: Request, res: Response) {
   try {
     const { id: taskId, subtaskId } = req.params;
-    const { title, description, completed, assigneeId, priority, dueDate } = req.body;
+    const { title, description, completed, assigneeIds, priority, dueDate } = req.body;
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
       data: {
         ...(title !== undefined && { title }),
         ...(description !== undefined && { description }),
         ...(completed !== undefined && { completed }),
-        ...(assigneeId !== undefined && { assigneeId }),
+        ...(assigneeIds !== undefined && Array.isArray(assigneeIds) ? {
+          assignees: {
+            set: assigneeIds.map((id: string) => ({ id }))
+          }
+        } : {}),
         ...(priority !== undefined && { priority }),
         ...(dueDate !== undefined && { dueDate: dueDate ? new Date(dueDate) : null }),
       },
-      include: { assignee: { select: { id: true, name: true, email: true, avatarUrl: true } } }
+      include: { assignees: { select: { id: true, name: true, email: true, avatarUrl: true } } } as any
     });
     await invalidateCache(`task:${taskId}`);
 

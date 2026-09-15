@@ -68,6 +68,7 @@ interface SidebarPageItemProps {
   onRename: (pageId: string, title: string) => void;
   onDelete: (pageId: string) => void;
   depth?: number;
+  isJournal?: boolean;
 }
 
 function SidebarPageItem({
@@ -78,10 +79,20 @@ function SidebarPageItem({
   onRename,
   onDelete,
   depth = 0,
+  isJournal = false,
 }: SidebarPageItemProps) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = page.subpages && page.subpages.length > 0;
   const isActive = activePageId === page.id;
+
+  const sortedSubpages = hasChildren ? [...page.subpages].sort((a, b) => {
+    if (isJournal) {
+      const timeA = new Date(a.title || '').getTime();
+      const timeB = new Date(b.title || '').getTime();
+      if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+    }
+    return (a.order || 0) - (b.order || 0);
+  }) : [];
 
   return (
     <div className="select-none">
@@ -155,7 +166,7 @@ function SidebarPageItem({
 
       {expanded && hasChildren && (
         <div className="space-y-0.5 mt-0.5">
-          {page.subpages.map((sub: any) => (
+          {sortedSubpages.map((sub: any) => (
             <SidebarPageItem
               key={sub.id}
               page={sub}
@@ -165,6 +176,7 @@ function SidebarPageItem({
               onRename={onRename}
               onDelete={onDelete}
               depth={depth + 1}
+              isJournal={isJournal}
             />
           ))}
         </div>
@@ -789,7 +801,14 @@ export default function DocPage({ docId }: { docId?: string }) {
           {doc?.pages?.length === 0 ? (
             <p className="text-xs text-zinc-600 italic px-1 py-2">No pages created yet.</p>
           ) : (
-            doc?.pages?.map((page: any) => (
+            [...(doc?.pages || [])].sort((a: any, b: any) => {
+              if (doc?.isDailyRollover) {
+                const timeA = new Date(a.title || '').getTime();
+                const timeB = new Date(b.title || '').getTime();
+                if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+              }
+              return (a.order || 0) - (b.order || 0);
+            }).map((page: any) => (
               <SidebarPageItem
                 key={page.id}
                 page={page}
@@ -798,6 +817,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                 onAddSubpage={(pId) => handleCreatePage(pId)}
                 onRename={handleRenamePageClick}
                 onDelete={handleDeletePage}
+                isJournal={doc?.isDailyRollover}
               />
             ))
           )}

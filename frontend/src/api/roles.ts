@@ -15,3 +15,10 @@ export const createRole = (data: { name: string; color?: string }): Promise<Work
 export const deleteRole = (id: string): Promise<void> => {
   return apiClient<void>(`/api/roles/${id}`, { method: 'DELETE' });
 };
+
+export const updateRole = (id: string, data: { name: string; color?: string }): Promise<WorkspaceRole> => {
+  return apiClient<WorkspaceRole>(`/api/roles/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+};

@@ -65,3 +65,38 @@ export const deleteRole = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to delete role' });
   }
 };
+
+export const updateRole = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, color } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Role name is required' });
+    }
+
+    const role = await prisma.workspaceRole.findUnique({
+      where: { id },
+    });
+
+    if (!role) {
+      return res.status(404).json({ error: 'Role not found' });
+    }
+
+    const updatedRole = await prisma.workspaceRole.update({
+      where: { id },
+      data: {
+        name: name.toUpperCase(),
+        color,
+      },
+    });
+
+    res.json(updatedRole);
+  } catch (error: any) {
+    req.log.error({ error }, 'Error updating role');
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'Role name already exists' });
+    }
+    res.status(500).json({ error: 'Failed to update role' });
+  }
+};

@@ -33,3 +33,4 @@ coverage/
 *.spec.ts
 *.spec.tsx
 server/src/scripts/test-external-api.ts
+AGENTS.md

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
+import { BlockEditor } from '../ui/BlockEditor';
 import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { canUserEditTask } from '@/lib/permissions';
@@ -7,6 +9,7 @@ import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, su
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
+import { ALL_STATUSES, STATUS_COLORS } from './TaskDetailModal';
 
 interface SubtasksSectionProps {
   task: Task;
@@ -16,6 +19,8 @@ interface SubtasksSectionProps {
   setAddingSubtask: (val: boolean) => void;
   socket?: any;
   currentUser?: any;
+  onOpenSubtask?: (subtask: Subtask) => void;
+  listStatuses?: any[];
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -88,10 +93,11 @@ function SubtaskDescription({
     };
   }, [socket, subtask.id, currentUser?.name]);
 
-  const handleStartEditing = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleStartEditing = (e?: React.SyntheticEvent) => {
+    if (e) e.stopPropagation();
     if (editingUser || subtask.completed || !canEditTask) return; // Locked by someone else, completed, or no edit permission
     setIsEditing(true);
+    setExpanded(true);
     if (socket && listId && taskId) {
       socket.emit('subtask_editing_start', {
         listId,
@@ -104,13 +110,14 @@ function SubtaskDescription({
 
   const handleStopEditing = () => {
     setIsEditing(false);
-    if (desc !== (subtask.description || '')) onSave(subtask.id, desc);
+    const sanitizedDesc = (desc === '<p></p>' || desc === '<p><br></p>') ? '' : desc;
+    if (sanitizedDesc !== (subtask.description || '')) onSave(subtask.id, sanitizedDesc);
     if (socket && listId && taskId) {
       socket.emit('subtask_editing_stop', {
         listId,
         taskId,
         subtaskId: subtask.id,
-        description: desc,
+        description: sanitizedDesc,
         userName: currentUser?.name
       });
     }
@@ -126,17 +133,15 @@ function SubtaskDescription({
     <div className="w-full relative group/desc-inner min-w-0">
       <div 
         onClick={!isEditing ? handleStartEditing : undefined}
-        className={`flex flex-col gap-1.5 px-2 py-1 rounded-md transition-colors group/desc-wrapper ${isEditing ? 'bg-zinc-800/80 ring-1 ring-zinc-700' : `hover:bg-zinc-800/50 ${subtask.completed ? 'cursor-default' : 'cursor-text'}`}`}
+        onFocus={!isEditing ? handleStartEditing : undefined}
+        className={`flex flex-col gap-1.5 px-2 py-1 rounded-md transition-colors group/desc-wrapper ${isEditing ? 'bg-zinc-800/80 ring-1 ring-zinc-700 cursor-text' : `hover:bg-zinc-800/50 ${subtask.completed ? 'cursor-default' : 'cursor-text'}`}`}
       >
         <div className="flex items-start gap-1.5 min-w-0">
           <div className="flex-1 flex flex-col gap-1 min-w-0">
-            {isEditing ? (
-              <textarea
-                autoFocus
-                value={desc}
-                onInput={handleTextareaInput}
-                onChange={(e) => {
-                  const val = e.target.value;
+            <div className={`relative ${!isEditing && desc.length > 60 && !expanded ? 'max-h-[60px] overflow-hidden' : ''}`}>
+              <BlockEditor
+                content={desc}
+                onChange={(val) => {
                   setDesc(val);
                   if (socket && listId && taskId) {
                     socket.emit('subtask_editing_content', {
@@ -149,19 +154,13 @@ function SubtaskDescription({
                   }
                 }}
                 onBlur={handleStopEditing}
-                onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') handleStopEditing(); }}
-                className="w-full bg-transparent text-xs text-zinc-300 leading-relaxed resize-none focus:outline-none m-0 p-0 overflow-hidden cursor-text"
-                placeholder="Add description..."
-                style={{ height: 'auto', minHeight: '20px' }}
-                ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+                editable={!editingUser && !subtask.completed && !!canEditTask}
               />
-            ) : (
-              <p
-                className={`text-xs leading-relaxed break-words min-h-[16px] cursor-text ${expanded ? 'whitespace-pre-wrap' : 'line-clamp-2'} ${editingUser ? 'text-zinc-500' : (!desc ? 'text-zinc-500 italic' : 'text-zinc-300 group-hover/desc-wrapper:text-zinc-200')} transition-colors`}
-              >
-                {desc || 'Add description...'}
-              </p>
-            )}
+              
+              {!isEditing && desc.length > 60 && !expanded && (
+                <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-zinc-900/50 to-transparent pointer-events-none" />
+              )}
+            </div>
 
             {desc.length > 60 && !editingUser && !isEditing && (
               <button
@@ -329,6 +328,7 @@ function SubtaskRow({
   commentCount,
   onAddCommentLocally,
   canEditTask,
+  listStatuses,
 }: {
   subtask: Subtask;
   users?: any[];
@@ -342,9 +342,11 @@ function SubtaskRow({
   commentCount?: number;
   onAddCommentLocally?: (subtaskId: string, comments: any[]) => void;
   canEditTask?: boolean;
+  listStatuses?: any[];
 }) {
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState<number | undefined>(undefined);
   const resizeRef = useRef<HTMLDivElement>(null);
   const priorityColor = subtask.priority ? PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400' : 'text-zinc-600';
@@ -451,6 +453,23 @@ function SubtaskRow({
       toast.error('Failed to add comment');
     } finally {
       setIsSubmittingComment(false);
+    }
+  };
+
+  const handleToggleItem = async (checklistId: string, itemId: string, completed: boolean) => {
+    if (canEditTask === false) return;
+    if (!subtask.checklists) return;
+    const newChecklists = subtask.checklists.map((c: any) => {
+      if (c.id === checklistId) {
+        return { ...c, items: c.items.map((i: any) => i.id === itemId ? { ...i, completed } : i) };
+      }
+      return c;
+    });
+    onUpdate(subtask.id, { checklists: newChecklists });
+    try {
+      await tasksApi.updateChecklistItem(subtask.id, checklistId, itemId, { completed });
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -564,18 +583,56 @@ function SubtaskRow({
               ? <CheckCircle2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
               : <CircleDashed className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
             }
-            <div
-              title={subtask.completed ? 'Done — click to reopen' : 'Open — click to close'}
-              onClick={() => { if (canEditTask) onToggle(subtask); }}
-              className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium select-none cursor-pointer transition-all w-fit ${
-                subtask.completed
-                  ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25'
-                  : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60'
-              }`}
-            >
-              {subtask.completed ? 'Done' : 'Open'}
-              <ChevronRight className="w-3 h-3 opacity-60" />
-            </div>
+            <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
+              <Popover.Trigger asChild>
+            {(() => {
+              const statusName = subtask.status ? subtask.status : (subtask.completed ? 'DONE' : 'OPEN');
+              const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+              const hasCustomColor = !!statusObj?.color;
+              const defaultClasses = STATUS_COLORS[subtask.status || ''] ?? (subtask.completed ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25' : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60');
+              
+              return (
+                <div
+                  title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
+                  onClick={() => { if (canEditTask) setStatusOpen(true); }}
+                  style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
+                  className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium select-none cursor-pointer w-fit ${hasCustomColor ? 'text-white hover:brightness-110' : defaultClasses}`}
+                >
+                  <span className="uppercase">{statusName.replace('_', ' ')}</span>
+                  <ChevronRight className="w-3 h-3 opacity-60 ml-0.5" />
+                </div>
+              );
+            })()}
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                  <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                    {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                      <div
+                        key={s}
+                        onClick={() => {
+                          if (!canEditTask) return;
+                          const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
+                          onUpdate(subtask.id, { status: s, completed: isFinal });
+                          setStatusOpen(false);
+                        }}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                      >
+                        {(() => {
+                          const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                          if (customObj?.color) {
+                            return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
+                          }
+                          return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                        })()}
+                        {s}
+                        {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                      </div>
+                    ))}
+                  </div>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
           </div>
 
           {/* Assignees row */}
@@ -798,21 +855,35 @@ function SubtaskRow({
               <div className="flex-1 flex flex-col relative h-full">
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
                   {subtask.checklists && subtask.checklists.length > 0 ? (
-                    subtask.checklists.map((checklist: any) => (
-                      <div key={checklist.id} className="flex flex-col gap-1.5">
-                        <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">{checklist.name}</div>
-                        {checklist.items?.map((item: any) => (
-                          <div key={item.id} className="flex items-start gap-2 group/item">
-                            <div className={`mt-0.5 w-3 h-3 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${item.completed ? 'bg-blue-600 border-blue-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
-                              {item.completed && <Check className="w-2.5 h-2.5 text-white" />}
+                    subtask.checklists.map((checklist: any) => {
+                      const isAuditChecklist = checklist.name.toLowerCase().includes('audit');
+                      const isAuditor = currentUser && [currentUser.primaryRole, currentUser.secondaryRole, currentUser.tertiaryRole, currentUser.minorRole]
+                        .some(r => r?.toLowerCase().includes('auditor')) || currentUser?.systemRole === 'ADMIN';
+                      const canCheck = !isAuditChecklist || isAuditor;
+
+                      return (
+                        <div key={checklist.id} className="flex flex-col gap-1.5">
+                          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">{checklist.name}</div>
+                          {checklist.items?.map((item: any) => (
+                            <div 
+                              key={item.id} 
+                              className={`flex items-start gap-2 group/item ${!canCheck ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                              onClick={() => {
+                                if (canCheck) handleToggleItem(checklist.id, item.id, !item.completed);
+                              }}
+                              title={!canCheck ? "Only Auditors can tick Audit Checklists" : undefined}
+                            >
+                              <div className={`mt-0.5 w-3 h-3 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${item.completed ? 'bg-blue-600 border-blue-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
+                                {item.completed && <Check className="w-2.5 h-2.5 text-white" />}
+                              </div>
+                              <span className={`text-[11px] leading-snug break-words ${item.completed ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
+                                {item.text}
+                              </span>
                             </div>
-                            <span className={`text-[11px] leading-snug break-words ${item.completed ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
-                              {item.text}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ))
+                          ))}
+                        </div>
+                      );
+                    })
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-center">
                       <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center mb-2">
@@ -906,7 +977,7 @@ function SubtaskRow({
   );
 }
 
-export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
+export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask, listStatuses }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isSubmittingSubtask, setIsSubmittingSubtask] = useState(false);
   const [showAllSubtasks, setShowAllSubtasks] = useState(false);
@@ -916,9 +987,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   const localSubtasksRef = useRef<Subtask[]>(localSubtasks);
   useEffect(() => { localSubtasksRef.current = localSubtasks; }, [localSubtasks]);
 
-  const canEditTask = useMemo(() => {
-    return canUserEditTask(task as any, currentUser).allowed;
-  }, [task, currentUser]);
+  const canEditTask = true;
 
   // Track mount state so we never call onUpdateTask after the modal closes
   const isMounted = useRef(true);
@@ -1023,6 +1092,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               }}
               socket={socket}
               currentUser={currentUser}
+              listStatuses={listStatuses}
               listId={task.listId}
               taskId={task.id}
               commentCount={subtask.comments?.length || 0}

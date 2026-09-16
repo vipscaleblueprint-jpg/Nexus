@@ -132,6 +132,7 @@ model User {
   favorites              Favorite[]
   uploadedAttachments    Attachment[]
   auditLogs              AuditLog[]
+  apiKeys                ApiKey[]
   channelMemberships     ChannelMember[]
   messagesSent           Message[]
   messageReactions       MessageReaction[]
@@ -333,6 +334,7 @@ model Subtask {
   title       String
   description String?   @db.Text
   completed   Boolean   @default(false)
+  status      String?
   taskId                   String
   priority                 Priority  @default(MEDIUM)
   dueDate                  DateTime?
@@ -629,6 +631,23 @@ model TaskNotification {
 
   @@index([userId, isCleared])
   @@index([taskId])
+}
+
+// -----------------------------------------------------------------------------
+// API KEYS
+// -----------------------------------------------------------------------------
+
+model ApiKey {
+  id        String    @id @default(uuid())
+  key       String    @unique
+  name      String
+  userId    String
+  createdAt DateTime  @default(now())
+  lastUsed  DateTime?
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // -----------------------------------------------------------------------------

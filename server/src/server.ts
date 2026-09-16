@@ -19,6 +19,7 @@ import { chatRouter } from './routes/chat.routes';
 import { invitationRouter } from './routes/invitation.routes';
 import { rolesRouter } from './routes/roles.routes';
 import { uploadRouter } from './routes/upload.routes';
+import externalRoutes from './routes/external.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -90,6 +91,7 @@ app.get('/api/health', (req, res) => {
       '/api/lists',
       '/api/tasks',
       '/api/chat',
+      '/api/external',
     ],
   });
 });
@@ -105,6 +107,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/invitations', invitationRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/upload', uploadRouter);
+app.use('/api/external', externalRoutes);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

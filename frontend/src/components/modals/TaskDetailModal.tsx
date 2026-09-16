@@ -12,6 +12,7 @@ import { useAppStore } from '@/lib/store';
 import { canUserMoveTask } from '@/lib/permissions';
 import { toast } from '@/lib/toast';
 import { usersApi, tasksApi } from '@/api';
+import { spacesApi } from '@/api/spaces';
 import { SubtasksSection } from './SubtasksSection';
 import { ChecklistsSection } from './ChecklistsSection';
 
@@ -33,7 +34,7 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: 'text-red-400 bg-red-500/20',
 };
 
-const ALL_STATUSES = [
+export const ALL_STATUSES = [
   'KYC',
   'Pin Board',
   'Daily',
@@ -49,7 +50,7 @@ const ALL_STATUSES = [
   'Closed',
 ];
 
-const STATUS_COLORS: Record<string, string> = {
+export const STATUS_COLORS: Record<string, string> = {
   KYC: 'bg-cyan-600 text-white',
   'Pin Board': 'bg-blue-600 text-white',
   PIN_BOARD: 'bg-blue-600 text-white',
@@ -248,8 +249,11 @@ export function TaskDetailModalContent({
     return () => { isMountedRef.current = false; };
   }, []);
 
-  // Team Assign logic — controls ALL task editing when the task is in a restricted column
-  const canEditTask = React.useMemo(() => {
+  // Task edits are open to all
+  const canEditTask = true;
+  
+  // Assignment is restricted by the column's role restrictions
+  const canAssignTask = React.useMemo(() => {
     return canUserMoveTask(task, listStatuses, currentUser, workspaceRoles).allowed;
   }, [task, currentUser, listStatuses, workspaceRoles]);
 
@@ -317,6 +321,18 @@ export function TaskDetailModalContent({
     setLocalDescription(task?.description || '');
   }, [task?.description]);
 
+  useEffect(() => {
+    if (task?.listId && (!listStatuses || listStatuses.length === 0)) {
+      spacesApi.getList(task.listId).then((res: any) => {
+        if (res?.list?.statuses) {
+          setInternalListStatuses(res.list.statuses);
+        }
+      }).catch((err: any) => console.error(err));
+    } else if (listStatuses && listStatuses.length > 0) {
+      setInternalListStatuses(listStatuses);
+    }
+  }, [task?.listId, listStatuses]);
+
   // Keep localTitle in sync with task prop changes
   useEffect(() => {
     setLocalTitle(task?.title || '');
@@ -352,15 +368,17 @@ export function TaskDetailModalContent({
   };
 
   const handleDescBlur = () => {
-    if (localDescription !== task?.description && task) {
+    const sanitizedDesc = (localDescription === '<p></p>' || localDescription === '<p><br></p>') ? '' : localDescription;
+    
+    if (sanitizedDesc !== task?.description && task) {
       tasksApi.updateTask(task.id, {
-        description: localDescription,
+        description: sanitizedDesc,
         currentListId: task.listId,
         userId: currentUser?.id,
       }).catch(err => console.error('Failed to save description:', err));
 
       if (onUpdateTask) {
-        onUpdateTask({ ...task, description: localDescription });
+        onUpdateTask({ ...task, description: sanitizedDesc });
       }
     }
 
@@ -368,7 +386,7 @@ export function TaskDetailModalContent({
       socket.emit('task_editing_stop', {
         listId: task.listId,
         taskId: task.id,
-        description: localDescription,
+        description: sanitizedDesc,
       });
     }
   };
@@ -444,6 +462,7 @@ export function TaskDetailModalContent({
 
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
+  const [internalListStatuses, setInternalListStatuses] = useState<any[]>(listStatuses || []);
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Resizable activity panel
@@ -483,11 +502,17 @@ export function TaskDetailModalContent({
   const permission = canUserMoveTask(task, listStatuses, currentUser, workspaceRoles);
 
   const handleStatusChangeAction = async (newStatus: string) => {
-    if (!permission.allowed) {
-      toast.error(permission.reason || 'You do not have permission to move tasks from this status');
-      return;
-    }
     if (!task) return;
+
+    if (newStatus.toLowerCase() === 'checking') {
+      const auditChecklists = (task.checklists || []).filter(c => c.name.toLowerCase().includes('audit'));
+      for (const c of auditChecklists) {
+        if (c.items && c.items.some(i => !i.completed)) {
+          toast.error(`Cannot move to ${newStatus}: Audit checklist "${c.name}" is not fully completed.`);
+          return;
+        }
+      }
+    }
 
     const oldStatus = task.status;
     if (onStatusChange) onStatusChange(newStatus);
@@ -510,8 +535,8 @@ export function TaskDetailModalContent({
   };
 
   const handleStatusClick = () => {
-    const statuses = (listStatuses && listStatuses.length > 0)
-      ? listStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+    const statuses = (internalListStatuses && internalListStatuses.length > 0)
+      ? internalListStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
       : ALL_STATUSES;
     const currentIndex = statuses.indexOf(task.status || 'Pending');
     const nextIndex = (currentIndex + 1) % statuses.length;
@@ -745,6 +770,7 @@ export function TaskDetailModalContent({
         onUpdateTask={onUpdateTask}
         setActiveSubtask={setActiveSubtask}
         permission={permission}
+        listStatuses={internalListStatuses}
       />
     );
   }
@@ -876,77 +902,77 @@ export function TaskDetailModalContent({
                     <span className="text-[12px] text-zinc-500">Status</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div
-                      className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${(!permission.allowed || !canEditTask) ? 'bg-zinc-700/50 text-zinc-400 cursor-not-allowed' : isCheckLocked ? 'bg-zinc-800/50 text-zinc-400 cursor-default' : (STATUS_COLORS[task.status] ?? 'bg-zinc-800/50 text-zinc-400')}`}
-                    >
-                      <Popover.Root open={isStatusOpen && canEditTask} onOpenChange={setIsStatusOpen}>
-                        <Popover.Trigger asChild>
-                          <div
-                            onClick={() => { if (!permission.allowed || !canEditTask || isCheckLocked) return; setIsStatusOpen(true); }}
-                            className={`flex items-center gap-1.5 px-2.5 h-full ${(!permission.allowed || !canEditTask || isCheckLocked) ? '' : 'hover:brightness-110 cursor-pointer'}`}
-                          >
-                            <span className="uppercase">{task.status.replace('_', ' ')}</span>
-                            {(!permission.allowed || !canEditTask) && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
-                          </div>
-                        </Popover.Trigger>
-                        <Popover.Portal>
-                          <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                            <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                              {((listStatuses && listStatuses.length > 0) ? listStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map(s => (
-                                <div
-                                  key={s}
-                                  onClick={() => {
-                                    if (!permission.allowed || !canEditTask || isCheckLocked) return;
-                                    handleStatusChangeAction(s);
-                                    setIsStatusOpen(false);
-                                  }}
-                                  className={`cursor-pointer flex items-center px-2 py-1.5 text-xs rounded-sm hover:brightness-110 transition-all ${STATUS_COLORS[s] ?? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}
-                                >
-                                  {s}
-                                </div>
-                              ))}
-                            </div>
-                          </Popover.Content>
-                        </Popover.Portal>
-                      </Popover.Root>
+                    {(() => {
+                      const statusName = task.status || 'No Status';
+                      const statusObj = internalListStatuses?.find(s => (s.name || s.title || s.status) === statusName);
+                      const hasCustomColor = !!statusObj?.color;
+                      const defaultClasses = STATUS_COLORS[task.status] ?? 'bg-zinc-800/50 text-zinc-400';
 
-                      {(permission.allowed && canEditTask) && (
+                      return (
                         <div
-                          className={`flex items-center justify-center h-full px-1.5 border-l border-black/20 ${isCheckLocked ? '' : 'hover:brightness-110 cursor-pointer'}`}
-                          onClick={isCheckLocked ? undefined : handleStatusClick}
-                          title="Move to next status"
+                          style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
+                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} cursor-pointer hover:brightness-110`}
                         >
-                          <ChevronRight className={`w-3.5 h-3.5 transition-opacity ${isCheckLocked ? 'opacity-0' : 'opacity-80 hover:opacity-100'}`} />
+                          <span className="px-2.5 uppercase">{statusName}</span>
+                          <div className="h-4 w-[1px] bg-white/20" />
+                          <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                            <Popover.Trigger asChild>
+                              <div 
+                                title="Change Status"
+                                onClick={() => setIsStatusOpen(true)}
+                                className="flex items-center gap-1.5 px-2.5 h-full hover:brightness-110 cursor-pointer"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+                              </div>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                                <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                                  {((internalListStatuses && internalListStatuses.length > 0) ? internalListStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map(s => (
+                                    <div
+                                      key={s}
+                                      onClick={() => {
+                                        handleStatusChangeAction(s);
+                                        setIsStatusOpen(false);
+                                      }}
+                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${task.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                                    >
+                                      {(() => {
+                                        const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
+                                        if (customObj?.color) {
+                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
+                                        }
+                                        return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                      })()}
+                                      {s}
+                                      {s === task.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                    </div>
+                                  ))}
+                                </div>
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
+
+                          <div 
+                            title="Move to next status"
+                            className="flex items-center justify-center h-full px-1.5 border-l border-white/20 hover:brightness-110 cursor-pointer"
+                            onClick={handleStatusClick}
+                          >
+                            <ChevronRight className="w-3.5 h-3.5 transition-opacity opacity-80 hover:opacity-100" />
+                          </div>
                         </div>
-                      )}
+                      );
+                    })()}
+
+                    <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                      <button
+                        onClick={() => handleStatusChangeAction('Closed')}
+                        title="Mark as Closed"
+                        className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-
-                    {(permission.allowed && canEditTask) && (
-                      <>
-                        <button
-                          onClick={() => handleStatusChangeAction('Closed')}
-                          disabled={isCheckLocked}
-                          title={isCheckLocked ? 'Unlock to close' : 'Mark as Closed'}
-                          className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${isCheckLocked
-                            ? 'bg-zinc-800/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
-                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer'
-                          }`}
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-
-                        <button
-                          onClick={() => setIsCheckLocked(!isCheckLocked)}
-                          title={isCheckLocked ? 'Click to unlock Quick Close' : 'Click to lock Quick Close'}
-                          className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${isCheckLocked
-                            ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/30 hover:text-indigo-300 cursor-pointer'
-                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 cursor-pointer'
-                          }`}
-                        >
-                          {isCheckLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
-                        </button>
-                      </>
-                    )}
                   </div>
 
                 </div>
@@ -962,7 +988,7 @@ export function TaskDetailModalContent({
                     <Popover.Root>
                       <Popover.Trigger asChild>
                         {(task.assigneeRoleRestrictions && task.assigneeRoleRestrictions.length > 0) ? (
-                          <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                          <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
                             {task.assigneeRoleRestrictions.map((role, i) => {
                               const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                               const bgColor = colors[i % colors.length];
@@ -978,9 +1004,10 @@ export function TaskDetailModalContent({
                             })}
                           </div>
                         ) : (
-                          <button disabled={!canEditTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none disabled:opacity-50 disabled:cursor-not-allowed">
+                          <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none disabled:opacity-50 disabled:cursor-not-allowed">
                             <Plus className="w-3 h-3" />
                             Assign Team
+                            {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
                           </button>
                         )}
                       </Popover.Trigger>
@@ -1015,12 +1042,12 @@ export function TaskDetailModalContent({
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
-                    <Popover.Root open={isAssigneeOpen && canEditTask} onOpenChange={(open) => canEditTask && setIsAssigneeOpen(open)}>
+                    <Popover.Root open={isAssigneeOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsAssigneeOpen(open)}>
                       <Popover.Trigger asChild>
                         <div
                           title={currentAssignees.map((u) => u.name).join(', ')}
                           className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${
-                            canEditTask 
+                            canAssignTask 
                               ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200' 
                               : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
                           }`}
@@ -1050,7 +1077,11 @@ export function TaskDetailModalContent({
                               )}
                             </>
                           ) : (
-                            <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
+                            <>
+                              <Plus className="w-3.5 h-3.5 shrink-0" />
+                              <span>Assign</span>
+                              {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                            </>
                           )}
                         </div>
                       </Popover.Trigger>
@@ -1222,6 +1253,7 @@ export function TaskDetailModalContent({
                 socket={socket}
                 currentUser={currentUser}
                 onOpenSubtask={(subtask) => setActiveSubtask(subtask)}
+                listStatuses={internalListStatuses}
               />
 
               {(!task.subtasks || task.subtasks.length === 0) && !addingSubtask && (
@@ -1236,8 +1268,9 @@ export function TaskDetailModalContent({
               <div className="mt-2 flex flex-col gap-2 w-full">
                 <ChecklistsSection
                   task={task}
-                  users={dbUsers}
+                  users={dbUsers || []}
                   checklists={task.checklists || []}
+                  currentUser={currentUser}
                   onUpdateChecklists={(checklists) => {
                     if (onUpdateTask) onUpdateTask({ ...task, checklists });
                   }}
@@ -1662,6 +1695,7 @@ function SubtaskDetailView({
   onUpdateTask,
   setActiveSubtask,
   permission,
+  listStatuses,
 }: {
   subtask: any;
   parentTask: any;
@@ -1672,11 +1706,13 @@ function SubtaskDetailView({
   onUpdateTask?: (task: any) => void;
   setActiveSubtask?: (st: any) => void;
   permission?: { allowed: boolean; reason?: string };
+  listStatuses?: any[];
 }) {
   const [richComments, setRichComments] = useState<any[]>([]);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localDesc, setLocalDesc] = useState(subtask.description || '');
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
   const [localTitle, setLocalTitle] = useState(subtask.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingUser, setEditingUser] = useState<string | null>(null);
@@ -1686,8 +1722,9 @@ function SubtaskDetailView({
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const canEditTask = permission?.allowed ?? true;
+  // Task edits are open to all
+  const canEditTask = true;
+  const canAssignTask = permission?.allowed ?? true;
 
   const handleDescriptionFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1823,14 +1860,15 @@ function SubtaskDetailView({
   };
 
   const handleDescBlur = () => {
-    if (localDesc !== subtask.description) {
-      tasksApi.updateSubtask(parentTask.id, subtask.id, { description: localDesc }).catch(err => console.error(err));
+    const sanitizedDesc = (localDesc === '<p></p>' || localDesc === '<p><br></p>') ? '' : localDesc;
+    if (sanitizedDesc !== subtask.description) {
+      tasksApi.updateSubtask(parentTask.id, subtask.id, { description: sanitizedDesc }).catch(err => console.error(err));
     }
     if (socket) {
       socket.emit('task_editing_stop', {
         listId: parentTask.listId,
         taskId: subtask.id,
-        description: localDesc,
+        description: sanitizedDesc,
       });
     }
   };
@@ -2043,42 +2081,76 @@ function SubtaskDetailView({
                   })()}
                   <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <div 
-                    className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-medium select-none transition-colors ${!permission?.allowed ? 'bg-zinc-700/50 text-zinc-400 cursor-not-allowed' : isCheckLocked ? 'bg-zinc-800/50 text-zinc-400 cursor-default' : (STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50 cursor-pointer')}`}
-                  >
-                    <span className="uppercase">{subtask.completed ? 'DONE' : subtask.status || 'OPEN'}</span>
-                    {!permission?.allowed && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
-                    {permission?.allowed && <ChevronRight className={`w-3.5 h-3.5 ml-0.5 shrink-0 transition-opacity ${isCheckLocked ? 'opacity-0' : 'opacity-50'}`} />}
-                  </div>
+                  {(() => {
+                    const statusName = subtask.status || 'No Status';
+                    const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+                    const hasCustomColor = !!statusObj?.color;
+                    const defaultClasses = STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400';
 
-                  {permission?.allowed && (
-                    <>
-                      <button
-                        onClick={() => handleStatusChangeAction('Closed')}
-                        disabled={isCheckLocked}
-                        title={isCheckLocked ? 'Unlock to close' : 'Mark as Closed'}
-                        className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border ${
-                          isCheckLocked
-                            ? 'bg-zinc-800/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
-                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer'
-                        }`}
+                    return (
+                      <div
+                        style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
+                        className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} cursor-pointer hover:brightness-110`}
                       >
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-                    <button 
-                      className={`w-5 h-5 ml-1.5 rounded-sm flex items-center justify-center transition-colors shadow-sm text-white ${
-                        !permission?.allowed 
-                          ? 'bg-emerald-600/50 cursor-not-allowed'
-                          : 'bg-emerald-600 hover:bg-emerald-500 cursor-pointer'
-                      }`}
-                      title={!permission?.allowed ? (permission?.reason || 'Status transition restricted') : 'Mark Complete'}
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                        <span className="px-2.5 uppercase">{statusName}</span>
+                        <div className="h-4 w-[1px] bg-white/20" />
+                        <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                          <Popover.Trigger asChild>
+                            <div 
+                              title="Change Status"
+                              onClick={() => setIsStatusOpen(true)}
+                              className="flex items-center gap-1.5 px-2.5 h-full hover:brightness-110 cursor-pointer"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+                            </div>
+                          </Popover.Trigger>
+                          <Popover.Portal>
+                            <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                                {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                                  <div
+                                    key={s}
+                                    onClick={() => {
+                                      tasksApi.updateSubtask(parentTask.id, subtask.id, { 
+                                        status: s,
+                                        completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed'
+                                      }).catch(err => console.error(err));
+                                      if (setActiveSubtask) {
+                                        setActiveSubtask({ ...subtask, status: s, completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed' });
+                                      }
+                                      setIsStatusOpen(false);
+                                    }}
+                                    className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                                  >
+                                    {(() => {
+                                      const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                                      if (customObj?.color) {
+                                        return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
+                                      }
+                                      return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                    })()}
+                                    {s}
+                                    {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                  </div>
+                                ))}
+                              </div>
+                            </Popover.Content>
+                          </Popover.Portal>
+                        </Popover.Root>
+                      </div>
+                    );
+                  })()}
+
+                  <button
+                    onClick={() => {
+                      tasksApi.updateSubtask(parentTask.id, subtask.id, { status: 'Closed', completed: true }).catch(err => console.error(err));
+                      if (setActiveSubtask) setActiveSubtask({ ...subtask, status: 'Closed', completed: true });
+                    }}
+                    title="Mark as Closed"
+                    className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
                 </div>
 
 
@@ -2179,6 +2251,7 @@ function SubtaskDetailView({
         subtaskId={subtask.id}
         users={dbUsers || []}
         checklists={subtask.checklists || []}
+        currentUser={currentUser}
         onUpdateChecklists={(checklists) => {
           const updatedSubtask = { ...subtask, checklists };
           if (setActiveSubtask) setActiveSubtask(updatedSubtask);

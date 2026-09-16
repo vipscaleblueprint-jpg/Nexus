@@ -241,13 +241,7 @@ export async function updateTask(req: Request, res: Response) {
     } = req.body;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
 
-    // Check status transition permission if changing status
-    if (status !== undefined) {
-      const check = await checkCanMoveFromStatus(taskId, status, currentListId || listId, effectiveUser);
-      if (!check.allowed) {
-        return res.status(403).json({ error: check.error });
-      }
-    }
+    // Status lock is now open to all, only audit checklist completion is checked later.
 
     const currentTask = await prisma.task.findUnique({
       where: { id: taskId },
@@ -259,11 +253,21 @@ export async function updateTask(req: Request, res: Response) {
         listId: true,
         creatorId: true,
         assignees: { select: { id: true, name: true } },
+        checklists: { include: { items: true } },
       },
     });
 
     if (!currentTask) {
       return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (status !== undefined && status.toLowerCase() === 'checking') {
+      const auditChecklists = currentTask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
+      for (const c of auditChecklists) {
+        if (c.items.some((i: any) => !i.completed)) {
+          return res.status(400).json({ error: `Cannot move to ${status}: Audit checklist "${c.name}" is not fully completed.` });
+        }
+      }
     }
 
     const updateData: any = {
@@ -494,10 +498,6 @@ export async function moveTask(req: Request, res: Response) {
 
     const authReq = req as any;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
-    const check = await checkCanMoveFromStatus(id, status, currentListId, effectiveUser);
-    if (!check.allowed) {
-      return res.status(403).json({ error: check.error });
-    }
 
     const currentTask = await prisma.task.findUnique({
       where: { id },
@@ -952,7 +952,7 @@ export async function getLiveBlocksData(req: Request, res: Response) {
           assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
           list: { select: { id: true, name: true } }
         },
-        orderBy: { title: 'asc' }
+        orderBy: { createdAt: 'desc' }
       });
 
       const priorities: Record<string, any[]> = {};
@@ -1021,11 +1021,13 @@ export async function getLiveBlocksData(req: Request, res: Response) {
 export async function createSubtask(req: Request, res: Response) {
   try {
     const { id: taskId } = req.params;
-    const { title, description, assigneeIds, priority, dueDate } = req.body;
+    const { title, description, assigneeIds, priority, dueDate, status } = req.body;
     const subtask = await prisma.subtask.create({
       data: {
         title,
         description,
+        // @ts-ignore: IDE stale Prisma types issue
+        status,
         ...(assigneeIds && Array.isArray(assigneeIds) && assigneeIds.length > 0 ? {
           assignees: {
             connect: assigneeIds.map((id: string) => ({ id }))
@@ -1051,12 +1053,13 @@ export async function createSubtask(req: Request, res: Response) {
 export async function updateSubtask(req: Request, res: Response) {
   try {
     const { id: taskId, subtaskId } = req.params;
-    const { title, description, completed, assigneeIds, priority, dueDate } = req.body;
+    const { title, description, completed, assigneeIds, priority, dueDate, status } = req.body;
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
       data: {
         ...(title !== undefined && { title }),
         ...(description !== undefined && { description }),
+        ...(status !== undefined && { status }),
         ...(completed !== undefined && { completed }),
         ...(assigneeIds !== undefined && Array.isArray(assigneeIds) ? {
           assignees: {

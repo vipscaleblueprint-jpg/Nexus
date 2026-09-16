@@ -858,13 +858,23 @@ export default function DocPage({ docId }: { docId?: string }) {
             </div>
 
             {/* ── Subpages List ── */}
-            {activePage.subpages && activePage.subpages.length > 0 && (
-              <div className="pt-4 pb-2">
-                <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold border-b border-zinc-800 pb-2 mb-2 px-2">
-                  <span>Subpages</span>
-                </div>
-                <div className="space-y-1">
-                  {activePage.subpages.slice(0, subpageLimit).map((sub: any) => (
+            {activePage.subpages && activePage.subpages.length > 0 && (() => {
+              const sortedContentSubpages = [...activePage.subpages].sort((a: any, b: any) => {
+                if (doc?.isDailyRollover) {
+                  const timeA = new Date(a.title || '').getTime();
+                  const timeB = new Date(b.title || '').getTime();
+                  if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+                }
+                return (a.order || 0) - (b.order || 0);
+              });
+              
+              return (
+                <div className="pt-4 pb-2">
+                  <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold border-b border-zinc-800 pb-2 mb-2 px-2">
+                    <span>Subpages</span>
+                  </div>
+                  <div className="space-y-1">
+                    {sortedContentSubpages.slice(0, subpageLimit).map((sub: any) => (
                     <div 
                       key={sub.id}
                       onClick={() => handleSelectPage(sub)}
@@ -893,7 +903,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
 
             {/* ── Freeform Writable Canvas Blocks ── */}
             <div className="space-y-1.5 pt-2">
@@ -1145,7 +1156,7 @@ export default function DocPage({ docId }: { docId?: string }) {
               isOpen={isTaskModalOpen}
               onClose={() => setIsTaskModalOpen(false)}
               task={selectedTaskForModal}
-              onUpdateTask={(updatedTask) => {
+              onUpdateTask={(updatedTask: any) => {
                 setSelectedTaskForModal(updatedTask);
                 setTasksMap((prev) => ({ ...prev, [updatedTask.id]: updatedTask }));
               }}

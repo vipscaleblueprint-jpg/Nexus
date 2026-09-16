@@ -174,6 +174,11 @@ io.on('connection', (socket) => {
     socket.to(`list:${data.listId}`).emit('task_reorder', { status: data.status, taskIds: data.taskIds });
   });
 
+  // Handle task move preview (sync dragging across clients instantly)
+  socket.on('task_move_preview', (data: { listId: string; taskId: string; status: string }) => {
+    socket.to(`list:${data.listId}`).emit('task_move_preview', data);
+  });
+
   // Handle task description editing lock
   socket.on('task_editing_start', (data: { listId: string; taskId: string; userName: string }) => {
     socket.to(`list:${data.listId}`).emit('task_editing_start', { taskId: data.taskId, userName: data.userName });

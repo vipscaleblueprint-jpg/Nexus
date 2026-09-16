@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, Circle } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, Circle, ImageIcon, File } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { BlockEditor } from '../ui/BlockEditor';
@@ -15,6 +15,8 @@ import { usersApi, tasksApi } from '@/api';
 import { spacesApi } from '@/api/spaces';
 import { SubtasksSection } from './SubtasksSection';
 import { ChecklistsSection } from './ChecklistsSection';
+import { AuditSection } from './AuditSection';
+import { AttachmentsGrid } from './AttachmentsGrid';
 
 interface Props {
   isOpen: boolean;
@@ -78,6 +80,80 @@ export const STATUS_COLORS: Record<string, string> = {
   CANCELLED: 'bg-red-700/60 text-red-200',
 };
 
+function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
+  const [loaded, setLoaded] = useState(false);
+
+  if (!loaded) {
+    return (
+      <span 
+        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setLoaded(true);
+        }}
+      >
+        <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
+        <span className="absolute inset-0 bg-zinc-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="mt-2 mb-2 inline-block relative group cursor-pointer" onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onPreview(src);
+    }}>
+      <img
+        src={src}
+        alt={alt}
+        className="max-w-[200px] max-h-[150px] object-cover rounded-lg"
+      />
+      <span className="absolute inset-0 bg-zinc-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg pointer-events-none">
+        <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
+      </span>
+    </span>
+  );
+}
+
+function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: string) => void }) {
+  const [loaded, setLoaded] = useState(false);
+
+  if (!loaded) {
+    return (
+      <span 
+        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setLoaded(true);
+        }}
+      >
+        <File className="w-10 h-10 text-zinc-500 opacity-50" />
+        <span className="absolute inset-0 bg-zinc-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load video</span>
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="mt-2 mb-2 inline-block relative group" onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onPreview(src);
+    }}>
+      <video
+        src={src}
+        className="max-w-[200px] max-h-[150px] object-cover rounded-lg bg-black/50"
+      />
+    </span>
+  );
+}
+
 export function TaskDetailModalContent({
   isOpen,
   onClose,
@@ -130,6 +206,50 @@ export function TaskDetailModalContent({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [localDescription, setLocalDescription] = useState(task?.description || '');
   const [localTitle, setLocalTitle] = useState(task?.title || '');
+  // State for handling attachments
+  const [attachments, setAttachments] = useState<any[]>(() => {
+    const existing = task?.attachments || [];
+    const desc = task?.description || '';
+    const oldAttachments: any[] = [];
+    
+    const divRegex = /<div[^>]*data-type="attachment-block"[^>]*>/g;
+    let match;
+    let count = 0;
+    while ((match = divRegex.exec(desc)) !== null) {
+      const tag = match[0];
+      const urlMatch = tag.match(/data-url="([^"]+)"/);
+      const nameMatch = tag.match(/data-name="([^"]+)"/);
+      const typeMatch = tag.match(/data-mime-type="([^"]+)"/);
+      if (urlMatch) {
+        oldAttachments.push({
+          id: `old-${count++}`,
+          fileName: nameMatch ? nameMatch[1] : 'attachment',
+          fileUrl: urlMatch[1],
+          fileKey: urlMatch[1],
+          fileSize: 0,
+          mimeType: typeMatch ? typeMatch[1] : 'image/jpeg',
+        });
+      }
+    }
+    
+    const imgRegex = /<img[^>]*src="([^"]+)"[^>]*>/g;
+    while ((match = imgRegex.exec(desc)) !== null) {
+      const tag = match[0];
+      const url = match[1];
+      if (!oldAttachments.find(a => a.fileUrl === url)) {
+        const altMatch = tag.match(/alt="([^"]+)"/);
+        oldAttachments.push({
+          id: `old-img-${count++}`,
+          fileName: altMatch ? altMatch[1] : 'image.png',
+          fileUrl: url,
+          fileKey: url,
+          fileSize: 0,
+          mimeType: 'image/jpeg',
+        });
+      }
+    }
+    return [...existing, ...oldAttachments];
+  });
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isActivityExpanded, setIsActivityExpanded] = useState(false);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
@@ -156,33 +276,10 @@ export function TaskDetailModalContent({
       const { node, ...rest } = props;
       const href = rest.href || '';
       if (href.match(/\.(mp4|webm|ogg|mov)$/i)) {
-        return (
-          <span className="mt-2 mb-2 inline-block">
-            <video
-              src={href}
-              className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity bg-black/50"
-              onClick={(e) => {
-                e.preventDefault();
-                setLightboxImage(href);
-              }}
-            ></video>
-          </span>
-        );
+        return <LazyMarkdownVideo src={href} onPreview={setLightboxImage} />;
       }
       if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
-        return (
-          <span className="mt-2 mb-2 inline-block">
-            <img
-              src={href}
-              alt="attachment"
-              className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-              onClick={(e) => {
-                e.preventDefault();
-                setLightboxImage(href);
-              }}
-            />
-          </span>
-        );
+        return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} />;
       }
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
@@ -199,22 +296,15 @@ export function TaskDetailModalContent({
           </a>
         );
       }
-      return <a {...rest} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{rest.children}</a>;
+      return (
+        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer">
+          {rest.children}
+        </a>
+      );
     },
     img: (props: any) => {
       const { node, ...rest } = props;
-      return (
-        <span className="mt-2 mb-2 inline-block">
-          <img
-            {...rest}
-            className="max-w-[200px] max-h-[150px] object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-            onClick={(e) => {
-              e.preventDefault();
-              setLightboxImage(rest.src);
-            }}
-          />
-        </span>
-      );
+      return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} />;
     }
   }), []);
 
@@ -318,8 +408,54 @@ export function TaskDetailModalContent({
 
   // Keep localDescription in sync with task prop changes (e.g. from socket updates)
   useEffect(() => {
-    setLocalDescription(task?.description || '');
-  }, [task?.description]);
+    if (task) {
+      setLocalDescription(task.description || '');
+      
+      const existing = task.attachments || [];
+      const desc = task.description || '';
+      const oldAttachments: any[] = [];
+      
+      const divRegex = /<div[^>]*data-type="attachment-block"[^>]*>/g;
+      let match;
+      let count = 0;
+      while ((match = divRegex.exec(desc)) !== null) {
+        const tag = match[0];
+        const urlMatch = tag.match(/data-url="([^"]+)"/);
+        const nameMatch = tag.match(/data-name="([^"]+)"/);
+        const typeMatch = tag.match(/data-mime-type="([^"]+)"/);
+        if (urlMatch) {
+          oldAttachments.push({
+            id: `old-${count++}`,
+            fileName: nameMatch ? nameMatch[1] : 'attachment',
+            fileUrl: urlMatch[1],
+            fileKey: urlMatch[1],
+            fileSize: 0,
+            mimeType: typeMatch ? typeMatch[1] : 'image/jpeg',
+          });
+        }
+      }
+      
+      const imgRegex = /<img[^>]*src="([^"]+)"[^>]*>/g;
+      while ((match = imgRegex.exec(desc)) !== null) {
+        const tag = match[0];
+        const url = match[1];
+        if (!oldAttachments.find(a => a.fileUrl === url)) {
+          const altMatch = tag.match(/alt="([^"]+)"/);
+          oldAttachments.push({
+            id: `old-img-${count++}`,
+            fileName: altMatch ? altMatch[1] : 'image.png',
+            fileUrl: url,
+            fileKey: url,
+            fileSize: 0,
+            mimeType: 'image/jpeg',
+          });
+        }
+      }
+      
+      setAttachments([...existing, ...oldAttachments]);
+      setEditingUser(null);
+    }
+  }, [task]);
 
   useEffect(() => {
     if (task?.listId && (!listStatuses || listStatuses.length === 0)) {
@@ -422,7 +558,24 @@ export function TaskDetailModalContent({
     const handleActivity = (data: any) => {
       if (data.taskId === task.id) {
         setActivities(prev => {
+          // If real ID already exists, skip
           if (prev.some(a => a.id === data.activity.id)) return prev;
+          // If an optimistic entry of the same type exists, replace it with the real one
+          // (this happens on the acting client who already has an optimistic placeholder)
+          const typePrefix = data.activity.type === 'status_change' ? 'optimistic-status'
+            : data.activity.type === 'assignment' ? 'optimistic-assign'
+            : data.activity.type === 'priority_change' ? 'optimistic-priority'
+            : null;
+          if (typePrefix) {
+            const optimisticIdx = prev.findIndex(
+              a => typeof a.id === 'string' && a.id.startsWith(typePrefix)
+            );
+            if (optimisticIdx !== -1) {
+              const updated = [...prev];
+              updated[optimisticIdx] = data.activity;
+              return updated;
+            }
+          }
           return [...prev, data.activity];
         });
       }
@@ -464,8 +617,10 @@ export function TaskDetailModalContent({
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [internalListStatuses, setInternalListStatuses] = useState<any[]>(listStatuses || []);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showApiSettings, setShowApiSettings] = useState(false);
+  const editorRef = useRef<any>(null);
 
-  // Resizable activity panel
+  // Focus trap and esc handler activity panel
   const [activityWidth, setActivityWidth] = useState(450);
   const isResizing = useRef(false);
 
@@ -518,18 +673,29 @@ export function TaskDetailModalContent({
     if (onStatusChange) onStatusChange(newStatus);
     else task.status = newStatus;
 
+    // Optimistically append activity to local feed immediately
+    const optimisticId = `optimistic-status-${Date.now()}`;
+    const optimisticActivity = {
+      id: optimisticId,
+      type: 'status_change',
+      author: currentUser?.name || 'Someone',
+      oldStatus,
+      newStatus,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticActivity]);
+
     try {
       const res = await tasksApi.moveTask(task.id, newStatus, task.listId, currentUser?.id);
       if (res?.activity) {
-        setActivities(prev => {
-          if (prev.some(a => a.id === res.activity.id)) return prev;
-          return [...prev, res.activity];
-        });
-      } else {
-        loadActivities();
+        // Replace optimistic entry with real one from server
+        setActivities(prev => prev.map(a => a.id === optimisticId ? res.activity : a));
       }
       toast.success(`Moved to ${newStatus}`);
     } catch (err: any) {
+      // Rollback optimistic activity on error
+      setActivities(prev => prev.filter(a => a.id !== optimisticId));
       toast.error(err.message || 'Failed to move task');
     }
   };
@@ -551,7 +717,21 @@ export function TaskDetailModalContent({
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
   const persistAssignees = useCallback(
-    async (taskToUpdate: Task, updatedIds: string[], primaryAssignee: UserModel | null) => {
+    async (taskToUpdate: Task, updatedIds: string[], primaryAssignee: UserModel | null, updatedAssignees: UserModel[]) => {
+      // Optimistically append activity to local feed immediately
+      const optimisticId = `optimistic-assign-${Date.now()}`;
+      const names = updatedAssignees.length > 0 ? updatedAssignees.map(u => u.name).join(', ') : 'Unassigned';
+      const optimisticActivity = {
+        id: optimisticId,
+        type: 'assignment',
+        author: currentUser?.name || 'Someone',
+        assigneeName: names,
+        assignees: updatedAssignees.map(u => u.name),
+        date: new Date(),
+        user: currentUser,
+      };
+      setActivities(prev => [...prev, optimisticActivity]);
+
       try {
         await tasksApi.updateTask(taskToUpdate.id, {
           assigneeIds: updatedIds,
@@ -559,20 +739,27 @@ export function TaskDetailModalContent({
           currentListId: taskToUpdate.listId,
           userId: currentUser?.id,
         });
-        loadActivities();
+        // Server will emit task_activity via socket for the other account
+        // Don't reload activities here — optimistic update is sufficient for local user
       } catch (err: any) {
-        console.error('Failed to persist assignees:', err);
+        // Rollback on error
+        setActivities(prev => prev.filter(a => a.id !== optimisticId));
+        console.error('[TaskDetailModal] Failed to persist assignees:', err);
       }
     },
-    [currentUser?.id, loadActivities]
+    [currentUser, setActivities]
   );
 
   const handleToggleAssignee = (user: UserModel) => {
     if (!task) return;
-    const isAssigned = isUserAssigned(user.id);
+    
+    // Always read from the mutated task object to survive rapid clicks within the same render cycle
+    const latestAssignees = task.assignees || (task.assignee ? [task.assignee] : []);
+    
+    const isAssigned = latestAssignees.some(u => u.id === user.id);
     const updatedAssignees = isAssigned
-      ? currentAssignees.filter((u) => u.id !== user.id)
-      : [...currentAssignees, user];
+      ? latestAssignees.filter((u) => u.id !== user.id)
+      : [...latestAssignees, user];
 
     const updatedIds = updatedAssignees.map((u) => u.id);
     const primaryAssignee = updatedAssignees.length > 0 ? updatedAssignees[0] : null;
@@ -586,13 +773,14 @@ export function TaskDetailModalContent({
     };
 
     // 1. Instant local update (0ms lag, immediate visual feedback)
+    // Mutate the original object directly so rapid subsequent clicks before re-render see the latest state
+    task.assignees = updatedAssignees;
+    task.assigneeIds = updatedIds;
+    task.assignee = primaryAssignee;
+    task.assigneeId = primaryAssignee?.id || null;
+
     if (onUpdateTask) {
       onUpdateTask(updatedTask);
-    } else {
-      task.assignees = updatedAssignees;
-      task.assigneeIds = updatedIds;
-      task.assignee = primaryAssignee;
-      task.assigneeId = primaryAssignee?.id || null;
     }
 
     // 2. Debounced remote persistence (batches rapid toggles into one clean request)
@@ -600,7 +788,7 @@ export function TaskDetailModalContent({
       clearTimeout(assigneeDebounceRef.current);
     }
     assigneeDebounceRef.current = setTimeout(() => {
-      persistAssignees(updatedTask, updatedIds, primaryAssignee);
+      persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees);
     }, 400);
   };
 
@@ -620,17 +808,17 @@ export function TaskDetailModalContent({
       assigneeId: null,
     };
 
+    task.assignees = [];
+    task.assigneeIds = [];
+    task.assignee = null;
+    task.assigneeId = null;
+
     if (onUpdateTask) {
       onUpdateTask(updatedTask);
-    } else {
-      task.assignees = [];
-      task.assigneeIds = [];
-      task.assignee = null;
-      task.assigneeId = null;
     }
     setIsAssigneeOpen(false);
 
-    persistAssignees(updatedTask, [], null);
+    persistAssignees(updatedTask, [], null, []);
   };
 
   const handlePriorityChange = async (p: Priority) => {
@@ -643,15 +831,29 @@ export function TaskDetailModalContent({
     }
     setIsPriorityOpen(false);
 
+    // Optimistically append activity immediately
+    const optimisticId = `optimistic-priority-${Date.now()}`;
+    const optimisticActivity = {
+      id: optimisticId,
+      type: 'priority_change',
+      author: currentUser?.name || 'Someone',
+      oldPriority,
+      newPriority: p,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticActivity]);
+
     try {
       await tasksApi.updateTask(task.id, {
         priority: p,
         currentListId: task.listId,
         userId: currentUser?.id,
       });
-      loadActivities();
       toast.success(`Priority set to ${p}`);
     } catch (err: any) {
+      // Rollback on error
+      setActivities(prev => prev.filter(a => a.id !== optimisticId));
       toast.error(err.message || 'Failed to update priority');
     }
   };
@@ -718,33 +920,36 @@ export function TaskDetailModalContent({
     if (file) {
       try {
         setIsUploading(true);
-        const res = await uploadApi.uploadFile(file, 'description');
-        let newContent = '';
-        if (file.type.startsWith('image/')) {
-          newContent = `<img src="${res.url}" />`;
-        } else {
-          newContent = `<a href="${res.url}" target="_blank" class="text-blue-400 hover:underline">${file.name}</a>`;
-        }
+        const res = await uploadApi.uploadFile(file, 'attachments');
+        if (res && res.url) {
+          const payload = {
+            fileName: file.name,
+            fileUrl: res.url,
+            fileKey: res.name || file.name,
+            fileSize: file.size,
+            mimeType: file.type,
+          };
+          
+          const tempId = 'temp-' + Date.now();
+          const newAtt = { id: tempId, ...payload };
+          setAttachments((prev) => [...prev, newAtt]);
 
-        const updatedDesc = localDescription ? localDescription + '<br/>' + newContent : newContent;
-        setLocalDescription(updatedDesc);
-
-        if (socket && task.listId) {
-          if (debounceRef.current) clearTimeout(debounceRef.current);
-          socket.emit('task_editing_content', {
-            listId: task.listId,
-            taskId: task.id,
-            content: updatedDesc,
-          });
-          if (onUpdateTask) {
-            onUpdateTask({ ...task, description: updatedDesc });
+          try {
+            const { attachment } = await tasksApi.createTaskAttachment(task.id, payload);
+            setAttachments((prev) => prev.map(a => a.id === tempId ? attachment : a));
+            if (onUpdateTask) onUpdateTask({ ...task, attachments: [...attachments, attachment] });
+          } catch(err) {
+            console.error('Failed to save to DB, keeping optimistic:', err);
+            // It will stay in UI at least, so we don't lose it if DB is down
           }
         }
-        toast.success('File attached');
       } catch (err: any) {
-        toast.error(err.message || 'Failed to attach file');
+        console.error('Failed to upload file:', err);
       } finally {
         setIsUploading(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       }
     }
   };
@@ -1004,7 +1209,7 @@ export function TaskDetailModalContent({
                             })}
                           </div>
                         ) : (
-                          <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none disabled:opacity-50 disabled:cursor-not-allowed">
+                          <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                             <Plus className="w-3 h-3" />
                             Assign Team
                             {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
@@ -1025,6 +1230,7 @@ export function TaskDetailModalContent({
                                     const next = selected
                                       ? current.filter(r => r !== role.name)
                                       : [...current, role.name];
+                                    task.assigneeRoleRestrictions = next;
                                     const updatedTask = { ...task, assigneeRoleRestrictions: next };
                                     if (onUpdateTask) onUpdateTask(updatedTask);
                                     tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any);
@@ -1232,6 +1438,7 @@ export function TaskDetailModalContent({
                     onChange={handleDescChange}
                     onBlur={handleDescBlur}
                     editable={!editingUser}
+                    onEditorReady={(editor) => { editorRef.current = editor; }}
                   />
 
                   {(!localDescription || localDescription === '<p></p>' || localDescription === '<p><br></p>') && (
@@ -1240,6 +1447,8 @@ export function TaskDetailModalContent({
                     </div>
                   )}
                 </div>
+
+
               </div>
 
               <SubtasksSection
@@ -1266,6 +1475,16 @@ export function TaskDetailModalContent({
 
               {/* Action Buttons (Notes, Attachments, etc) */}
               <div className="mt-2 flex flex-col gap-2 w-full">
+                <AuditSection
+                  task={task}
+                  title={task.title}
+                  users={dbUsers || []}
+                  checklists={task.checklists || []}
+                  currentUser={currentUser}
+                  onUpdateChecklists={(checklists) => {
+                    if (onUpdateTask) onUpdateTask({ ...task, checklists });
+                  }}
+                />
                 <ChecklistsSection
                   task={task}
                   users={dbUsers || []}
@@ -1279,6 +1498,14 @@ export function TaskDetailModalContent({
                 <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer disabled:opacity-50">
                   <Paperclip className="w-4 h-4 shrink-0" /> {isUploading ? 'Uploading...' : 'Attach file or image'}
                 </button>
+                <AttachmentsGrid
+                  attachments={attachments}
+                  onDelete={async (id) => {
+                    await tasksApi.deleteTaskAttachment(task.id, id);
+                    setAttachments(prev => prev.filter(a => a.id !== id));
+                    if (onUpdateTask) onUpdateTask({ ...task, attachments: attachments.filter(a => a.id !== id) });
+                  }}
+                />
               </div>
 
             </div>
@@ -1722,6 +1949,7 @@ function SubtaskDetailView({
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorRef = useRef<any>(null);
   // Task edits are open to all
   const canEditTask = true;
   const canAssignTask = permission?.allowed ?? true;
@@ -1731,26 +1959,24 @@ function SubtaskDetailView({
     if (file) {
       try {
         setIsUploading(true);
-        const res = await uploadApi.uploadFile(file, 'description');
-        let newContent = '';
-        if (file.type.startsWith('image/')) {
-          newContent = `<img src="${res.url}" />`;
-        } else {
-          newContent = `<a href="${res.url}" target="_blank" class="text-blue-400 hover:underline">${file.name}</a>`;
+        const res = await uploadApi.uploadFile(file, 'attachments');
+        if (res && res.url) {
+          const payload = {
+            fileName: file.name,
+            fileUrl: res.url,
+            fileKey: res.name || file.name,
+            fileSize: file.size,
+            mimeType: file.type,
+          };
+          const { attachment } = await tasksApi.createTaskAttachment(subtask.id, payload);
+          const updatedSubtask = { ...subtask, attachments: [...(subtask.attachments || []), attachment] };
+          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+          if (onUpdateTask) {
+            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+          }
         }
-
-        const updatedDesc = localDesc ? localDesc + '<br/>' + newContent : newContent;
-        setLocalDesc(updatedDesc);
-
-        if (socket && parentTask.listId) {
-          if (debounceRef.current) clearTimeout(debounceRef.current);
-          socket.emit('task_editing_content', {
-            listId: parentTask.listId,
-            taskId: subtask.id,
-            content: updatedDesc
-          });
-        }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to upload file:', err);
       } finally {
         setIsUploading(false);
@@ -2161,21 +2387,58 @@ function SubtaskDetailView({
                   <User className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Assignees</span>
                 </div>
-                <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] text-zinc-400 hover:text-zinc-200 select-none w-fit">
-                  {assignee ? (
-                    <>
-                      {assignee.avatarUrl ? (
-                        <img src={assignee.avatarUrl} alt={assignee.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
-                          {(assignee.name || 'U').substring(0, 2).toUpperCase()}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Popover.Root>
+                    <Popover.Trigger asChild>
+                      {(subtask.assigneeRoleRestrictions && subtask.assigneeRoleRestrictions.length > 0) ? (
+                        <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                          {subtask.assigneeRoleRestrictions.map((role: string, i: number) => {
+                            const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                            const bgColor = colors[i % colors.length];
+                            return (
+                              <div 
+                                key={role} 
+                                className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
+                                title={role}
+                              >
+                                {role.substring(0, 2).toUpperCase()}
+                              </div>
+                            );
+                          })}
                         </div>
+                      ) : (
+                        <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                          <Plus className="w-3 h-3 shrink-0" />
+                          Assign Team
+                        </button>
                       )}
-                      <span className="truncate max-w-[100px]">{assignee.name}</span>
-                    </>
-                  ) : (
-                    <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
-                  )}
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                        <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+                          <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
+                          <p className="text-[10px] text-zinc-400 px-2 py-1">Not implemented for subtasks</p>
+                        </div>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
+
+                  <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] text-zinc-400 hover:text-zinc-200 select-none w-fit">
+                    {assignee ? (
+                      <>
+                        {assignee.avatarUrl ? (
+                          <img src={assignee.avatarUrl} alt={assignee.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
+                            {(assignee.name || 'U').substring(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <span className="truncate max-w-[100px]">{assignee.name}</span>
+                      </>
+                    ) : (
+                      <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2233,8 +2496,22 @@ function SubtaskDetailView({
             }, 150);
           }
         }}
-        onBlur={handleDescBlur}
+        onBlur={() => {
+          if (onUpdateTask) {
+            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
+            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+          }
+          if (socket && subtask) {
+            socket.emit('task_editing_end', {
+              listId: parentTask.listId,
+              taskId: subtask.id,
+              userName: currentUser?.name || 'Someone',
+            });
+          }
+          setEditingUser(null);
+        }}
         editable={!editingUser}
+        onEditorReady={(editor) => { editorRef.current = editor; }}
       />
 
       {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
@@ -2246,6 +2523,22 @@ function SubtaskDetailView({
 
     {/* Action Buttons (Notes, Attachments, etc) */}
     <div className="mt-8 flex flex-col gap-2 w-full">
+      <AuditSection
+        task={parentTask}
+        title={subtask.title}
+        subtaskId={subtask.id}
+        users={dbUsers || []}
+        checklists={subtask.checklists || []}
+        currentUser={currentUser}
+        onUpdateChecklists={(checklists) => {
+          const updatedSubtask = { ...subtask, checklists };
+          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+          if (onUpdateTask) {
+            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+          }
+        }}
+      />
       <ChecklistsSection
         task={parentTask}
         subtaskId={subtask.id}
@@ -2266,6 +2559,18 @@ function SubtaskDetailView({
       <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer disabled:opacity-50">
         <Paperclip className="w-4 h-4 shrink-0" /> {isUploading ? 'Uploading...' : 'Attach file or image'}
       </button>
+      <AttachmentsGrid
+        attachments={subtask.attachments || []}
+        onDelete={async (id) => {
+          await tasksApi.deleteTaskAttachment(subtask.id, id);
+          const updatedSubtask = { ...subtask, attachments: (subtask.attachments || []).filter((a: any) => a.id !== id) };
+          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+          if (onUpdateTask) {
+            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+          }
+        }}
+      />
     </div>
   </div>
           </div >
@@ -2434,7 +2739,12 @@ export function TaskDetailModal(props: Props) {
         setIsLoading(true);
         try {
           const res = await tasksApi.getTask(props.task!.id);
-          if (res?.task) setFullTask(prev => ({ ...res.task, ...props.task! }));
+          if (res?.task) {
+            setFullTask(prev => {
+              if (!prev) return res.task;
+              return { ...res.task, ...prev };
+            });
+          }
         } catch (err) {
           console.error(err);
         } finally {

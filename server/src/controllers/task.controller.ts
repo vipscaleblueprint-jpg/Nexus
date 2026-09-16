@@ -30,7 +30,7 @@ export const getRequiredAudits = (taskTitle: string) => {
 const taskInclude = {
   subtasks: {
     include: {
-      assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
+      User: { select: { id: true, name: true, email: true, avatarUrl: true } },
       comments: { 
         include: {
           user: { select: { id: true, name: true, avatarUrl: true } }
@@ -40,7 +40,7 @@ const taskInclude = {
       checklists: { 
         include: { 
           items: {
-            include: { assignee: { select: { id: true, name: true, avatarUrl: true } } }
+            include: { checkedBy: { select: { id: true, name: true, avatarUrl: true } } }
           } 
         } 
       },
@@ -49,7 +49,7 @@ const taskInclude = {
   checklists: { 
     include: { 
       items: {
-        include: { assignee: { select: { id: true, name: true, avatarUrl: true } } }
+        include: { checkedBy: { select: { id: true, name: true, avatarUrl: true } } }
       } 
     } 
   },
@@ -317,8 +317,7 @@ export async function updateTask(req: Request, res: Response) {
       ...(teamId !== undefined ? { teamId } : {}),
       ...(dueDate !== undefined ? { dueDate: dueDate ? new Date(dueDate) : null } : {}),
       ...(startDate !== undefined ? { startDate: startDate ? new Date(startDate) : null } : {}),
-      ...(assigneeRoleRestrictions !== undefined ? { assigneeRoleRestrictions: Array.isArray(assigneeRoleRestrictions) ? assigneeRoleRestrictions : [] } : {}),
-      ...(teamAssignAccessRole !== undefined ? { teamAssignAccessRole: teamAssignAccessRole || null } : {}),
+      // Ensure undefined fields are stripped out completely
     };
 
     if (assigneeIds !== undefined) {
@@ -329,176 +328,197 @@ export async function updateTask(req: Request, res: Response) {
       updateData.assignees = assigneeId ? { set: [{ id: assigneeId }] } : { set: [] };
     }
 
-    // Immediately persist to DB
+    // Immediately persist to DB without heavy includes for realtime speed
     const updated = await prisma.task.update({
       where: { id: taskId },
       data: updateData,
-      include: taskInclude,
     });
 
-    await invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
-
-    // Create AuditLog activity entry if status or assignee changed
-    const actingUserId = effectiveUser?.id || (await prisma.user.findFirst())?.id;
-    let activity: any = null;
-
-    if (actingUserId) {
-      const user = await prisma.user.findUnique({
-        where: { id: actingUserId },
-        select: { id: true, name: true, avatarUrl: true, email: true },
-      });
-
-      if (status && status !== currentTask.status) {
-        const log = await prisma.auditLog.create({
-          data: {
-            action: 'STATUS_CHANGE',
-            entity: 'TASK',
-            entityId: taskId,
-            userId: actingUserId,
-            details: { oldStatus: currentTask.status, newStatus: status },
-          },
+    // Manually construct the payload for frontend to merge efficiently
+    const payload = { ...updated } as any;
+    if (assigneeIds !== undefined || assigneeId !== undefined) {
+      const idsToFetch = assigneeIds !== undefined ? assigneeIds : (assigneeId ? [assigneeId] : []);
+      if (idsToFetch.length > 0) {
+        payload.assignees = await prisma.user.findMany({
+          where: { id: { in: idsToFetch } },
+          select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true }
         });
-
-        const usersToNotify = currentTask.assignees
-          .map((a: any) => a.id)
-          .filter((id: any) => id !== actingUserId);
-
-        if (usersToNotify.length > 0) {
-          await prisma.taskNotification.createMany({
-            data: usersToNotify.map((id: any) => ({
-              userId: id,
-              actorId: actingUserId,
-              taskId,
-              type: 'STATUS_CHANGE',
-              title: `${user?.name || 'Someone'} changed the status to ${status}`,
-            })),
-          });
-          usersToNotify.forEach((id: any) => {
-            io.to(`user:${id}`).emit('notification_received');
-          });
-        }
-
-        activity = {
-          id: log.id,
-          type: 'status_change',
-          author: user?.name || 'Someone',
-          oldStatus: currentTask.status,
-          newStatus: status,
-          date: log.createdAt,
-          user,
-        };
-      } else if (assigneeIds !== undefined) {
-        const assignedUsers = assigneeIds.length > 0
-          ? await prisma.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true, avatarUrl: true } })
-          : [];
-        const names = assignedUsers.length > 0 ? assignedUsers.map((u: any) => u.name).join(', ') : 'Unassigned';
-        const log = await prisma.auditLog.create({
-          data: {
-            action: 'ASSIGNMENT',
-            entity: 'TASK',
-            entityId: taskId,
-            userId: actingUserId,
-            details: { assigneeName: names, assigneeNames: assignedUsers.map((u: any) => u.name), count: assignedUsers.length },
-          },
-        });
-        const newlyAssigned = assigneeIds.filter((id: string) => !currentTask.assignees.some((a: any) => a.id === id));
-        if (newlyAssigned.length > 0) {
-          const newAssigneesToNotify = newlyAssigned.filter((id: string) => id !== actingUserId);
-          if (newAssigneesToNotify.length > 0) {
-            await prisma.taskNotification.createMany({
-              data: newAssigneesToNotify.map((id: string) => ({
-                userId: id,
-                actorId: actingUserId,
-                taskId,
-                type: 'ASSIGNMENT',
-                title: `${user?.name || 'Someone'} assigned this task to you`,
-              })),
-            });
-            newAssigneesToNotify.forEach((id: string) => {
-              io.to(`user:${id}`).emit('notification_received');
-            });
-          }
-        }
-
-        activity = {
-          id: log.id,
-          type: 'assignment',
-          author: user?.name || 'Someone',
-          assigneeName: names,
-          assignees: assignedUsers.map((u: any) => u.name),
-          date: log.createdAt,
-          user,
-        };
-      } else if (assigneeId !== undefined && assigneeId !== currentTask.assigneeId) {
-        const assignedUser = assigneeId
-          ? await prisma.user.findUnique({ where: { id: assigneeId }, select: { name: true } })
-          : null;
-        const log = await prisma.auditLog.create({
-          data: {
-            action: 'ASSIGNMENT',
-            entity: 'TASK',
-            entityId: taskId,
-            userId: actingUserId,
-            details: { assigneeName: assignedUser?.name || 'Unassigned' },
-          },
-        });
-        if (assigneeId && assigneeId !== actingUserId) {
-          await prisma.taskNotification.create({
-            data: {
-              userId: assigneeId,
-              actorId: actingUserId,
-              taskId,
-              type: 'ASSIGNMENT',
-              title: `${user?.name || 'Someone'} assigned this task to you`,
-            },
-          });
-          io.to(`user:${assigneeId}`).emit('notification_received');
-        }
-
-        activity = {
-          id: log.id,
-          type: 'assignment',
-          author: user?.name || 'Someone',
-          assigneeName: assignedUser?.name || 'Unassigned',
-          date: log.createdAt,
-          user,
-        };
-      } else if (priority && priority !== currentTask.priority) {
-        const log = await prisma.auditLog.create({
-          data: {
-            action: 'PRIORITY_CHANGE',
-            entity: 'TASK',
-            entityId: taskId,
-            userId: actingUserId,
-            details: { oldPriority: currentTask.priority, newPriority: priority },
-          },
-        });
-        activity = {
-          id: log.id,
-          type: 'priority_change',
-          author: user?.name || 'Someone',
-          oldPriority: currentTask.priority,
-          newPriority: priority,
-          date: log.createdAt,
-          user,
-        };
+      } else {
+        payload.assignees = [];
       }
     }
 
+    // Broadcast IMMEDIATELY after update
     const roomListId = listId || currentListId || currentTask.listId;
     if (roomListId) {
-      io.to(`list:${roomListId}`).emit('task:updated', updated);
-      if (activity) {
-        io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId, activity });
-      }
+      io.to(`list:${roomListId}`).emit('task:updated', payload);
     }
     // Global broadcast so dashboards and other lists update in real-time
-    io.emit('task:updated', updated);
-    if (activity) {
-      io.emit('task_activity', { taskId, activity });
-    }
+    io.emit('task:updated', payload);
 
-    return res.json({ task: updated, activity, queued: true });
+    // Return the response immediately so the client doesn't wait
+    res.json({ task: payload, queued: true });
+
+    // Background Processing: Cache Invalidation & Audit Logs
+    invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all').catch(console.error);
+
+    const actingUserId = effectiveUser?.id || (await prisma.user.findFirst())?.id;
+    if (actingUserId) {
+      (async () => {
+        try {
+          const user = await prisma.user.findUnique({
+            where: { id: actingUserId },
+            select: { id: true, name: true, avatarUrl: true, email: true },
+          });
+          let activity: any = null;
+
+          if (status && status !== currentTask.status) {
+            const log = await prisma.auditLog.create({
+              data: {
+                action: 'STATUS_CHANGE',
+                entity: 'TASK',
+                entityId: taskId,
+                userId: actingUserId,
+                details: { oldStatus: currentTask.status, newStatus: status },
+              },
+            });
+
+            const usersToNotify = currentTask.assignees
+              .map((a: any) => a.id)
+              .filter((id: any) => id !== actingUserId);
+
+            if (usersToNotify.length > 0) {
+              await prisma.taskNotification.createMany({
+                data: usersToNotify.map((id: any) => ({
+                  userId: id,
+                  actorId: actingUserId,
+                  taskId,
+                  type: 'STATUS_CHANGE',
+                  title: `${user?.name || 'Someone'} changed the status to ${status}`,
+                })),
+              });
+              usersToNotify.forEach((id: any) => {
+                io.to(`user:${id}`).emit('notification_received');
+              });
+            }
+
+            activity = {
+              id: log.id,
+              type: 'status_change',
+              author: user?.name || 'Someone',
+              oldStatus: currentTask.status,
+              newStatus: status,
+              date: log.createdAt,
+              user,
+            };
+          } else if (assigneeIds !== undefined) {
+            const assignedUsers = assigneeIds.length > 0
+              ? await prisma.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true, avatarUrl: true } })
+              : [];
+            const names = assignedUsers.length > 0 ? assignedUsers.map((u: any) => u.name).join(', ') : 'Unassigned';
+            const log = await prisma.auditLog.create({
+              data: {
+                action: 'ASSIGNMENT',
+                entity: 'TASK',
+                entityId: taskId,
+                userId: actingUserId,
+                details: { assigneeName: names, assigneeNames: assignedUsers.map((u: any) => u.name), count: assignedUsers.length },
+              },
+            });
+            const newlyAssigned = assigneeIds.filter((id: string) => !currentTask.assignees.some((a: any) => a.id === id));
+            if (newlyAssigned.length > 0) {
+              const newAssigneesToNotify = newlyAssigned.filter((id: string) => id !== actingUserId);
+              if (newAssigneesToNotify.length > 0) {
+                await prisma.taskNotification.createMany({
+                  data: newAssigneesToNotify.map((id: string) => ({
+                    userId: id,
+                    actorId: actingUserId,
+                    taskId,
+                    type: 'ASSIGNMENT',
+                    title: `${user?.name || 'Someone'} assigned this task to you`,
+                  })),
+                });
+                newAssigneesToNotify.forEach((id: string) => {
+                  io.to(`user:${id}`).emit('notification_received');
+                });
+              }
+            }
+
+            activity = {
+              id: log.id,
+              type: 'assignment',
+              author: user?.name || 'Someone',
+              assigneeName: names,
+              assignees: assignedUsers.map((u: any) => u.name),
+              date: log.createdAt,
+              user,
+            };
+          } else if (assigneeId !== undefined && assigneeId !== currentTask.assigneeId) {
+            const assignedUser = assigneeId
+              ? await prisma.user.findUnique({ where: { id: assigneeId }, select: { name: true } })
+              : null;
+            const log = await prisma.auditLog.create({
+              data: {
+                action: 'ASSIGNMENT',
+                entity: 'TASK',
+                entityId: taskId,
+                userId: actingUserId,
+                details: { assigneeName: assignedUser?.name || 'Unassigned' },
+              },
+            });
+            if (assigneeId && assigneeId !== actingUserId) {
+              await prisma.taskNotification.create({
+                data: {
+                  userId: assigneeId,
+                  actorId: actingUserId,
+                  taskId,
+                  type: 'ASSIGNMENT',
+                  title: `${user?.name || 'Someone'} assigned this task to you`,
+                },
+              });
+              io.to(`user:${assigneeId}`).emit('notification_received');
+            }
+
+            activity = {
+              id: log.id,
+              type: 'assignment',
+              author: user?.name || 'Someone',
+              assigneeName: assignedUser?.name || 'Unassigned',
+              date: log.createdAt,
+              user,
+            };
+          } else if (priority && priority !== currentTask.priority) {
+            const log = await prisma.auditLog.create({
+              data: {
+                action: 'PRIORITY_CHANGE',
+                entity: 'TASK',
+                entityId: taskId,
+                userId: actingUserId,
+                details: { oldPriority: currentTask.priority, newPriority: priority },
+              },
+            });
+            activity = {
+              id: log.id,
+              type: 'priority_change',
+              author: user?.name || 'Someone',
+              oldPriority: currentTask.priority,
+              newPriority: priority,
+              date: log.createdAt,
+              user,
+            };
+          }
+
+          if (activity) {
+            if (roomListId) {
+              io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId, activity });
+            }
+            io.emit('task_activity', { taskId, activity });
+          }
+        } catch (err) {
+          console.error('Background task logging error:', err);
+        }
+      })();
+    }
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -548,62 +568,60 @@ export async function moveTask(req: Request, res: Response) {
 
     const oldStatus = currentTask.status;
 
-    // Immediately persist to DB with full relations
+    // Immediately persist to DB (scalar fields only for max speed)
     const updated = await prisma.task.update({
       where: { id },
       data: { status },
-      include: taskInclude,
     });
 
-    await invalidateCache(`task:${id}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
-
-    // Create AuditLog activity entry
-    let activity: any = null;
-    if (oldStatus !== status) {
-      const actingUserId = effectiveUser?.id || (await prisma.user.findFirst())?.id;
-      if (actingUserId) {
-        const user = await prisma.user.findUnique({
-          where: { id: actingUserId },
-          select: { id: true, name: true, avatarUrl: true, email: true },
-        });
-
-        const log = await prisma.auditLog.create({
-          data: {
-            action: 'STATUS_CHANGE',
-            entity: 'TASK',
-            entityId: id,
-            userId: actingUserId,
-            details: { oldStatus, newStatus: status },
-          },
-        });
-
-        activity = {
-          id: log.id,
-          type: 'status_change',
-          author: user?.name || 'Someone',
-          oldStatus,
-          newStatus: status,
-          date: log.createdAt,
-          user,
-        };
-      }
-    }
-
+    // Broadcast IMMEDIATELY after update
     const roomListId = currentListId || currentTask.listId;
-
     if (roomListId) {
       io.to(`list:${roomListId}`).emit('task:updated', updated);
-      if (activity) {
-        io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId: id, activity });
+    }
+    io.emit('task:updated', updated);
+
+    // Fire and forget cache invalidation so we don't block the API response
+    invalidateCache(`task:${id}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all').catch(err => {
+      console.error('Cache invalidation error:', err);
+    });
+
+    // Create AuditLog activity entry asynchronously so it doesn't block the API response
+    if (oldStatus !== status) {
+      const actingUserId = effectiveUser?.id || (userId ? userId : null);
+      if (actingUserId) {
+        prisma.user.findUnique({
+          where: { id: actingUserId },
+          select: { id: true, name: true, avatarUrl: true, email: true },
+        }).then(user => {
+          prisma.auditLog.create({
+            data: {
+              action: 'STATUS_CHANGE',
+              entity: 'TASK',
+              entityId: id,
+              userId: actingUserId,
+              details: { oldStatus, newStatus: status },
+            },
+          }).then(log => {
+            const activity = {
+              id: log.id,
+              type: 'status_change',
+              author: user?.name || 'Someone',
+              oldStatus,
+              newStatus: status,
+              date: log.createdAt,
+              user,
+            };
+            if (roomListId) {
+              io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId: id, activity });
+            }
+            io.emit('task_activity', { taskId: id, activity });
+          }).catch(console.error);
+        }).catch(console.error);
       }
     }
-    // Global broadcast for dashboards and workspace views
-    io.emit('task:updated', updated);
-    if (activity) {
-      io.emit('task_activity', { taskId: id, activity });
-    }
 
-    return res.json({ task: updated, activity, queued: true, message: 'Status updated successfully' });
+    return res.json({ task: updated, queued: true, message: 'Status updated successfully' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

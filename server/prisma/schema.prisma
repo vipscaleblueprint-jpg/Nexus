@@ -7,9 +7,538 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// -----------------------------------------------------------------------------
-// ENUMS
-// -----------------------------------------------------------------------------
+model Team {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  color       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       Task[]
+  members     User[]
+
+  @@index([name])
+}
+
+model WorkspaceRole {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  color     String?
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id                    String                @id @default(uuid())
+  email                 String                @unique
+  password              String
+  name                  String
+  avatarUrl             String?
+  dailySheetUrl         String?
+  starRating            Int                   @default(1)
+  employmentType        EmploymentType        @default(FULL_TIME)
+  isActive              Boolean               @default(true)
+  lastLoginAt           DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  systemRole            SystemRole            @default(MEMBER)
+  primaryRole           String?
+  secondaryRole         String?
+  tertiaryRole          String?
+  minorRole             String?
+  teamId                String?
+  googleId              String?               @unique
+  imageUrl              String?
+  uploadedAttachments   Attachment[]
+  auditLogs             AuditLog[]
+  createdChannels       Channel[]             @relation("ChannelCreatedBy")
+  channelMemberships    ChannelMember[]
+  checkedItems          ChecklistItem[]       @relation("ItemChecker")
+  favorites             Favorite[]
+  sentInvitations       Invitation[]          @relation("UserInvitations")
+  pinnedMessages        Message[]             @relation("MessagePinnedBy")
+  messagesSent          Message[]
+  messageMentions       MessageMention[]      @relation("UserMentions")
+  notifications         MessageNotification[]
+  messageReactions      MessageReaction[]
+  readReceipts          MessageReadReceipt[]
+  savedMessages         SavedMessage[]
+  ownedSpaces           Space[]               @relation("SpaceOwner")
+  Subtask               Subtask[]
+  assignedTasks         Task[]                @relation("TaskAssignee")
+  createdTasks          Task[]                @relation("TaskCreator")
+  taskCommentReactions  TaskCommentReaction[]
+  taskNotificationsSent TaskNotification[]    @relation("ActorNotification")
+  taskNotifications     TaskNotification[]    @relation("UserNotification")
+  team                  Team?                 @relation(fields: [teamId], references: [id])
+  assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
+  taskComments          TaskComment[]
+
+  @@index([email])
+  @@index([systemRole])
+  @@index([teamId])
+  @@index([primaryRole])
+}
+
+model Space {
+  id        String    @id @default(uuid())
+  name      String
+  icon      String?
+  color     String?
+  ownerId   String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  order     Int       @default(0)
+  channels  Channel[]
+  docs      Doc[]
+  folders   Folder[]
+  lists     List[]
+  owner     User      @relation("SpaceOwner", fields: [ownerId], references: [id])
+
+  @@index([ownerId])
+  @@index([name])
+}
+
+model Folder {
+  id             String   @id @default(uuid())
+  name           String
+  spaceId        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  parentFolderId String?
+  order          Int      @default(0)
+  docs           Doc[]
+  parentFolder   Folder?  @relation("FolderHierarchy", fields: [parentFolderId], references: [id], onDelete: Cascade)
+  subfolders     Folder[] @relation("FolderHierarchy")
+  space          Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  lists          List[]
+
+  @@index([spaceId])
+  @@index([parentFolderId])
+}
+
+model List {
+  id           String       @id @default(uuid())
+  name         String
+  spaceId      String?
+  folderId     String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  customGroups String[]     @default([])
+  order        Int          @default(0)
+  folder       Folder?      @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  space        Space?       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  statuses     ListStatus[]
+  tasks        Task[]
+
+  @@index([spaceId])
+  @@index([folderId])
+}
+
+model ListStatus {
+  id           String   @id @default(uuid())
+  name         String
+  color        String   @default("zinc")
+  allowedRoles String[] @default([])
+  listId       String
+  createdAt    DateTime @default(now())
+  groupName    String?
+  list         List     @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@index([listId])
+}
+
+model Doc {
+  id               String   @id @default(uuid())
+  title            String
+  docDate          DateTime @default(now())
+  spaceId          String?
+  folderId         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  isDailyRollover  Boolean  @default(false)
+  rolloverTimezone String   @default("Asia/Singapore")
+  order            Int      @default(0)
+  folder           Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  space            Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  pages            Page[]
+
+  @@index([spaceId])
+  @@index([folderId])
+}
+
+model Page {
+  id           String    @id @default(uuid())
+  title        String
+  content      String    @default("")
+  docId        String
+  parentPageId String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  isClosed     Boolean   @default(false)
+  reportDate   DateTime?
+  doc          Doc       @relation(fields: [docId], references: [id], onDelete: Cascade)
+  parentPage   Page?     @relation("PageHierarchy", fields: [parentPageId], references: [id], onDelete: Cascade)
+  subpages     Page[]    @relation("PageHierarchy")
+
+  @@index([docId])
+  @@index([parentPageId])
+  @@index([reportDate])
+}
+
+model Favorite {
+  id         String     @id @default(uuid())
+  userId     String
+  entityType EntityType
+  entityId   String
+  createdAt  DateTime   @default(now())
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, entityType, entityId])
+  @@index([userId])
+  @@index([entityType, entityId])
+}
+
+model Task {
+  id            String             @id @default(uuid())
+  title         String
+  description   String?
+  priority      Priority           @default(MEDIUM)
+  listId        String
+  creatorId     String
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  assigneeId    String?
+  dueDate       DateTime?
+  startDate     DateTime?
+  status        String             @default("Pending")
+  teamId        String?
+  attachments   Attachment[]
+  checklists    Checklist[]
+  subtasks      Subtask[]
+  assignee      User?              @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator       User               @relation("TaskCreator", fields: [creatorId], references: [id])
+  list          List               @relation(fields: [listId], references: [id], onDelete: Cascade)
+  team          Team?              @relation(fields: [teamId], references: [id])
+  comments      TaskComment[]
+  notifications TaskNotification[]
+  assignees     User[]             @relation("TaskMultiAssignees")
+
+  @@index([listId])
+  @@index([status])
+  @@index([priority])
+  @@index([assigneeId])
+  @@index([creatorId])
+  @@index([teamId])
+  @@index([createdAt])
+}
+
+model Subtask {
+  id          String        @id @default(uuid())
+  title       String
+  taskId      String
+  createdAt   DateTime      @default(now())
+  completed   Boolean       @default(false)
+  assigneeId  String?
+  dueDate     DateTime?
+  priority    Priority      @default(MEDIUM)
+  description String?
+  checklists  Checklist[]
+  User        User?         @relation(fields: [assigneeId], references: [id])
+  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  comments    TaskComment[]
+
+  @@index([taskId])
+  @@index([assigneeId])
+}
+
+model Checklist {
+  id        String          @id @default(uuid())
+  taskId    String
+  createdAt DateTime        @default(now())
+  name      String
+  subtaskId String?
+  subtask   Subtask?        @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
+  task      Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  items     ChecklistItem[]
+
+  @@index([taskId])
+  @@index([subtaskId])
+}
+
+model ChecklistItem {
+  id          String    @id @default(uuid())
+  text        String
+  checklistId String
+  createdAt   DateTime  @default(now())
+  checkedById String?
+  completed   Boolean   @default(false)
+  checkedBy   User?     @relation("ItemChecker", fields: [checkedById], references: [id])
+  checklist   Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+
+  @@index([checklistId])
+  @@index([checkedById])
+}
+
+model TaskComment {
+  id              String                @id @default(uuid())
+  content         String
+  taskId          String
+  userId          String
+  createdAt       DateTime              @default(now())
+  parentCommentId String?
+  replyCount      Int                   @default(0)
+  subtaskId       String?
+  attachments     Attachment[]
+  parentComment   TaskComment?          @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies         TaskComment[]         @relation("CommentReplies")
+  subtask         Subtask?              @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
+  task            Task                  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  reactions       TaskCommentReaction[]
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([subtaskId])
+  @@index([userId])
+  @@index([parentCommentId])
+}
+
+model TaskCommentReaction {
+  id        String      @id @default(uuid())
+  commentId String
+  userId    String
+  emoji     String
+  createdAt DateTime    @default(now())
+  comment   TaskComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@index([commentId])
+  @@index([userId])
+}
+
+model Attachment {
+  id            String       @id @default(uuid())
+  fileName      String
+  fileUrl       String
+  fileKey       String
+  fileSize      Int
+  mimeType      String
+  taskId        String?
+  taskCommentId String?
+  uploadedById  String
+  createdAt     DateTime     @default(now())
+  taskComment   TaskComment? @relation(fields: [taskCommentId], references: [id], onDelete: Cascade)
+  task          Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedBy    User         @relation(fields: [uploadedById], references: [id])
+
+  @@index([taskId])
+  @@index([uploadedById])
+}
+
+model Channel {
+  id          String          @id @default(uuid())
+  name        String?
+  description String?
+  isPrivate   Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  createdById String?
+  isArchived  Boolean         @default(false)
+  spaceId     String?
+  topic       String?
+  type        ChannelType     @default(PUBLIC)
+  updatedAt   DateTime        @updatedAt
+  createdBy   User?           @relation("ChannelCreatedBy", fields: [createdById], references: [id])
+  space       Space?          @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  members     ChannelMember[]
+  messages    Message[]
+
+  @@index([spaceId])
+  @@index([createdById])
+  @@index([type])
+  @@index([isPrivate])
+}
+
+model ChannelMember {
+  id                   String      @id @default(uuid())
+  channelId            String
+  userId               String
+  role                 ChannelRole @default(MEMBER)
+  notificationsEnabled Boolean     @default(true)
+  lastReadAt           DateTime    @default(now())
+  joinedAt             DateTime    @default(now())
+  channel              Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+  @@index([channelId])
+  @@index([userId])
+}
+
+model Message {
+  id              String                @id @default(uuid())
+  content         String
+  senderId        String
+  channelId       String
+  isEdited        Boolean               @default(false)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  deletedAt       DateTime?
+  editedAt        DateTime?
+  isDeleted       Boolean               @default(false)
+  isPinned        Boolean               @default(false)
+  parentMessageId String?
+  pinnedAt        DateTime?
+  pinnedById      String?
+  replyCount      Int                   @default(0)
+  channel         Channel               @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  parentMessage   Message?              @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: Cascade)
+  replies         Message[]             @relation("MessageReplies")
+  pinnedBy        User?                 @relation("MessagePinnedBy", fields: [pinnedById], references: [id])
+  sender          User                  @relation(fields: [senderId], references: [id])
+  attachments     MessageAttachment[]
+  mentions        MessageMention[]
+  notifications   MessageNotification[]
+  reactions       MessageReaction[]
+  readReceipts    MessageReadReceipt[]
+  savedMessages   SavedMessage[]
+
+  @@index([channelId, createdAt])
+  @@index([senderId])
+  @@index([parentMessageId])
+  @@index([isPinned])
+}
+
+model MessageAttachment {
+  id        String   @id @default(uuid())
+  messageId String
+  fileName  String
+  fileUrl   String
+  fileKey   String?
+  fileSize  Int
+  mimeType  String
+  createdAt DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@index([userId])
+}
+
+model MessageMention {
+  id              String   @id @default(uuid())
+  messageId       String
+  mentionedUserId String
+  createdAt       DateTime @default(now())
+  mentionedUser   User     @relation("UserMentions", fields: [mentionedUserId], references: [id], onDelete: Cascade)
+  message         Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([mentionedUserId])
+}
+
+model MessageReadReceipt {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+}
+
+model SavedMessage {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  savedAt   DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+}
+
+model MessageNotification {
+  id        String           @id @default(uuid())
+  userId    String
+  messageId String
+  type      NotificationType
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  message   Message          @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([messageId])
+}
+
+model TaskNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  actorId   String?
+  taskId    String?
+  type      String
+  title     String
+  content   String?
+  isRead    Boolean  @default(false)
+  isCleared Boolean  @default(false)
+  createdAt DateTime @default(now())
+  actor     User?    @relation("ActorNotification", fields: [actorId], references: [id])
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User     @relation("UserNotification", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isCleared])
+  @@index([taskId])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  entity    String
+  entityId  String
+  userId    String
+  details   Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+model Invitation {
+  id             String           @id @default(uuid())
+  email          String
+  role           SystemRole       @default(MEMBER)
+  employmentType EmploymentType   @default(FULL_TIME)
+  token          String           @unique @default(uuid())
+  status         InvitationStatus @default(PENDING)
+  invitedById    String
+  expiresAt      DateTime
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  invitedBy      User             @relation("UserInvitations", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([status])
+  @@index([invitedById])
+}
 
 enum SystemRole {
   ADMIN
@@ -65,629 +594,4 @@ enum NotificationType {
   REACTION
   DIRECT_MESSAGE
   CHANNEL_MESSAGE
-}
-
-// -----------------------------------------------------------------------------
-// DYNAMIC TEAMS
-// -----------------------------------------------------------------------------
-
-model Team {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
-  color       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  members User[]
-  tasks   Task[]
-
-  @@index([name])
-}
-
-model WorkspaceRole {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  color     String?
-  createdAt DateTime @default(now())
-}
-
-// -----------------------------------------------------------------------------
-// USER & MULTI-ROLE AUTHORIZATION
-// -----------------------------------------------------------------------------
-
-model User {
-  id             String         @id @default(uuid())
-  email          String         @unique
-  password       String
-  name           String
-  avatarUrl      String?
-  imageUrl       String?
-  googleId       String?        @unique
-  dailySheetUrl  String?
-  starRating     Int            @default(1)
-  employmentType EmploymentType @default(FULL_TIME)
-  isActive       Boolean        @default(true)
-  lastLoginAt    DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-
-  systemRole SystemRole @default(MEMBER)
-
-  primaryRole   String?
-  secondaryRole String?
-  tertiaryRole  String?
-  minorRole     String?
-
-  teamId String?
-  team   Team?   @relation(fields: [teamId], references: [id])
-
-  ownedSpaces            Space[]               @relation("SpaceOwner")
-  assignedTasks          Task[]                @relation("TaskAssignee")
-  assignedTasksMulti     Task[]                @relation("TaskMultiAssignees")
-  createdTasks           Task[]                @relation("TaskCreator")
-  assignedSubtasks       Subtask[]             @relation("SubtaskMultiAssignees")
-  checkedItems           ChecklistItem[]       @relation("ItemChecker")
-  assignedChecklistItems ChecklistItem[]       @relation("ItemAssignee")
-  favorites              Favorite[]
-  uploadedAttachments    Attachment[]
-  auditLogs              AuditLog[]
-  apiKeys                ApiKey[]
-  channelMemberships     ChannelMember[]
-  messagesSent           Message[]
-  messageReactions       MessageReaction[]
-  messageMentions        MessageMention[]      @relation("UserMentions")
-  readReceipts           MessageReadReceipt[]
-  savedMessages          SavedMessage[]
-  notifications          MessageNotification[]
-  taskNotifications      TaskNotification[]    @relation("UserNotification")
-  taskNotificationsSent  TaskNotification[]    @relation("ActorNotification")
-  taskComments           TaskComment[]
-  taskCommentReactions   TaskCommentReaction[]
-  pinnedMessages         Message[]             @relation("MessagePinnedBy")
-  createdChannels        Channel[]             @relation("ChannelCreatedBy")
-  sentInvitations        Invitation[]          @relation("UserInvitations")
-
-  @@index([email])
-  @@index([systemRole])
-  @@index([teamId])
-  @@index([primaryRole])
-}
-
-// -----------------------------------------------------------------------------
-// CLICKUP-STYLE HIERARCHY
-// -----------------------------------------------------------------------------
-
-model Space {
-  id        String   @id @default(uuid())
-  name      String
-  icon      String?
-  color     String?
-  ownerId   String
-  order     Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  owner    User      @relation("SpaceOwner", fields: [ownerId], references: [id])
-  folders  Folder[]
-  lists    List[]
-  docs     Doc[]
-  channels Channel[]
-
-  @@index([ownerId])
-  @@index([name])
-}
-
-model Folder {
-  id             String   @id @default(uuid())
-  name           String
-  spaceId        String?
-  parentFolderId String?
-  order          Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  space        Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  parentFolder Folder?  @relation("FolderHierarchy", fields: [parentFolderId], references: [id], onDelete: Cascade)
-  subfolders   Folder[] @relation("FolderHierarchy")
-  lists        List[]
-  docs         Doc[]
-
-  @@index([spaceId])
-  @@index([parentFolderId])
-}
-
-model List {
-  id           String   @id @default(uuid())
-  name         String
-  spaceId      String?
-  folderId     String?
-  customGroups String[] @default([])
-  order        Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  space    Space?       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  folder   Folder?      @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  tasks    Task[]
-  statuses ListStatus[]
-
-  @@index([spaceId])
-  @@index([folderId])
-}
-
-model ListStatus {
-  id           String   @id @default(uuid())
-  name         String
-  color        String   @default("zinc")
-  allowedRoles String[] @default([])
-  groupName    String?
-  listId       String
-  createdAt    DateTime @default(now())
-
-  list List @relation(fields: [listId], references: [id], onDelete: Cascade)
-
-  @@index([listId])
-}
-
-model Doc {
-  id               String   @id @default(uuid())
-  title            String
-  docDate          DateTime @default(now())
-  spaceId          String?
-  folderId         String?
-  isDailyRollover  Boolean  @default(false)
-  rolloverTimezone String   @default("Asia/Singapore")
-  order            Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  space  Space?  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  folder Folder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  pages  Page[]
-
-  @@index([spaceId])
-  @@index([folderId])
-}
-
-model Page {
-  id           String    @id @default(uuid())
-  title        String
-  content      String    @default("")
-  docId        String
-  parentPageId String?
-  isClosed     Boolean   @default(false)
-  reportDate   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  doc        Doc    @relation(fields: [docId], references: [id], onDelete: Cascade)
-  parentPage Page?  @relation("PageHierarchy", fields: [parentPageId], references: [id], onDelete: Cascade)
-  subpages   Page[] @relation("PageHierarchy")
-
-  @@index([docId])
-  @@index([parentPageId])
-  @@index([reportDate])
-}
-
-// -----------------------------------------------------------------------------
-// FAVORITES SYSTEM
-// -----------------------------------------------------------------------------
-
-model Favorite {
-  id         String     @id @default(uuid())
-  userId     String
-  entityType EntityType
-  entityId   String
-  createdAt  DateTime   @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, entityType, entityId])
-  @@index([userId])
-  @@index([entityType, entityId])
-}
-
-// -----------------------------------------------------------------------------
-// TASKS, SUBTASKS, CHECKLISTS & COMMENTS
-// -----------------------------------------------------------------------------
-
-model Task {
-  id          String    @id @default(uuid())
-  title       String
-  description String?
-  status      String    @default("Pending")
-  priority    Priority  @default(MEDIUM)
-  dueDate     DateTime?
-  startDate   DateTime?
-  listId      String
-  assigneeId  String?
-  creatorId   String
-  teamId                   String?
-  assigneeRoleRestrictions String[]
-  teamAssignAccessRole     String?
-  createdAt                DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
-
-  list          List               @relation(fields: [listId], references: [id], onDelete: Cascade)
-  assignee      User?              @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  assignees     User[]             @relation("TaskMultiAssignees")
-  creator       User               @relation("TaskCreator", fields: [creatorId], references: [id])
-  team          Team?              @relation(fields: [teamId], references: [id])
-  subtasks      Subtask[]
-  checklists    Checklist[]
-  comments      TaskComment[]
-  attachments   Attachment[]
-  notifications TaskNotification[]
-
-  @@index([listId])
-  @@index([status])
-  @@index([priority])
-  @@index([assigneeId])
-  @@index([creatorId])
-  @@index([teamId])
-  @@index([createdAt])
-}
-
-model Subtask {
-  id          String    @id @default(uuid())
-  title       String
-  description String?   @db.Text
-  completed   Boolean   @default(false)
-  status      String?
-  taskId                   String
-  priority                 Priority  @default(MEDIUM)
-  dueDate                  DateTime?
-  assigneeRoleRestrictions String[]
-  teamAssignAccessRole     String?
-  createdAt                DateTime  @default(now())
-
-  task       Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  assignees  User[]        @relation("SubtaskMultiAssignees")
-  comments   TaskComment[]
-  checklists Checklist[]
-
-  @@index([taskId])
-}
-
-model Checklist {
-  id        String   @id @default(uuid())
-  name      String
-  taskId    String
-  subtaskId String?
-  createdAt DateTime @default(now())
-
-  task    Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  subtask Subtask?        @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
-  items   ChecklistItem[]
-
-  @@index([taskId])
-  @@index([subtaskId])
-}
-
-model ChecklistItem {
-  id          String   @id @default(uuid())
-  text        String
-  completed   Boolean  @default(false)
-  checklistId String
-  checkedById String?
-  assigneeId  String?
-  createdAt   DateTime @default(now())
-
-  checklist Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
-  checkedBy User?     @relation("ItemChecker", fields: [checkedById], references: [id])
-  assignee  User?     @relation("ItemAssignee", fields: [assigneeId], references: [id])
-
-  @@index([checklistId])
-  @@index([checkedById])
-  @@index([assigneeId])
-}
-
-model TaskComment {
-  id              String   @id @default(uuid())
-  content         String
-  taskId          String
-  subtaskId       String?
-  userId          String
-  parentCommentId String?
-  replyCount      Int      @default(0)
-  createdAt       DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  task          Task                  @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  subtask       Subtask?              @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
-  attachments   Attachment[]
-  reactions     TaskCommentReaction[]
-  parentComment TaskComment?          @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
-  replies       TaskComment[]         @relation("CommentReplies")
-
-  @@index([taskId])
-  @@index([subtaskId])
-  @@index([userId])
-  @@index([parentCommentId])
-}
-
-model TaskCommentReaction {
-  id        String   @id @default(uuid())
-  commentId String
-  userId    String
-  emoji     String
-  createdAt DateTime @default(now())
-
-  comment TaskComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([commentId, userId, emoji])
-  @@index([commentId])
-  @@index([userId])
-}
-
-model Attachment {
-  id            String   @id @default(uuid())
-  fileName      String
-  fileUrl       String
-  fileKey       String
-  fileSize      Int
-  mimeType      String
-  taskId        String?
-  taskCommentId String?
-  uploadedById  String
-  createdAt     DateTime @default(now())
-
-  task        Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  taskComment TaskComment? @relation(fields: [taskCommentId], references: [id], onDelete: Cascade)
-  uploadedBy  User         @relation(fields: [uploadedById], references: [id])
-
-  @@index([taskId])
-  @@index([uploadedById])
-}
-
-// -----------------------------------------------------------------------------
-// CHANNELS, DMs, MESSAGES, THREADS, REACTION, MENTIONS, PINS, READ RECEIPTS
-// -----------------------------------------------------------------------------
-
-model Channel {
-  id          String      @id @default(uuid())
-  name        String?
-  topic       String?
-  description String?
-  type        ChannelType @default(PUBLIC)
-  isPrivate   Boolean     @default(false)
-  isArchived  Boolean     @default(false)
-  spaceId     String?
-  createdById String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  space     Space?          @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  createdBy User?           @relation("ChannelCreatedBy", fields: [createdById], references: [id])
-  members   ChannelMember[]
-  messages  Message[]
-
-  @@index([spaceId])
-  @@index([createdById])
-  @@index([type])
-  @@index([isPrivate])
-}
-
-model ChannelMember {
-  id                   String      @id @default(uuid())
-  channelId            String
-  userId               String
-  role                 ChannelRole @default(MEMBER)
-  notificationsEnabled Boolean     @default(true)
-  lastReadAt           DateTime    @default(now())
-  joinedAt             DateTime    @default(now())
-
-  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([channelId, userId])
-  @@index([channelId])
-  @@index([userId])
-}
-
-model Message {
-  id              String    @id @default(uuid())
-  content         String
-  channelId       String
-  senderId        String
-  parentMessageId String?
-  replyCount      Int       @default(0)
-  isEdited        Boolean   @default(false)
-  editedAt        DateTime?
-  isDeleted       Boolean   @default(false)
-  deletedAt       DateTime?
-  isPinned        Boolean   @default(false)
-  pinnedAt        DateTime?
-  pinnedById      String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  channel       Channel               @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  sender        User                  @relation(fields: [senderId], references: [id])
-  parentMessage Message?              @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: Cascade)
-  replies       Message[]             @relation("MessageReplies")
-  pinnedBy      User?                 @relation("MessagePinnedBy", fields: [pinnedById], references: [id])
-  attachments   MessageAttachment[]
-  reactions     MessageReaction[]
-  mentions      MessageMention[]
-  readReceipts  MessageReadReceipt[]
-  savedMessages SavedMessage[]
-  notifications MessageNotification[]
-
-  @@index([channelId, createdAt])
-  @@index([senderId])
-  @@index([parentMessageId])
-  @@index([isPinned])
-}
-
-model MessageAttachment {
-  id        String   @id @default(uuid())
-  messageId String
-  fileName  String
-  fileUrl   String
-  fileKey   String?
-  fileSize  Int
-  mimeType  String
-  createdAt DateTime @default(now())
-
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  @@index([messageId])
-}
-
-model MessageReaction {
-  id        String   @id @default(uuid())
-  messageId String
-  userId    String
-  emoji     String
-  createdAt DateTime @default(now())
-
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, userId, emoji])
-  @@index([messageId])
-  @@index([userId])
-}
-
-model MessageMention {
-  id              String   @id @default(uuid())
-  messageId       String
-  mentionedUserId String
-  createdAt       DateTime @default(now())
-
-  message       Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  mentionedUser User    @relation("UserMentions", fields: [mentionedUserId], references: [id], onDelete: Cascade)
-
-  @@index([messageId])
-  @@index([mentionedUserId])
-}
-
-model MessageReadReceipt {
-  id        String   @id @default(uuid())
-  messageId String
-  userId    String
-  readAt    DateTime @default(now())
-
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, userId])
-  @@index([messageId])
-  @@index([userId])
-}
-
-model SavedMessage {
-  id        String   @id @default(uuid())
-  messageId String
-  userId    String
-  savedAt   DateTime @default(now())
-
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, userId])
-  @@index([messageId])
-  @@index([userId])
-}
-
-model MessageNotification {
-  id        String           @id @default(uuid())
-  userId    String
-  messageId String
-  type      NotificationType
-  isRead    Boolean          @default(false)
-  createdAt DateTime         @default(now())
-
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  @@index([userId, isRead])
-  @@index([messageId])
-}
-
-// -----------------------------------------------------------------------------
-// TASK NOTIFICATIONS (INBOX)
-// -----------------------------------------------------------------------------
-
-model TaskNotification {
-  id        String   @id @default(uuid())
-  userId    String
-  actorId   String?
-  taskId    String?
-  type      String // "ASSIGNMENT" or "MENTION"
-  title     String
-  content   String?
-  isRead    Boolean  @default(false)
-  isCleared Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  user  User  @relation("UserNotification", fields: [userId], references: [id], onDelete: Cascade)
-  actor User? @relation("ActorNotification", fields: [actorId], references: [id], onDelete: SetNull)
-  task  Task? @relation(fields: [taskId], references: [id], onDelete: Cascade)
-
-  @@index([userId, isCleared])
-  @@index([taskId])
-}
-
-// -----------------------------------------------------------------------------
-// API KEYS
-// -----------------------------------------------------------------------------
-
-model ApiKey {
-  id        String    @id @default(uuid())
-  key       String    @unique
-  name      String
-  userId    String
-  createdAt DateTime  @default(now())
-  lastUsed  DateTime?
-
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-}
-
-// -----------------------------------------------------------------------------
-// AUDIT LOGS
-// -----------------------------------------------------------------------------
-
-model AuditLog {
-  id        String   @id @default(uuid())
-  action    String
-  entity    String
-  entityId  String
-  userId    String
-  details   Json?
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([entity, entityId])
-  @@index([createdAt])
-}
-
-// -----------------------------------------------------------------------------
-// INVITATIONS
-// -----------------------------------------------------------------------------
-
-model Invitation {
-  id             String           @id @default(uuid())
-  email          String
-  role           SystemRole       @default(MEMBER)
-  employmentType EmploymentType   @default(FULL_TIME)
-  token          String           @unique @default(uuid())
-  status         InvitationStatus @default(PENDING)
-  invitedById    String
-  invitedBy      User             @relation("UserInvitations", fields: [invitedById], references: [id], onDelete: Cascade)
-  expiresAt      DateTime
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-
-  @@index([email])
-  @@index([status])
-  @@index([invitedById])
 }

@@ -558,7 +558,24 @@ export function TaskDetailModalContent({
     const handleActivity = (data: any) => {
       if (data.taskId === task.id) {
         setActivities(prev => {
+          // If real ID already exists, skip
           if (prev.some(a => a.id === data.activity.id)) return prev;
+          // If an optimistic entry of the same type exists, replace it with the real one
+          // (this happens on the acting client who already has an optimistic placeholder)
+          const typePrefix = data.activity.type === 'status_change' ? 'optimistic-status'
+            : data.activity.type === 'assignment' ? 'optimistic-assign'
+            : data.activity.type === 'priority_change' ? 'optimistic-priority'
+            : null;
+          if (typePrefix) {
+            const optimisticIdx = prev.findIndex(
+              a => typeof a.id === 'string' && a.id.startsWith(typePrefix)
+            );
+            if (optimisticIdx !== -1) {
+              const updated = [...prev];
+              updated[optimisticIdx] = data.activity;
+              return updated;
+            }
+          }
           return [...prev, data.activity];
         });
       }
@@ -656,18 +673,29 @@ export function TaskDetailModalContent({
     if (onStatusChange) onStatusChange(newStatus);
     else task.status = newStatus;
 
+    // Optimistically append activity to local feed immediately
+    const optimisticId = `optimistic-status-${Date.now()}`;
+    const optimisticActivity = {
+      id: optimisticId,
+      type: 'status_change',
+      author: currentUser?.name || 'Someone',
+      oldStatus,
+      newStatus,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticActivity]);
+
     try {
       const res = await tasksApi.moveTask(task.id, newStatus, task.listId, currentUser?.id);
       if (res?.activity) {
-        setActivities(prev => {
-          if (prev.some(a => a.id === res.activity.id)) return prev;
-          return [...prev, res.activity];
-        });
-      } else {
-        loadActivities();
+        // Replace optimistic entry with real one from server
+        setActivities(prev => prev.map(a => a.id === optimisticId ? res.activity : a));
       }
       toast.success(`Moved to ${newStatus}`);
     } catch (err: any) {
+      // Rollback optimistic activity on error
+      setActivities(prev => prev.filter(a => a.id !== optimisticId));
       toast.error(err.message || 'Failed to move task');
     }
   };
@@ -689,7 +717,21 @@ export function TaskDetailModalContent({
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
   const persistAssignees = useCallback(
-    async (taskToUpdate: Task, updatedIds: string[], primaryAssignee: UserModel | null) => {
+    async (taskToUpdate: Task, updatedIds: string[], primaryAssignee: UserModel | null, updatedAssignees: UserModel[]) => {
+      // Optimistically append activity to local feed immediately
+      const optimisticId = `optimistic-assign-${Date.now()}`;
+      const names = updatedAssignees.length > 0 ? updatedAssignees.map(u => u.name).join(', ') : 'Unassigned';
+      const optimisticActivity = {
+        id: optimisticId,
+        type: 'assignment',
+        author: currentUser?.name || 'Someone',
+        assigneeName: names,
+        assignees: updatedAssignees.map(u => u.name),
+        date: new Date(),
+        user: currentUser,
+      };
+      setActivities(prev => [...prev, optimisticActivity]);
+
       try {
         await tasksApi.updateTask(taskToUpdate.id, {
           assigneeIds: updatedIds,
@@ -697,12 +739,15 @@ export function TaskDetailModalContent({
           currentListId: taskToUpdate.listId,
           userId: currentUser?.id,
         });
-        loadActivities();
+        // Server will emit task_activity via socket for the other account
+        // Don't reload activities here — optimistic update is sufficient for local user
       } catch (err: any) {
+        // Rollback on error
+        setActivities(prev => prev.filter(a => a.id !== optimisticId));
         console.error('[TaskDetailModal] Failed to persist assignees:', err);
       }
     },
-    [currentUser?.id, loadActivities]
+    [currentUser, setActivities]
   );
 
   const handleToggleAssignee = (user: UserModel) => {
@@ -743,7 +788,7 @@ export function TaskDetailModalContent({
       clearTimeout(assigneeDebounceRef.current);
     }
     assigneeDebounceRef.current = setTimeout(() => {
-      persistAssignees(updatedTask, updatedIds, primaryAssignee);
+      persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees);
     }, 400);
   };
 
@@ -773,7 +818,7 @@ export function TaskDetailModalContent({
     }
     setIsAssigneeOpen(false);
 
-    persistAssignees(updatedTask, [], null);
+    persistAssignees(updatedTask, [], null, []);
   };
 
   const handlePriorityChange = async (p: Priority) => {
@@ -786,15 +831,29 @@ export function TaskDetailModalContent({
     }
     setIsPriorityOpen(false);
 
+    // Optimistically append activity immediately
+    const optimisticId = `optimistic-priority-${Date.now()}`;
+    const optimisticActivity = {
+      id: optimisticId,
+      type: 'priority_change',
+      author: currentUser?.name || 'Someone',
+      oldPriority,
+      newPriority: p,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticActivity]);
+
     try {
       await tasksApi.updateTask(task.id, {
         priority: p,
         currentListId: task.listId,
         userId: currentUser?.id,
       });
-      loadActivities();
       toast.success(`Priority set to ${p}`);
     } catch (err: any) {
+      // Rollback on error
+      setActivities(prev => prev.filter(a => a.id !== optimisticId));
       toast.error(err.message || 'Failed to update priority');
     }
   };

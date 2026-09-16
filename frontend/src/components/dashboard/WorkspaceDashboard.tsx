@@ -654,23 +654,6 @@ function WorkspaceDashboardContent({
           </h1>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => onOpenCreate("LIST")}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-colors cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            New List
-          </button>
-
-          <button
-            onClick={() => onOpenCreate("DOC")}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-md transition-colors cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            New Doc
-          </button>
-        </div>
       </div>
 
 

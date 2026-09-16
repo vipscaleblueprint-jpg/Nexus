@@ -161,6 +161,7 @@ export interface Subtask {
   id: string;
   title: string;
   description?: string | null;
+  status?: string;
   completed: boolean;
   taskId: string;
   assignees?: User[];

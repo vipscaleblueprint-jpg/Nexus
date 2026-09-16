@@ -160,7 +160,7 @@ const CardContent = ({ task: initialTask, isSubtask = false, children, onDropdow
   }
 
   const breadcrumbs = 'list' in task && task.list ? `In ${task.list.space?.name || 'Space'} | ${task.list.folder?.name || 'Folder'} | ${task.list.name}` : '';
-  const statusStr = 'status' in task ? task.status : ('completed' in task && task.completed ? 'CLOSED' : 'PENDING');
+  const statusStr = ('status' in task && task.status) ? task.status : ('completed' in task && task.completed ? 'CLOSED' : 'PENDING');
   const isClosed = statusStr.toUpperCase() === 'CLOSED' || ('completed' in task && task.completed);
 
   // Field hover class
@@ -172,13 +172,6 @@ const CardContent = ({ task: initialTask, isSubtask = false, children, onDropdow
         <h4 className="text-[13px] font-semibold text-zinc-200 leading-tight">
           {task.title}
         </h4>
-        {!isSubtask && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800/80 border border-zinc-700 text-zinc-400 rounded-md px-1 py-0.5 shadow-sm">
-            <Plus className="w-3 h-3 hover:text-zinc-200 cursor-pointer" />
-            <Pencil className="w-3 h-3 hover:text-zinc-200 cursor-pointer" />
-            <MoreHorizontal className="w-3 h-3 hover:text-zinc-200 cursor-pointer" />
-          </div>
-        )}
       </div>
 
       {!isSubtask && breadcrumbs && (

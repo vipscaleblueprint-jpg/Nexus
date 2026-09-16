@@ -1,8 +1,12 @@
 import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
+import { debugLog } from './debug';
 import {
   DndContext,
   DragOverlay,
+  closestCorners,
   rectIntersection,
+  pointerWithin,
+  closestCenter,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -21,10 +25,12 @@ import { getRoles } from '@/api/roles';
 import { canUserMoveTask, canUserEditTask } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
+const EMPTY_ARRAY: any[] = [];
 
 interface Props {
   tasks: Task[];
-  onTaskMove: (taskId: string, newStatus: string) => Promise<void>;
+  onTaskMove: (taskId: string, newStatus: string) => void;
+  onTaskMovePreview?: (taskId: string, newStatus: string) => void;
   onTaskReorder?: (activeId: string, overId: string) => void;
   onAddTaskClick?: (status: string) => void;
   onTaskClick?: (task: Task) => void;
@@ -81,9 +87,10 @@ const SortableGroupWrapper = memo(function SortableGroupWrapper({
   children: (sortable: any) => React.ReactNode;
 }) {
   const isSortable = !category.isCatchAll;
+  const sortableData = useMemo(() => ({ type: 'Group', groupName: category.title }), [category.title]);
   const sortable = useSortable({
     id: category.id,
-    data: { type: 'Group', groupName: category.title },
+    data: sortableData,
     disabled: !isSortable,
   });
 
@@ -194,15 +201,29 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   );
 });
 
-export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange }: Props) {
+export function KanbanBoard({ tasks,  onTaskMove,
+  onTaskMovePreview,
+  onTaskReorder,
+  onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange }: Props) {
+  debugLog('KanbanBoard', `Render board with tasks=${tasks.length}`);
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAppStore((s) => s.currentUser);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
+  
+  // Keep track of the latest tasks prop to merge missed websocket updates after drag
+  const latestTasksRef = useRef(tasks);
+  latestTasksRef.current = tasks;
+  
+  // Track dragging state in a ref so it doesn't trigger effect runs
+  const isDraggingRef = useRef(false);
 
   useEffect(() => {
-    setLocalTasks(tasks);
+    if (!isDraggingRef.current) {
+      debugLog('KanbanBoard', `Tasks prop updated! length=${tasks.length}`);
+      setLocalTasks(tasks);
+    }
   }, [tasks]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
     if (typeof window !== 'undefined') {
@@ -313,16 +334,19 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     boardContainerRef.current.scrollLeft = scrollLeftRef.current - walk;
   };
 
+  const pointerSensorOptions = useMemo(() => ({
+    activationConstraint: {
+      distance: 8,
+    },
+  }), []);
+
+  const keyboardSensorOptions = useMemo(() => ({
+    coordinateGetter: sortableKeyboardCoordinates,
+  }), []);
+
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        // Require the user to move 8px before drag starts — prevents accidental drags on click
-        distance: 8,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(PointerSensor, pointerSensorOptions),
+    useSensor(KeyboardSensor, keyboardSensorOptions)
   );
 
   // Group tasks by status
@@ -441,6 +465,10 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     return sortedSections;
   }, [tasksByStatus, customGroups, listStatuses]);
 
+  const sortableColumnIds = useMemo(() => {
+    return categorizedColumns.filter(c => !c.isCatchAll).map(c => c.id);
+  }, [categorizedColumns]);
+
   const toggleColumnCollapse = (status: string, categoryId: string) => {
     setCollapsedColumns((prev) => {
       const next = { ...prev, [status]: !prev[status] };
@@ -482,6 +510,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
   }, [newGroup, onAddGroup]);
 
   const handleDragStart = (event: DragStartEvent) => {
+    isDraggingRef.current = true;
     const { active } = event;
     
     if (active.data.current?.type === 'Group') {
@@ -512,6 +541,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
+    debugLog('KanbanBoard', `handleDragOver active=${active.id}, over=${over?.id}`);
     if (!over) return;
     
     if (active.data.current?.type === 'Group') return;
@@ -540,15 +570,27 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
         }
         return newTasks;
       });
+
+      // Relay the move to other clients immediately (while still dragging)
+      if (onTaskMovePreview) {
+        onTaskMovePreview(activeId, overStatus);
+      }
     }
   };
 
   const customCollisionDetection = useCallback((args: any) => {
     const isGroupDrag = args.active?.data?.current?.type === 'Group';
-    const collisions = rectIntersection(args);
     
     if (isGroupDrag) {
+      const collisions = rectIntersection(args);
       return collisions.filter((c: any) => c.data?.current?.type === 'Group' && c.id !== args.active?.id);
+    }
+    
+    // For tasks, use pointerWithin to prevent layout shift infinite loops.
+    // If the pointer is not strictly within any container, fallback to closestCenter.
+    let collisions = pointerWithin(args);
+    if (collisions.length === 0) {
+      collisions = closestCenter(args);
     }
     
     return collisions.filter((c: any) => c.data?.current?.type !== 'Group' && c.id !== args.active?.id);
@@ -575,6 +617,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     const originalTask = activeTask;
 
     // Clear drag state
+    isDraggingRef.current = false;
     setActiveTask(null);
 
     if (!originalTask) {
@@ -612,6 +655,16 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     if (!finalStatus) return;
 
     if (finalStatus !== originalTask.status) {
+      // Optimistic update locally on top of the latest tasks (in case we missed websocket updates while dragging)
+      setLocalTasks(() => {
+        const newTasks = [...latestTasksRef.current];
+        const idx = newTasks.findIndex(t => t.id === activeId);
+        if (idx > -1) {
+          newTasks[idx] = { ...newTasks[idx], status: finalStatus };
+        }
+        return newTasks;
+      });
+
       // Card moved to a different column — commit to API
       onTaskMove(activeId, finalStatus);
     } else if (over && active.id !== over.id && onTaskReorder) {
@@ -622,19 +675,20 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
 
 
   const handleDragCancel = () => {
+    isDraggingRef.current = false;
     setActiveTask(null);
     setActiveGroup(null);
-    setLocalTasks(tasks);
+    setLocalTasks(latestTasksRef.current);
   };
 
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={customCollisionDetection}
-      autoScroll={{
+      autoScroll={useMemo(() => ({
         layoutShiftCompensation: false,
         acceleration: 1.5, // Slow down auto-scroll (default is often 10+)
-      }}
+      }), [])}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
@@ -651,7 +705,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
         className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 pb-4 px-2 custom-scrollbar transition-all duration-300 ${!activeTask ? 'snap-x snap-mandatory' : ''}`}
       >
         <SortableContext 
-          items={categorizedColumns.filter(c => !c.isCatchAll).map(c => c.id)} 
+          items={sortableColumnIds} 
           strategy={horizontalListSortingStrategy}
         >
           {categorizedColumns.map((category) => {
@@ -782,7 +836,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
                           key={status}
                           status={status}
                           category={category}
-                          tasks={tasksByStatus[status] || []}
+                          tasks={tasksByStatus[status] || EMPTY_ARRAY}
                           isCollapsed={isCollapsed}
                           setCollapsedColumns={setCollapsedColumns}
                           toggleColumnCollapse={toggleColumnCollapse}

@@ -1,8 +1,10 @@
-# Nexus Workspace Rules & Workflows Index
+# Nexus Workspace
 
-This file serves as a directory of active rules and workflows for this repository. DO NOT duplicate these rules here; read the source files directly.
+## Stack
+- **Package Manager:** npm (frontend and server)
+- **Frontend:** React 19, Next.js 16.3.4 (App Router), Tailwind CSS v4, Zustand, TipTap, yjs.
+- **Server:** Node.js (tsx), Express, Prisma ORM, PostgreSQL, Socket.io, BullMQ.
 
-<<<<<<< Updated upstream
 ## Architecture
 - **Frontend (`/frontend`):** Uses `/src/app` for routing, `/src/components` for UI, `/src/api` for data fetching, `/src/lib` for utils. 
 - **Server (`/server`):** Layered pattern with `/src/routes`, `/src/controllers`, `/src/services`, `/src/middleware`, `/src/validation`, `/src/workers`.
@@ -29,13 +31,3 @@ This file serves as a directory of active rules and workflows for this repositor
 - Always run `npm run prisma:migrate` or `npx prisma db push` inside `server` after approved schema changes.
 - Do not bypass state management systems or directly manipulate the DOM.
 - Avoid modifying `.next/`, `node_modules/`, or `server/dist/` - these are generated.
-=======
-- **Global Agent Workflow**: `.agents/rules/core-workflow.mdc`
-- **Frontend Rules**: `.agents/rules/frontend-guidelines.mdc`
-- **Frontend Design System**: `.agents/rules/design-system.mdc`
-- **Server Rules**: `.agents/rules/server-guidelines.mdc`
-- **Anti-Hallucination Protocol**: `.agents/rules/anti-hallucination.mdc`
-- **Security & Secrets**: `.agents/rules/security.mdc`
-- **DB Migration Workflow**: `.agents/skills/db-migration/SKILL.md`
-- **Architecture Overview**: `.agents/skills/architecture/SKILL.md`
->>>>>>> Stashed changes

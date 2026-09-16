@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { ListSkeleton } from '@/components/ui/Skeleton';
+import { debugLog } from '@/components/board/debug';
 import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
@@ -123,11 +124,27 @@ export default function BoardPage() {
 
     // Real-time: task updated/moved by another user
     s.on('task:updated', (updatedTask: any) => {
+      console.log('[BoardPage Socket] task:updated received', updatedTask.id, updatedTask.status);
       setList((prev: any) => {
-        if (!prev || !prev.tasks) return prev;
+        if (!prev || !prev.tasks) {
+          console.log('[BoardPage Socket] aborting setList, prev or prev.tasks is null');
+          return prev;
+        }
+        
+        let found = false;
+        const newTasks = prev.tasks.map((t: any) => {
+          if (t.id === updatedTask.id) {
+            found = true;
+            console.log('[BoardPage Socket] Match found! Updating status from', t.status, 'to', updatedTask.status);
+            return { ...t, ...updatedTask };
+          }
+          return t;
+        });
+
+        console.log('[BoardPage Socket] setList completed. Task was found:', found);
         return {
           ...prev,
-          tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? { ...t, ...updatedTask } : t)
+          tasks: newTasks
         };
       });
       setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
@@ -140,6 +157,19 @@ export default function BoardPage() {
         return { ...prev, tasks: prev.tasks.filter((t: any) => t.id !== data.taskId) };
       });
       setSelectedTask((prev: any) => prev?.id === data.taskId ? null : prev);
+    });
+
+    // Real-time: task dragging between columns
+    s.on('task_move_preview', (data: { taskId: string; status: string }) => {
+      setList((prev: any) => {
+        if (!prev || !prev.tasks) return prev;
+        return {
+          ...prev,
+          tasks: prev.tasks.map((t: any) => 
+            t.id === data.taskId ? { ...t, status: data.status } : t
+          ),
+        };
+      });
     });
 
     s.on('task:comment_added', (payload: { taskId: string, comment: any }) => {
@@ -158,6 +188,7 @@ export default function BoardPage() {
 
     // Real-time: task reorder within a column
     s.on('task_reorder', (data: { status: string; taskIds: string[] }) => {
+      console.log('[BoardPage Socket] task_reorder received', data);
       setList((prev: any) => {
         if (!prev || !prev.tasks) return prev;
         const otherTasks = prev.tasks.filter((t: any) => t.status !== data.status);
@@ -205,6 +236,8 @@ export default function BoardPage() {
     ...statusOrder.filter((s) => tasksByStatus[s]),
     ...Object.keys(tasksByStatus).filter((s) => !statusOrder.includes(s)),
   ];
+  
+  debugLog('BoardPage', `Render BoardPage with list.tasks length=${list?.tasks?.length}`);
 
   const breadcrumb = [
     list?.space?.name,
@@ -223,6 +256,7 @@ export default function BoardPage() {
     }
 
     // Optimistically update UI
+    console.log('[BoardPage] handleTaskMove optimistic update', taskId, newStatus);
     setList((prev: any) => ({
       ...prev,
       tasks: prev.tasks.map((t: any) =>
@@ -231,6 +265,7 @@ export default function BoardPage() {
     }));
 
     try {
+      console.log('[BoardPage] calling tasksApi.moveTask');
       await tasksApi.moveTask(taskId, newStatus, id as string, currentUser?.id);
     } catch (err: any) {
       console.error('Failed to move task:', err);
@@ -262,6 +297,16 @@ export default function BoardPage() {
       }
       return prev;
     });
+  };
+
+  const handleTaskMovePreview = (taskId: string, newStatus: string) => {
+    if (socket) {
+      socket.emit('task_move_preview', {
+        listId: id,
+        taskId,
+        status: newStatus,
+      });
+    }
   };
 
   const handleAddTask = async (task: any) => {
@@ -390,6 +435,7 @@ export default function BoardPage() {
               <KanbanBoard
                 tasks={list?.tasks || []}
                 onTaskMove={handleTaskMove}
+                onTaskMovePreview={handleTaskMovePreview}
                 onTaskReorder={handleTaskReorder}
                 onAddTaskClick={(status) => {
                   setTaskModalStatus(status);

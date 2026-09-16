@@ -196,14 +196,27 @@ function WorkspaceDashboardContent({
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
-  const [currentTab, setCurrentTab] = useState<"all" | "my">(
+  const [currentTab, setCurrentTab] = useState<"all" | "my" | "clients" | "priorities">(
     searchParams?.get("filter") === "my" || activeView === "my" ? "my" : "all",
   );
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
+
+  // Track local updates to prevent socket echoes from causing UI bouncing
+  const pendingTaskUpdatesRef = useRef<Record<string, number>>({});
+
+  const toggleGroup = (groupKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
 
   // Inline Add Task state
   const [addingStatus, setAddingStatus] = useState<string | null>(null);
@@ -216,6 +229,10 @@ function WorkspaceDashboardContent({
     const filter = searchParams?.get("filter");
     if (filter === "my" || activeView === "my") {
       setCurrentTab("my");
+    } else if (filter === "clients") {
+      setCurrentTab("clients");
+    } else if (filter === "priorities") {
+      setCurrentTab("priorities");
     } else {
       setCurrentTab("all");
     }
@@ -277,6 +294,11 @@ function WorkspaceDashboardContent({
     });
 
     s.on("task:updated", (updatedTask: Task) => {
+      const lastUpdated = pendingTaskUpdatesRef.current[updatedTask.id];
+      if (lastUpdated && Date.now() - lastUpdated < 5000) {
+        return;
+      }
+      
       setTasks((prev) => {
         const exists = prev.some((t) => t.id === updatedTask.id);
         if (!exists) {
@@ -310,12 +332,12 @@ function WorkspaceDashboardContent({
     return () => window.removeEventListener("focus", handleFocus);
   }, [fetchTasks]);
 
-  const handleTabChange = (tab: "all" | "my") => {
+  const handleTabChange = (tab: "all" | "my" | "clients" | "priorities") => {
     setCurrentTab(tab);
-    if (tab === "my") {
-      router.replace("/tasks?filter=my");
-    } else {
+    if (tab === "all") {
       router.replace("/");
+    } else {
+      router.replace(`/tasks?filter=${tab}`);
     }
   };
 
@@ -516,6 +538,129 @@ function WorkspaceDashboardContent({
     }));
   }, [filteredAllTasks]);
 
+  const groupedAllTasksByPriority = useMemo(() => {
+    const priorityGroups: Record<string, Record<string, Task[]>> = {};
+    const priorityOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW", "EMPTY"];
+    filteredAllTasks.forEach((t) => {
+      const p = t.priority ? t.priority.toUpperCase() : "EMPTY";
+      const s = (t.status || "TODO").trim().toUpperCase();
+      if (!priorityGroups[p]) priorityGroups[p] = {};
+      if (!priorityGroups[p][s]) priorityGroups[p][s] = [];
+      priorityGroups[p][s].push(t);
+    });
+
+    const statusOrder = [
+      "IN PROGRESS",
+      "IN_PROGRESS",
+      "PENDING",
+      "DAILY",
+      "KYC",
+      "TODO",
+      "REVIEW",
+      "COMPLETED",
+      "COMPLETE",
+    ];
+
+    const allGroupKeys = Object.keys(priorityGroups);
+    if (allGroupKeys.length === 0) return [];
+    allGroupKeys.sort((a, b) => {
+      const idxA = priorityOrder.indexOf(a);
+      const idxB = priorityOrder.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+
+    return allGroupKeys.map((priorityKey) => {
+      const config = PRIORITY_FLAGS[priorityKey] || {
+        label: priorityKey,
+        color: "text-zinc-500",
+        iconColor: "text-zinc-500",
+      };
+
+      const statusGroups = priorityGroups[priorityKey];
+      const statusKeys = Object.keys(statusGroups).sort((a, b) => {
+        const idxA = statusOrder.indexOf(a);
+        const idxB = statusOrder.indexOf(b);
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return a.localeCompare(b);
+      });
+
+      const subGroups = statusKeys.map((statusKey) => ({
+        status: statusKey,
+        config: getStatusConfig(statusKey),
+        tasks: statusGroups[statusKey],
+      }));
+
+      const totalTasks = subGroups.reduce((acc, sg) => acc + sg.tasks.length, 0);
+
+      return {
+        priority: priorityKey,
+        config,
+        tasks: [],
+        subGroups,
+        totalTasks
+      };
+    });
+  }, [filteredAllTasks]);
+
+  const groupedAllTasksByClient = useMemo(() => {
+    const clientGroups: Record<string, Record<string, Task[]>> = {};
+    filteredAllTasks.forEach((t) => {
+      const c = t.list?.name || "Workspace";
+      const s = (t.status || "TODO").trim().toUpperCase();
+      if (!clientGroups[c]) clientGroups[c] = {};
+      if (!clientGroups[c][s]) clientGroups[c][s] = [];
+      clientGroups[c][s].push(t);
+    });
+
+    const priorityOrder = [
+      "IN PROGRESS",
+      "IN_PROGRESS",
+      "PENDING",
+      "DAILY",
+      "KYC",
+      "TODO",
+      "REVIEW",
+      "COMPLETED",
+      "COMPLETE",
+    ];
+
+    const allClientKeys = Object.keys(clientGroups);
+    if (allClientKeys.length === 0) return [];
+    allClientKeys.sort((a, b) => a.localeCompare(b));
+
+    return allClientKeys.map((clientKey) => {
+      const statusGroups = clientGroups[clientKey];
+      const statusKeys = Object.keys(statusGroups).sort((a, b) => {
+        const idxA = priorityOrder.indexOf(a);
+        const idxB = priorityOrder.indexOf(b);
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return a.localeCompare(b);
+      });
+
+      const subGroups = statusKeys.map((statusKey) => ({
+        status: statusKey,
+        config: getStatusConfig(statusKey),
+        tasks: statusGroups[statusKey],
+      }));
+
+      const totalTasks = subGroups.reduce((acc, sg) => acc + sg.tasks.length, 0);
+
+      return {
+        client: clientKey,
+        tasks: [],
+        subGroups,
+        totalTasks
+      };
+    });
+  }, [filteredAllTasks]);
+
   // Group tasks by status (ClickUp Style!)
   const groupedTasksByStatus = useMemo(() => {
     const groups: Record<string, Task[]> = {};
@@ -602,6 +747,39 @@ function WorkspaceDashboardContent({
     }
   };
 
+  // Define active groupings based on current tab
+  const activeGroups = useMemo(() => {
+    if (currentTab === "all") {
+      return groupedAllTasksByStatus.map(g => ({
+        key: g.status,
+        label: g.config.label,
+        pillClass: g.config.pill,
+        tasks: g.tasks,
+      }));
+    }
+    if (currentTab === "priorities") {
+      return groupedAllTasksByPriority.map(g => ({
+        key: g.priority,
+        label: g.config.label,
+        pillClass: `bg-zinc-800/80 ${g.config.color}`,
+        tasks: g.tasks,
+        subGroups: g.subGroups,
+        totalTasks: g.totalTasks
+      }));
+    }
+    if (currentTab === "clients") {
+      return groupedAllTasksByClient.map(g => ({
+        key: g.client,
+        label: g.client,
+        pillClass: "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20",
+        tasks: g.tasks,
+        subGroups: g.subGroups,
+        totalTasks: g.totalTasks
+      }));
+    }
+    return [];
+  }, [currentTab, groupedAllTasksByStatus, groupedAllTasksByPriority, groupedAllTasksByClient]);
+
   if (loading) {
     return <DashboardSkeleton />;
   }
@@ -616,6 +794,7 @@ function WorkspaceDashboardContent({
           socket={socket}
           workspaceRoles={workspaceRoles}
           onUpdateTask={(updatedTask) => {
+            pendingTaskUpdatesRef.current[updatedTask.id] = Date.now();
             setSelectedTask(updatedTask);
             setTasks((prev) =>
               prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)),
@@ -624,6 +803,7 @@ function WorkspaceDashboardContent({
           onStatusChange={(newStatus) => {
             if (selectedTask) {
               const updated = { ...selectedTask, status: newStatus };
+              pendingTaskUpdatesRef.current[updated.id] = Date.now();
               setSelectedTask(updated);
               setTasks((prev) =>
                 prev.map((t) => (t.id === updated.id ? updated : t)),
@@ -634,6 +814,7 @@ function WorkspaceDashboardContent({
       </div>
     );
   }
+
 
   return (
     <div className="p-6 w-full h-full space-y-6">
@@ -710,6 +891,26 @@ function WorkspaceDashboardContent({
                 </span>
               )}
             </button>
+            <button
+              onClick={() => handleTabChange("clients")}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                currentTab === "clients"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+              }`}
+            >
+              Clients
+            </button>
+            <button
+              onClick={() => handleTabChange("priorities")}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                currentTab === "priorities"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+              }`}
+            >
+              Priorities
+            </button>
           </div>
 
           {/* Sort + Filter controls (uniform pill-selects) */}
@@ -728,8 +929,6 @@ function WorkspaceDashboardContent({
                 className="appearance-none h-8 pl-7 pr-7 bg-[#18181c] border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer"
               >
                 <option value="recent">Sort: Recent</option>
-                <option value="client">Sort: Clients (A–Z)</option>
-                <option value="priority">Sort: Priority</option>
                 <option value="status">Sort: Status</option>
               </select>
               <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
@@ -819,8 +1018,8 @@ function WorkspaceDashboardContent({
         </div>
       </div>
 
-      {/* ─── TAB CONTENT: ALL TASKS (OVERVIEW) ─── */}
-      {currentTab === "all" && (
+      {/* ─── TAB CONTENT: ALL TASKS / CLIENTS / PRIORITIES (OVERVIEW) ─── */}
+      {["all", "clients", "priorities"].includes(currentTab) && (
         <>
           {/* Tasks Overview */}
           <div className="space-y-4">
@@ -828,7 +1027,7 @@ function WorkspaceDashboardContent({
               <div className="flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-indigo-400" />
                 <h2 className="text-base font-semibold text-zinc-200">
-                  Workspace Tasks ({filteredAllTasks.length})
+                  {currentTab === "all" ? "Workspace Tasks" : currentTab === "clients" ? "Clients Overview" : "Priorities Overview"} ({filteredAllTasks.length})
                 </h2>
               </div>
             </div>
@@ -840,7 +1039,7 @@ function WorkspaceDashboardContent({
                   Loading tasks...
                 </p>
               </div>
-            ) : groupedAllTasksByStatus.length === 0 ? (
+            ) : activeGroups.length === 0 ? (
               <div className="p-16 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-4 shadow-xl">
                 <CheckSquare className="w-12 h-12 text-zinc-600 mx-auto opacity-40" />
                 <h3 className="text-base font-semibold text-zinc-200">
@@ -854,74 +1053,119 @@ function WorkspaceDashboardContent({
               </div>
             ) : (
               <div className="space-y-6">
-                {groupedAllTasksByStatus.map(
-                  ({ status, config, tasks: groupTasks }) => (
-                    <div key={status} className="space-y-0.5">
-                      <div className="flex items-center justify-between px-1 pb-2">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1`}
-                          >
-                            {config.label}
-                            <ChevronDown className="w-3 h-3 opacity-70" />
-                          </span>
-                          <span className="text-xs font-semibold text-zinc-500 ml-1">
-                            {groupTasks.length}
-                          </span>
+                {activeGroups.map(
+                  (groupData) => {
+                    const { key, label, pillClass, tasks: groupTasks, subGroups, totalTasks } = groupData as any;
+                    const isCollapsed = collapsedGroups.has(key);
+                    const count = totalTasks ?? groupTasks.length;
+                    
+                    const renderTasks = (tasksToRender: Task[]) => (
+                      <>
+                        <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-1 pb-1.5 border-b border-zinc-800/60 w-full">
+                          <span className="w-1/2 text-left pl-6">Name</span>
+                          <div className="flex items-center gap-8 pr-10">
+                            <span className="w-24 text-left">Client / List</span>
+                            <span className="w-20 text-left">Priority</span>
+                          </div>
                         </div>
-                      </div>
-
-                      <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-1 pb-1.5 border-b border-zinc-800/60 w-full">
-                        <span className="w-1/2 text-left pl-8">Name</span>
-                        <div className="flex items-center gap-8 pr-10">
-                          <span className="w-24 text-left">Client / List</span>
-                          <span className="w-20 text-left">Priority</span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col w-full">
-                        {groupTasks.map((task) => {
-                          const priorityConfig =
-                            task.priority && PRIORITY_FLAGS[task.priority]
-                              ? PRIORITY_FLAGS[task.priority]
-                              : {
-                                  label: task.priority || "Normal",
-                                  color: "text-zinc-500",
-                                  iconColor: "text-zinc-500",
-                                };
-                          return (
-                            <div
-                              key={task.id}
-                              onClick={() => setSelectedTask(task)}
-                              className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-1 pr-4">
-                                <div className="w-3.5 h-3.5 rounded-[3px] border border-zinc-600 shrink-0 flex items-center justify-center transition-colors shadow-sm" />
-                                <span className="text-[13px] font-medium text-zinc-200 truncate">
-                                  {task.title}
-                                </span>
-                              </div>
-                              <div className="hidden sm:flex items-center gap-8 pr-10 shrink-0">
-                                <span className="w-24 text-[11px] text-zinc-400 truncate">
-                                  {task.list?.name || "Workspace"}
-                                </span>
-                                <div className="w-20 flex items-center gap-1.5">
-                                  <Flag
-                                    className={`w-3 h-3 ${priorityConfig.iconColor}`}
-                                  />
-                                  <span
-                                    className={`text-[11px] font-medium ${priorityConfig.color}`}
-                                  >
-                                    {priorityConfig.label}
+                        <div className="flex flex-col w-full">
+                          {tasksToRender.map((task) => {
+                            const priorityConfig =
+                              task.priority && PRIORITY_FLAGS[task.priority]
+                                ? PRIORITY_FLAGS[task.priority]
+                                : {
+                                    label: task.priority || "Normal",
+                                    color: "text-zinc-500",
+                                    iconColor: "text-zinc-500",
+                                  };
+                            return (
+                              <div
+                                key={task.id}
+                                onClick={() => setSelectedTask(task)}
+                                className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">
+                                  <div className="w-3.5 h-3.5 rounded-[3px] border border-zinc-600 shrink-0 flex items-center justify-center transition-colors shadow-sm" />
+                                  <span className="text-[13px] font-medium text-zinc-200 truncate">
+                                    {task.title}
                                   </span>
                                 </div>
+                                <div className="hidden sm:flex items-center gap-8 pr-10 shrink-0">
+                                  <span className="w-24 text-[11px] text-zinc-400 truncate">
+                                    {task.list?.name || "Workspace"}
+                                  </span>
+                                  <div className="w-20 flex items-center gap-1.5">
+                                    <Flag
+                                      className={`w-3 h-3 ${priorityConfig.iconColor}`}
+                                    />
+                                    <span
+                                      className={`text-[11px] font-medium ${priorityConfig.color}`}
+                                    >
+                                      {priorityConfig.label}
+                                    </span>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
+                      </>
+                    );
+
+                    return (
+                    <div key={key} className="space-y-0.5">
+                      <div 
+                        className="flex items-center justify-between px-1 pb-2 cursor-pointer select-none group"
+                        onClick={() => toggleGroup(key)}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${pillClass} shadow-sm flex items-center gap-1 transition-transform`}
+                          >
+                            {label}
+                            <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
+                          </span>
+                          <span className="text-xs font-semibold text-zinc-500 ml-1">
+                            {count}
+                          </span>
+                        </div>
                       </div>
+                      
+                      {!isCollapsed && (
+                        subGroups ? (
+                          <div className="pl-2 sm:pl-6 space-y-4 pt-2 border-l-2 border-zinc-800/40 ml-2">
+                            {subGroups.map((sg: any) => {
+                              const sgKey = `${key}-${sg.status}`;
+                              const isSgCollapsed = collapsedGroups.has(sgKey);
+                              return (
+                                <div key={sgKey} className="space-y-0.5">
+                                  <div 
+                                    className="flex items-center justify-between px-1 pb-2 cursor-pointer select-none group"
+                                    onClick={() => toggleGroup(sgKey)}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${sg.config.pill} shadow-sm flex items-center gap-1 transition-transform`}
+                                      >
+                                        {sg.config.label}
+                                        <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isSgCollapsed ? "-rotate-90" : ""}`} />
+                                      </span>
+                                      <span className="text-xs font-semibold text-zinc-500 ml-1">
+                                        {sg.tasks.length}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  {!isSgCollapsed && renderTasks(sg.tasks)}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          renderTasks(groupTasks)
+                        )
+                      )}
                     </div>
-                  ),
+                  )}
                 )}
               </div>
             )}
@@ -966,17 +1210,22 @@ function WorkspaceDashboardContent({
             /* CLICKUP GROUPED STATUS SECTIONS (Matching User Screenshot 3!) */
             <div className="space-y-6">
               {groupedTasksByStatus.map(
-                ({ status, config, tasks: groupTasks }) => (
+                ({ status, config, tasks: groupTasks }) => {
+                  const isCollapsed = collapsedGroups.has(status);
+                  return (
                   <div key={status} className="space-y-0.5">
                     {/* Status Group Header Bar */}
-                    <div className="flex items-center justify-between px-1 pb-2">
+                    <div 
+                      className="flex items-center justify-between px-1 pb-2 cursor-pointer select-none group"
+                      onClick={() => toggleGroup(status)}
+                    >
                       <div className="flex items-center gap-2">
                         {/* Status Pill Badge */}
                         <span
-                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1`}
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1 transition-transform`}
                         >
                           {config.label}
-                          <ChevronDown className="w-3 h-3 opacity-70" />
+                          <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                         </span>
                         {/* Count badge */}
                         <span className="text-xs font-semibold text-zinc-500 ml-1">
@@ -985,185 +1234,189 @@ function WorkspaceDashboardContent({
                       </div>
                     </div>
 
-                    {/* Column Headers matching ClickUp */}
-                    <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-1 pb-1.5 border-b border-zinc-800/60 w-full">
-                      <span className="w-1/2 text-left pl-8">Name</span>
-                      <div className="flex items-center gap-8 pr-10">
-                        <span className="w-20 text-left">Priority</span>
-                      </div>
-                    </div>
+                    {!isCollapsed && (
+                      <>
+                        {/* Column Headers matching ClickUp */}
+                        <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-1 pb-1.5 border-b border-zinc-800/60 w-full">
+                          <span className="w-1/2 text-left pl-6">Name</span>
+                          <div className="flex items-center gap-8 pr-10">
+                            <span className="w-20 text-left">Priority</span>
+                          </div>
+                        </div>
 
-                    {/* Task Rows List */}
-                    <div className="flex flex-col w-full">
-                      {groupTasks.map((task) => {
-                        const priorityConfig =
-                          task.priority && PRIORITY_FLAGS[task.priority]
-                            ? PRIORITY_FLAGS[task.priority]
-                            : {
-                                label: task.priority || "Normal",
-                                color: "text-zinc-500",
-                                iconColor: "text-zinc-500",
-                              };
+                        {/* Task Rows List */}
+                        <div className="flex flex-col w-full">
+                          {groupTasks.map((task) => {
+                            const priorityConfig =
+                              task.priority && PRIORITY_FLAGS[task.priority]
+                                ? PRIORITY_FLAGS[task.priority]
+                                : {
+                                    label: task.priority || "Normal",
+                                    color: "text-zinc-500",
+                                    iconColor: "text-zinc-500",
+                                  };
 
-                        const taskAssignees =
-                          task.assignees && task.assignees.length > 0
-                            ? task.assignees
-                            : task.assignee
-                              ? [task.assignee]
-                              : [];
+                            const taskAssignees =
+                              task.assignees && task.assignees.length > 0
+                                ? task.assignees
+                                : task.assignee
+                                  ? [task.assignee]
+                                  : [];
 
-                        return (
-                          <div
-                            key={task.id}
-                            onClick={() => setSelectedTask(task)}
-                            className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
-                          >
-                            {/* Left: Check/Status dot + Title + Context Breadcrumb */}
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-1 pr-4">
-                              {/* Checkbox (Square) */}
+                            return (
                               <div
-                                className="w-3.5 h-3.5 rounded-[3px] border border-zinc-600 hover:border-zinc-400 shrink-0 flex items-center justify-center transition-colors shadow-sm"
-                                title="Mark complete"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // TODO: Call status update to complete
-                                }}
-                              />
-
-                              {/* Status circle indicator */}
-                              <div
-                                className={`w-2.5 h-2.5 rounded-full ${config.dot} shrink-0`}
-                                title={`Status: ${task.status}`}
-                              />
-
-                              {/* Task Title */}
-                              <span className="text-[13px] text-zinc-300 group-hover:text-indigo-300 transition-colors truncate font-medium">
-                                {task.title}
-                              </span>
-
-                              {/* List Name aligned after title */}
-                              {task.list && (
-                                <span className="hidden md:inline-flex items-center text-[11px] text-zinc-600 shrink-0 max-w-[200px] truncate ml-1 font-medium group-hover:text-zinc-400 transition-colors">
-                                  ≡ {task.list.name}
-                                </span>
-                              )}
-
-                              {/* Subtask icon & count */}
-                              {task.subtasks && task.subtasks.length > 0 && (
-                                <span className="flex items-center gap-1 text-[11px] text-zinc-500 font-mono shrink-0 ml-1">
-                                  <ListIcon className="w-3 h-3 text-zinc-500" />
-                                  {
-                                    task.subtasks.filter(
-                                      (st: any) => st.isCompleted,
-                                    ).length
-                                  }
-                                  /{task.subtasks.length}
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Right: Assignees + Priority + Due Date + More */}
-                            <div className="flex items-center gap-8 shrink-0 pr-2">
-                              {/* ClickUp-style Stacked Avatars */}
-                              <div
-                                className="hidden sm:flex items-center -space-x-1"
-                                title={
-                                  taskAssignees.map((a) => a.name).join(", ") ||
-                                  "Unassigned"
-                                }
+                                key={task.id}
+                                onClick={() => setSelectedTask(task)}
+                                className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
                               >
-                                {taskAssignees.slice(0, 3).map((a) => (
+                                {/* Left: Check/Status dot + Title + Context Breadcrumb */}
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">
+                                  {/* Checkbox (Square) */}
                                   <div
-                                    key={a.id}
-                                    className="w-5 h-5 rounded-full ring-2 ring-[#18181c] flex items-center justify-center text-[9px] font-bold text-white overflow-hidden bg-indigo-600 shrink-0"
+                                    className="w-3.5 h-3.5 rounded-[3px] border border-zinc-600 hover:border-zinc-400 shrink-0 flex items-center justify-center transition-colors shadow-sm"
+                                    title="Mark complete"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      // TODO: Call status update to complete
+                                    }}
+                                  />
+
+                                  {/* Status circle indicator */}
+                                  <div
+                                    className={`w-2.5 h-2.5 rounded-full ${config.dot} shrink-0`}
+                                    title={`Status: ${task.status}`}
+                                  />
+
+                                  {/* Task Title */}
+                                  <span className="text-[13px] text-zinc-300 group-hover:text-indigo-300 transition-colors truncate font-medium">
+                                    {task.title}
+                                  </span>
+
+                                  {/* List Name aligned after title */}
+                                  {task.list && (
+                                    <span className="hidden md:inline-flex items-center text-[11px] text-zinc-600 shrink-0 max-w-[200px] truncate ml-1 font-medium group-hover:text-zinc-400 transition-colors">
+                                      ≡ {task.list.name}
+                                    </span>
+                                  )}
+
+                                  {/* Subtask icon & count */}
+                                  {task.subtasks && task.subtasks.length > 0 && (
+                                    <span className="flex items-center gap-1 text-[11px] text-zinc-500 font-mono shrink-0 ml-1">
+                                      <ListIcon className="w-3 h-3 text-zinc-500" />
+                                      {
+                                        task.subtasks.filter(
+                                          (st: any) => st.isCompleted,
+                                        ).length
+                                      }
+                                      /{task.subtasks.length}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Right: Assignees + Priority + Due Date + More */}
+                                <div className="flex items-center gap-8 shrink-0 pr-2">
+                                  {/* ClickUp-style Stacked Avatars */}
+                                  <div
+                                    className="hidden sm:flex items-center -space-x-1"
+                                    title={
+                                      taskAssignees.map((a) => a.name).join(", ") ||
+                                      "Unassigned"
+                                    }
                                   >
-                                    {a.avatarUrl ? (
-                                      <img
-                                        src={a.avatarUrl}
-                                        alt={a.name}
-                                        className="w-full h-full object-cover"
-                                      />
-                                    ) : (
-                                      (a.name || "U").charAt(0).toUpperCase()
+                                    {taskAssignees.slice(0, 3).map((a) => (
+                                      <div
+                                        key={a.id}
+                                        className="w-5 h-5 rounded-full ring-2 ring-[#18181c] flex items-center justify-center text-[9px] font-bold text-white overflow-hidden bg-indigo-600 shrink-0"
+                                      >
+                                        {a.avatarUrl ? (
+                                          <img
+                                            src={a.avatarUrl}
+                                            alt={a.name}
+                                            className="w-full h-full object-cover"
+                                          />
+                                        ) : (
+                                          (a.name || "U").charAt(0).toUpperCase()
+                                        )}
+                                      </div>
+                                    ))}
+                                    {taskAssignees.length === 0 && (
+                                      <div className="w-5 h-5 rounded-full border border-dashed border-zinc-700 flex items-center justify-center text-[10px] text-zinc-500 bg-[#18181c] shadow-sm shrink-0">
+                                        <UserIcon className="w-3 h-3" />
+                                      </div>
                                     )}
                                   </div>
-                                ))}
-                                {taskAssignees.length === 0 && (
-                                  <div className="w-5 h-5 rounded-full border border-dashed border-zinc-700 flex items-center justify-center text-[10px] text-zinc-500 bg-[#18181c] shadow-sm shrink-0">
-                                    <UserIcon className="w-3 h-3" />
-                                  </div>
-                                )}
-                              </div>
 
-                              {/* Priority Column */}
-                              <div className="hidden sm:flex items-center gap-1.5 w-20">
-                                <Flag
-                                  className={`w-3.5 h-3.5 ${priorityConfig.iconColor}`}
-                                />
-                                <span
-                                  className={`text-[11px] font-medium ${priorityConfig.color}`}
+                                  {/* Priority Column */}
+                                  <div className="hidden sm:flex items-center gap-1.5 w-20">
+                                    <Flag
+                                      className={`w-3.5 h-3.5 ${priorityConfig.iconColor}`}
+                                    />
+                                    <span
+                                      className={`text-[11px] font-medium ${priorityConfig.color}`}
+                                    >
+                                      {priorityConfig.label}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* Inline Task Creation Form for this Status Group */}
+                          {addingStatus === status ? (
+                            <div className="p-2 border-b border-zinc-800/40 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-[#18181c]">
+                              <input
+                                type="text"
+                                autoFocus
+                                placeholder="Task name"
+                                value={inlineTaskTitle}
+                                onChange={(e) => setInlineTaskTitle(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleCreateInlineTask(status);
+                                  } else if (e.key === "Escape") {
+                                    setAddingStatus(null);
+                                  }
+                                }}
+                                className="flex-1 px-2 py-1 bg-transparent border-none text-[13px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-0"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleCreateInlineTask(status)}
+                                  disabled={
+                                    !inlineTaskTitle.trim() || isCreatingInline
+                                  }
+                                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
                                 >
-                                  {priorityConfig.label}
-                                </span>
+                                  {isCreatingInline ? "Adding..." : "Save"}
+                                </button>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* Inline Task Creation Form for this Status Group */}
-                      {addingStatus === status ? (
-                        <div className="p-2 border-b border-zinc-800/40 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-[#18181c]">
-                          <input
-                            type="text"
-                            autoFocus
-                            placeholder="Task name"
-                            value={inlineTaskTitle}
-                            onChange={(e) => setInlineTaskTitle(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleCreateInlineTask(status);
-                              } else if (e.key === "Escape") {
-                                setAddingStatus(null);
-                              }
-                            }}
-                            className="flex-1 px-2 py-1 bg-transparent border-none text-[13px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-0"
-                          />
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleCreateInlineTask(status)}
-                              disabled={
-                                !inlineTaskTitle.trim() || isCreatingInline
-                              }
-                              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
-                            >
-                              {isCreatingInline ? "Adding..." : "Save"}
-                            </button>
-                          </div>
+                          ) : (
+                            /* ClickUp "+ Add Task" row below group tasks */
+                            <div className="group flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/20 border-b border-zinc-800/40 transition-colors cursor-pointer">
+                              <button
+                                onClick={() => {
+                                  setAddingStatus(status);
+                                  setInlineTaskTitle("");
+                                }}
+                                className="flex items-center gap-2 text-xs font-medium text-zinc-500 group-hover:text-zinc-400 pl-1"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Add Task</span>
+                              </button>
+                              <div className="hidden sm:flex items-center gap-8 pr-10 opacity-0">
+                                <span className="w-20"></span>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        /* ClickUp "+ Add Task" row below group tasks */
-                        <div className="group flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/20 border-b border-zinc-800/40 transition-colors cursor-pointer">
-                          <button
-                            onClick={() => {
-                              setAddingStatus(status);
-                              setInlineTaskTitle("");
-                            }}
-                            className="flex items-center gap-2 text-xs font-medium text-zinc-500 group-hover:text-zinc-400 pl-1"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Add Task</span>
-                          </button>
-                          <div className="hidden sm:flex items-center gap-8 pr-10 opacity-0">
-                            <span className="w-20"></span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      </>
+                    )}
                   </div>
-                ),
-              )}
+                );
+              })}
             </div>
           )}
         </div>

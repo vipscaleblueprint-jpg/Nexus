@@ -1,5 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { memo, useState, useMemo, useRef, useEffect } from 'react';
+import { debugLog } from './debug';
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
@@ -27,7 +28,7 @@ interface Props {
   onUnauthorizedDragAttempt?: () => void;
 }
 
-const CardContent = ({ task: initialTask, isSubtask = false, children, onDropdownOpenChange, listStatuses = [] }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void, listStatuses?: any[] }) => {
+const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDropdownOpenChange, listStatuses = [] }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void, listStatuses?: any[] }) => {
   const [task, setTask] = useState(initialTask);
   
   useEffect(() => {
@@ -385,9 +386,10 @@ const CardContent = ({ task: initialTask, isSubtask = false, children, onDropdow
       </div>
     </div>
   );
-};
+});
 
 export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason, listStatuses, onUnauthorizedDragAttempt }: Props) {
+  debugLog('KanbanCard', `Render task=${task.id}, isOverlay=${isOverlay}`);
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
   const pointerPosRef = useRef<{x: number, y: number} | null>(null);
@@ -407,9 +409,9 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
   }), [task]);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: task.id,
+    id: isOverlay ? `${task.id}-overlay` : task.id,
     data: sortableData,
-    disabled: effectivelyDisabled,
+    disabled: effectivelyDisabled || isOverlay,
   });
 
   const style = {
@@ -418,6 +420,26 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
   };
 
   const subtasksCount = task.subtasks?.length || 0;
+
+  const subtasksToggle = useMemo(() => {
+    if (subtasksCount === 0) return null;
+    return (
+      <div
+        className="flex items-center gap-2 text-[11px] text-zinc-400 hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
+        onClick={(e) => { e.stopPropagation(); setIsSubtasksExpanded(prev => !prev); }}
+      >
+        {!isSubtasksExpanded && (
+          <CornerDownRight className="w-3.5 h-3.5 block group-hover/subtasks:hidden shrink-0" />
+        )}
+        <ChevronRight
+          className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${
+            isSubtasksExpanded ? 'rotate-90 block' : 'hidden group-hover/subtasks:block'
+          }`}
+        />
+        <span>{subtasksCount} subtask{subtasksCount > 1 ? 's' : ''}</span>
+      </div>
+    );
+  }, [subtasksCount, isSubtasksExpanded]);
 
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -472,22 +494,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
       >
         <div className={isDragging ? 'opacity-0 pointer-events-none flex flex-col gap-3 w-full h-full' : 'contents'}>
           <CardContent task={task} listStatuses={listStatuses} onDropdownOpenChange={setHasOpenDropdown}>
-            {subtasksCount > 0 && (
-              <div
-                className="flex items-center gap-2 text-[11px] text-zinc-400 hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
-                onClick={(e) => { e.stopPropagation(); setIsSubtasksExpanded(!isSubtasksExpanded); }}
-              >
-                {!isSubtasksExpanded && (
-                  <CornerDownRight className="w-3.5 h-3.5 block group-hover/subtasks:hidden shrink-0" />
-                )}
-                <ChevronRight
-                  className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${
-                    isSubtasksExpanded ? 'rotate-90 block' : 'hidden group-hover/subtasks:block'
-                  }`}
-                />
-                <span>{subtasksCount} subtask{subtasksCount > 1 ? 's' : ''}</span>
-              </div>
-            )}
+            {subtasksToggle}
           </CardContent>
         </div>
       </div>

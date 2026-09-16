@@ -548,10 +548,10 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     const collisions = rectIntersection(args);
     
     if (isGroupDrag) {
-      return collisions.filter((c: any) => c.data?.current?.type === 'Group');
+      return collisions.filter((c: any) => c.data?.current?.type === 'Group' && c.id !== args.active?.id);
     }
     
-    return collisions.filter((c: any) => c.data?.current?.type !== 'Group');
+    return collisions.filter((c: any) => c.data?.current?.type !== 'Group' && c.id !== args.active?.id);
   }, []);
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -577,7 +577,9 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
     // Clear drag state
     setActiveTask(null);
 
-    if (!originalTask) return;
+    if (!originalTask) {
+      return;
+    }
 
     const activeId = active.id as string;
 
@@ -617,6 +619,7 @@ export function KanbanBoard({ tasks, onTaskMove, onTaskReorder, onAddTaskClick, 
       onTaskReorder(activeId, over.id as string);
     }
   };
+
 
   const handleDragCancel = () => {
     setActiveTask(null);

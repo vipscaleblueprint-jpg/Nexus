@@ -21,6 +21,8 @@ import {
   createChecklistItem,
   updateChecklistItem,
   deleteChecklistItem,
+  createTaskAttachment,
+  deleteTaskAttachment,
 } from '../controllers/task.controller';
 import { idParams, idAndSubtaskIdParams, idAndChecklistIdParams, idChecklistIdItemIdParams, validate } from '../validation';
 import {
@@ -45,6 +47,8 @@ taskRouter.post(
   validate({ params: idParams, body: attachmentUrlSchema }),
   createAttachmentUrl
 );
+taskRouter.post('/:id/attachments', optionalAuthenticateToken, validate({ params: idParams }), createTaskAttachment);
+taskRouter.delete('/:id/attachments/:attachmentId', optionalAuthenticateToken, validate({ params: idParams }), deleteTaskAttachment);
 taskRouter.post('/:id/comments', validate({ params: idParams }), createTaskComment);
 taskRouter.get('/:id/comments', validate({ params: idParams }), getTaskComments);
 taskRouter.post('/:id/comments/:commentId/reactions', toggleCommentReaction);

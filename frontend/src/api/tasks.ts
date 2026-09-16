@@ -138,4 +138,17 @@ export const tasksApi = {
       method: 'DELETE',
     });
   },
+
+  async createTaskAttachment(taskId: string, data: any): Promise<{ attachment: any }> {
+    return apiClient<{ attachment: any }>(`/api/tasks/${taskId}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteTaskAttachment(taskId: string, attachmentId: string): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>(`/api/tasks/${taskId}/attachments/${attachmentId}`, {
+      method: 'DELETE',
+    });
+  },
 };

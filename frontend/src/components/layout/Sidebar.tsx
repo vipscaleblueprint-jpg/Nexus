@@ -10,6 +10,7 @@ import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
 import { CreateListModal } from '@/components/modals/CreateListModal';
 import { CreateDocModal } from '@/components/modals/CreateDocModal';
 import { CreatePageModal } from '@/components/modals/CreatePageModal';
+import { ApiSettingsModal } from '@/components/modals/ApiSettingsModal';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
@@ -92,6 +93,7 @@ import {
   Moon,
   LogOut,
   LayoutGrid,
+  Code,
 } from 'lucide-react';
 
 const VIPSCALE_BASE = 'https://tools.vipscaleph.com';
@@ -527,6 +529,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const [isCreateListOpen, setIsCreateListOpen] = useState(false);
   const [isCreateDocOpen, setIsCreateDocOpen] = useState(false);
   const [isCreatePageOpen, setIsCreatePageOpen] = useState(false);
+  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
   const [activeSpaceId, setActiveSpaceId] = useState<string | undefined>();
   const [activeFolderId, setActiveFolderId] = useState<string | undefined>();
   const [activeDocId, setActiveDocId] = useState<string | undefined>();
@@ -680,6 +683,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 <Moon className="size-4 shrink-0 text-purple-400" />
                 {!collapsed && <span>Toggle Theme</span>}
               </button>
+              <button onClick={() => setIsApiSettingsOpen(true)} title={collapsed ? 'API Integrations' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
+                <Code className="size-4 shrink-0 text-cyan-400" />
+                {!collapsed && <span>API Integrations</span>}
+              </button>
               <button title={collapsed ? 'Sign Out' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
                 <LogOut className="size-4 shrink-0 text-red-500" />
                 {!collapsed && <span>Sign Out</span>}
@@ -714,7 +721,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 </span>
               )}
             </Link>
-            <div className="space-y-px">
+            <div className="space-y-px">
               <Link
                 href="/activity/priorities"
                 className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${
@@ -820,6 +827,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       <CreateListModal isOpen={isCreateListOpen} onClose={() => setIsCreateListOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
       <CreateDocModal isOpen={isCreateDocOpen} onClose={() => setIsCreateDocOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
       <CreatePageModal isOpen={isCreatePageOpen} onClose={() => setIsCreatePageOpen(false)} onSuccess={loadSpaces} allDocs={flatDocs} defaultDocId={activeDocId} />
+      <ApiSettingsModal isOpen={isApiSettingsOpen} onClose={() => setIsApiSettingsOpen(false)} />
       <RenameModal isOpen={isRenameOpen} onClose={() => setIsRenameOpen(false)} onConfirm={handleConfirmRename} title={`Rename ${actionEntity?.type}`} initialName={actionEntity?.name || ''} />
       <ConfirmDeleteModal isOpen={isDeleteOpen} onClose={() => setIsDeleteOpen(false)} onConfirm={handleConfirmDelete} title={`Delete ${actionEntity?.type}`} itemName={actionEntity?.name || ''} />
     </div>
@@ -906,6 +914,8 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [localTitle, setLocalTitle] = useState(folder.name);
   
   const combinedItems = [
     ...(folder.subfolders?.map(f => ({ ...f, itemType: 'folder' })) || []),
@@ -913,11 +923,26 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
     ...(folder.docs?.filter(d => d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
   ].sort((a, b) => (a.order || 0) - (b.order || 0));
 
+  const handleRename = async () => {
+    setIsEditing(false);
+    if (localTitle.trim() && localTitle !== folder.name) {
+      try {
+        await spacesApi.updateFolder(folder.id, { name: localTitle });
+        window.dispatchEvent(new CustomEvent('space_activity'));
+      } catch (err) {
+        console.error('Failed to rename folder', err);
+        setLocalTitle(folder.name);
+      }
+    } else {
+      setLocalTitle(folder.name);
+    }
+  };
+
   return (
     <div className="space-y-px">
       <div className="group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-[hsl(240,3.7%,15.9%)] cursor-pointer transition-colors">
-        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 truncate flex-1">
-          <div className="relative size-3.5 flex items-center justify-center shrink-0">
+        <div className="flex items-center gap-2 truncate flex-1">
+          <div onClick={() => setIsOpen(!isOpen)} className="relative size-3.5 flex items-center justify-center shrink-0">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               {isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}
             </div>
@@ -925,11 +950,26 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
               <FolderIcon className="size-3.5 text-amber-400" />
             </div>
           </div>
-          <span className="truncate text-xs text-[hsl(240,4.8%,95.9%)]">{folder.name}</span>
+          {isEditing ? (
+            <input
+              type="text"
+              autoFocus
+              value={localTitle}
+              onChange={(e) => setLocalTitle(e.target.value)}
+              onBlur={handleRename}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') { setIsEditing(false); setLocalTitle(folder.name); } }}
+              className="bg-zinc-800 text-xs text-white px-1 py-0.5 rounded outline-none w-full"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div className="flex items-center group/edit flex-1 min-w-0" onClick={() => setIsOpen(!isOpen)}>
+              <span className="truncate text-xs text-[hsl(240,4.8%,95.9%)] block">{folder.name}</span>
+            </div>
+          )}
         </div>
         <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
           <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
-            <button onClick={() => onAction('rename', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
+            <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
             <button onClick={() => onAction('delete', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
           </ActionMenu>
           <ActionMenu icon={<Plus className="size-3.5" />}>
@@ -967,7 +1007,25 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [localTitle, setLocalTitle] = useState(doc.title);
   const hasPages = doc.pages && doc.pages.length > 0;
+
+  const handleRename = async () => {
+    setIsEditing(false);
+    if (localTitle.trim() && localTitle !== doc.title) {
+      try {
+        await spacesApi.updateDoc(doc.id, { title: localTitle });
+        window.dispatchEvent(new CustomEvent('space_activity'));
+      } catch (err) {
+        console.error('Failed to rename doc', err);
+        setLocalTitle(doc.title);
+      }
+    } else {
+      setLocalTitle(doc.title);
+    }
+  };
+
   return (
     <div className="space-y-px">
       <div className="group flex items-center justify-between rounded-md px-2 py-1 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
@@ -976,7 +1034,28 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
             {hasPages && <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">{isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}</div>}
             <div className={`absolute inset-0 flex items-center justify-center ${hasPages ? 'group-hover:opacity-0' : ''} transition-opacity`}><FileText className="size-3.5 text-purple-400" /></div>
           </div>
-          <Link href={`/docs/${doc.id}`} className="truncate flex-1"><span className="truncate">{doc.title}</span></Link>
+          {isEditing ? (
+            <input
+              type="text"
+              autoFocus
+              value={localTitle}
+              onChange={(e) => setLocalTitle(e.target.value)}
+              onBlur={handleRename}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') { setIsEditing(false); setLocalTitle(doc.title); } }}
+              className="bg-zinc-800 text-xs text-white px-1 py-0.5 rounded outline-none w-full"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div className="flex items-center group/edit flex-1 min-w-0">
+              <Link href={`/docs/${doc.id}`} className="truncate flex-1 min-w-0"><span className="truncate block">{doc.title}</span></Link>
+            </div>
+          )}
+        </div>
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0" onClick={(e) => e.stopPropagation()}>
+          <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
+            <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
+            <button onClick={() => onAction('delete', 'doc', doc.id, doc.title)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
+          </ActionMenu>
         </div>
       </div>
       {isOpen && hasPages && (
@@ -993,17 +1072,50 @@ function PageTreeItem({ page, onAction }: {
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [localTitle, setLocalTitle] = useState(page.title);
   const hasSubpages = page.subpages && page.subpages.length > 0;
+
+  const handleRename = async () => {
+    setIsEditing(false);
+    if (localTitle.trim() && localTitle !== page.title) {
+      try {
+        await spacesApi.updatePage(page.id, { title: localTitle });
+        window.dispatchEvent(new CustomEvent('space_activity'));
+      } catch (err) {
+        console.error('Failed to rename page', err);
+        setLocalTitle(page.title);
+      }
+    } else {
+      setLocalTitle(page.title);
+    }
+  };
+
   return (
     <div className="space-y-px">
       <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="group flex items-center justify-between rounded-md px-2 py-0.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
         <div className="flex items-center gap-2 truncate flex-1">
           <FileText className="size-3 text-emerald-400 shrink-0 opacity-80" />
-          <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1"><span className="truncate">{page.title}</span></Link>
+          {isEditing ? (
+            <input
+              type="text"
+              autoFocus
+              value={localTitle}
+              onChange={(e) => setLocalTitle(e.target.value)}
+              onBlur={handleRename}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') { setIsEditing(false); setLocalTitle(page.title); } }}
+              className="bg-zinc-800 text-xs text-white px-1 py-0.5 rounded outline-none w-full"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div className="flex items-center group/edit flex-1 min-w-0">
+              <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1 min-w-0"><span className="truncate block">{page.title}</span></Link>
+            </div>
+          )}
         </div>
         <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0" onClick={(e) => e.stopPropagation()}>
           <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
-            <button onClick={() => onAction('rename', 'page', page.id, page.title)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
+            <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
             <button onClick={() => onAction('delete', 'page', page.id, page.title)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
           </ActionMenu>
         </div>
@@ -1021,10 +1133,51 @@ function ListTreeItem({ list, onAction }: {
   list: List;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [localTitle, setLocalTitle] = useState(list.name);
+
+  const handleRename = async () => {
+    setIsEditing(false);
+    if (localTitle.trim() && localTitle !== list.name) {
+      try {
+        await spacesApi.updateList(list.id, { name: localTitle });
+        window.dispatchEvent(new CustomEvent('space_activity'));
+      } catch (err) {
+        console.error('Failed to rename list', err);
+        setLocalTitle(list.name);
+      }
+    } else {
+      setLocalTitle(list.name);
+    }
+  };
+
   return (
-    <Link href={`/lists/${list.id}`} className="group flex items-center gap-2 rounded-md px-2 py-1 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
-      <ListIcon className="size-3.5 text-blue-400 shrink-0" />
-      <span className="truncate">{list.name}</span>
-    </Link>
+    <div className="group flex items-center justify-between rounded-md px-2 py-1 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
+      <div className="flex items-center gap-2 truncate flex-1">
+        <ListIcon className="size-3.5 text-blue-400 shrink-0" />
+        {isEditing ? (
+          <input
+            type="text"
+            autoFocus
+            value={localTitle}
+            onChange={(e) => setLocalTitle(e.target.value)}
+            onBlur={handleRename}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') { setIsEditing(false); setLocalTitle(list.name); } }}
+            className="bg-zinc-800 text-xs text-white px-1 py-0.5 rounded outline-none w-full"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <div className="flex items-center group/edit flex-1 min-w-0">
+            <Link href={`/lists/${list.id}`} className="truncate flex-1 min-w-0"><span className="truncate block">{list.name}</span></Link>
+          </div>
+        )}
+      </div>
+      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0" onClick={(e) => e.stopPropagation()}>
+        <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
+          <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
+          <button onClick={() => onAction('delete', 'list', list.id, list.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
+        </ActionMenu>
+      </div>
+    </div>
   );
 }

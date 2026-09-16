@@ -4,12 +4,13 @@ import { BlockEditor } from '../ui/BlockEditor';
 import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { canUserEditTask } from '@/lib/permissions';
-import { Check, CheckCircle2, Circle, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown } from 'lucide-react';
+import { Check, CheckCircle2, Circle, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
 import { ALL_STATUSES, STATUS_COLORS } from './TaskDetailModal';
+import { getRequiredAudits } from './AuditSection';
 
 interface SubtasksSectionProps {
   task: Task;
@@ -353,7 +354,7 @@ function SubtaskRow({
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleVal, setTitleVal] = useState(subtask.title);
-  const [activeTab, setActiveTab] = useState<'checklist' | 'comments'>('comments');
+  const [activeTab, setActiveTab] = useState<'checklist' | 'comments' | 'audit'>('comments');
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Multi-assignee derived value
@@ -366,18 +367,23 @@ function SubtaskRow({
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
   const handleToggleAssignee = (u: any) => {
-    const isAssigned = isUserAssigned(u.id);
+    const latestAssignees = subtask.assignees || [];
+    const isAssigned = latestAssignees.some(a => a.id === u.id);
     const updatedAssignees = isAssigned
-      ? currentAssignees.filter((a) => a.id !== u.id)
-      : [...currentAssignees, u];
+      ? latestAssignees.filter((a) => a.id !== u.id)
+      : [...latestAssignees, u];
 
     const updatedIds = updatedAssignees.map((a) => a.id);
-    onUpdate(subtask.id, { assigneeIds: updatedIds } as any);
+    subtask.assignees = updatedAssignees;
+    subtask.assigneeIds = updatedIds;
+    onUpdate(subtask.id, { assigneeIds: updatedIds, assignees: updatedAssignees } as any);
   };
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    onUpdate(subtask.id, { assigneeIds: [] } as any);
+    subtask.assignees = [];
+    subtask.assigneeIds = [];
+    onUpdate(subtask.id, { assigneeIds: [], assignees: [] } as any);
     setAssigneeOpen(false);
   };
 
@@ -571,12 +577,12 @@ function SubtaskRow({
         </button>
       </div>
 
-      {/* Row 2: 2-column Layout mimicking main task but fluid */}
+      {/* Row 2: 3-column Layout mimicking main task but fluid */}
       <div className={`grid transition-[grid-template-rows,opacity,margin] duration-300 ease-in-out ${isCollapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'}`}>
         <div className="overflow-hidden">
-          <div className="flex items-stretch gap-4 w-full max-h-[300px]">
+          <div className="flex items-stretch gap-4 w-full min-h-[250px] max-h-[300px]">
         {/* Column 1: Properties Stack — icon + pill rows */}
-        <div className="flex flex-col shrink-0 gap-2 pt-1 w-[140px]">
+        <div className="flex flex-col shrink-0 gap-2 pt-1 w-auto min-w-[140px]">
           {/* Status row */}
           <div className="flex items-center gap-3">
             {subtask.completed
@@ -639,6 +645,42 @@ function SubtaskRow({
           <div className="flex items-center gap-3">
             <User className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
             <div className="flex items-center gap-1.5">
+              <Popover.Root>
+                <Popover.Trigger asChild>
+                  {(subtask.assigneeRoleRestrictions && subtask.assigneeRoleRestrictions.length > 0) ? (
+                    <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                      {subtask.assigneeRoleRestrictions.map((role: string, i: number) => {
+                        const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                        const bgColor = colors[i % colors.length];
+                        return (
+                          <div 
+                            key={role} 
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
+                            title={role}
+                          >
+                            {role.substring(0, 2).toUpperCase()}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <button disabled={!canEditTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                      <Plus className="w-3 h-3 shrink-0" />
+                      Assign Team
+                    </button>
+                  )}
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                    <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+                      <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
+                      {/* TODO: Add role restrictions map if needed */}
+                      <p className="text-[10px] text-zinc-400 px-2 py-1">Not implemented for subtasks</p>
+                    </div>
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+
               <Popover.Root open={assigneeOpen} onOpenChange={(open) => { if (!subtask.completed) setAssigneeOpen(open); }}>
               <Popover.Trigger asChild>
                 <div
@@ -674,7 +716,7 @@ function SubtaskRow({
                       )}
                     </>
                   ) : (
-                    <span className="text-zinc-500">Empty</span>
+                    <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
                   )}
                 </div>
               </Popover.Trigger>
@@ -810,7 +852,7 @@ function SubtaskRow({
         </div>
 
         {/* Column 2: Description (Middle) */}
-        <div className="flex-1 flex flex-col min-w-[200px] border-l border-r border-zinc-800/60 px-4">
+        <div className="flex-1 flex flex-col min-w-0 border-l border-r border-zinc-800/60 px-4">
           <div className="flex items-center gap-2 mb-4 shrink-0">
             <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
               <AlignLeft className="w-3.5 h-3.5" />
@@ -835,6 +877,13 @@ function SubtaskRow({
           {/* Internal Tabs */}
           <div className="flex items-center gap-4 border-b border-zinc-800/60 mb-4 shrink-0">
             <button
+              onClick={() => setActiveTab('audit')}
+              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'audit' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
+            >
+              <span className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Audit</span>
+              {activeTab === 'audit' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t-full" />}
+            </button>
+            <button
               onClick={() => setActiveTab('checklist')}
               className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'checklist' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
@@ -854,12 +903,9 @@ function SubtaskRow({
             {activeTab === 'checklist' && (
               <div className="flex-1 flex flex-col relative h-full">
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
-                  {subtask.checklists && subtask.checklists.length > 0 ? (
-                    subtask.checklists.map((checklist: any) => {
-                      const isAuditChecklist = checklist.name.toLowerCase().includes('audit');
-                      const isAuditor = currentUser && [currentUser.primaryRole, currentUser.secondaryRole, currentUser.tertiaryRole, currentUser.minorRole]
-                        .some(r => r?.toLowerCase().includes('auditor')) || currentUser?.systemRole === 'ADMIN';
-                      const canCheck = !isAuditChecklist || isAuditor;
+                  {subtask.checklists && subtask.checklists.filter((c: any) => !c.name.toLowerCase().includes('audit')).length > 0 ? (
+                    subtask.checklists.filter((c: any) => !c.name.toLowerCase().includes('audit')).map((checklist: any) => {
+                      const canCheck = true; // Subtask checks are allowed by default for standard checklists
 
                       return (
                         <div key={checklist.id} className="flex flex-col gap-1.5">
@@ -898,6 +944,86 @@ function SubtaskRow({
                       </button>
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'audit' && (
+              <div className="flex-1 flex flex-col relative h-full">
+                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Audit Items</div>
+                    {getRequiredAudits(subtask.title).map((text, idx) => {
+                      const auditChecklist = subtask.checklists?.find((c: any) => c.name.toLowerCase() === 'audit');
+                      const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());
+                      const isCompleted = !!item?.completed;
+
+                      const roles = [currentUser?.primaryRole, currentUser?.secondaryRole, currentUser?.tertiaryRole, currentUser?.minorRole]
+                        .map(r => r?.toLowerCase() || '');
+                      const isAdmin = currentUser?.systemRole === 'ADMIN';
+
+                      let canCheck = isAdmin;
+                      let requiredRole = "";
+                      if (!canCheck) {
+                        if (text === 'UI UX Audit') {
+                          canCheck = roles.some(r => r.includes('ui/ux') || r.includes('ui ux') || r.includes('ui-ux'));
+                          requiredRole = "UI/UX";
+                        } else if (text === 'Design Audit') {
+                          canCheck = roles.some(r => r.includes('design'));
+                          requiredRole = "Designer";
+                        } else if (text === 'Funnel Audit') {
+                          canCheck = roles.some(r => r.includes('funnel') || r.includes('backend'));
+                          requiredRole = "Funnel/Backend";
+                        }
+                      }
+
+                      const handleToggleAuditItem = async () => {
+                        if (!canCheck) return;
+                        
+                        let targetChecklistId = auditChecklist?.id;
+                        let newChecklists = [...(subtask.checklists || [])];
+
+                        try {
+                          if (!targetChecklistId) {
+                            const res = await tasksApi.createChecklist(taskId!, { name: 'Audit', subtaskId: subtask.id });
+                            targetChecklistId = res.checklist.id;
+                            newChecklists.push(res.checklist);
+                            onUpdate(subtask.id, { checklists: newChecklists });
+                          }
+
+                          if (!item) {
+                            const res = await tasksApi.createChecklistItem(taskId!, targetChecklistId!, { text });
+                            const updatedItem = await tasksApi.updateChecklistItem(taskId!, targetChecklistId!, res.item.id, { completed: true });
+                            newChecklists = newChecklists.map((c: any) => c.id === targetChecklistId ? { ...c, items: [...(c.items || []), updatedItem.item] } : c);
+                            onUpdate(subtask.id, { checklists: newChecklists });
+                          } else {
+                            const newCompleted = !isCompleted;
+                            newChecklists = newChecklists.map((c: any) => c.id === targetChecklistId ? { ...c, items: c.items.map((i: any) => i.id === item.id ? { ...i, completed: newCompleted } : i) } : c);
+                            onUpdate(subtask.id, { checklists: newChecklists });
+                            await tasksApi.updateChecklistItem(taskId!, targetChecklistId!, item.id, { completed: newCompleted });
+                          }
+                        } catch (e) {
+                          console.error(e);
+                        }
+                      };
+
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`flex items-start gap-2 group/item ${!canCheck ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          onClick={handleToggleAuditItem}
+                          title={!canCheck ? `Only ${requiredRole || 'Admins'} can check this item` : undefined}
+                        >
+                          <div className={`mt-0.5 w-3 h-3 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${isCompleted ? 'bg-emerald-600 border-emerald-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
+                            {isCompleted && <Check className="w-2.5 h-2.5 text-white" />}
+                          </div>
+                          <span className={`text-[11px] leading-snug break-words ${isCompleted ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
+                            {text}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}

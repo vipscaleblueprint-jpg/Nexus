@@ -23,9 +23,10 @@ interface BlockEditorProps {
   onKeyDown?: (e: React.KeyboardEvent) => void;
   autoFocus?: boolean;
   editable?: boolean;
+  onEditorReady?: (editor: any) => void;
 }
 
-export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, editable = true }: BlockEditorProps) {
+export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, editable = true, onEditorReady }: BlockEditorProps) {
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const editor = useEditor({
@@ -67,9 +68,14 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none focus:outline-none min-h-[24px] text-sm text-zinc-100 prose-p:my-0 prose-headings:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0',
+        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 prose-p:my-0 prose-headings:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0',
       },
     },
+    onCreate: ({ editor }) => {
+      if (onEditorReady) {
+        onEditorReady(editor);
+      }
+    }
   });
 
   const handleKeyDownCapture = (e: React.KeyboardEvent) => {

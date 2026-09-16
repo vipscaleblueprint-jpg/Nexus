@@ -5,6 +5,28 @@ import { getCache, setCache, invalidateCache } from '../services/redisService';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { io } from '../server';
 
+export const getRequiredAudits = (taskTitle: string) => {
+  const t = taskTitle.toLowerCase();
+  
+  // 1. Graphics, Reels, Video, Samples -> ONLY Design
+  if (t.match(/graphic|reel|video|sample/)) {
+    return ['Design Audit'];
+  }
+  
+  // 2. Newsletters, Emails, Social Media Packages -> Design + Funnel
+  if (t.match(/email|newsletter|social media/)) {
+    return ['Design Audit', 'Funnel Audit'];
+  }
+  
+  // 3. Websites, Links, Landing Pages -> ALL THREE
+  if (t.match(/website|page|funnel|link/)) {
+    return ['UI UX Audit', 'Design Audit', 'Funnel Audit'];
+  }
+  
+  // Default fallback if we don't recognize the type
+  return [];
+};
+
 const taskInclude = {
   subtasks: {
     include: {
@@ -42,6 +64,7 @@ const taskInclude = {
       folder: { select: { id: true, name: true } },
     },
   },
+  attachments: true,
 };
 
 // GET /api/tasks - Redis Cache-Aside
@@ -247,6 +270,7 @@ export async function updateTask(req: Request, res: Response) {
       where: { id: taskId },
       select: {
         id: true,
+        title: true,
         status: true,
         priority: true,
         assigneeId: true,
@@ -254,6 +278,7 @@ export async function updateTask(req: Request, res: Response) {
         creatorId: true,
         assignees: { select: { id: true, name: true } },
         checklists: { include: { items: true } },
+        subtasks: { include: { checklists: { include: { items: true } } } },
       },
     });
 
@@ -262,10 +287,23 @@ export async function updateTask(req: Request, res: Response) {
     }
 
     if (status !== undefined && status.toLowerCase() === 'checking') {
+      // Check task audit checklists
+      const requiredTaskAudits = getRequiredAudits(currentTask.title);
       const auditChecklists = currentTask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
       for (const c of auditChecklists) {
-        if (c.items.some((i: any) => !i.completed)) {
-          return res.status(400).json({ error: `Cannot move to ${status}: Audit checklist "${c.name}" is not fully completed.` });
+        if (c.items.some((i: any) => requiredTaskAudits.includes(i.text) && !i.completed)) {
+          return res.status(400).json({ error: `Cannot move to ${status}: Required audits for task are not fully completed.` });
+        }
+      }
+      
+      // Check subtasks audit checklists
+      for (const subtask of currentTask.subtasks) {
+        const requiredSubtaskAudits = getRequiredAudits(subtask.title);
+        const subtaskAuditChecklists = subtask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
+        for (const c of subtaskAuditChecklists) {
+          if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {
+            return res.status(400).json({ error: `Cannot move to ${status}: Subtask "${subtask.title}" required audits are not fully completed.` });
+          }
         }
       }
     }
@@ -1054,6 +1092,23 @@ export async function updateSubtask(req: Request, res: Response) {
   try {
     const { id: taskId, subtaskId } = req.params;
     const { title, description, completed, assigneeIds, priority, dueDate, status } = req.body;
+    
+    if (status !== undefined && status.toLowerCase() === 'checking') {
+      const currentSubtask = await prisma.subtask.findUnique({
+        where: { id: subtaskId },
+        include: { checklists: { include: { items: true } } }
+      });
+      if (currentSubtask) {
+        const requiredSubtaskAudits = getRequiredAudits(currentSubtask.title);
+        const auditChecklists = currentSubtask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
+        for (const c of auditChecklists) {
+          if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {
+            return res.status(400).json({ error: `Cannot move to ${status}: Required audits for subtask are not fully completed.` });
+          }
+        }
+      }
+    }
+
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
       data: {
@@ -1207,6 +1262,65 @@ export async function deleteChecklistItem(req: Request, res: Response) {
     await prisma.checklistItem.delete({
       where: { id: itemId },
     });
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/tasks/:id/attachments
+export async function createTaskAttachment(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { fileName, fileUrl, fileKey, fileSize, mimeType } = req.body;
+    const userId = (req as any).user?.id;
+
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const attachment = await prisma.attachment.create({
+      data: {
+        fileName,
+        fileUrl,
+        fileKey,
+        fileSize,
+        mimeType,
+        taskId: id,
+        uploadedById: userId,
+      }
+    });
+
+    // Notify connected clients via Socket
+    io.emit('task:attachment:created', { taskId: id, attachment });
+
+    return res.status(201).json({ attachment });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// DELETE /api/tasks/:id/attachments/:attachmentId
+export async function deleteTaskAttachment(req: Request, res: Response) {
+  try {
+    const { id, attachmentId } = req.params;
+    const userId = (req as any).user?.id;
+
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const attachment = await prisma.attachment.findUnique({
+      where: { id: attachmentId }
+    });
+
+    if (!attachment || attachment.taskId !== id) {
+      return res.status(404).json({ error: 'Attachment not found' });
+    }
+
+    await prisma.attachment.delete({
+      where: { id: attachmentId }
+    });
+
+    // Notify connected clients via Socket
+    io.emit('task:attachment:deleted', { taskId: id, attachmentId });
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

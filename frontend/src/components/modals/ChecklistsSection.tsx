@@ -19,7 +19,9 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
   const [newItemText, setNewItemText] = useState('');
   const [creatingChecklist, setCreatingChecklist] = useState(false);
 
-  const completedCount = checklists.reduce((acc, list) => {
+  const standardChecklists = checklists.filter(c => !c.name.toLowerCase().includes('audit'));
+
+  const completedCount = standardChecklists.reduce((acc, list) => {
     return acc + (list.items?.every(i => i.completed) && list.items.length > 0 ? 1 : 0);
   }, 0);
 
@@ -100,7 +102,7 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
     }
   };
 
-  if (checklists.length === 0 && !creatingChecklist) {
+  if (standardChecklists.length === 0 && !creatingChecklist) {
     return (
       <Popover.Root>
         <Popover.Trigger asChild>
@@ -211,12 +213,12 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
       {/* Checklists List */}
       {isExpanded && (
         <div className="flex flex-col gap-4">
-          {checklists.map((checklist, index) => (
+          {standardChecklists.map((checklist, index) => (
             <div key={checklist.id} className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800/60 rounded-xl overflow-hidden">
               {/* Checklist Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-800/60">
                 <div className="font-medium text-sm text-zinc-900 dark:text-zinc-100">
-                  {checklist.name} <span className="text-zinc-400 font-normal text-xs ml-2">{index + 1} of {checklists.length}</span>
+                  {checklist.name} <span className="text-zinc-400 font-normal text-xs ml-2">{index + 1} of {standardChecklists.length}</span>
                 </div>
                 <Popover.Root>
                   <Popover.Trigger asChild>
@@ -379,26 +381,6 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                 >
                   <ListTodo className="w-4 h-4 text-zinc-400" />
                   Standard Checklist
-                </button>
-                <div className="h-[1px] bg-zinc-800 my-1"></div>
-                <div className="text-[10px] font-semibold text-zinc-500 px-2 py-1 uppercase tracking-wider">Audit Checklists</div>
-                <button 
-                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-                  onClick={() => handleCreateChecklist('UI UX Audit')}
-                >
-                  UI UX Audit
-                </button>
-                <button 
-                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-                  onClick={() => handleCreateChecklist('Design Audit')}
-                >
-                  Design Audit
-                </button>
-                <button 
-                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-                  onClick={() => handleCreateChecklist('Funnel Audit')}
-                >
-                  Funnel Audit
                 </button>
               </Popover.Content>
             </Popover.Portal>

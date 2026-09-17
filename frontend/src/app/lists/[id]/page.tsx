@@ -567,7 +567,12 @@ export default function BoardPage() {
                         const updated = await res.json();
                         setList((prev: any) => ({
                           ...prev,
-                          statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s)
+                          statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s),
+                          tasks: (prev.tasks || []).map((t: any) => 
+                            t.status === existingStatus.name && data.name
+                              ? { ...t, status: data.name }
+                              : t
+                          )
                         }));
 
                       } else {
@@ -605,6 +610,28 @@ export default function BoardPage() {
                     return newGroups;
                   });
                   socket?.emit('add_group', { listId: id, group });
+                }}
+                onStatusDelete={async (statusName) => {
+                  try {
+                    const existingStatus = list?.statuses?.find((s: any) => s.name === statusName);
+                    if (existingStatus) {
+                      const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${existingStatus.id}`, {
+                        method: 'DELETE',
+                      });
+                      if (res.ok) {
+                        setList((prev: any) => ({
+                          ...prev,
+                          statuses: prev.statuses.filter((s: any) => s.id !== existingStatus.id)
+                        }));
+                      } else {
+                        const errData = await res.json().catch(() => ({}));
+                        toast.error(errData.error || 'Failed to delete column');
+                      }
+                    }
+                  } catch (e: any) {
+                    console.error('Failed to delete status', e);
+                    toast.error(e.message || 'Failed to delete status');
+                  }
                 }}
                 onGroupReorder={(newGroups) => {
                   setCustomGroups(newGroups);

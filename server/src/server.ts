@@ -117,10 +117,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 });
 
 const io = new Server(server, {
-  cors: {
-    origin: process.env.NODE_ENV === 'development' ? ['http://localhost:3000'] : requireEnv('CORS_ORIGIN'),
-    credentials: true,
-  },
+  cors: corsOptions,
 });
 
 const socketLog = createLogger('socket.io');

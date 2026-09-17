@@ -15,24 +15,32 @@ interface AuditSectionProps {
 }
 export const getRequiredAudits = (taskTitle: string) => {
   const t = taskTitle.toLowerCase();
+  const audits = new Set<string>();
   
-  // 1. Graphics, Reels, Video, Samples -> ONLY Design
-  if (t.match(/graphic|reel|video|sample/)) {
-    return ['Design Audit'];
+  // 3. Websites, Links, Landing Pages -> ALL THREE
+  if (t.match(/website|page|funnel|link|domain|hosting|web|app/)) {
+    audits.add('UI UX Audit');
+    audits.add('Design Audit');
+    audits.add('Funnel Audit');
   }
   
   // 2. Newsletters, Emails, Social Media Packages -> Design + Funnel
-  if (t.match(/email|newsletter|social media/)) {
-    return ['Design Audit', 'Funnel Audit'];
+  if (t.match(/email|newsletter|social media|post|copy|campaign|marketing|seo/)) {
+    audits.add('Design Audit');
+    audits.add('Funnel Audit');
+  }
+
+  // 4. Backend and Logic -> Funnel Audit
+  if (t.match(/backend|logic|api|database|server|function|endpoint|integration|automation|webhook|workflow|system|data/)) {
+    audits.add('Funnel Audit');
+  }
+
+  // 1. Graphics, Reels, Video, Samples, Images, Audio, Content Creation -> ONLY Design
+  if (t.match(/graphic|reel|video|sample|image|picture|photo|visual|motion|voice|audio|sound|caption|wardrobe|animation|vfx|sfx|content|media|edit|render|upscale|thumbnail|typography|podcast/)) {
+    audits.add('Design Audit');
   }
   
-  // 3. Websites, Links, Landing Pages -> ALL THREE
-  if (t.match(/website|page|funnel|link/)) {
-    return ['UI UX Audit', 'Design Audit', 'Funnel Audit'];
-  }
-  
-  // Default fallback if we don't recognize the type
-  return [];
+  return Array.from(audits);
 };
 
 export function AuditSection({ task, title, subtaskId, users, checklists, onUpdateChecklists, currentUser }: AuditSectionProps) {

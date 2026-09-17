@@ -1,0 +1,802 @@
+[
+  {
+    "id": "z8py7abtj4",
+    "name": "--Audit Design — Marketing Content Samples",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtj3",
+    "name": "--Audit Design — Social Media Packages",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtj2",
+    "name": "--Audit Funnel Automation — Social Media Packages",
+    "list": "Joel Viavattene",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtj1",
+    "name": "--Audit Design — Video Editing Samples",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtj0",
+    "name": "--Audit Design — Social Media Samples",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abthz",
+    "name": "--Audit Funnel Automation — Social Media Samples",
+    "list": "Joel Viavattene",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abthy",
+    "name": "--Compile and Send Marketing Content Samples",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abthx",
+    "name": "--Follow Up on Marketing Content Plan",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abthw",
+    "name": "--Compile and Send Social Media Packages",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abthv",
+    "name": "--Compile and Send Video Editing Samples",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abthu",
+    "name": "--Compile and Send Social Media Samples",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtht",
+    "name": "Send Marketing & Social Media Samples to Joel for Review",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abthp",
+    "name": "Client's KYC",
+    "list": "Joel Viavattene",
+    "typeIndicator": "List: Joel Viavattene",
+    "tags": [],
+    "status": "kyc"
+  },
+  {
+    "id": "z8py7abtgf",
+    "name": "--Audit Design — Podcast Episode Graphic",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "List: Dr. Lisa Muehlenbein",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtge",
+    "name": "Create Podcast Episode Graphic",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "List: Dr. Lisa Muehlenbein",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtg3",
+    "name": "--Audit Funnel Automation — Newsletter Content",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtg2",
+    "name": "Create and Schedule Newsletter Content",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "List: Dr. Lisa Muehlenbein",
+    "tags": [],
+    "status": "weekly"
+  },
+  {
+    "id": "z8py7abtfp",
+    "name": "--Audit Design — Podcast Links",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "List: Dr. Lisa Muehlenbein",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtfn",
+    "name": "--Audit Funnel Automation — Podcast Links",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtfm",
+    "name": "--Audit UI/UX — Podcast Links",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "List: Dr. Lisa Muehlenbein",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtfk",
+    "name": "Add Podcast Link to Blog Post",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Ads",
+    "tags": [],
+    "status": "weekly"
+  },
+  {
+    "id": "z8py7abtcx",
+    "name": "--Audit Design — Website",
+    "list": "Georgia Human",
+    "typeIndicator": "List: Georgia Human",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtcw",
+    "name": "--Audit Funnel Automation — Website",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtcv",
+    "name": "--Audit UI/UX — Website",
+    "list": "Georgia Human",
+    "typeIndicator": "List: Georgia Human",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtcu",
+    "name": "Impliment Parker Social Website (Elle Parker)",
+    "list": "Georgia Human",
+    "typeIndicator": "List: Georgia Human",
+    "tags": [],
+    "status": "in progress"
+  },
+  {
+    "id": "z8py7abtcr",
+    "name": "--Audit Funnel Automation — Email Signature",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "Email",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtcq",
+    "name": "PRIORITY: email signature",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "Email",
+    "tags": [],
+    "status": "waiting"
+  },
+  {
+    "id": "z8py7abtaf",
+    "name": "--Audit Design — Reel",
+    "list": "Veronica | The Queen's Soulmate",
+    "typeIndicator": "List: Veronica | The Queen's Soulmate",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtae",
+    "name": "--Audit Funnel Automation — Reel",
+    "list": "Veronica | The Queen's Soulmate",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtad",
+    "name": "Weight Reel",
+    "list": "Veronica | The Queen's Soulmate",
+    "typeIndicator": "List: Veronica | The Queen's Soulmate",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtab",
+    "name": "--Audit Design — Siwa Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abtaa",
+    "name": "45 second Siwa Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt8u",
+    "name": "--Audit Design — Funnel Fixes",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt8t",
+    "name": "--Audit Funnel Automation — Funnel Fixes",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt8r",
+    "name": "--Audit UI/UX — Funnel Fixes",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt8q",
+    "name": "--Audit Design — Landing Page Fixes",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt8p",
+    "name": "--Audit Funnel Automation — Landing Page Fixes",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt8n",
+    "name": "--Audit UI/UX — Landing Page Fixes",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt8m",
+    "name": "Fixing of Audited Funnel/Landing Pages",
+    "list": "Dr. Lisa Muehlenbein",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "in progress"
+  },
+  {
+    "id": "z8py7abt7f",
+    "name": "--Audit Design — Life Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt7e",
+    "name": "My entire Life Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt77",
+    "name": "Food Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abt05",
+    "name": "Siwa Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "Closed"
+  },
+  {
+    "id": "z8py7abt02",
+    "name": "North Coast Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "Closed"
+  },
+  {
+    "id": "z8py7abrzx",
+    "name": "Cairo Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "Closed"
+  },
+  {
+    "id": "z8py7abrq9",
+    "name": "--Audit Design — Font update on command events page",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abrq8",
+    "name": "--Audit UI/UX — Font update on command events page",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abrq7",
+    "name": "update font on Sarah's command events page (Saraf Leffley)",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "waiting"
+  },
+  {
+    "id": "z8py7abrby",
+    "name": "--Audit Design — Waitlist Page Update",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abrbx",
+    "name": "--Audit Funnel Automation — Waitlist Page Update",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abrbw",
+    "name": "--Audit UI/UX — Waitlist Page Update",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abrbv",
+    "name": "Waitlist Page Content Update (Debbie Reeves)",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "waiting"
+  },
+  {
+    "id": "z8py7abr7h",
+    "name": "--Audit Design — Canva Cover - Day Ten",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr7g",
+    "name": "--Audit UI/UX — Canva Cover - Day Ten",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr7f",
+    "name": "--Audit Design — Canva Cover - Day Nine",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr7e",
+    "name": "--Audit UI/UX — Canva Cover - Day Nine",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr7d",
+    "name": "--Audit Design — Canva Cover - Day Eight",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr7c",
+    "name": "--Audit UI/UX — Canva Cover - Day Eight",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr7b",
+    "name": "--Audit Design — Canva Cover - Day Seven",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr7a",
+    "name": "--Audit UI/UX — Canva Cover - Day Seven",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr79",
+    "name": "--Audit Design — Canva Cover - Day Six",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr78",
+    "name": "--Audit UI/UX — Canva Cover - Day Six",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr77",
+    "name": "--Audit Design — Canva Cover - Day Five",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr76",
+    "name": "--Audit UI/UX — Canva Cover - Day Five",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr75",
+    "name": "--Audit Design — Canva Cover - Day Four",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr74",
+    "name": "--Audit UI/UX — Canva Cover - Day Four",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr73",
+    "name": "--Audit Design — Canva Cover - Day Three",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr72",
+    "name": "--Audit UI/UX — Canva Cover - Day Three",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr71",
+    "name": "--Audit Design — Canva Cover - Day Two",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr70",
+    "name": "--Audit UI/UX — Canva Cover - Day Two",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6z",
+    "name": "--Create Canva Cover - Day Ten",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6y",
+    "name": "--Create Canva Cover - Day Nine",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6x",
+    "name": "--Create Canva Cover - Day Eight",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6w",
+    "name": "--Create Canva Cover - Day Seven",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6v",
+    "name": "--Create Canva Cover - Day Six",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6u",
+    "name": "--Create Canva Cover - Day Five",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6t",
+    "name": "--Create Canva Cover - Day Four",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6r",
+    "name": "--Create Canva Cover - Day Three",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6q",
+    "name": "--Create Canva Cover - Day Two",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abr6p",
+    "name": "Covers",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "List: Gabi Metz - Katharina Espinosa",
+    "tags": [],
+    "status": "waiting"
+  },
+  {
+    "id": "z8py7abr68",
+    "name": "--Audit Design — Commend Day Events Sales Page",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "Closed"
+  },
+  {
+    "id": "z8py7abr67",
+    "name": "--Audit Funnel Automation — Commend Day Events Sales Page",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "Closed"
+  },
+  {
+    "id": "z8py7abr66",
+    "name": "--Audit UI/UX — Commend Day Events Sales Page",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "Closed"
+  },
+  {
+    "id": "z8py7abr65",
+    "name": "Move Sydney before Melbourne on Commend Day Events Sales Page",
+    "list": "Georgia Human",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "Closed"
+  },
+  {
+    "id": "z8py7abq22",
+    "name": "--Audit Design — Superannuation Course Content",
+    "list": "123 Financial Group - Jen Richardson ",
+    "typeIndicator": "List: 123 Financial Group - Jen Richardson ",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abq21",
+    "name": "--Audit Design — Divorce, Kids & Money Course Content",
+    "list": "123 Financial Group - Jen Richardson ",
+    "typeIndicator": "List: 123 Financial Group - Jen Richardson ",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abq20",
+    "name": "--Work on Superannuation Course Content",
+    "list": "123 Financial Group - Jen Richardson ",
+    "typeIndicator": "List: 123 Financial Group - Jen Richardson ",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abq1z",
+    "name": "--Work on Divorce, Kids & Money Course Content",
+    "list": "123 Financial Group - Jen Richardson ",
+    "typeIndicator": "List: 123 Financial Group - Jen Richardson ",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abq1y",
+    "name": "Resume CMS Course Content",
+    "list": "123 Financial Group - Jen Richardson ",
+    "typeIndicator": "List: 123 Financial Group - Jen Richardson ",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abq1w",
+    "name": "--Audit Design — B-roll footage",
+    "list": "123 Financial Group - Jen Richardson ",
+    "typeIndicator": "List: 123 Financial Group - Jen Richardson ",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abq1v",
+    "name": "Capture B-roll Footage",
+    "list": "123 Financial Group - Jen Richardson ",
+    "typeIndicator": "List: 123 Financial Group - Jen Richardson ",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abpy5",
+    "name": "Create Egypt Travel Reel",
+    "list": "Caryn Meininger | Coach | Chrome",
+    "typeIndicator": "List: Caryn Meininger | Coach | Chrome",
+    "tags": [],
+    "status": "revision"
+  },
+  {
+    "id": "z8py7abpvn",
+    "name": "--Audit Funnel Automation — Draft Email whole list",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "Email",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abpvm",
+    "name": "Draft Email whole list",
+    "list": "Gabi Metz - Katharina Espinosa",
+    "typeIndicator": "Email",
+    "tags": [],
+    "status": "waiting"
+  },
+  {
+    "id": "z8py7abpq5",
+    "name": "--Audit Design — Asana Workspace",
+    "list": "Gianna Rielle",
+    "typeIndicator": "List: Gianna Rielle",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abpq4",
+    "name": "Create Asana Workspace",
+    "list": "Gianna Rielle",
+    "typeIndicator": "List: Gianna Rielle",
+    "tags": [],
+    "status": "waiting"
+  },
+  {
+    "id": "z8py7abpq3",
+    "name": "--Audit Design — Webinar landing page",
+    "list": "Ana James - Social Media",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abpq2",
+    "name": "--Audit Funnel Automation — Webinar landing page",
+    "list": "Ana James - Social Media",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abpq1",
+    "name": "--Audit UI/UX — Webinar landing page",
+    "list": "Ana James - Social Media",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "pending"
+  },
+  {
+    "id": "z8py7abpq0",
+    "name": "Build new SMP Webinar landing page",
+    "list": "Ana James - Social Media",
+    "typeIndicator": "Landing Page / Funnel",
+    "tags": [],
+    "status": "waiting"
+  }
+]

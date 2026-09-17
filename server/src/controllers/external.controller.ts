@@ -12,7 +12,6 @@ async function authenticateApiKey(req: Request, res: Response) {
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  // @ts-ignore
   const apiKey = await prisma.apiKey.findUnique({
     where: { key: token },
     include: { user: true }
@@ -24,7 +23,6 @@ async function authenticateApiKey(req: Request, res: Response) {
   }
 
   // Update last used
-  // @ts-ignore
   await prisma.apiKey.update({
     where: { id: apiKey.id },
     data: { lastUsed: new Date() }
@@ -53,13 +51,29 @@ export async function getTasks(req: Request, res: Response) {
         listId: true,
         createdAt: true,
         updatedAt: true,
+        list: {
+          select: {
+            name: true,
+            space: {
+              select: {
+                name: true
+              }
+            }
+          }
+        }
       },
       orderBy: { updatedAt: 'desc' },
       take: 50
     });
 
     const formattedTasks = tasks.map(task => ({
-      ...task,
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      client: task.list?.space?.name || 'Unknown Client',
+      listName: task.list?.name || 'Unknown List',
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
       link: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/lists/${task.listId}?task=${task.id}`
     }));
 

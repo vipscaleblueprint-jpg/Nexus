@@ -70,14 +70,15 @@ const taskInclude = {
 // GET /api/tasks - Redis Cache-Aside
 export async function listTasks(req: Request, res: Response) {
   try {
-    const { listId, assigneeId, status } = req.query as Record<string, string | undefined>;
-    const cacheKey = `tasks:all:${listId || 'all'}:${assigneeId || 'all'}:${status || 'all'}`;
+    const { listId, assigneeId, status, lightweight } = req.query as Record<string, string | undefined>;
+    const cacheKey = `tasks:all:${listId || 'all'}:${assigneeId || 'all'}:${status || 'all'}:${lightweight || 'false'}`;
 
     const cachedTasks = await getCache<any[]>(cacheKey);
     if (cachedTasks) {
       return res.json({ tasks: cachedTasks, cached: true });
     }
 
+    console.time('[API] listTasks db query');
     const tasks = await prisma.task.findMany({
       where: {
         ...(listId ? { listId } : {}),
@@ -91,9 +92,16 @@ export async function listTasks(req: Request, res: Response) {
             }
           : {}),
       },
-      include: taskInclude,
+      include: lightweight === 'true' 
+        ? {
+            assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            list: { select: { id: true, name: true, space: { select: { id: true, name: true } }, folder: { select: { id: true, name: true } } } }
+          }
+        : taskInclude,
       orderBy: { createdAt: 'desc' },
     });
+    console.timeEnd('[API] listTasks db query');
 
     await setCache(cacheKey, tasks, 300);
 
@@ -162,6 +170,60 @@ export async function createTask(req: Request, res: Response) {
     });
 
     await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
+
+    // Backend injection into Daily Rollover doc
+    try {
+      const docs = await prisma.doc.findMany({ where: { isDailyRollover: true } });
+      for (const doc of docs) {
+        const tz = doc.rolloverTimezone || 'Asia/Singapore';
+        const dateObj = new Date();
+        const monthFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' });
+        const monthTitle = monthFormatter.format(dateObj);
+        const dayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', day: 'numeric', year: 'numeric' });
+        const dayTitle = dayFormatter.format(dateObj);
+
+        const monthPage = await prisma.page.findFirst({ where: { docId: doc.id, title: monthTitle, parentPageId: null } });
+        if (!monthPage) continue;
+
+        const dayPage = await prisma.page.findFirst({ where: { docId: doc.id, title: dayTitle, parentPageId: monthPage.id } });
+        if (!dayPage) continue;
+
+        let blocks = [];
+        try {
+          blocks = JSON.parse(dayPage.content);
+        } catch(e) {}
+
+        let newTasksIdx = -1;
+        for (let i = 0; i < blocks.length; i++) {
+          if (blocks[i].content && blocks[i].content.includes('>New Tasks</')) {
+            newTasksIdx = i;
+            break;
+          }
+        }
+        
+        if (newTasksIdx !== -1) {
+          const escapedTitle = task.title.replace(/"/g, '&quot;');
+          const statusColor = '#3b82f6';
+          const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
+          const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
+          
+          blocks.splice(newTasksIdx + 1, 0, {
+            id: `blk-t-${Date.now()}-${task.id}`,
+            type: 'text',
+            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}">@${escapedTitle}</span></p>`
+          });
+          
+          await prisma.page.update({
+            where: { id: dayPage.id },
+            data: { content: JSON.stringify(blocks) }
+          });
+          
+          io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to inject task into daily rollover:', err);
+    }
 
     // Broadcast new task to the list room and globally for real-time sync
     io.to(`list:${listId}`).emit('task:created', task);

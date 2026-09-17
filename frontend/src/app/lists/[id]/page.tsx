@@ -15,10 +15,11 @@ import {
   ChevronLeft,
   Loader2,
   KanbanSquare,
+  Share2,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { ListSkeleton } from '@/components/ui/Skeleton';
-import { debugLog } from '@/components/board/debug';
+
 import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
@@ -237,7 +238,7 @@ export default function BoardPage() {
     ...Object.keys(tasksByStatus).filter((s) => !statusOrder.includes(s)),
   ];
   
-  debugLog('BoardPage', `Render BoardPage with list.tasks length=${list?.tasks?.length}`);
+
 
   const breadcrumb = [
     list?.space?.name,
@@ -393,25 +394,43 @@ export default function BoardPage() {
       ) : (
         <div className="w-full h-full flex flex-col px-6 py-6 overflow-hidden">
           {/* Header */}
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-2">
-              <button
-                onClick={() => router.back()}
-                className="p-1 rounded-md bg-zinc-800/50 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-                title="Go back"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <p className="text-[11px] text-zinc-500">{breadcrumb}</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-500/15">
-                <ListIcon className="w-5 h-5 text-blue-400" />
+          <div className="mb-6 flex items-start justify-between">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2 mb-2">
+                <button
+                  onClick={() => router.back()}
+                  className="p-1 rounded-md bg-zinc-800/50 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                  title="Go back"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                  {list?.space && (
+                    <>
+                      <button onClick={() => router.push(`/spaces/${list.space.id}`)} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.space.name}</button>
+                      <span className="text-zinc-600">/</span>
+                    </>
+                  )}
+                  {list?.folder && (
+                    <>
+                      <button onClick={() => router.push(`/folders/${list.folder.id}`)} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.folder.name}</button>
+                      <span className="text-zinc-600">/</span>
+                    </>
+                  )}
+                  {list?.name && (
+                    <span className="text-zinc-400">{list.name}</span>
+                  )}
+                </div>
               </div>
-              <h1 className="text-xl font-semibold text-zinc-100">{list?.name}</h1>
-              <span className="text-[11px] text-zinc-500 px-2 py-0.5 bg-zinc-800 rounded-full">
-                {list?.tasks?.length ?? 0} tasks
-              </span>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-500/15">
+                  <ListIcon className="w-5 h-5 text-blue-400" />
+                </div>
+                <h1 className="text-xl font-semibold text-zinc-100">{list?.name}</h1>
+                <span className="text-[11px] text-zinc-500 px-2 py-0.5 bg-zinc-800 rounded-full">
+                  {list?.tasks?.length ?? 0} tasks
+                </span>
+              </div>
             </div>
           </div>
 

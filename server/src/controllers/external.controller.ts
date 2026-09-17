@@ -78,7 +78,7 @@ export async function getTasks(req: Request, res: Response) {
       listName: task.list?.name || 'Unknown List',
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
-      link: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/lists/${task.listId}?task=${task.id}`
+      link: `${process.env.FRONTEND_URL || 'https://app.vipscaleph.com'}/lists/${task.listId}?task=${task.id}`
     }));
 
     return res.json({ tasks: formattedTasks });

@@ -3,7 +3,9 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// Middleware helper to check API Key
+// ---------------------------------------------------------------------------
+// Auth helper: validates API key and returns the key record (with user)
+// ---------------------------------------------------------------------------
 async function authenticateApiKey(req: Request, res: Response) {
   const authHeader = req.headers.authorization || req.headers['x-api-key'] as string;
   if (!authHeader) {
@@ -12,7 +14,7 @@ async function authenticateApiKey(req: Request, res: Response) {
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const apiKey = await prisma.apiKey.findUnique({
+  const apiKey = await (prisma as any).apiKey.findUnique({
     where: { key: token },
     include: { user: true }
   });
@@ -22,8 +24,8 @@ async function authenticateApiKey(req: Request, res: Response) {
     return null;
   }
 
-  // Update last used
-  await prisma.apiKey.update({
+  // Track last usage
+  await (prisma as any).apiKey.update({
     where: { id: apiKey.id },
     data: { lastUsed: new Date() }
   });
@@ -31,6 +33,10 @@ async function authenticateApiKey(req: Request, res: Response) {
   return apiKey;
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/external/tasks
+// Returns tasks with title, status, client (space name), listName, and link
+// ---------------------------------------------------------------------------
 export async function getTasks(req: Request, res: Response) {
   try {
     const apiKey = await authenticateApiKey(req, res);
@@ -55,9 +61,7 @@ export async function getTasks(req: Request, res: Response) {
           select: {
             name: true,
             space: {
-              select: {
-                name: true
-              }
+              select: { name: true }
             }
           }
         }
@@ -83,6 +87,10 @@ export async function getTasks(req: Request, res: Response) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/external/activity
+// Logs an audit entry against a task (shows in the activity feed)
+// ---------------------------------------------------------------------------
 export async function postActivity(req: Request, res: Response) {
   try {
     const apiKey = await authenticateApiKey(req, res);
@@ -110,6 +118,55 @@ export async function postActivity(req: Request, res: Response) {
     });
 
     return res.json({ message: 'Activity logged successfully', auditLog });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/external/comment
+// Posts a formatted comment to a task — shows up in the task modal Comments
+// section exactly like a regular user comment (with avatar, reactions, reply).
+//
+// Body:
+//   taskId  (string, required) — ID of the target task
+//   content (string, required) — Markdown-formatted comment body
+//
+// Tip: format your spreadsheet columns as markdown and pass as `content`.
+// The comment will appear under the API key owner's account.
+// ---------------------------------------------------------------------------
+export async function postComment(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { taskId, content } = req.body;
+
+    if (!taskId || !content) {
+      return res.status(400).json({ error: 'taskId and content are required' });
+    }
+
+    const task = await prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    // Create the comment as the API key owner
+    const comment = await prisma.taskComment.create({
+      data: {
+        content,
+        taskId,
+        userId: apiKey.userId,
+      },
+      include: {
+        user: { select: { id: true, name: true, avatarUrl: true } }
+      }
+    });
+
+    return res.json({
+      message: 'Comment posted successfully',
+      comment
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

@@ -171,3 +171,52 @@ export async function postComment(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// PUT /api/external/comment
+// Updates an existing comment.
+//
+// Body:
+//   commentId (string, required)
+//   content (string, required)
+// ---------------------------------------------------------------------------
+export async function updateComment(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { commentId, content } = req.body;
+
+    if (!commentId || !content) {
+      return res.status(400).json({ error: 'commentId and content are required' });
+    }
+
+    const existingComment = await prisma.taskComment.findUnique({
+      where: { id: commentId }
+    });
+
+    if (!existingComment) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    // Only allow the API key owner to update their own comments
+    if (existingComment.userId !== apiKey.userId) {
+      return res.status(403).json({ error: 'You do not have permission to update this comment' });
+    }
+
+    const updatedComment = await prisma.taskComment.update({
+      where: { id: commentId },
+      data: { content },
+      include: {
+        user: { select: { id: true, name: true, avatarUrl: true } }
+      }
+    });
+
+    return res.json({
+      message: 'Comment updated successfully',
+      comment: updatedComment
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}

@@ -107,16 +107,23 @@ export function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalProps) {
               <Activity className="size-4 text-cyan-400" /> Endpoint Documentation
             </h3>
 
-            <div className="bg-[hsl(240,3.7%,15.9%)] p-4 rounded-lg space-y-4 text-sm text-[hsl(240,5%,64.9%)]">
+            <div className="bg-[hsl(240,3.7%,15.9%)] p-4 rounded-lg space-y-5 text-sm text-[hsl(240,5%,64.9%)]">
               <div>
                 <p className="font-medium text-white mb-1">Base URL</p>
                 <code className="text-xs bg-black/30 px-2 py-1 rounded text-cyan-300">{baseUrl}</code>
               </div>
 
-              <div>
-                <p className="font-medium text-white mb-1">GET /tasks</p>
-                <p className="text-xs mb-2">Fetch tasks to pull into your spreadsheet or n8n workflow.</p>
-                <div className="bg-black/30 p-2 rounded-md overflow-x-auto relative group">
+              {/* GET /tasks */}
+              <div className="border-t border-white/5 pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">GET</span>
+                  <p className="font-medium text-white">/tasks</p>
+                </div>
+                <p className="text-xs mb-1">Fetch tasks to pull into your spreadsheet or n8n workflow.</p>
+                <p className="text-xs mb-2 text-zinc-500">Query params: <code className="text-zinc-400">status</code>, <code className="text-zinc-400">listId</code> (all optional, max 50 results)</p>
+
+                {/* Example Request */}
+                <div className="bg-black/30 p-2 rounded-md overflow-x-auto relative group mb-2">
                   <button
                     onClick={() => copyToClipboard(`curl -X GET "${baseUrl}/tasks?status=Pending" \\\n  -H "Authorization: Bearer YOUR_API_KEY"`, 'curl-get')}
                     className="absolute top-2 right-2 p-1.5 rounded-md bg-[hsl(240,3.7%,15.9%)] border border-white/5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[hsl(240,3.7%,25%)]"
@@ -129,12 +136,55 @@ export function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalProps) {
                     -H "Authorization: Bearer YOUR_API_KEY"
                   </pre>
                 </div>
+
+                {/* Response Schema */}
+                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Response</p>
+                <div className="bg-black/30 p-2 rounded-md overflow-x-auto relative group">
+                  <button
+                    onClick={() => copyToClipboard(`{
+  "tasks": [
+    {
+      "id": "uuid",
+      "title": "Landing Page Design",
+      "status": "In Progress",
+      "client": "Vipscale",
+      "listName": "Sprint 3",
+      "createdAt": "2026-09-17T10:00:00Z",
+      "updatedAt": "2026-09-17T10:43:08Z",
+      "link": "${baseUrl.replace('/api/external', '')}/lists/LIST_ID?task=TASK_ID"
+    }
+  ]
+}`, 'res-get')}
+                    className="absolute top-2 right-2 p-1.5 rounded-md bg-[hsl(240,3.7%,15.9%)] border border-white/5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[hsl(240,3.7%,25%)]"
+                    title="Copy schema"
+                  >
+                    {copiedKey === 'res-get' ? <Check className="size-3.5 text-green-400" /> : <Copy className="size-3.5 text-zinc-400" />}
+                  </button>
+                  <pre className="text-[11px] text-zinc-300">{`{
+  "tasks": [
+    {
+      "id": "uuid",
+      "title": "Landing Page Design",
+      "status": "In Progress",
+      "client": "Vipscale",          ← Space / workspace name
+      "listName": "Sprint 3",        ← List the task belongs to
+      "createdAt": "2026-09-17T...",
+      "updatedAt": "2026-09-17T...",
+      "link": "https://app.../lists/LIST_ID?task=TASK_ID"
+    }
+  ]
+}`}</pre>
+                </div>
               </div>
 
-              <div>
-                <p className="font-medium text-white mb-1">POST /activity</p>
-                <p className="text-xs mb-2">Log external activity to a specific task in Nexus.</p>
-                <div className="bg-black/30 p-2 rounded-md overflow-x-auto relative group">
+              {/* POST /activity */}
+              <div className="border-t border-white/5 pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-bold bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">POST</span>
+                  <p className="font-medium text-white">/activity</p>
+                </div>
+                <p className="text-xs mb-2">Log external activity to a specific task in Nexus (e.g. from n8n or a spreadsheet automation).</p>
+                <div className="bg-black/30 p-2 rounded-md overflow-x-auto relative group mb-2">
                   <button
                     onClick={() => copyToClipboard(`curl -X POST "${baseUrl}/activity" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"taskId": "TASK_UUID", "action": "Sync via n8n"}'`, 'curl-post')}
                     className="absolute top-2 right-2 p-1.5 rounded-md bg-[hsl(240,3.7%,15.9%)] border border-white/5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[hsl(240,3.7%,25%)]"
@@ -146,8 +196,38 @@ export function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalProps) {
                     curl -X POST "{baseUrl}/activity"\n
                     -H "Authorization: Bearer YOUR_API_KEY"\n
                     -H "Content-Type: application/json"\n
-                    -d '{"{"}"taskId": "TASK_UUID", "action": "Sync via n8n"{"}"}'
+                    -d '{"{"}\"taskId\": \"TASK_UUID\", \"action\": \"Sync via n8n\"{"}"}'
                   </pre>
+                </div>
+
+                {/* Body Schema */}
+                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Body</p>
+                <div className="bg-black/30 p-2 rounded-md mb-2">
+                  <pre className="text-[11px] text-zinc-300">{`{
+  "taskId": "TASK_UUID",   ← required
+  "action": "string",      ← required (e.g. "Synced from Sheet")
+  "details": {}            ← optional JSON metadata
+}`}</pre>
+                </div>
+
+                {/* Response Schema */}
+                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Response</p>
+                <div className="bg-black/30 p-2 rounded-md">
+                  <pre className="text-[11px] text-zinc-300">{`{
+  "message": "Activity logged successfully",
+  "auditLog": { "id": "...", "action": "...", "createdAt": "..." }
+}`}</pre>
+                </div>
+              </div>
+
+              {/* Auth info */}
+              <div className="border-t border-white/5 pt-4">
+                <p className="text-xs font-medium text-white mb-1">Authentication</p>
+                <p className="text-xs">Pass your API key in the <code className="text-amber-300">Authorization</code> header as a Bearer token, or as an <code className="text-amber-300">x-api-key</code> header.</p>
+                <div className="mt-2 bg-black/30 p-2 rounded-md">
+                  <pre className="text-[11px] text-zinc-300">{`Authorization: Bearer nx_your_api_key_here
+# OR
+x-api-key: nx_your_api_key_here`}</pre>
                 </div>
               </div>
             </div>

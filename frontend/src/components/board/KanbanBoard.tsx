@@ -39,6 +39,7 @@ interface Props {
   onGroupReorder?: (newGroups: string[]) => void;
   listStatuses?: any[];
   onStatusChange?: (status: string, data: { name?: string, color?: string, allowedRoles?: string[], groupName?: string }) => void | Promise<void>;
+  onStatusDelete?: (statusName: string) => void | Promise<void>;
 }
 
 const CATEGORIES = [
@@ -125,6 +126,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   columnThemes,
   setColumnThemes,
   onStatusChange,
+  onStatusDelete,
   onAddTaskClick,
   onTaskClick,
   hasMarginRight,
@@ -196,6 +198,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
         onAddTaskClick={onAddTaskClick}
         onTaskClick={onTaskClick}
         onRoleChange={handleRoleChange}
+        onDeleteColumn={onStatusDelete}
       />
     </div>
   );
@@ -204,7 +207,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
 export function KanbanBoard({ tasks,  onTaskMove,
   onTaskMovePreview,
   onTaskReorder,
-  onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange }: Props) {
+  onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete }: Props) {
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAppStore((s) => s.currentUser);
@@ -367,19 +370,33 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
     // 1. Predefined categories
     CATEGORIES.forEach((cat) => {
+      // If listStatuses exists, only keep default statuses that still exist in the DB (haven't been deleted/renamed)
+      const validStatusesForCat = listStatuses.length > 0 
+        ? cat.statuses.filter(statusName => listStatuses.some(s => (s.name || '').trim().toUpperCase() === statusName.toUpperCase()))
+        : cat.statuses;
+
       const dynamicStatusesForCat = listStatuses
         .filter((s) => s.groupName === cat.title && !cat.statuses.includes(s.name))
         .map((s) => s.name);
         
       dynamicStatusesForCat.forEach(s => configuredStatusNames.add(s));
       
+      const unorderedStatuses = [...validStatusesForCat, ...dynamicStatusesForCat];
+      // Sort statuses based on their actual order in listStatuses (which reflects DB insertion order)
+      const orderedStatuses = unorderedStatuses.sort((a, b) => {
+        const indexA = listStatuses.findIndex(s => s.name === a);
+        const indexB = listStatuses.findIndex(s => s.name === b);
+        if (indexA === -1 || indexB === -1) return 0;
+        return indexA - indexB;
+      });
+
       sections.push({
         id: `preset_${cat.id}`,
         title: cat.title,
         badgeClass: cat.badgeClass,
         borderColor: cat.borderColor,
         icon: cat.icon,
-        statuses: [...cat.statuses, ...dynamicStatusesForCat],
+        statuses: orderedStatuses,
         isPreset: true,
       });
     });
@@ -834,6 +851,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
                           columnThemes={columnThemes}
                           setColumnThemes={setColumnThemes}
                           onStatusChange={onStatusChange}
+                          onStatusDelete={onStatusDelete}
                           onAddTaskClick={onAddTaskClick}
                           onTaskClick={onTaskClick}
                           hasMarginRight={hasMarginRight}

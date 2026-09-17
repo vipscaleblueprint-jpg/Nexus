@@ -12,7 +12,7 @@ export async function listLists(req: Request, res: Response) {
 
     const lists = await prisma.list.findMany({
       include: {
-        statuses: true,
+        statuses: { orderBy: { createdAt: 'asc' } },
         tasks: {
           include: {
             subtasks: {
@@ -43,7 +43,7 @@ export async function getList(req: Request, res: Response) {
       include: {
         space: { select: { id: true, name: true, color: true } },
         folder: { select: { id: true, name: true } },
-        statuses: true,
+        statuses: { orderBy: { createdAt: 'asc' } },
         tasks: {
           orderBy: { createdAt: 'asc' },
           select: {
@@ -112,9 +112,16 @@ export async function createList(req: Request, res: Response) {
       data: { name, spaceId: spaceId || null, folderId: folderId || null },
     });
 
+    const defaultStatusesToSeed = DEFAULT_STATUSES.map(s => {
+      if (s.name === 'KYC') {
+        return { ...s, name: list.name, allowedRoles: [], listId: list.id };
+      }
+      return { ...s, allowedRoles: [], listId: list.id };
+    });
+
     // Auto-seed default statuses for every new list
     await prisma.listStatus.createMany({
-      data: DEFAULT_STATUSES.map(s => ({ ...s, allowedRoles: [], listId: list.id })),
+      data: defaultStatusesToSeed,
       skipDuplicates: true,
     });
 
@@ -239,6 +246,20 @@ export async function createStatus(req: Request, res: Response) {
 export async function updateStatus(req: Request, res: Response) {
   try {
     const { name, color, allowedRoles, groupName } = req.body;
+    
+    if (name) {
+      const oldStatus = await prisma.listStatus.findUnique({
+        where: { id: req.params.statusId },
+      });
+      if (oldStatus && oldStatus.name !== name) {
+        // Update all tasks in this list that have the old status
+        await prisma.task.updateMany({
+          where: { listId: req.params.id, status: oldStatus.name },
+          data: { status: name },
+        });
+      }
+    }
+
     const status = await prisma.listStatus.update({
       where: { id: req.params.statusId },
       data: {

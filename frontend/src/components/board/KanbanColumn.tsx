@@ -22,6 +22,7 @@ interface Props {
   allowedRoles?: string[];
   onRoleChange?: (allowedRoles: string[]) => void;
   onUpdateColumn?: (status: string, data: { name?: string; color?: string; allowedRoles?: string[] }) => Promise<void> | void;
+  onDeleteColumn?: (status: string) => void | Promise<void>;
   roleMap?: Record<string, string>;
   onRename?: (newName: string) => void;
   isColumnRestrictedForUser?: boolean;
@@ -136,6 +137,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   isColumnRestrictedForUser = false,
   columnRestrictionReason,
   listStatuses = [],
+  onDeleteColumn,
 }: Props) {
 
 
@@ -152,13 +154,14 @@ export const KanbanColumn = memo(function KanbanColumn({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [renderLimit, setRenderLimit] = useState(5);
   const [isShaking, setIsShaking] = useState(false);
-  const label = STATUS_LABELS[status] || status;
+  const dbStatus = listStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
+  const label = dbStatus?.name || STATUS_LABELS[status] || status;
   const [isEditing, setIsEditing] = useState(false);
   const [localName, setLocalName] = useState(label);
 
   useEffect(() => {
-    setLocalName(STATUS_LABELS[status] || status);
-  }, [status]);
+    setLocalName(label);
+  }, [label]);
 
   const handleRenameSubmit = async () => {
     setIsEditing(false);
@@ -385,7 +388,9 @@ export const KanbanColumn = memo(function KanbanColumn({
         onRename={onRename}
         onRoleChange={onRoleChange}
         onThemeChange={onThemeChange}
-        onDelete={() => console.log('Delete column:', status)}
+        onDelete={() => {
+          if (onDeleteColumn) onDeleteColumn(status);
+        }}
       />
     </div>
   );

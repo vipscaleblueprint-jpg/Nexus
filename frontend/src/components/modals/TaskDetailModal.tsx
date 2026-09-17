@@ -1062,7 +1062,10 @@ export function TaskDetailModalContent({
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
-                navigator.clipboard.writeText(window.location.href);
+                const baseUrl = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+                const path = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
+                const link = baseUrl ? `${baseUrl}${path}` : window.location.href;
+                navigator.clipboard.writeText(link);
                 toast.success('Link copied to clipboard');
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-2"

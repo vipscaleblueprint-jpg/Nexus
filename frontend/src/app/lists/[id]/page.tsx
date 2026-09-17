@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { spacesApi, authApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import {
@@ -16,8 +16,9 @@ import {
   Loader2,
   KanbanSquare,
   Share2,
+  Pencil,
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+// useRouter is imported above
 import { ListSkeleton } from '@/components/ui/Skeleton';
 
 import { KanbanBoard } from '@/components/board/KanbanBoard';
@@ -48,6 +49,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function BoardPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { currentUser, setCurrentUser } = useAppStore();
   const [list, setList] = useState<any>(null);
@@ -60,6 +62,8 @@ export default function BoardPage() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editingNameValue, setEditingNameValue] = useState('');
 
   useEffect(() => {
     getRoles()
@@ -94,6 +98,37 @@ export default function BoardPage() {
     })();
     return () => { cancelled = true; };
   }, [id]);
+
+  useEffect(() => {
+    if (!loading && list?.tasks && !selectedTask) {
+      const taskIdParam = searchParams.get('task');
+      if (taskIdParam) {
+        // Handle malformed duplicated ID like ?task=ID/ID by taking the first part
+        const actualTaskId = taskIdParam.split('/')[0];
+        const taskToOpen = list.tasks.find((t: any) => t.id === actualTaskId);
+        if (taskToOpen) {
+          setSelectedTask(taskToOpen);
+        }
+      }
+    }
+  }, [loading, list?.tasks, searchParams, selectedTask]);
+
+  // Sync selectedTask to URL so that copy-pasting the address bar works
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (selectedTask) {
+        if (url.searchParams.get('task') !== selectedTask.id) {
+          url.searchParams.set('task', selectedTask.id);
+          window.history.replaceState(null, '', url.toString());
+        }
+      } else if (url.searchParams.has('task')) {
+        url.searchParams.delete('task');
+        url.searchParams.delete('subtask');
+        window.history.replaceState(null, '', url.toString());
+      }
+    }
+  }, [selectedTask]);
 
   useEffect(() => {
     if (!id) return;
@@ -357,7 +392,13 @@ export default function BoardPage() {
         <div className="w-full h-full">
           <TaskDetailModal
             isOpen={!!selectedTask}
-            onClose={() => setSelectedTask(null)}
+            onClose={() => {
+              setSelectedTask(null);
+              const currentUrl = new URL(window.location.href);
+              currentUrl.searchParams.delete('task');
+              currentUrl.searchParams.delete('subtask');
+              window.history.replaceState(null, '', currentUrl.toString());
+            }}
             task={selectedTask}
             socket={socket}
             listStatuses={list?.statuses || []}
@@ -426,7 +467,48 @@ export default function BoardPage() {
                 <div className="p-2 rounded-lg bg-blue-500/15">
                   <ListIcon className="w-5 h-5 text-blue-400" />
                 </div>
-                <h1 className="text-xl font-semibold text-zinc-100">{list?.name}</h1>
+                {isEditingName ? (
+                  <input
+                    type="text"
+                    value={editingNameValue}
+                    onChange={(e) => setEditingNameValue(e.target.value)}
+                    onBlur={async () => {
+                      setIsEditingName(false);
+                      if (editingNameValue.trim() && editingNameValue !== list?.name) {
+                        try {
+                          await spacesApi.updateList(id as string, { name: editingNameValue.trim() });
+                          setList((prev: any) => ({ ...prev, name: editingNameValue.trim() }));
+                          toast.success('List name updated');
+                        } catch (err: any) {
+                          toast.error(err.message || 'Failed to update list name');
+                        }
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                      if (e.key === 'Escape') {
+                        setIsEditingName(false);
+                      }
+                    }}
+                    autoFocus
+                    className="text-xl font-semibold text-zinc-100 bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5 outline-none focus:border-indigo-500"
+                  />
+                ) : (
+                  <div className="group flex items-center gap-2">
+                    <h1 className="text-xl font-semibold text-zinc-100">{list?.name}</h1>
+                    <button
+                      onClick={() => {
+                        setEditingNameValue(list?.name || '');
+                        setIsEditingName(true);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-all cursor-pointer"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
                 <span className="text-[11px] text-zinc-500 px-2 py-0.5 bg-zinc-800 rounded-full">
                   {list?.tasks?.length ?? 0} tasks
                 </span>

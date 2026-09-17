@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { memo, useState, useMemo, useRef, useEffect } from 'react';
-import { debugLog } from './debug';
+
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
@@ -389,7 +389,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 });
 
 export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason, listStatuses, onUnauthorizedDragAttempt }: Props) {
-  debugLog('KanbanCard', `Render task=${task.id}, isOverlay=${isOverlay}`);
+
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
   const pointerPosRef = useRef<{x: number, y: number} | null>(null);

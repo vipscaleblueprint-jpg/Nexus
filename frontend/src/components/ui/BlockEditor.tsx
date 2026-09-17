@@ -8,6 +8,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import { TaskMention } from '../editor/extensions/TaskMention';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
+import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
 import { taskSuggestion } from '../editor/suggestions/taskSuggestion';
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
@@ -29,6 +30,15 @@ interface BlockEditorProps {
 export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, editable = true, onEditorReady }: BlockEditorProps) {
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  let initialContent: any = content || '';
+  if (typeof initialContent === 'string' && initialContent.startsWith('{"type":"doc"')) {
+    try {
+      initialContent = JSON.parse(initialContent);
+    } catch (e) {
+      console.warn('Failed to parse Tiptap JSON content', e);
+    }
+  }
+
   const editor = useEditor({
     editable,
     immediatelyRender: false,
@@ -48,8 +58,11 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
         suggestion: taskSuggestion,
       }),
       LiveKanbanBlock,
+      Toggle,
+      ToggleSummary,
+      ToggleContent,
     ],
-    content: content || '',
+    content: initialContent,
     onUpdate: ({ editor }) => {
       onChange(editor.getHTML());
     },
@@ -108,8 +121,25 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
   useEffect(() => {
     if (editor && content !== undefined && content !== null) {
       if (!editor.isFocused) {
-        if (editor.getHTML() !== content) {
-          editor.commands.setContent(content, false);
+        let isJson = false;
+        let parsedContent: any = content;
+        
+        if (typeof content === 'string' && content.startsWith('{"type":"doc"')) {
+          isJson = true;
+          try {
+            parsedContent = JSON.parse(content);
+          } catch (e) {}
+        }
+        
+        if (isJson) {
+          // If it's JSON and not focused, we should accept updates (e.g. from real-time events)
+          // Since it's not focused, it's safe to overwrite the content.
+          editor.commands.setContent(parsedContent, false);
+        } else {
+          // It's HTML string
+          if (editor.getHTML() !== content) {
+            editor.commands.setContent(content, false);
+          }
         }
       }
     }

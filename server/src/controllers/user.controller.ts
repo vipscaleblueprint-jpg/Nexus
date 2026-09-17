@@ -136,7 +136,6 @@ export async function deleteUser(req: Request, res: Response) {
 export async function getApiKeys(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    // @ts-ignore
     const apiKeys = await prisma.apiKey.findMany({
       where: { userId: id },
       orderBy: { createdAt: 'desc' }
@@ -160,7 +159,6 @@ export async function createApiKey(req: Request, res: Response) {
 
     const key = `nx_${crypto.randomBytes(24).toString('hex')}`;
     
-    // @ts-ignore
     const apiKey = await prisma.apiKey.create({
       data: {
         name,
@@ -178,7 +176,6 @@ export async function createApiKey(req: Request, res: Response) {
 export async function deleteApiKey(req: Request, res: Response) {
   try {
     const { id, keyId } = req.params;
-    // @ts-ignore
     await prisma.apiKey.delete({
       where: { id: keyId, userId: id }
     });

@@ -160,10 +160,8 @@ export default function BoardPage() {
 
     // Real-time: task updated/moved by another user
     s.on('task:updated', (updatedTask: any) => {
-      console.log('[BoardPage Socket] task:updated received', updatedTask.id, updatedTask.status);
       setList((prev: any) => {
         if (!prev || !prev.tasks) {
-          console.log('[BoardPage Socket] aborting setList, prev or prev.tasks is null');
           return prev;
         }
         
@@ -171,13 +169,11 @@ export default function BoardPage() {
         const newTasks = prev.tasks.map((t: any) => {
           if (t.id === updatedTask.id) {
             found = true;
-            console.log('[BoardPage Socket] Match found! Updating status from', t.status, 'to', updatedTask.status);
             return { ...t, ...updatedTask };
           }
           return t;
         });
 
-        console.log('[BoardPage Socket] setList completed. Task was found:', found);
         return {
           ...prev,
           tasks: newTasks
@@ -224,7 +220,6 @@ export default function BoardPage() {
 
     // Real-time: task reorder within a column
     s.on('task_reorder', (data: { status: string; taskIds: string[] }) => {
-      console.log('[BoardPage Socket] task_reorder received', data);
       setList((prev: any) => {
         if (!prev || !prev.tasks) return prev;
         const otherTasks = prev.tasks.filter((t: any) => t.status !== data.status);
@@ -292,7 +287,6 @@ export default function BoardPage() {
     }
 
     // Optimistically update UI
-    console.log('[BoardPage] handleTaskMove optimistic update', taskId, newStatus);
     setList((prev: any) => ({
       ...prev,
       tasks: prev.tasks.map((t: any) =>
@@ -301,7 +295,6 @@ export default function BoardPage() {
     }));
 
     try {
-      console.log('[BoardPage] calling tasksApi.moveTask');
       await tasksApi.moveTask(taskId, newStatus, id as string, currentUser?.id);
     } catch (err: any) {
       console.error('Failed to move task:', err);
@@ -567,7 +560,12 @@ export default function BoardPage() {
                         const updated = await res.json();
                         setList((prev: any) => ({
                           ...prev,
-                          statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s)
+                          statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s),
+                          tasks: (prev.tasks || []).map((t: any) => 
+                            t.status === existingStatus.name && data.name
+                              ? { ...t, status: data.name }
+                              : t
+                          )
                         }));
 
                       } else {
@@ -605,6 +603,28 @@ export default function BoardPage() {
                     return newGroups;
                   });
                   socket?.emit('add_group', { listId: id, group });
+                }}
+                onStatusDelete={async (statusName) => {
+                  try {
+                    const existingStatus = list?.statuses?.find((s: any) => s.name === statusName);
+                    if (existingStatus) {
+                      const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${existingStatus.id}`, {
+                        method: 'DELETE',
+                      });
+                      if (res.ok) {
+                        setList((prev: any) => ({
+                          ...prev,
+                          statuses: prev.statuses.filter((s: any) => s.id !== existingStatus.id)
+                        }));
+                      } else {
+                        const errData = await res.json().catch(() => ({}));
+                        toast.error(errData.error || 'Failed to delete column');
+                      }
+                    }
+                  } catch (e: any) {
+                    console.error('Failed to delete status', e);
+                    toast.error(e.message || 'Failed to delete status');
+                  }
                 }}
                 onGroupReorder={(newGroups) => {
                   setCustomGroups(newGroups);

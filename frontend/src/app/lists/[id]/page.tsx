@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { spacesApi, authApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -99,19 +99,24 @@ export default function BoardPage() {
     return () => { cancelled = true; };
   }, [id]);
 
+  const lastUrlTaskId = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!loading && list?.tasks && !selectedTask) {
+    if (!loading && list?.tasks) {
       const taskIdParam = searchParams.get('task');
-      if (taskIdParam) {
-        // Handle malformed duplicated ID like ?task=ID/ID by taking the first part
-        const actualTaskId = taskIdParam.split('/')[0];
-        const taskToOpen = list.tasks.find((t: any) => t.id === actualTaskId);
-        if (taskToOpen) {
-          setSelectedTask(taskToOpen);
+      const actualTaskId = taskIdParam ? taskIdParam.split('/')[0] : null;
+
+      if (actualTaskId !== lastUrlTaskId.current) {
+        lastUrlTaskId.current = actualTaskId;
+        if (actualTaskId) {
+          const taskToOpen = list.tasks.find((t: any) => t.id === actualTaskId);
+          if (taskToOpen) {
+            setSelectedTask(taskToOpen);
+          }
         }
       }
     }
-  }, [loading, list?.tasks, searchParams, selectedTask]);
+  }, [loading, list?.tasks, searchParams]);
 
   // Sync selectedTask to URL so that copy-pasting the address bar works
   useEffect(() => {
@@ -120,12 +125,12 @@ export default function BoardPage() {
       if (selectedTask) {
         if (url.searchParams.get('task') !== selectedTask.id) {
           url.searchParams.set('task', selectedTask.id);
-          window.history.replaceState(null, '', url.toString());
+          router.replace(url.pathname + url.search, { scroll: false });
         }
       } else if (url.searchParams.has('task')) {
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
-        window.history.replaceState(null, '', url.toString());
+        router.replace(url.pathname + url.search, { scroll: false });
       }
     }
   }, [selectedTask]);
@@ -385,13 +390,7 @@ export default function BoardPage() {
         <div className="w-full h-full">
           <TaskDetailModal
             isOpen={!!selectedTask}
-            onClose={() => {
-              setSelectedTask(null);
-              const currentUrl = new URL(window.location.href);
-              currentUrl.searchParams.delete('task');
-              currentUrl.searchParams.delete('subtask');
-              window.history.replaceState(null, '', currentUrl.toString());
-            }}
+            onClose={() => setSelectedTask(null)}
             task={selectedTask}
             socket={socket}
             listStatuses={list?.statuses || []}

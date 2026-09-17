@@ -239,6 +239,7 @@ model Subtask {
   taskId      String
   createdAt   DateTime      @default(now())
   completed   Boolean       @default(false)
+  status      String?
   assigneeId  String?
   dueDate     DateTime?
   priority    Priority      @default(MEDIUM)

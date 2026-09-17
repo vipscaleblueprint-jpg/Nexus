@@ -123,14 +123,14 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
       if (!editor.isFocused) {
         let isJson = false;
         let parsedContent: any = content;
-        
+
         if (typeof content === 'string' && content.startsWith('{"type":"doc"')) {
           isJson = true;
           try {
             parsedContent = JSON.parse(content);
-          } catch (e) {}
+          } catch (e) { }
         }
-        
+
         if (isJson) {
           // If it's JSON and not focused, we should accept updates (e.g. from real-time events)
           // Since it's not focused, it's safe to overwrite the content.
@@ -202,7 +202,7 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
 
       const positions: number[] = [];
       const nodeSizes: number[] = [];
-      
+
       state.doc.descendants((node, pos) => {
         if (node.type.name === 'mention' && node.attrs.id === id) {
           positions.push(pos);
@@ -246,115 +246,115 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
           <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999 }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-[99999]">
-        <button
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('bold') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Bold"
-        >
-          <Bold className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('italic') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Italic"
-        >
-          <Italic className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('underline') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Underline"
-        >
-          <UnderlineIcon className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => editor.chain().focus().toggleStrike().run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('strike') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Strikethrough"
-        >
-          <Strikethrough className="w-3.5 h-3.5" />
-        </button>
-        
-        <div className="w-px h-4 bg-zinc-700 mx-1" />
-        
-        <button
-          onClick={() => editor.chain().focus().setTextAlign('left').run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'left' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Align Left"
-        >
-          <AlignLeft className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => editor.chain().focus().setTextAlign('center').run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'center' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Align Center"
-        >
-          <AlignCenter className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => editor.chain().focus().setTextAlign('right').run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'right' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Align Right"
-        >
-          <AlignRight className="w-3.5 h-3.5" />
-        </button>
-        
-        <div className="w-px h-4 bg-zinc-700 mx-1" />
-        
-        <button
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('bulletList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Bullet List"
-        >
-          <List className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('orderedList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Numbered List"
-        >
-          <ListOrdered className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => editor.chain().focus().toggleTaskList().run()}
-          className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('taskList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
-          title="Task List"
-        >
-          <CheckSquare className="w-3.5 h-3.5" />
-        </button>
-        
-        <div className="w-px h-4 bg-zinc-700 mx-1" />
-        
-        <div className="relative group/color">
-          <button className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 flex items-center gap-1" title="Text Color">
-            <Palette className="w-3.5 h-3.5" />
-          </button>
-          
-          <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:flex bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 z-[99999] w-max max-w-[160px] flex-wrap justify-center">
-            {colors.map((color) => (
-              <button
-                key={color}
-                onClick={() => editor.chain().focus().setColor(color).run()}
-                className="w-4 h-4 rounded-full border border-zinc-700 hover:scale-125 transition-transform cursor-pointer shadow-sm"
-                style={{ backgroundColor: color }}
-                title={color}
-              />
-            ))}
             <button
-               onClick={() => editor.chain().focus().unsetColor().run()}
-               className="w-4 h-4 rounded-full border border-zinc-700 bg-transparent flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-               title="Remove Color"
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('bold') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Bold"
             >
-               <X className="w-2.5 h-2.5" />
+              <Bold className="w-3.5 h-3.5" />
             </button>
-          </div>
-        </div>
-      </BubbleMenu>
+            <button
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('italic') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Italic"
+            >
+              <Italic className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleUnderline().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('underline') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Underline"
+            >
+              <UnderlineIcon className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('strike') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Strikethrough"
+            >
+              <Strikethrough className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-zinc-700 mx-1" />
+
+            <button
+              onClick={() => editor.chain().focus().setTextAlign('left').run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'left' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Align Left"
+            >
+              <AlignLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().setTextAlign('center').run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'center' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Align Center"
+            >
+              <AlignCenter className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().setTextAlign('right').run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'right' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Align Right"
+            >
+              <AlignRight className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-zinc-700 mx-1" />
+
+            <button
+              onClick={() => editor.chain().focus().toggleBulletList().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('bulletList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Bullet List"
+            >
+              <List className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleOrderedList().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('orderedList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Numbered List"
+            >
+              <ListOrdered className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleTaskList().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('taskList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Task List"
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-zinc-700 mx-1" />
+
+            <div className="relative group/color">
+              <button className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 flex items-center gap-1" title="Text Color">
+                <Palette className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:flex bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 z-[99999] w-max max-w-[160px] flex-wrap justify-center">
+                {colors.map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => editor.chain().focus().setColor(color).run()}
+                    className="w-4 h-4 rounded-full border border-zinc-700 hover:scale-125 transition-transform cursor-pointer shadow-sm"
+                    style={{ backgroundColor: color }}
+                    title={color}
+                  />
+                ))}
+                <button
+                  onClick={() => editor.chain().focus().unsetColor().run()}
+                  className="w-4 h-4 rounded-full border border-zinc-700 bg-transparent flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+                  title="Remove Color"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            </div>
+          </BubbleMenu>
         </div>
       </div>
-      
-      <div 
-        className="flex-1 min-w-0" 
+
+      <div
+        className="flex-1 min-w-0"
         onMouseDown={(e) => {
           if (!editor.isFocused) {
             editor.commands.focus();

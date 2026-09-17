@@ -191,12 +191,12 @@ export function TaskDetailModalContent({
     if (activeSubtask) {
       if (url.searchParams.get('subtask') !== activeSubtask.id) {
         url.searchParams.set('subtask', activeSubtask.id);
-        window.history.replaceState(null, '', url.toString());
+        router.replace(url.pathname + url.search, { scroll: false });
       }
     } else {
       if (url.searchParams.has('subtask')) {
         url.searchParams.delete('subtask');
-        window.history.replaceState(null, '', url.toString());
+        router.replace(url.pathname + url.search, { scroll: false });
       }
     }
   }, [activeSubtask, task]);
@@ -791,7 +791,7 @@ export function TaskDetailModalContent({
     }
     assigneeDebounceRef.current = setTimeout(() => {
       persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees);
-    }, 400);
+    }, 50);
   };
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
@@ -1589,7 +1589,13 @@ export function TaskDetailModalContent({
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                                   <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus}</span> to <span className="text-blue-400 font-medium bg-blue-500/10 px-1 rounded">{act.newStatus}</span>
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                    {act.subtaskTitle ? (
+                                      <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
+                                    ) : (
+                                      <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus}</span></>
+                                    )}
+                                    {' '}to <span className="text-blue-400 font-medium bg-blue-500/10 px-1 rounded">{act.newStatus}</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -1602,7 +1608,12 @@ export function TaskDetailModalContent({
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
                                   <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> assigned to{' '}
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> assigned{' '}
+                                    {act.subtaskTitle ? (
+                                      <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                    ) : (
+                                      <>to{' '}</>
+                                    )}
                                     <span className="text-purple-400 font-medium">{act.assigneeName}</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">

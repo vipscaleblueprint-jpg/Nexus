@@ -99,8 +99,8 @@ function SidebarPageItem({
       <div
         onClick={() => onSelect(page)}
         className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors group ${isActive
-            ? 'bg-[#27272a] text-white shadow-sm font-semibold'
-            : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
+          ? 'bg-[#27272a] text-white shadow-sm font-semibold'
+          : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
           }`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
@@ -754,7 +754,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                 }
                 return (a.order || 0) - (b.order || 0);
               });
-              
+
               return (
                 <div className="pt-4 pb-2">
                   <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold border-b border-zinc-800 pb-2 mb-2 px-2">
@@ -762,34 +762,34 @@ export default function DocPage({ docId }: { docId?: string }) {
                   </div>
                   <div className="space-y-1">
                     {sortedContentSubpages.slice(0, subpageLimit).map((sub: any) => (
-                    <div 
-                      key={sub.id}
-                      onClick={() => handleSelectPage(sub)}
-                      className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-zinc-800/40 cursor-pointer group transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="p-1 rounded bg-zinc-800/80 group-hover:bg-zinc-700 transition-colors">
-                          <FileText className="w-3.5 h-3.5 text-zinc-400" />
+                      <div
+                        key={sub.id}
+                        onClick={() => handleSelectPage(sub)}
+                        className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-zinc-800/40 cursor-pointer group transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-1 rounded bg-zinc-800/80 group-hover:bg-zinc-700 transition-colors">
+                            <FileText className="w-3.5 h-3.5 text-zinc-400" />
+                          </div>
+                          <span className="text-sm text-zinc-200 font-medium group-hover:text-white transition-colors">{sub.title || 'Untitled Page'}</span>
                         </div>
-                        <span className="text-sm text-zinc-200 font-medium group-hover:text-white transition-colors">{sub.title || 'Untitled Page'}</span>
                       </div>
-                    </div>
-                  ))}
-                </div>
-                {activePage.subpages.length > subpageLimit && (
-                  <div className="flex justify-center mt-3">
-                    <button 
-                      onClick={() => setSubpageLimit(prev => prev + 10)}
-                      className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/60 hover:border-zinc-700 rounded-full transition-all cursor-pointer shadow-sm"
-                    >
-                      <span>See More</span>
-                      <span className="text-[10px] font-mono bg-zinc-800/80 px-1.5 py-0.5 rounded-md">
-                        {activePage.subpages.length - subpageLimit} left
-                      </span>
-                    </button>
+                    ))}
                   </div>
-                )}
-              </div>
+                  {activePage.subpages.length > subpageLimit && (
+                    <div className="flex justify-center mt-3">
+                      <button
+                        onClick={() => setSubpageLimit(prev => prev + 10)}
+                        className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/60 hover:border-zinc-700 rounded-full transition-all cursor-pointer shadow-sm"
+                      >
+                        <span>See More</span>
+                        <span className="text-[10px] font-mono bg-zinc-800/80 px-1.5 py-0.5 rounded-md">
+                          {activePage.subpages.length - subpageLimit} left
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             })()}
 
@@ -834,12 +834,12 @@ export default function DocPage({ docId }: { docId?: string }) {
                     <div
                       key={block.id}
                       className={`flex items-center justify-between py-1 px-2 rounded-md group transition-colors relative ${block.type === 'callout'
-                          ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
-                          : 'hover:bg-zinc-800/40'
+                        ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
+                        : 'hover:bg-zinc-800/40'
                         }`}
                     >
                       {isHeading && (
-                        <div 
+                        <div
                           className="absolute -left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 cursor-pointer p-0.5 rounded hover:bg-zinc-700 z-10 transition-opacity"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -883,39 +883,39 @@ export default function DocPage({ docId }: { docId?: string }) {
                               if (target.tagName === 'INPUT' && target.getAttribute('type') === 'checkbox') {
                                 const input = target as HTMLInputElement;
                                 const isChecked = input.checked;
-                                
+
                                 // Find the index of this checkbox among all checkboxes in this block's DOM
                                 const checkboxesInBlock = Array.from(e.currentTarget.querySelectorAll('input[type="checkbox"]'));
                                 const checkboxIndex = checkboxesInBlock.indexOf(input);
-                                
+
                                 if (checkboxIndex !== -1) {
                                   // Parse the actual HTML content to update it
                                   const tempDiv = document.createElement('div');
                                   tempDiv.innerHTML = block.content;
-                                  
+
                                   const tempCheckboxes = tempDiv.querySelectorAll('input[type="checkbox"]');
                                   const tempCheckbox = tempCheckboxes[checkboxIndex] as HTMLInputElement;
-                                  
+
                                   if (tempCheckbox) {
                                     if (isChecked) {
                                       tempCheckbox.setAttribute('checked', 'checked');
                                     } else {
                                       tempCheckbox.removeAttribute('checked');
                                     }
-                                    
+
                                     // Also update the parent li data-checked attribute for Tiptap
                                     const li = tempCheckbox.closest('li[data-type="taskItem"]');
                                     if (li) {
                                       li.setAttribute('data-checked', isChecked ? 'true' : 'false');
                                     }
-                                    
+
                                     const newContent = tempDiv.innerHTML;
-                                    
+
                                     // Update blocks state and save
                                     const updated = blocks.map(b => b.id === block.id ? { ...b, content: newContent } : b);
                                     setBlocks(updated);
                                     handleSavePage(updated);
-                                    
+
                                     if (socket) {
                                       socket.emit('block_content_update', { docId: id, blockId: block.id, content: newContent });
                                     }
@@ -932,8 +932,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                               <BlockEditor
                                 editable={false}
                                 content={block.content}
-                                onChange={() => {}}
-                                onBlur={() => {}}
+                                onChange={() => { }}
+                                onBlur={() => { }}
                               />
                             ) : (
                               <div
@@ -1045,7 +1045,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                     onClick={() => handleLinkTaskToDoc(task)}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-zinc-800/80 cursor-pointer transition-colors group"
                   >
-                                        <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
                       <CheckSquare className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                       <span className="text-xs text-zinc-200 font-medium truncate group-hover:text-white">
                         {task.title}
@@ -1068,7 +1068,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
       {/* ── Task Detail Modal Trigger ── */}
       {isTaskModalOpen && selectedTaskForModal && (
-        <div 
+        <div
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
           onClick={(e) => { if (e.target === e.currentTarget) setIsTaskModalOpen(false); }}
         >
@@ -1088,7 +1088,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
       {/* Global Task Hover Card */}
       {hoverCardPos && hoverCardData && (
-        <div 
+        <div
           id="global-task-hover-card"
           className="fixed z-[99999]"
           style={{ left: Math.min(hoverCardPos.x, window.innerWidth - 330), top: Math.min(hoverCardPos.y, window.innerHeight - 250) }}
@@ -1101,7 +1101,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                 <span>Task Mention</span>
               </div>
             </div>
-            
+
             <div className="flex flex-col p-2 max-h-[300px] overflow-y-auto custom-scrollbar">
               {hoverCardData.mentionType === 'status' ? (
                 (() => {
@@ -1137,32 +1137,32 @@ export default function DocPage({ docId }: { docId?: string }) {
                           ))
                         )}
                         <div className="mt-2">
-                           <input 
-                             type="text" 
-                             placeholder={`Add task to ${hoverCardData.label}...`}
-                             className="w-full text-xs px-2 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
-                             onKeyDown={async (e) => {
-                               if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                                 const title = e.currentTarget.value.trim();
-                                 e.currentTarget.value = 'Adding...';
-                                 e.currentTarget.disabled = true;
-                                 try {
-                                   await tasksApi.createTask({
-                                     title,
-                                     status: hoverCardData.label,
-                                     priority: 'MEDIUM'
-                                   });
-                                   // Note: To see the new task, the user can re-open the hover card or refresh.
-                                   // A full state sync would be better, but this handles the automated input!
-                                   setHoverCardPos(null);
-                                 } catch (err) {
-                                   console.error('Failed to create task', err);
-                                   e.currentTarget.value = title;
-                                   e.currentTarget.disabled = false;
-                                 }
-                               }
-                             }}
-                           />
+                          <input
+                            type="text"
+                            placeholder={`Add task to ${hoverCardData.label}...`}
+                            className="w-full text-xs px-2 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+                            onKeyDown={async (e) => {
+                              if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                                const title = e.currentTarget.value.trim();
+                                e.currentTarget.value = 'Adding...';
+                                e.currentTarget.disabled = true;
+                                try {
+                                  await tasksApi.createTask({
+                                    title,
+                                    status: hoverCardData.label,
+                                    priority: 'MEDIUM'
+                                  });
+                                  // Note: To see the new task, the user can re-open the hover card or refresh.
+                                  // A full state sync would be better, but this handles the automated input!
+                                  setHoverCardPos(null);
+                                } catch (err) {
+                                  console.error('Failed to create task', err);
+                                  e.currentTarget.value = title;
+                                  e.currentTarget.disabled = false;
+                                }
+                              }
+                            }}
+                          />
                         </div>
                       </div>
                     );
@@ -1200,7 +1200,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                               </div>
                             ));
                           }
-                        } catch (e) {}
+                        } catch (e) { }
                         return <span className="text-zinc-500 italic">Unassigned</span>;
                       })()}
                     </div>
@@ -1208,13 +1208,13 @@ export default function DocPage({ docId }: { docId?: string }) {
                   <div className="flex border-b border-zinc-200 dark:border-zinc-700">
                     <div className="w-1/3 p-2 px-3 text-zinc-500 dark:text-zinc-400 flex items-center border-r border-zinc-200 dark:border-zinc-700">Due Date</div>
                     <div className="w-2/3 p-2 px-3 flex items-center">
-                       {hoverCardData.taskDueDate ? new Date(hoverCardData.taskDueDate).toLocaleDateString() : <span className="text-zinc-500 italic">Not set</span>}
+                      {hoverCardData.taskDueDate ? new Date(hoverCardData.taskDueDate).toLocaleDateString() : <span className="text-zinc-500 italic">Not set</span>}
                     </div>
                   </div>
                   <div className="flex">
                     <div className="w-1/3 p-2 px-3 text-zinc-500 dark:text-zinc-400 flex items-center border-r border-zinc-200 dark:border-zinc-700">Priority</div>
                     <div className="w-2/3 p-2 px-3 flex items-center gap-1.5">
-                       <span>{hoverCardData.taskPriority || 'None'}</span>
+                      <span>{hoverCardData.taskPriority || 'None'}</span>
                     </div>
                   </div>
                 </div>

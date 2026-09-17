@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, Circle, ImageIcon, File } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, Circle, ImageIcon, File, Share2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
+import { useRouter } from 'next/navigation';
 import { BlockEditor } from '../ui/BlockEditor';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -164,6 +165,7 @@ export function TaskDetailModalContent({
   listStatuses = [],
   workspaceRoles = [],
 }: Props) {
+  const router = useRouter();
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [comment, setComment] = useState('');
   const [activities, setActivities] = useState<any[]>([]);
@@ -998,39 +1000,44 @@ export function TaskDetailModalContent({
             </button>
 
             {task.list ? (
-              <div 
-                className="flex items-center gap-2 text-xs text-zinc-400 font-medium cursor-pointer transition-all relative after:absolute after:-bottom-0.5 after:left-0 after:w-full after:h-[1px] after:bg-zinc-400 after:opacity-0 hover:after:opacity-100"
-                onClick={() => {
-                  navigator.clipboard.writeText(window.location.href);
-                }}
-                title="Click to copy link"
-              >
+              <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
                 {task.list.space && (
                   <>
-                    <div className="flex items-center gap-1.5">
+                    <button 
+                      onClick={() => router.push(`/spaces/${task.list?.space?.id}`)}
+                      className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
+                    >
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
                         <span className="text-[9px] font-bold text-indigo-400">{task.list.space.name.charAt(0).toUpperCase()}</span>
                       </div>
                       <span className="truncate max-w-[120px]">{task.list.space.name}</span>
-                    </div>
+                    </button>
                     <span className="text-zinc-700">/</span>
                   </>
                 )}
 
                 {task.list.folder && (
                   <>
-                    <div className="flex items-center gap-1.5">
+                    <button 
+                      onClick={() => router.push(`/folders/${task.list?.folder?.id}`)}
+                      className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
+                    >
                       <Folder className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate max-w-[120px]">{task.list.folder.name}</span>
-                    </div>
+                    </button>
                     <span className="text-zinc-700">/</span>
                   </>
                 )}
 
-                <div className="flex items-center gap-1.5">
+                <button 
+                  onClick={() => router.push(`/lists/${task.list?.id}`)}
+                  className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
+                >
                   <ListTodo className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate max-w-[150px]">{task.list.name}</span>
-                </div>
+                </button>
+                <span className="text-zinc-700">/</span>
+                <span className="truncate max-w-[150px] text-zinc-200">{task.title || 'Untitled'}</span>
               </div>
             ) : (
               <div className="flex items-center gap-2 text-xs animate-pulse opacity-50 cursor-default">
@@ -1053,6 +1060,16 @@ export function TaskDetailModalContent({
 
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href);
+                toast.success('Link copied to clipboard');
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-2"
+            >
+              <Share2 className="w-3.5 h-3.5 text-zinc-400" />
+              Share
+            </button>
             <button
               onClick={onClose}
               className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
@@ -1935,6 +1952,7 @@ function SubtaskDetailView({
   permission?: { allowed: boolean; reason?: string };
   listStatuses?: any[];
 }) {
+  const router = useRouter();
   const [richComments, setRichComments] = useState<any[]>([]);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2193,37 +2211,42 @@ function SubtaskDetailView({
             <ChevronLeft className="w-4 h-4" />
           </button>
           {parentTask.list ? (
-            <div 
-              className="flex items-center gap-2 text-xs text-zinc-400 font-medium cursor-pointer transition-all relative after:absolute after:-bottom-0.5 after:left-0 after:w-full after:h-[1px] after:bg-zinc-400 after:opacity-0 hover:after:opacity-100"
-              onClick={() => {
-                navigator.clipboard.writeText(window.location.href);
-              }}
-              title="Click to copy link"
-            >
+            <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
               {parentTask.list.space && (
                 <>
-                  <div className="flex items-center gap-1.5">
+                  <button 
+                    onClick={() => router.push(`/spaces/${parentTask.list?.space?.id}`)}
+                    className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
+                  >
                     <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
                       <span className="text-[9px] font-bold text-indigo-400">{parentTask.list.space.name.charAt(0).toUpperCase()}</span>
                     </div>
                     <span className="truncate max-w-[120px]">{parentTask.list.space.name}</span>
-                  </div>
+                  </button>
                   <span className="text-zinc-700">/</span>
                 </>
               )}
               {parentTask.list.folder && (
                 <>
-                  <div className="flex items-center gap-1.5">
+                  <button 
+                    onClick={() => router.push(`/folders/${parentTask.list?.folder?.id}`)}
+                    className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
+                  >
                     <Folder className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate max-w-[120px]">{parentTask.list.folder.name}</span>
-                  </div>
+                  </button>
                   <span className="text-zinc-700">/</span>
                 </>
               )}
-              <div className="flex items-center gap-1.5">
+              <button 
+                onClick={() => router.push(`/lists/${parentTask.list?.id}`)}
+                className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
+              >
                 <ListTodo className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate max-w-[150px]">{parentTask.list.name}</span>
-              </div>
+              </button>
+              <span className="text-zinc-700">/</span>
+              <span className="truncate max-w-[150px] text-zinc-400">{parentTask.title || 'Untitled'}</span>
               <span className="text-zinc-700">/</span>
               <span className="truncate max-w-[150px] text-zinc-200">{subtask.title || 'Untitled'}</span>
             </div>
@@ -2250,6 +2273,22 @@ function SubtaskDetailView({
         </div>
         <div className="flex items-center gap-2">
           {/* Action buttons could go here */}
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(window.location.href);
+              toast.success('Link copied to clipboard');
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-2"
+          >
+            <Share2 className="w-3.5 h-3.5 text-zinc-400" />
+            Share
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
       </div>
 

@@ -430,6 +430,7 @@ export async function createDoc(req: Request, res: Response) {
 // GET /api/spaces/docs/:id
 export async function getDoc(req: Request, res: Response) {
   try {
+    console.time(`[API] getDoc db query - ${req.params.id}`);
     const doc = await prisma.doc.findUnique({
       where: { id: req.params.id },
       include: {
@@ -449,6 +450,7 @@ export async function getDoc(req: Request, res: Response) {
         },
       },
     });
+    console.timeEnd(`[API] getDoc db query - ${req.params.id}`);
     if (!doc) return res.status(404).json({ error: 'Doc not found' });
     return res.json({ doc });
   } catch (err: any) {

@@ -1,6 +1,10 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
+
+// Typed shorthand to avoid IDE stale-cache false positives on new Prisma models
+const db = prisma as any;
 
 /** Fields safe to expose in the roster. Excludes password and googleId. */
 const rosterSelect = {
@@ -136,10 +140,9 @@ export async function deleteUser(req: Request, res: Response) {
 export async function getApiKeys(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    // @ts-ignore
-    const apiKeys = await prisma.apiKey.findMany({
+    const apiKeys = await db.apiKey.findMany({
       where: { userId: id },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
     return res.json({ apiKeys });
   } catch (err: any) {
@@ -147,26 +150,19 @@ export async function getApiKeys(req: Request, res: Response) {
   }
 }
 
-import crypto from 'crypto';
-
 export async function createApiKey(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const { name } = req.body;
-    
+
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
 
     const key = `nx_${crypto.randomBytes(24).toString('hex')}`;
-    
-    // @ts-ignore
-    const apiKey = await prisma.apiKey.create({
-      data: {
-        name,
-        key,
-        userId: id
-      }
+
+    const apiKey = await db.apiKey.create({
+      data: { name, key, userId: id },
     });
 
     return res.json({ apiKey });
@@ -178,9 +174,8 @@ export async function createApiKey(req: Request, res: Response) {
 export async function deleteApiKey(req: Request, res: Response) {
   try {
     const { id, keyId } = req.params;
-    // @ts-ignore
-    await prisma.apiKey.delete({
-      where: { id: keyId, userId: id }
+    await db.apiKey.delete({
+      where: { id: keyId, userId: id },
     });
     return res.json({ success: true });
   } catch (err: any) {

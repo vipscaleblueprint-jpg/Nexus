@@ -208,6 +208,11 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const docRef = useRef<any>(null);
+  useEffect(() => {
+    docRef.current = doc;
+  }, [doc]);
+
   const [activePage, setActivePage] = useState<any>(null);
   const activePageRef = useRef<any>(null);
   useEffect(() => {
@@ -221,6 +226,18 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [subpageLimit, setSubpageLimit] = useState(10);
+  const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(new Set());
+
+  const getHeadingLevel = (content?: string): number => {
+    if (!content) return 0;
+    if (content.includes('"type":"heading"')) {
+      const match = content.match(/"level":(\d)/);
+      if (match) return parseInt(match[1]);
+    }
+    const match = content.match(/<h(\d)/);
+    if (match) return parseInt(match[1]);
+    return 0;
+  };
 
   // Global hover card state
   const [hoverCardData, setHoverCardData] = useState<any>(null);
@@ -327,142 +344,8 @@ export default function DocPage({ docId }: { docId?: string }) {
     };
     window.addEventListener('open-task-detail', handleOpenTaskDetail as any);
 
-    const handleTaskCreated = (e: any) => {
-      const task = e.detail?.task;
-      
-      setBlocks(prevBlocks => {
-        if (!task || !task.list?.name) return prevBlocks;
-
-        const exists = prevBlocks.some(b => b.content && b.content.includes(`data-id="${task.id}"`));
-        if (exists) return prevBlocks;
-
-        if (!activePageRef.current) return prevBlocks;
-
-        const STATUS_COLORS: Record<string, string> = {
-          'KYC': '#06b6d4',
-          'Pin Board': '#06b6d4',
-          'Daily': '#a855f7',
-          'Weekly': '#a855f7',
-          'Monthly': '#a855f7',
-          'Pending': '#6366f1',
-          'In Progress': '#eab308',
-          'Revision': '#6366f1',
-          'Waiting': '#f97316',
-          'In Review': '#6366f1',
-          'Checking': '#6366f1',
-          'On-Hold': '#ef4444',
-          'Closed': '#10b981',
-        };
-        const statusColor = STATUS_COLORS[task.status] || '#3b82f6';
-        const escapedTitle = task.title.replace(/"/g, '&quot;');
-        const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
-        const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
-
-        const mentionHTML = `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}"></span></p>`;
-        
-        const newMentionBlock = {
-          id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-          type: 'text' as any,
-          content: mentionHTML
-        };
-
-        let newBlocks = [...prevBlocks];
-        let foundBlockIdx = -1;
-
-        for (let i = 0; i < newBlocks.length; i++) {
-           const b = newBlocks[i];
-           // Ignore task blocks when searching for the client heading to prevent matching task names
-           if (b.content && 
-               b.content.toLowerCase().includes(task.list.name.toLowerCase()) && 
-               !b.content.includes('data-type="mention"')) {
-              foundBlockIdx = i;
-           }
-        }
-
-        if (foundBlockIdx !== -1) {
-           let taskBlockIdx = foundBlockIdx;
-           if (foundBlockIdx + 1 < newBlocks.length) {
-              const nextBlock = newBlocks[foundBlockIdx + 1];
-              if (nextBlock.content.includes('data-type="mention"')) {
-                 taskBlockIdx = foundBlockIdx + 1;
-              }
-           }
-           
-           if (taskBlockIdx === foundBlockIdx) {
-              if (newBlocks[foundBlockIdx].content.includes('data-type="mention"')) {
-                 newBlocks[foundBlockIdx].content += mentionHTML;
-              } else {
-                 newBlocks.splice(foundBlockIdx + 1, 0, newMentionBlock);
-              }
-           } else {
-              newBlocks[taskBlockIdx] = {
-                 ...newBlocks[taskBlockIdx],
-                 content: newBlocks[taskBlockIdx].content + mentionHTML
-              };
-           }
-        } else {
-           const clientHeadings = [];
-           for (let i = 0; i < newBlocks.length; i++) {
-             const b = newBlocks[i];
-             if (b.content && b.content.startsWith('<h3>') && b.content.endsWith('</h3>')) {
-               const clientName = b.content.replace('<h3>', '').replace('</h3>', '').trim();
-               clientHeadings.push({ index: i, name: clientName });
-             }
-           }
-
-           let insertIdx = newBlocks.length;
-           if (clientHeadings.length > 0) {
-             const nextClient = clientHeadings.find(h => h.name.toLowerCase() > task.list.name.toLowerCase());
-             if (nextClient) {
-               insertIdx = nextClient.index;
-             }
-           }
-
-           const blocksToInsert = [];
-           if (insertIdx > 0 && newBlocks[insertIdx - 1].content.trim() !== '') {
-             blocksToInsert.push({
-               id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-               type: 'text' as any,
-               content: ''
-             });
-           }
-           blocksToInsert.push({
-             id: `blk-h-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-             type: 'text' as any,
-             content: `<h3>${task.list.name}</h3>`
-           });
-           blocksToInsert.push({
-             ...newMentionBlock,
-             id: `blk-t-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
-           });
-           
-           if (insertIdx < newBlocks.length && newBlocks[insertIdx].content.trim() !== '') {
-              blocksToInsert.push({
-                 id: `blk-s-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                 type: 'text' as any,
-                 content: ''
-              });
-           }
-
-           newBlocks.splice(insertIdx, 0, ...blocksToInsert);
-        }
-
-        // Delay the save slightly to allow block state to settle
-        setTimeout(() => {
-          spacesApi.updatePage(activePageRef.current.id, {
-            title: activePageRef.current.title || 'Untitled Page',
-            content: blocksToMarkdown(newBlocks),
-          }).catch(err => console.error('Failed to auto-save new task block:', err));
-        }, 100);
-
-        return newBlocks;
-      });
-    };
-    window.addEventListener('task:created', handleTaskCreated as any);
-
     return () => {
       window.removeEventListener('open-task-detail', handleOpenTaskDetail as any);
-      window.removeEventListener('task:created', handleTaskCreated as any);
     };
   }, [tasksMap, allTasks]);
 
@@ -497,7 +380,8 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const fetchTasks = async () => {
     try {
-      const res = await tasksApi.getTasks();
+      console.time('[DocPage] fetchTasks');
+      const res = await tasksApi.getTasks({ lightweight: true });
       if (res.tasks) {
         setAllTasks(res.tasks);
         const map: Record<string, Task> = {};
@@ -506,6 +390,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         });
         setTasksMap(map);
       }
+      console.timeEnd('[DocPage] fetchTasks');
     } catch (err) {
       console.warn('Failed to load tasks for doc page linking:', err);
     }
@@ -513,6 +398,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const fetchDoc = async () => {
     try {
+      console.time('[DocPage] fetchDoc');
       const docRes = await spacesApi.getDoc(id as string);
       setDoc(docRes.doc);
       if (docRes.doc?.pages?.length > 0 && !activePageRef.current) {
@@ -525,6 +411,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       setError(e.message || 'Failed to load document');
     } finally {
       setLoading(false);
+      console.timeEnd('[DocPage] fetchDoc');
     }
   };
 
@@ -537,7 +424,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           if (!cancelled && user) setCurrentUser(user);
         } catch { }
       }
-      await fetchTasks();
+      fetchTasks(); // Non-blocking so document loads instantly
       await fetchDoc();
     })();
     return () => {
@@ -908,22 +795,40 @@ export default function DocPage({ docId }: { docId?: string }) {
 
             {/* ── Freeform Writable Canvas Blocks ── */}
             <div className="space-y-1.5 pt-2">
-              {blocks.length === 0 ? (
-                <div
-                  onClick={() => handleAddBlock('text')}
-                  className="py-1 px-2 cursor-text"
-                >
-                  <input
-                    type="text"
-                    autoFocus
-                    placeholder="Start typing..."
-                    onFocus={() => handleAddBlock('text')}
-                    className="w-full bg-transparent border-none text-white text-sm font-semibold focus:outline-none placeholder-zinc-700"
-                  />
-                </div>
-              ) : (
-                blocks.map((block, index) => {
+              {(() => {
+                let currentActiveHeaders: { id: string, level: number }[] = [];
+                const visibleBlocks = blocks.filter(block => {
+                  const level = getHeadingLevel(block.content);
+                  if (level > 0) {
+                    currentActiveHeaders = currentActiveHeaders.filter(h => h.level < level);
+                    currentActiveHeaders.push({ id: block.id, level });
+                  }
+                  const isHidden = currentActiveHeaders.some(h => collapsedHeaders.has(h.id) && h.id !== block.id);
+                  return !isHidden;
+                });
+
+                if (blocks.length === 0) {
+                  return (
+                    <div
+                      onClick={() => handleAddBlock('text')}
+                      className="py-1 px-2 cursor-text"
+                    >
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Start typing..."
+                        onFocus={() => handleAddBlock('text')}
+                        className="w-full bg-transparent border-none text-white text-sm font-semibold focus:outline-none placeholder-zinc-700"
+                      />
+                    </div>
+                  );
+                }
+
+                return visibleBlocks.map((block, index) => {
                   const isLockedBySomeoneElse = block.lockedBy && block.lockedBy !== currentUser?.id;
+                  const headingLevel = getHeadingLevel(block.content);
+                  const isHeading = headingLevel > 0;
+                  const isCollapsed = collapsedHeaders.has(block.id);
 
                   return (
                     <div
@@ -933,7 +838,23 @@ export default function DocPage({ docId }: { docId?: string }) {
                           : 'hover:bg-zinc-800/40'
                         }`}
                     >
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-20">
+                      {isHeading && (
+                        <div 
+                          className="absolute -left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 cursor-pointer p-0.5 rounded hover:bg-zinc-700 z-10 transition-opacity"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCollapsedHeaders(prev => {
+                              const next = new Set(prev);
+                              if (next.has(block.id)) next.delete(block.id);
+                              else next.add(block.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          <ChevronRight className={`w-3.5 h-3.5 text-zinc-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-20 relative">
 
                         {block.type === 'callout' && (
                           <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
@@ -1007,7 +928,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                             }}
                             className={`flex-1 ${!isLockedBySomeoneElse ? 'cursor-text select-text' : 'cursor-not-allowed text-zinc-500 select-none'} min-h-[24px]`}
                           >
-                            {block.content?.includes('data-type="live-kanban-block"') || block.content?.includes('data-type="mention"') ? (
+                            {block.content?.includes('data-type="live-kanban-block"') || block.content?.includes('data-type="mention"') || block.content?.startsWith('{"type":"doc"') ? (
                               <BlockEditor
                                 editable={false}
                                 content={block.content}
@@ -1051,8 +972,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                       </div>
                     </div>
                   );
-                })
-              )}
+                });
+              })()}
             </div>
 
             {/* Clickable area at the bottom to append a new block (Innate Line) */}

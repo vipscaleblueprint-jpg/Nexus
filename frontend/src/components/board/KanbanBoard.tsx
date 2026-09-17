@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
-import { debugLog } from './debug';
+
 import {
   DndContext,
   DragOverlay,
@@ -205,7 +205,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
   onTaskMovePreview,
   onTaskReorder,
   onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange }: Props) {
-  debugLog('KanbanBoard', `Render board with tasks=${tasks.length}`);
+
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAppStore((s) => s.currentUser);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
@@ -221,7 +221,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
   useEffect(() => {
     if (!isDraggingRef.current) {
-      debugLog('KanbanBoard', `Tasks prop updated! length=${tasks.length}`);
+
       setLocalTasks(tasks);
     }
   }, [tasks]);
@@ -541,7 +541,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    debugLog('KanbanBoard', `handleDragOver active=${active.id}, over=${over?.id}`);
+
     if (!over) return;
     
     if (active.data.current?.type === 'Group') return;
@@ -755,31 +755,18 @@ export function KanbanBoard({ tasks,  onTaskMove,
                       >
                         {/* Group Header */}
                         <div 
-                          className={`flex items-center justify-between mb-3 w-full ${!category.id.startsWith('group_') ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                          className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing"
                           onMouseDown={!category.id.startsWith('group_') ? handleHeaderMouseDown : undefined}
                           onMouseLeave={!category.id.startsWith('group_') ? handleHeaderMouseLeave : undefined}
                           onMouseUp={!category.id.startsWith('group_') ? handleHeaderMouseUp : undefined}
                           onMouseMove={!category.id.startsWith('group_') ? handleHeaderMouseMove : undefined}
+                          {...(category.id.startsWith('group_') ? sortable.listeners : {})}
+                          {...(category.id.startsWith('group_') ? sortable.attributes : {})}
                         >
                           <div className="flex items-center gap-1.5">
-                            {category.id.startsWith('group_') && (
-                              <div 
-                                className="p-1 cursor-grab active:cursor-grabbing hover:bg-white/10 rounded mr-1"
-                                {...sortable.listeners}
-                                {...sortable.attributes}
-                                onMouseDown={(e) => {
-                                  // Ensure we don't trigger the group-level drag-to-scroll when sorting
-                                  if (sortable.listeners?.onMouseDown) {
-                                    sortable.listeners.onMouseDown(e);
-                                  }
-                                }}
-                              >
-                                <GripVertical className="w-4 h-4 text-zinc-500" />
-                              </div>
-                            )}
                             <div 
                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/5"
-                               onClick={() => toggleCategory(category.id)}
+                               onClick={(e) => { e.stopPropagation(); toggleCategory(category.id); }}
                                title="Collapse section"
                                onMouseDown={(e) => e.stopPropagation()}
                             >
@@ -948,7 +935,6 @@ export function KanbanBoard({ tasks,  onTaskMove,
           <div className="flex-shrink-0 snap-start self-stretch flex items-stretch h-[500px]">
              <div className="rounded-2xl border bg-[#18181c] h-full p-4 pt-3 flex flex-col shadow-2xl scale-105 opacity-90 cursor-grabbing" style={{ borderColor: activeGroup.borderColor }}>
                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg mb-3">
-                 <GripVertical className="w-4 h-4 text-zinc-500 mr-1" />
                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">{activeGroup.title}</span>
                </div>
                <div className="flex-1 flex gap-4">

@@ -1,5 +1,5 @@
 import { useState, useEffect, memo, useMemo } from 'react';
-import { debugLog } from './debug';
+
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Plus, MoreHorizontal, Archive, Trash2, Link2, Hash, ExternalLink, Star, Edit2, Bell, Clock, ArrowRight, Merge, Copy, RefreshCw, LayoutTemplate, Share2, Target, Play, Mail, Lock, Pencil } from 'lucide-react';
@@ -137,7 +137,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   columnRestrictionReason,
   listStatuses = [],
 }: Props) {
-  debugLog('KanbanColumn', `Render status=${status}, tasks=${tasks.length}, sortableItemsRef=${Array.from(new Set(tasks.slice(0, 50).map(t => t.id))).join(',')}`);
+
 
   const droppableData = useMemo(() => ({
     type: 'Column',
@@ -338,6 +338,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           className={`px-2 pb-2 flex flex-col gap-2 overflow-y-auto transition-colors custom-scrollbar ${colors.scrollThumb} flex-1 min-h-0 ${
             isOver ? 'bg-black/5' : ''
           }`}
+          onWheel={(e) => e.stopPropagation()}
         >
           <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
             {tasks.slice(0, renderLimit).filter((t, index, self) => index === self.findIndex((task) => task.id === t.id)).map((task) => (

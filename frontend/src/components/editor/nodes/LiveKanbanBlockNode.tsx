@@ -342,7 +342,11 @@ export const LiveKanbanBlockNode = (props: NodeViewProps) => {
         const res = await tasksApi.getLiveBlocksData(blockType, assigneeName, '', listId);
         if (mounted) {
           setData(res.blocks);
-          updateAttributes({ frozenData: res.blocks });
+          const newFrozen = JSON.stringify(res.blocks);
+          const oldFrozen = typeof frozenData === 'string' ? frozenData : JSON.stringify(frozenData);
+          if (newFrozen !== oldFrozen) {
+            updateAttributes({ frozenData: res.blocks });
+          }
         }
       } catch (e) {
         console.error('Failed to fetch live kanban block', e);

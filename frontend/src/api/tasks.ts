@@ -2,8 +2,9 @@ import { apiClient } from './client';
 import { Task } from '@/lib/types';
 
 export const tasksApi = {
-  async getTasks(): Promise<{ tasks: Task[] }> {
-    return apiClient<{ tasks: Task[] }>('/api/tasks', {
+  async getTasks(params?: { lightweight?: boolean }): Promise<{ tasks: Task[] }> {
+    const qs = params?.lightweight ? '?lightweight=true' : '';
+    return apiClient<{ tasks: Task[] }>(`/api/tasks${qs}`, {
       method: 'GET',
     });
   },

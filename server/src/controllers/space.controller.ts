@@ -64,6 +64,17 @@ const listsIncludeWithCount = {
   include: { _count: { select: { tasks: true } } },
 };
 
+const pageSelectConfig = {
+  id: true,
+  title: true,
+  docId: true,
+  parentPageId: true,
+  createdAt: true,
+  updatedAt: true,
+  isClosed: true,
+  reportDate: true,
+};
+
 // Helper for recursive folder inclusion
 const folderIncludeConfig: any = {
   orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
@@ -74,8 +85,12 @@ const folderIncludeConfig: any = {
       include: {
         pages: {
           orderBy: { createdAt: 'asc' },
-          include: {
-            subpages: { orderBy: { createdAt: 'asc' } },
+          select: {
+            ...pageSelectConfig,
+            subpages: {
+              orderBy: { createdAt: 'asc' },
+              select: pageSelectConfig,
+            },
           },
         },
       },
@@ -89,8 +104,12 @@ const folderIncludeConfig: any = {
           include: {
             pages: {
               orderBy: { createdAt: 'asc' },
-              include: {
-                subpages: { orderBy: { createdAt: 'asc' } },
+              select: {
+                ...pageSelectConfig,
+                subpages: {
+                  orderBy: { createdAt: 'asc' },
+                  select: pageSelectConfig,
+                },
               },
             },
           },
@@ -122,8 +141,12 @@ export async function listSpaces(req: Request, res: Response) {
           include: {
             pages: {
               orderBy: { createdAt: 'asc' },
-              include: {
-                subpages: { orderBy: { createdAt: 'asc' } },
+              select: {
+                ...pageSelectConfig,
+                subpages: {
+                  orderBy: { createdAt: 'asc' },
+                  select: pageSelectConfig,
+                },
               },
             },
           },
@@ -148,8 +171,12 @@ export async function listSpaces(req: Request, res: Response) {
       include: {
         pages: {
           orderBy: { createdAt: 'asc' },
-          include: {
-            subpages: { orderBy: { createdAt: 'asc' } },
+          select: {
+            ...pageSelectConfig,
+            subpages: {
+              orderBy: { createdAt: 'asc' },
+              select: pageSelectConfig,
+            },
           },
         },
       },

@@ -945,6 +945,7 @@ export async function getTaskActivities(req: Request, res: Response) {
           author: log.user?.name || 'Someone',
           oldStatus: details.oldStatus,
           newStatus: details.newStatus,
+          subtaskTitle: details.subtaskTitle,
           date: log.createdAt,
           user: log.user,
         };
@@ -964,7 +965,8 @@ export async function getTaskActivities(req: Request, res: Response) {
           id: log.id,
           type: 'assignment',
           author: log.user?.name || 'Someone',
-          assigneeName: details.assigneeName,
+          assigneeName: details.assigneeName || (details.assignees ? details.assignees.join(', ') : 'Unassigned'),
+          subtaskTitle: details.subtaskTitle,
           date: log.createdAt,
           user: log.user,
         };
@@ -1147,19 +1149,20 @@ export async function createSubtask(req: Request, res: Response) {
         // @ts-ignore: IDE stale Prisma types issue
         status,
         ...(assigneeIds && Array.isArray(assigneeIds) && assigneeIds.length > 0 ? {
-          assignees: {
-            connect: assigneeIds.map((id: string) => ({ id }))
-          }
+          assigneeId: assigneeIds[0]
         } : {}),
         priority,
         dueDate: dueDate ? new Date(dueDate) : null,
         taskId,
       },
-      include: { assignees: { select: { id: true, name: true, email: true, avatarUrl: true } } } as any
+      include: { User: { select: { id: true, name: true, email: true, avatarUrl: true } } }
     });
     await invalidateCache(`task:${taskId}`);
 
-    const task = await prisma.task.findUnique({ where: { id: taskId }, include: taskInclude });
+    const task = await prisma.task.findUnique({ 
+      where: { id: taskId }, 
+      select: { id: true, listId: true, subtasks: taskInclude.subtasks }
+    });
     if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
 
     return res.json({ subtask });
@@ -1197,19 +1200,87 @@ export async function updateSubtask(req: Request, res: Response) {
         ...(status !== undefined && { status }),
         ...(completed !== undefined && { completed }),
         ...(assigneeIds !== undefined && Array.isArray(assigneeIds) ? {
-          assignees: {
-            set: assigneeIds.map((id: string) => ({ id }))
-          }
+          assigneeId: assigneeIds.length > 0 ? assigneeIds[0] : null
         } : {}),
         ...(priority !== undefined && { priority }),
         ...(dueDate !== undefined && { dueDate: dueDate ? new Date(dueDate) : null }),
       },
-      include: { assignees: { select: { id: true, name: true, email: true, avatarUrl: true } } } as any
+      include: { User: { select: { id: true, name: true, email: true, avatarUrl: true } } }
     });
+
+    const authReq = req as any;
+    const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
+    if (actingUserId) {
+      if (assigneeIds !== undefined && Array.isArray(assigneeIds)) {
+        await prisma.auditLog.create({
+          data: {
+            action: 'ASSIGNMENT',
+            entity: 'TASK',
+            entityId: taskId,
+            userId: actingUserId,
+            details: { assignees: subtask.User ? [subtask.User.name] : [], subtaskTitle: subtask.title }
+          }
+        });
+
+        if (subtask.assigneeId && subtask.assigneeId !== actingUserId) {
+          await prisma.taskNotification.create({
+            data: {
+              userId: subtask.assigneeId,
+              actorId: actingUserId,
+              taskId,
+              type: 'ASSIGNMENT',
+              title: `You were assigned to a subtask: ${subtask.title}`
+            }
+          });
+        }
+      }
+      if (status !== undefined) {
+        await prisma.auditLog.create({
+          data: {
+            action: 'STATUS_CHANGE',
+            entity: 'TASK',
+            entityId: taskId,
+            userId: actingUserId,
+            details: { newStatus: status, subtaskTitle: subtask.title }
+          }
+        });
+      }
+    }
+
     await invalidateCache(`task:${taskId}`);
 
-    const task = await prisma.task.findUnique({ where: { id: taskId }, include: taskInclude });
-    if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+    const task = await prisma.task.findUnique({ 
+      where: { id: taskId }, 
+      select: { id: true, listId: true, subtasks: taskInclude.subtasks }
+    });
+    if (task) {
+      io.to(`list:${task.listId}`).emit('task:updated', task);
+      
+      // Emit socket events for the newly created audit logs so the frontend updates in real-time
+      if (actingUserId) {
+        if (assigneeIds !== undefined && Array.isArray(assigneeIds)) {
+          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: {
+            id: Date.now().toString(),
+            type: 'assignment',
+            author: (req as any).user?.name || 'Someone',
+            assigneeName: subtask.User ? subtask.User.name : 'Unassigned',
+            subtaskTitle: subtask.title,
+            date: new Date().toISOString(),
+          }});
+        }
+        if (status !== undefined) {
+          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: {
+            id: (Date.now() + 1).toString(),
+            type: 'status_change',
+            author: (req as any).user?.name || 'Someone',
+            oldStatus: undefined,
+            newStatus: status,
+            subtaskTitle: subtask.title,
+            date: new Date().toISOString(),
+          }});
+        }
+      }
+    }
 
     return res.json({ subtask });
   } catch (err: any) {
@@ -1223,7 +1294,10 @@ export async function deleteSubtask(req: Request, res: Response) {
     await prisma.subtask.delete({ where: { id: subtaskId } });
     await invalidateCache(`task:${taskId}`);
 
-    const task = await prisma.task.findUnique({ where: { id: taskId }, include: taskInclude });
+    const task = await prisma.task.findUnique({ 
+      where: { id: taskId }, 
+      select: { id: true, listId: true, subtasks: taskInclude.subtasks }
+    });
     if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
 
     return res.json({ success: true });

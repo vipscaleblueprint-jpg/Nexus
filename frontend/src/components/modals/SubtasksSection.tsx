@@ -359,15 +359,16 @@ function SubtaskRow({
 
   // Multi-assignee derived value
   const currentAssignees: any[] = useMemo(() => {
-    return (subtask.assignees && subtask.assignees.length > 0)
-      ? subtask.assignees
-      : [];
-  }, [subtask.assignees]);
+    if (subtask.assignees && subtask.assignees.length > 0) return subtask.assignees;
+    if (subtask.User) return [subtask.User];
+    if (subtask.assignee) return [subtask.assignee];
+    return [];
+  }, [subtask.assignees, subtask.User, subtask.assignee]);
 
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
   const handleToggleAssignee = (u: any) => {
-    const latestAssignees = subtask.assignees || [];
+    const latestAssignees = subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
     const isAssigned = latestAssignees.some(a => a.id === u.id);
     const updatedAssignees = isAssigned
       ? latestAssignees.filter((a) => a.id !== u.id)

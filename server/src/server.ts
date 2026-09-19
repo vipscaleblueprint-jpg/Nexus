@@ -21,6 +21,7 @@ import { rolesRouter } from './routes/roles.routes';
 import { uploadRouter } from './routes/upload.routes';
 import externalRoutes from './routes/external.routes';
 import webhookRoutes from './routes/webhook.routes';
+import teamRouter from './routes/team.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -110,6 +111,7 @@ app.use('/api/roles', rolesRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/external', externalRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/teams', teamRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

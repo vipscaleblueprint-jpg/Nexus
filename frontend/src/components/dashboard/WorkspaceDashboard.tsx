@@ -259,9 +259,9 @@ function WorkspaceDashboardContent({
   }, [allLists, selectedListId]);
 
   // 1. Fetch all tasks from API
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (silent = false) => {
     try {
-      setLoadingTasks(true);
+      if (!silent) setLoadingTasks(true);
       const res = await tasksApi.getTasks();
       if (res?.tasks) {
         setTasks(res.tasks);
@@ -269,7 +269,7 @@ function WorkspaceDashboardContent({
     } catch (err) {
       console.error("Failed to load tasks for dashboard:", err);
     } finally {
-      setLoadingTasks(false);
+      if (!silent) setLoadingTasks(false);
     }
   }, []);
 
@@ -326,7 +326,7 @@ function WorkspaceDashboardContent({
   // Refresh tasks on window focus (guarantees instant sync if coming back from another tab)
   useEffect(() => {
     const handleFocus = () => {
-      fetchTasks();
+      fetchTasks(true);
     };
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);

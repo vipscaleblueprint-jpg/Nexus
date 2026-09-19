@@ -211,15 +211,15 @@ export function TaskDetailModalContent({
     if (activeSubtask) {
       if (url.searchParams.get('subtask') !== activeSubtask.id) {
         url.searchParams.set('subtask', activeSubtask.id);
-        router.replace(url.pathname + url.search, { scroll: false });
+        window.history.replaceState(null, '', url.pathname + url.search);
       }
     } else {
       if (url.searchParams.has('subtask')) {
         url.searchParams.delete('subtask');
-        router.replace(url.pathname + url.search, { scroll: false });
+        window.history.replaceState(null, '', url.pathname + url.search);
       }
     }
-  }, [activeSubtask, task]);
+  }, [activeSubtask, task, router]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null); // Name of user currently editing
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
@@ -334,6 +334,7 @@ export function TaskDetailModalContent({
 
   // Fetch real users from DB for assignee picker
   useEffect(() => {
+    if (!currentUser) return;
     let cancelled = false;
     (async () => {
       try {
@@ -342,13 +343,13 @@ export function TaskDetailModalContent({
           setDbUsers(res.users);
         }
       } catch (e) {
-        console.error('Failed to load users for assignee picker:', e);
+        console.warn('Failed to load users for assignee picker:', e);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [currentUser]);
 
   const onUpdateTaskRef = useRef(onUpdateTask);
   useEffect(() => {
@@ -386,7 +387,7 @@ export function TaskDetailModalContent({
 
   // Fetch persistent activities and comments from DB
   const loadActivities = useCallback(async () => {
-    if (!task?.id) return;
+    if (!task?.id || !currentUser) return;
     try {
       setLoadingActivities(true);
       const [actRes, commentRes] = await Promise.all([
@@ -397,11 +398,11 @@ export function TaskDetailModalContent({
       if (actRes?.activities) setActivities(actRes.activities);
       if (commentRes?.comments) setRichComments(commentRes.comments);
     } catch (err) {
-      console.error('Failed to load task data:', err);
+      console.warn('Failed to load task data:', err);
     } finally {
       if (isMountedRef.current) setLoadingActivities(false);
     }
-  }, [task?.id]);
+  }, [task?.id, currentUser]);
 
   const handleToggleReaction = async (commentId: string, emoji: string) => {
     if (!task?.id || !currentUser?.id) return;
@@ -413,7 +414,7 @@ export function TaskDetailModalContent({
         return { ...c, replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, reactions: res.reactions } : r) };
       }));
       setShowEmojiPickerFor(null);
-    } catch (err) { console.error('Reaction failed:', err); }
+    } catch (err) { console.warn('Reaction failed:', err); }
   };
 
   const handleSubmitReply = async (parentCommentId: string) => {
@@ -427,7 +428,7 @@ export function TaskDetailModalContent({
       const res = await tasksApi.getComments(task.id);
       if (res?.comments) setRichComments(res.comments);
     } catch (err) {
-      console.error('Reply failed:', err);
+      console.warn('Reply failed:', err);
     } finally {
       setIsSubmittingReply(false);
     }
@@ -491,16 +492,17 @@ export function TaskDetailModalContent({
   }, [task]);
 
   useEffect(() => {
+    if (!currentUser) return;
     if (task?.listId && (!listStatuses || listStatuses.length === 0)) {
       spacesApi.getList(task.listId).then((res: any) => {
         if (res?.list?.statuses) {
           setInternalListStatuses(res.list.statuses);
         }
-      }).catch((err: any) => console.error(err));
+      }).catch((err: any) => console.warn(err));
     } else if (listStatuses && listStatuses.length > 0) {
       setInternalListStatuses(listStatuses);
     }
-  }, [task?.listId, listStatuses]);
+  }, [task?.listId, listStatuses, currentUser]);
 
   // Keep localTitle in sync with task prop changes
   useEffect(() => {
@@ -515,7 +517,7 @@ export function TaskDetailModalContent({
         title: trimmed,
         currentListId: task.listId,
         userId: currentUser?.id,
-      }).catch(err => console.error('Failed to save title:', err));
+      }).catch(err => console.warn('Failed to save title:', err));
       if (onUpdateTask) onUpdateTask({ ...task, title: trimmed });
     }
   };
@@ -544,7 +546,7 @@ export function TaskDetailModalContent({
         description: sanitizedDesc,
         currentListId: task.listId,
         userId: currentUser?.id,
-      }).catch(err => console.error('Failed to save description:', err));
+      }).catch(err => console.warn('Failed to save description:', err));
 
       if (onUpdateTask) {
         onUpdateTask({ ...task, description: sanitizedDesc });
@@ -777,7 +779,7 @@ export function TaskDetailModalContent({
       } catch (err: any) {
         // Rollback on error
         setActivities(prev => prev.filter(a => a.id !== optimisticId));
-        console.error('[TaskDetailModal] Failed to persist assignees:', err);
+        console.warn('[TaskDetailModal] Failed to persist assignees:', err);
       }
     },
     [currentUser, setActivities]
@@ -1023,9 +1025,12 @@ export function TaskDetailModalContent({
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-[#18181b]">
           <div className="flex items-center gap-3">
             <button
-              onClick={onClose}
+              onClick={() => {
+                onClose();
+                router.push('/tasks');
+              }}
               className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
-              title="Go Back"
+              title="Go Back to All Tasks"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -1035,7 +1040,7 @@ export function TaskDetailModalContent({
                 {task.list.space && (
                   <>
                     <button 
-                      onClick={() => router.push(`/spaces/${task.list?.space?.id}`)}
+                      onClick={() => { onClose(); router.push('/tasks'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -1050,7 +1055,7 @@ export function TaskDetailModalContent({
                 {task.list.folder && (
                   <>
                     <button 
-                      onClick={() => router.push(`/folders/${task.list?.folder?.id}`)}
+                      onClick={() => { onClose(); router.push('/tasks'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <Folder className="w-3.5 h-3.5 shrink-0" />
@@ -1061,7 +1066,7 @@ export function TaskDetailModalContent({
                 )}
 
                 <button 
-                  onClick={() => router.push(`/lists/${task.list?.id}`)}
+                  onClick={() => { onClose(); router.push(`/lists/${task.list?.id}`); }}
                   className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                 >
                   <ListTodo className="w-3.5 h-3.5 shrink-0" />
@@ -1105,7 +1110,10 @@ export function TaskDetailModalContent({
               Share
             </button>
             <button
-              onClick={onClose}
+              onClick={() => {
+                onClose();
+                router.push('/tasks');
+              }}
               className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -1999,6 +2007,7 @@ function SubtaskDetailView({
 }) {
   const router = useRouter();
   const [richComments, setRichComments] = useState<any[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localDesc, setLocalDesc] = useState(subtask.description || '');
@@ -2165,10 +2174,13 @@ function SubtaskDetailView({
   useEffect(() => {
     const load = async () => {
       try {
+        setLoadingActivities(true);
         const commentRes = await tasksApi.getComments(parentTask.id, subtask.id);
         if (commentRes?.comments) setRichComments(commentRes.comments);
       } catch (err) {
         console.error('Failed to load comments:', err);
+      } finally {
+        setLoadingActivities(false);
       }
     };
     load();
@@ -2249,7 +2261,7 @@ function SubtaskDetailView({
       <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 bg-[#18181b] shrink-0">
         <div className="flex items-center gap-3">
           <button
-            onClick={onClose}
+            onClick={() => setActiveSubtask && setActiveSubtask(null)}
             className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
             title="Go Back"
           >
@@ -2260,7 +2272,7 @@ function SubtaskDetailView({
               {parentTask.list.space && (
                 <>
                   <button 
-                    onClick={() => router.push(`/spaces/${parentTask.list?.space?.id}`)}
+                    onClick={() => { onClose(); router.push('/tasks'); }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
                     <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -2274,7 +2286,7 @@ function SubtaskDetailView({
               {parentTask.list.folder && (
                 <>
                   <button 
-                    onClick={() => router.push(`/folders/${parentTask.list?.folder?.id}`)}
+                    onClick={() => { onClose(); router.push('/tasks'); }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
                     <Folder className="w-3.5 h-3.5 shrink-0" />
@@ -2284,7 +2296,7 @@ function SubtaskDetailView({
                 </>
               )}
               <button 
-                onClick={() => router.push(`/lists/${parentTask.list?.id}`)}
+                onClick={() => { onClose(); router.push(`/lists/${parentTask.list?.id}`); }}
                 className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
               >
                 <ListTodo className="w-3.5 h-3.5 shrink-0" />

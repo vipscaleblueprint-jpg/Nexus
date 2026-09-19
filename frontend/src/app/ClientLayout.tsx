@@ -41,7 +41,12 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
             setUnreadNotifications(unread);
           });
         })
-        .catch(() => {});
+        .catch(() => {
+          // Token expired or invalid — redirect to login
+          if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+            window.location.href = '/login';
+          }
+        });
     }
   }, [pathname]);
 

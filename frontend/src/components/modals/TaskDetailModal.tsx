@@ -379,16 +379,27 @@ export function TaskDetailModalContent({
     if (!task?.assigneeRoleRestrictions || task.assigneeRoleRestrictions.length === 0) {
       return dbUsers;
     }
-    return dbUsers.filter((u) => {
-      const userRoles = [
-        u.primaryRole,
-        u.secondaryRole,
-        u.tertiaryRole,
-        u.minorRole,
-      ].filter(Boolean);
-      return task.assigneeRoleRestrictions!.some((role) => userRoles.includes(role));
+    // Build a map of TeamRole name -> teamId for fast lookup
+    const teamRoleToTeamId = new Map<string, string>();
+    dbTeams.forEach((team: any) => {
+      (team.teamRoles || []).forEach((tr: any) => {
+        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
+      });
     });
-  }, [dbUsers, task?.assigneeRoleRestrictions]);
+
+    return dbUsers.filter((u) => {
+      const userRoles = [u.primaryRole, u.secondaryRole, u.tertiaryRole, u.minorRole].filter(Boolean) as string[];
+      return task.assigneeRoleRestrictions!.some((role) => {
+        // Check generic role match (TECH, PM, AUDITOR...)
+        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
+        // Check TeamRole match — filter by team membership
+        const teamId = teamRoleToTeamId.get(role.toLowerCase());
+        if (teamId && (u as any).teamId === teamId) return true;
+        return false;
+      });
+    });
+  }, [dbUsers, dbTeams, task?.assigneeRoleRestrictions]);
+
 
   // Fetch persistent activities and comments from DB
   const loadActivities = useCallback(async () => {
@@ -1276,7 +1287,7 @@ export function TaskDetailModalContent({
                         ) : (
                           <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                             <Plus className="w-3 h-3" />
-                            Assign Team
+                            Assign Role
                             {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
                           </button>
                         )}
@@ -1304,10 +1315,11 @@ export function TaskDetailModalContent({
                                         const next = selected
                                           ? current.filter(r => r !== role.name)
                                           : [...current, role.name];
-                                        task.assigneeRoleRestrictions = next;
+                                        // Optimistically update immediately — no mutation of task ref
                                         const updatedTask = { ...task, assigneeRoleRestrictions: next };
                                         if (onUpdateTask) onUpdateTask(updatedTask);
-                                        tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any);
+                                        // Fire API in background
+                                        tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
                                       }}
                                       className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
                                     >
@@ -2525,7 +2537,7 @@ function SubtaskDetailView({
                       ) : (
                         <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                           <Plus className="w-3 h-3 shrink-0" />
-                          Assign Team
+                          Assign Role
                         </button>
                       )}
                     </Popover.Trigger>
@@ -2547,30 +2559,27 @@ function SubtaskDetailView({
                                   return (
                                     <div
                                       key={role.id}
-                                      onClick={async () => {
+                                      onClick={() => {
                                         const current = subtask.assigneeRoleRestrictions || [];
                                         const next = selected
                                           ? current.filter((r: string) => r !== role.name)
                                           : [...current, role.name];
                                         
-                                        // Update optimistically
+                                        // Optimistically update immediately before API call
                                         const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
-                                        
-                                        // Update state if we had a function for it, but for subtasks in the modal, 
-                                        // it relies on parent task state. We should trigger the api and update the parent task
-                                        try {
-                                          await tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any);
-                                          
-                                          if (onUpdateTask) {
-                                            const updatedTask = {
-                                              ...parentTask,
-                                              subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
-                                            };
-                                            onUpdateTask(updatedTask);
-                                          }
-                                        } catch (err) {
-                                          console.error("Failed to update subtask role restriction", err);
+                                        if (onUpdateTask) {
+                                          const updatedTask = {
+                                            ...parentTask,
+                                            subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
+                                          };
+                                          onUpdateTask(updatedTask);
                                         }
+
+                                        // Fire API in background
+                                        tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any)
+                                          .catch((err: any) => {
+                                            console.error("Failed to update subtask role restriction", err);
+                                          });
                                       }}
                                       className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
                                     >
@@ -2924,9 +2933,12 @@ export function TaskDetailModal(props: Props) {
 
   useEffect(() => {
     if (props.isOpen && props.task && fullTask && props.task.id === fullTask.id) {
-      setFullTask(prev => ({ ...prev!, ...props.task! }));
+      // Merge incoming prop changes, but let our local (optimistic) state take priority
+      // so that user's role/assignee changes aren't reverted by socket task:updated events
+      setFullTask(prev => ({ ...props.task!, ...prev! }));
     }
   }, [props.task]);
+
 
   const handleUpdateTask = (updatedTask: Task) => {
     setFullTask(updatedTask);

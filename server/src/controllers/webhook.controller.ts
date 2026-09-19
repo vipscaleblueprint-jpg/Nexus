@@ -141,7 +141,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
 
   try {
-    const { clients, prompt, title, priority, assignee, task_link, listed_by } = req.body;
+    const { clients, prompt, title, priority, assignee, auditor, task_link, listed_by } = req.body;
 
     const clientName = clients?.name;
     if (!clientName) {
@@ -204,13 +204,33 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'No user available to set as creator' });
     }
 
-    // Resolve assignee: prefer Team match first, then fall back to individual user lookup
+    // Resolve assignee: role assignments set assigneeRoleRestrictions; named users are individual
     let resolvedTeamId: string | null = null;
     const assigneeIdsSet = new Set<string>();
+    const roleNamesSet = new Set<string>();
     if (assignee && Array.isArray(assignee)) {
       for (const a of assignee) {
         if (!a.name) continue;
         const aName = a.name;
+
+        // 0. Role assignment — store as restriction AND map the individual users
+        if (a.type === 'role' || (a.id && String(a.id).startsWith('role_'))) {
+          roleNamesSet.add(aName.toUpperCase());
+          if (a.userIds && Array.isArray(a.userIds)) {
+            a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
+          }
+          continue;
+        }
+
+        // 0.5. TeamRole assignment — store role name as restriction + team + users
+        if (a.type === 'teamrole' || (a.id && String(a.id).startsWith('teamrole_'))) {
+          roleNamesSet.add(aName); // Keep original casing for TeamRole names
+          if (a.teamId && !resolvedTeamId) resolvedTeamId = a.teamId;
+          if (a.userIds && Array.isArray(a.userIds)) {
+            a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
+          }
+          continue;
+        }
 
         // 1. Check if the name matches a Team directly
         const matchedTeam = await prisma.team.findFirst({
@@ -218,7 +238,6 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         });
 
         if (matchedTeam) {
-          // Assign the team to the task — don't expand into individual members
           resolvedTeamId = matchedTeam.id;
           continue;
         }
@@ -241,13 +260,12 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         if (usersByName.length > 0) {
           usersByName.forEach(u => assigneeIdsSet.add(u.id));
         }
-        // Note: we intentionally skip the role-based fallback that was expanding
-        // a role name (e.g. "TECH") into all individual team members.
       }
     }
 
     const finalAssigneeIds = Array.from(assigneeIdsSet);
     const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[0] : null;
+    const roleRestrictions = Array.from(roleNamesSet);
 
     // Since this is a newly created task from Galaxy, we'll try 'PENDING', fallback to 'DAILY', or the first available status
     const firstStatus = await prisma.listStatus.findFirst({
@@ -264,27 +282,48 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         description: prompt || '',
         listId: list.id,
         creatorId: creator.id,
-        assigneeId: primaryAssigneeId,
         ...(resolvedTeamId && { teamId: resolvedTeamId }),
-        ...(finalAssigneeIds.length > 0 && {
-          assignees: {
-            connect: finalAssigneeIds.map(id => ({ id }))
-          }
-        }),
+        // If a role was specified, set it as the role restriction (shows role badge in UI)
+        // Otherwise fall back to individual user assignees
+        ...(roleRestrictions.length > 0 ? { assigneeRoleRestrictions: roleRestrictions } : {}),
+        ...(finalAssigneeIds.length > 0 ? {
+          assigneeId: primaryAssigneeId,
+          assignees: { connect: finalAssigneeIds.map(id => ({ id })) }
+        } : {}),
         priority: priority ? priority.toUpperCase() : 'MEDIUM',
         status: firstStatus?.name || 'Pending',
         externalId: task_link || null
       }
     });
 
-    // Auto-create subtask
-    const autoSubtaskTitle = `--Audit Design - ${title || clientName}`;
+    // Auto-create subtask for the Audit Team
+    // Determine the specific auditor role requested by the AI, fallback to 'AUDITOR'
+    let auditorRoleName = 'AUDITOR';
+    let auditorUserIds: string[] = [];
+    if (auditor && Array.isArray(auditor) && auditor.length > 0) {
+      const selectedAuditor = auditor[0];
+      if (selectedAuditor.name) {
+        auditorRoleName = selectedAuditor.name; // Keep original casing (especially for TeamRoles like "Funnel Auditor")
+      }
+      if (selectedAuditor.userIds && Array.isArray(selectedAuditor.userIds)) {
+        auditorUserIds = selectedAuditor.userIds;
+      }
+    }
+
+    const autoSubtaskTitle = `--Audit - ${auditorRoleName} - ${title || clientName}`;
+
     const subtask = await prisma.subtask.create({
       data: {
         title: autoSubtaskTitle,
         taskId: newTask.id,
         priority: priority ? priority.toUpperCase() : 'MEDIUM',
-        assigneeId: primaryAssigneeId,
+        // Store auditor role as restriction so the role badge shows in UI
+        assigneeRoleRestrictions: [auditorRoleName],
+        // Assign the actual users to the subtask
+        ...(auditorUserIds.length > 0 ? {
+          assigneeId: auditorUserIds[0],
+          assignees: { connect: auditorUserIds.map(id => ({ id })) }
+        } : {})
       }
     });
 
@@ -407,13 +446,33 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Parent task not found in Nexus' });
     }
 
-    // Resolve assignee: prefer Team match first, then fall back to individual user lookup
+    // Resolve assignee: role assignments set assigneeRoleRestrictions; named users are individual
     let resolvedTeamId: string | null = null;
     const assigneeIdsSet = new Set<string>();
+    const roleNamesSet = new Set<string>();
     if (assignee && Array.isArray(assignee)) {
       for (const a of assignee) {
         if (!a.name) continue;
         const aName = a.name;
+
+        // 0. Role assignment — store as restriction AND map the individual users
+        if (a.type === 'role' || (a.id && String(a.id).startsWith('role_'))) {
+          roleNamesSet.add(aName.toUpperCase());
+          if (a.userIds && Array.isArray(a.userIds)) {
+            a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
+          }
+          continue;
+        }
+
+        // 0.5. TeamRole assignment — store role name as restriction + team + users
+        if (a.type === 'teamrole' || (a.id && String(a.id).startsWith('teamrole_'))) {
+          roleNamesSet.add(aName); // Keep original casing for TeamRole names
+          if (a.teamId && !resolvedTeamId) resolvedTeamId = a.teamId;
+          if (a.userIds && Array.isArray(a.userIds)) {
+            a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
+          }
+          continue;
+        }
 
         // 1. Check if the name matches a Team directly
         const matchedTeam = await prisma.team.findFirst({
@@ -447,6 +506,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
 
     const finalAssigneeIds = Array.from(assigneeIdsSet);
     const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[0] : null;
+    const roleRestrictions = Array.from(roleNamesSet);
 
 
     const subtask = await prisma.subtask.create({
@@ -454,6 +514,8 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         title: title || 'New Subtask',
         taskId: parentTask.id,
         priority: priority ? priority.toUpperCase() : 'MEDIUM',
+        // Role assignments show as role badge; individual users connect directly
+        ...(roleRestrictions.length > 0 ? { assigneeRoleRestrictions: roleRestrictions } : {}),
         ...(finalAssigneeIds.length > 0 ? {
           assigneeId: primaryAssigneeId,
           assignees: { connect: finalAssigneeIds.map(id => ({ id })) }

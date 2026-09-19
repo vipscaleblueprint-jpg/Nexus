@@ -320,6 +320,29 @@ async function checkCanMoveFromStatus(
   }
 }
 
+async function resolveUsersFromRoles(roleRestrictions: string[]): Promise<string[]> {
+  if (!roleRestrictions || roleRestrictions.length === 0) return [];
+  const users = await prisma.user.findMany({
+    where: {
+      OR: [
+        { primaryRole: { in: roleRestrictions, mode: 'insensitive' } },
+        { secondaryRole: { in: roleRestrictions, mode: 'insensitive' } },
+        { tertiaryRole: { in: roleRestrictions, mode: 'insensitive' } },
+        { minorRole: { in: roleRestrictions, mode: 'insensitive' } },
+        {
+          team: {
+            teamRoles: {
+              some: { name: { in: roleRestrictions, mode: 'insensitive' } }
+            }
+          }
+        }
+      ]
+    },
+    select: { id: true }
+  });
+  return users.map(u => u.id);
+}
+
 // PATCH /api/tasks/:id
 export async function updateTask(req: Request, res: Response) {
   try {
@@ -390,9 +413,14 @@ export async function updateTask(req: Request, res: Response) {
       // Ensure undefined fields are stripped out completely
     };
 
-    if (assigneeIds !== undefined) {
-      updateData.assignees = { set: assigneeIds.map((id: string) => ({ id })) };
-      updateData.assigneeId = assigneeIds.length > 0 ? assigneeIds[0] : null;
+    let computedAssigneeIds = assigneeIds;
+    if (assigneeRoleRestrictions !== undefined && assigneeIds === undefined && assigneeId === undefined) {
+      computedAssigneeIds = await resolveUsersFromRoles(assigneeRoleRestrictions);
+    }
+
+    if (computedAssigneeIds !== undefined) {
+      updateData.assignees = { set: computedAssigneeIds.map((id: string) => ({ id })) };
+      updateData.assigneeId = computedAssigneeIds.length > 0 ? computedAssigneeIds[0] : null;
     } else if (assigneeId !== undefined) {
       updateData.assigneeId = assigneeId || null;
       updateData.assignees = assigneeId ? { set: [{ id: assigneeId }] } : { set: [] };
@@ -406,8 +434,8 @@ export async function updateTask(req: Request, res: Response) {
 
     // Manually construct the payload for frontend to merge efficiently
     const payload = { ...updated } as any;
-    if (assigneeIds !== undefined || assigneeId !== undefined) {
-      const idsToFetch = assigneeIds !== undefined ? assigneeIds : (assigneeId ? [assigneeId] : []);
+    if (computedAssigneeIds !== undefined || assigneeId !== undefined) {
+      const idsToFetch = computedAssigneeIds !== undefined ? computedAssigneeIds : (assigneeId ? [assigneeId] : []);
       if (idsToFetch.length > 0) {
         payload.assignees = await prisma.user.findMany({
           where: { id: { in: idsToFetch } },
@@ -488,9 +516,9 @@ export async function updateTask(req: Request, res: Response) {
               date: log.createdAt,
               user,
             };
-          } else if (assigneeIds !== undefined) {
-            const assignedUsers = assigneeIds.length > 0
-              ? await prisma.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true, avatarUrl: true } })
+          } else if (computedAssigneeIds !== undefined) {
+            const assignedUsers = computedAssigneeIds.length > 0
+              ? await prisma.user.findMany({ where: { id: { in: computedAssigneeIds } }, select: { id: true, name: true, avatarUrl: true } })
               : [];
             const names = assignedUsers.length > 0 ? assignedUsers.map((u: any) => u.name).join(', ') : 'Unassigned';
             const log = await prisma.auditLog.create({
@@ -502,7 +530,7 @@ export async function updateTask(req: Request, res: Response) {
                 details: { assigneeName: names, assigneeNames: assignedUsers.map((u: any) => u.name), count: assignedUsers.length },
               },
             });
-            const newlyAssigned = assigneeIds.filter((id: string) => !currentTask.assignees.some((a: any) => a.id === id));
+            const newlyAssigned = computedAssigneeIds.filter((id: string) => !currentTask.assignees.some((a: any) => a.id === id));
             if (newlyAssigned.length > 0) {
               const newAssigneesToNotify = newlyAssigned.filter((id: string) => id !== actingUserId);
               if (newAssigneesToNotify.length > 0) {
@@ -1226,6 +1254,11 @@ export async function updateSubtask(req: Request, res: Response) {
       finalCompleted = status === 'CLOSED';
     }
 
+    let computedAssigneeIds = assigneeIds;
+    if (assigneeRoleRestrictions !== undefined && assigneeIds === undefined && assigneeId === undefined) {
+      computedAssigneeIds = await resolveUsersFromRoles(assigneeRoleRestrictions);
+    }
+
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
       data: {
@@ -1233,9 +1266,9 @@ export async function updateSubtask(req: Request, res: Response) {
         ...(description !== undefined && { description }),
         ...(status !== undefined && { status }),
         ...(finalCompleted !== undefined && { completed: finalCompleted }),
-        ...(assigneeIds !== undefined && Array.isArray(assigneeIds) ? {
-          assigneeId: assigneeIds.length > 0 ? assigneeIds[0] : null,
-          assignees: { set: assigneeIds.map((id: string) => ({ id })) }
+        ...(computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds) ? {
+          assigneeId: computedAssigneeIds.length > 0 ? computedAssigneeIds[0] : null,
+          assignees: { set: computedAssigneeIds.map((id: string) => ({ id })) }
         } : assigneeId !== undefined ? {
           assigneeId: assigneeId || null,
           assignees: assigneeId ? { set: [{ id: assigneeId }] } : { set: [] }
@@ -1257,7 +1290,7 @@ export async function updateSubtask(req: Request, res: Response) {
     const authReq = req as any;
     const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
     if (actingUserId) {
-      if (assigneeIds !== undefined && Array.isArray(assigneeIds)) {
+      if (computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)) {
         await prisma.auditLog.create({
           data: {
             action: 'ASSIGNMENT',
@@ -1268,7 +1301,7 @@ export async function updateSubtask(req: Request, res: Response) {
           }
         });
 
-        for (const assigneeId of assigneeIds) {
+        for (const assigneeId of computedAssigneeIds) {
           if (assigneeId !== actingUserId) {
             await prisma.taskNotification.create({
               data: {

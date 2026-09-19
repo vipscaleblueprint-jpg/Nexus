@@ -3,10 +3,33 @@ import { prisma } from '../config/prisma';
 
 export const getRoles = async (req: Request, res: Response) => {
   try {
-    const roles = await prisma.workspaceRole.findMany({
-      orderBy: { createdAt: 'asc' },
-    });
-    res.json(roles);
+    const [workspaceRoles, teamRoles] = await Promise.all([
+      prisma.workspaceRole.findMany({ orderBy: { createdAt: 'asc' } }),
+      (prisma as any).teamRole.findMany({
+        orderBy: { createdAt: 'asc' },
+        include: { team: { select: { id: true, name: true } } },
+      }),
+    ]);
+
+    // Merge: workspace roles first, then team-specific roles
+    const merged = [
+      ...workspaceRoles.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        color: r.color || null,
+        type: 'workspace',
+      })),
+      ...teamRoles.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        color: null,
+        type: 'teamrole',
+        teamId: r.teamId,
+        teamName: r.team?.name || null,
+      })),
+    ];
+
+    res.json(merged);
   } catch (error: any) {
     req.log.error({ error }, 'Error fetching roles');
     res.status(500).json({ error: 'Failed to fetch roles' });

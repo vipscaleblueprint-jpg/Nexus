@@ -672,7 +672,7 @@ function SubtaskRow({
                   ) : (
                     <button disabled={!canEditTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                       <Plus className="w-3 h-3 shrink-0" />
-                      Assign Team
+                      Assign Role
                     </button>
                   )}
                 </Popover.Trigger>

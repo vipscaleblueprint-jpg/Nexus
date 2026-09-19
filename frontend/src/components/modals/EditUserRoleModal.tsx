@@ -97,6 +97,37 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
     }
   };
 
+  // Group roles by type for optgroup rendering
+  const workspaceRoleOptions = availableRoles.filter((r: any) => r.type === 'workspace' || !r.type);
+  const teamRoleGroups: Record<string, { id: string; name: string }[]> = {};
+  availableRoles.forEach((r: any) => {
+    if (r.type === 'teamrole') {
+      const groupKey = r.teamName || 'Other';
+      if (!teamRoleGroups[groupKey]) teamRoleGroups[groupKey] = [];
+      teamRoleGroups[groupKey].push(r);
+    }
+  });
+
+  const RoleOptions = () => (
+    <>
+      <option value="">None / Unassigned</option>
+      {workspaceRoleOptions.length > 0 && (
+        <optgroup label="─── Generic Roles ───">
+          {workspaceRoleOptions.map((r: any) => (
+            <option key={r.id} value={r.name}>{r.name}</option>
+          ))}
+        </optgroup>
+      )}
+      {Object.entries(teamRoleGroups).map(([teamName, roles]) => (
+        <optgroup key={teamName} label={`─── ${teamName} ───`}>
+          {roles.map((r) => (
+            <option key={r.id} value={r.name}>{r.name}</option>
+          ))}
+        </optgroup>
+      ))}
+    </>
+  );
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
@@ -240,10 +271,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
                   disabled={loadingRoles}
                   className="w-full bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                 >
-                  <option value="">None / Unassigned</option>
-                  {availableRoles.map((r) => (
-                    <option key={r.id} value={r.name}>{r.name}</option>
-                  ))}
+                  <RoleOptions />
                 </select>
               </div>
 
@@ -258,10 +286,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
                   disabled={loadingRoles}
                   className="w-full bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                 >
-                  <option value="">None / Unassigned</option>
-                  {availableRoles.map((r) => (
-                    <option key={r.id} value={r.name}>{r.name}</option>
-                  ))}
+                  <RoleOptions />
                 </select>
               </div>
 
@@ -276,10 +301,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
                   disabled={loadingRoles}
                   className="w-full bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                 >
-                  <option value="">None / Unassigned</option>
-                  {availableRoles.map((r) => (
-                    <option key={r.id} value={r.name}>{r.name}</option>
-                  ))}
+                  <RoleOptions />
                 </select>
               </div>
 
@@ -294,10 +316,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
                   disabled={loadingRoles}
                   className="w-full bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                 >
-                  <option value="">None / Unassigned</option>
-                  {availableRoles.map((r) => (
-                    <option key={r.id} value={r.name}>{r.name}</option>
-                  ))}
+                  <RoleOptions />
                 </select>
               </div>
             </div>

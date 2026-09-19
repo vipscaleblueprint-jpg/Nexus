@@ -779,7 +779,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       <div 
         ref={boardContainerRef}
         onWheel={handleWheelScroll}
-        className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 pb-4 px-2 custom-scrollbar transition-all duration-300 ${!activeTask ? 'snap-x snap-mandatory' : ''}`}
+        className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 custom-scrollbar transition-all duration-300 ${!activeTask ? 'snap-x snap-mandatory' : ''}`}
       >
         <SortableContext 
           items={sortableColumnIds} 

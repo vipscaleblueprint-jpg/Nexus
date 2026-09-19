@@ -428,11 +428,10 @@ export async function updateSubtask(req: Request, res: Response) {
 
 // ---------------------------------------------------------------------------
 // GET /api/external/assignable-groups
-// Returns all users, roles, and teams for VIPScale assignee dropdowns
+// Returns all users, roles, teamroles, and teams for VIPScale assignee dropdowns
 // ---------------------------------------------------------------------------
 export async function getAssignableGroups(req: Request, res: Response) {
   try {
-    // Safely query users and include their team relation instead of querying users from within the team
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -446,9 +445,15 @@ export async function getAssignableGroups(req: Request, res: Response) {
       }
     });
 
-    const teams = await prisma.team.findMany({ select: { id: true, name: true } });
+    const teams = await prisma.team.findMany({
+      select: {
+        id: true,
+        name: true,
+        teamRoles: { select: { id: true, name: true } }
+      }
+    });
 
-    // Map roles to their users
+    // Map generic roles (TECH, PM, AUDITOR...) to their users
     const roleUsersMap = new Map<string, string[]>();
     users.forEach(u => {
       const addRole = (role?: string | null) => {
@@ -464,14 +469,27 @@ export async function getAssignableGroups(req: Request, res: Response) {
     });
 
     const options = [
+      // Generic roles derived from user.primaryRole etc. (TECH, PM, AUDITOR...)
       ...Array.from(roleUsersMap.entries()).map(([role, userIds]) => ({
         id: `role_${role}`,
         name: role,
         type: 'role',
         userIds
       })),
+      // Specific TeamRoles (Funnel Auditor, Design Auditor, UI UX Auditor...)
+      ...teams.flatMap(t =>
+        (t.teamRoles || []).map(tr => ({
+          id: `teamrole_${tr.id}`,
+          name: tr.name,
+          type: 'teamrole',
+          teamId: t.id,
+          teamName: t.name,
+          // Users in this team are the pool for this role
+          userIds: users.filter(u => u.team?.id === t.id).map(u => u.id)
+        }))
+      ),
+      // Teams
       ...teams.map(t => {
-        // Find all users that belong to this team safely
         const teamUsers = users.filter(u => u.team?.id === t.id).map(u => u.id);
         return {
           id: `team_${t.id}`,
@@ -480,6 +498,7 @@ export async function getAssignableGroups(req: Request, res: Response) {
           userIds: teamUsers
         };
       }),
+      // Individual users
       ...users.map(u => ({
         id: u.id,
         name: u.name,
@@ -494,3 +513,4 @@ export async function getAssignableGroups(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+

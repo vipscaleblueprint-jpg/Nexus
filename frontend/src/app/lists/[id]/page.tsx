@@ -426,7 +426,7 @@ export default function BoardPage() {
           />
         </div>
       ) : (
-        <div className="w-full h-full flex flex-col px-6 py-6 overflow-hidden">
+        <div className="w-full h-full flex flex-col px-6 pt-6 overflow-hidden">
           {/* Header */}
           <div className="mb-6 flex items-start justify-between">
             <div className="flex flex-col">

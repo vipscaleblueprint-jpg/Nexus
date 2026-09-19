@@ -604,6 +604,14 @@ export default function BoardPage() {
                   });
                   socket?.emit('add_group', { listId: id, group });
                 }}
+                onDeleteGroup={(groupToDelete) => {
+                  setCustomGroups(prev => {
+                    const newGroups = prev.filter(g => g !== groupToDelete);
+                    spacesApi.updateList(id as string, { customGroups: newGroups }).catch(console.error);
+                    return newGroups;
+                  });
+                  socket?.emit('delete_group', { listId: id, group: groupToDelete });
+                }}
                 onStatusDelete={async (statusName) => {
                   try {
                     const existingStatus = list?.statuses?.find((s: any) => s.name === statusName);

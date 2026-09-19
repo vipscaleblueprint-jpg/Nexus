@@ -314,7 +314,8 @@ export async function refresh(req: Request, res: Response) {
 
     const user = await prisma.user.findUnique({ where: { id: decoded.id } });
     if (!user || !user.isActive) {
-      return res.status(401).json({ error: 'User account disabled' });
+      clearAuthCookies(res);
+      return res.status(401).json({ error: 'User account disabled or not found' });
     }
 
     const tokens = generateTokens(user);
@@ -372,7 +373,10 @@ export async function getMe(req: AuthRequest, res: Response) {
       },
     });
 
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user) {
+      clearAuthCookies(res);
+      return res.status(401).json({ error: 'User not found' });
+    }
 
     // If role changed in DB since JWT was minted, automatically refresh tokens and cookies
     if (user.systemRole !== req.user.systemRole) {

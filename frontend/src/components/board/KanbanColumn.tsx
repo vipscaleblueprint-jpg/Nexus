@@ -28,6 +28,8 @@ interface Props {
   isColumnRestrictedForUser?: boolean;
   columnRestrictionReason?: string;
   listStatuses?: any[];
+  dragListeners?: any;
+  dragAttributes?: any;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -138,6 +140,8 @@ export const KanbanColumn = memo(function KanbanColumn({
   columnRestrictionReason,
   listStatuses = [],
   onDeleteColumn,
+  dragListeners,
+  dragAttributes,
 }: Props) {
 
 
@@ -271,7 +275,11 @@ export const KanbanColumn = memo(function KanbanColumn({
 
       {/* ── EXPANDED VIEW ── */}
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <div className="flex flex-col px-3 pt-3 pb-2 shrink-0 group/colheader">
+        <div 
+          className="flex flex-col px-3 pt-3 pb-2 shrink-0 group/colheader cursor-grab active:cursor-grabbing"
+          {...dragListeners}
+          {...dragAttributes}
+        >
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5 flex-wrap min-w-0 pr-1">
               {isEditing ? (

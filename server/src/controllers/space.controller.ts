@@ -443,13 +443,14 @@ export async function deleteFolder(req: Request, res: Response) {
 // POST /api/spaces/docs (Doc container for Pages)
 export async function createDoc(req: Request, res: Response) {
   try {
-    const { title, docDate, spaceId, folderId, isDailyRollover } = req.body;
+    const { title, docDate, spaceId, folderId, teamId, isDailyRollover } = req.body;
     const doc = await prisma.doc.create({
       data: {
         title,
         docDate: docDate ? new Date(docDate) : new Date(),
         spaceId: spaceId || null,
         folderId: folderId || null,
+        teamId: teamId || null,
         isDailyRollover: isDailyRollover || false,
       },
     });
@@ -469,6 +470,7 @@ export async function getDoc(req: Request, res: Response) {
       include: {
         space: { select: { id: true, name: true, color: true } },
         folder: { select: { id: true, name: true } },
+        team: { select: { id: true, name: true, color: true } },
         pages: {
           where: { parentPageId: null },
           orderBy: { createdAt: 'asc' },
@@ -496,12 +498,13 @@ export async function getDoc(req: Request, res: Response) {
 // PATCH /api/spaces/docs/:id
 export async function updateDoc(req: Request, res: Response) {
   try {
-    const { title, docDate } = req.body;
+    const { title, docDate, teamId } = req.body;
     const doc = await prisma.doc.update({
       where: { id: req.params.id },
       data: {
         ...(title && { title }),
         ...(docDate && { docDate: new Date(docDate) }),
+        ...(teamId !== undefined && { teamId }),
       },
     });
     await invalidateCache('spaces:all', 'dashboard:all');

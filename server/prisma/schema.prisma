@@ -15,7 +15,10 @@ model Team {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   tasks       Task[]
+  subtasks    Subtask[]
   members     User[]
+  teamRoles   TeamRole[]
+  docs        Doc[]
 
   @@index([name])
 }
@@ -25,6 +28,17 @@ model WorkspaceRole {
   name      String   @unique
   color     String?
   createdAt DateTime @default(now())
+}
+
+model TeamRole {
+  id        String   @id @default(uuid())
+  name      String
+  teamId    String?
+  team      Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([name, teamId])
+  @@index([teamId])
 }
 
 model User {
@@ -73,6 +87,7 @@ model User {
   taskNotifications     TaskNotification[]    @relation("UserNotification")
   team                  Team?                 @relation(fields: [teamId], references: [id])
   assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
+  subtasksAssignedMulti Subtask[]             @relation("SubtaskMultiAssignees")
 
   @@index([email])
   @@index([systemRole])
@@ -163,6 +178,8 @@ model Doc {
   folder           Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
   space            Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   pages            Page[]
+  teamId           String?
+  team             Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
   @@index([spaceId])
   @@index([folderId])
@@ -225,6 +242,8 @@ model Task {
   comments      TaskComment[]
   notifications TaskNotification[]
   assignees     User[]             @relation("TaskMultiAssignees")
+  assigneeRoleRestrictions String[] @default([])
+  teamAssignAccessRole     String?
 
   @@index([listId])
   @@index([status])
@@ -246,13 +265,19 @@ model Subtask {
   dueDate     DateTime?
   priority    Priority      @default(MEDIUM)
   assigneeId  String?
+  teamId      String?
+  assignees   User[]        @relation("SubtaskMultiAssignees")
+  team        Team?         @relation(fields: [teamId], references: [id])
   checklists  Checklist[]
   User        User?         @relation(fields: [assigneeId], references: [id])
   task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
   comments    TaskComment[]
+  assigneeRoleRestrictions String[] @default([])
+  teamAssignAccessRole     String?
 
   @@index([taskId])
   @@index([assigneeId])
+  @@index([teamId])
 }
 
 model Checklist {

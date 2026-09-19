@@ -12,6 +12,8 @@ import { Task } from '@/lib/types';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { RenameModal } from '@/components/modals/RenameModal';
+import { usersApi } from '@/api/users';
+import * as Popover from '@radix-ui/react-popover';
 import {
   FileText,
   ChevronRight,
@@ -287,6 +289,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     return () => document.removeEventListener('mouseover', handleMouseOver);
   }, [hoverCardPos]);
 
+  const [dbTeams, setDbTeams] = useState<any[]>([]);
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [tasksMap, setTasksMap] = useState<Record<string, Task>>({});
   const [selectedTaskForModal, setSelectedTaskForModal] = useState<Task | null>(null);
@@ -379,19 +382,27 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   };
 
-  const fetchTasks = async () => {
+  const fetchTasksAndTeams = async () => {
     try {
-      const res = await tasksApi.getTasks({ lightweight: true });
-      if (res.tasks) {
-        setAllTasks(res.tasks);
+      const [tasksRes, teamsRes] = await Promise.all([
+        tasksApi.getTasks({ lightweight: true }),
+        usersApi.getTeams()
+      ]);
+      
+      if (tasksRes.tasks) {
+        setAllTasks(tasksRes.tasks);
         const map: Record<string, Task> = {};
-        res.tasks.forEach((t) => {
+        tasksRes.tasks.forEach((t) => {
           map[t.id] = t;
         });
         setTasksMap(map);
       }
+      
+      if (teamsRes?.teams) {
+        setDbTeams(teamsRes.teams);
+      }
     } catch (err) {
-      console.warn('Failed to load tasks for doc page linking:', err);
+      console.warn('Failed to load tasks or teams:', err);
     }
   };
 
@@ -421,7 +432,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           if (!cancelled && user) setCurrentUser(user);
         } catch { }
       }
-      fetchTasks(); // Non-blocking so document loads instantly
+      fetchTasksAndTeams(); // Non-blocking so document loads instantly
       await fetchDoc();
     })();
     return () => {
@@ -730,13 +741,87 @@ export default function DocPage({ docId }: { docId?: string }) {
                 className="w-full bg-transparent border-none text-4xl font-extrabold text-zinc-100 placeholder-zinc-700 focus:outline-none tracking-tight"
               />
 
-              <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <div className="flex items-center gap-2 text-xs text-zinc-400 flex-wrap">
                 <div className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center font-bold text-[10px] shadow-sm">
                   {currentUser?.name ? currentUser.name[0] : 'H'}
                 </div>
                 <span className="font-semibold text-zinc-300">{currentUser?.name || 'Hannah'}</span>
                 <span className="text-zinc-600">•</span>
                 <span className="text-zinc-400">Last updated today</span>
+                {!doc?.isDailyRollover && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <Popover.Root>
+                      <Popover.Trigger asChild>
+                        <button className="flex items-center gap-1.5 px-2 py-0.5 rounded-md hover:bg-zinc-800 transition-colors cursor-pointer border border-transparent hover:border-zinc-700">
+                          {doc?.teamId ? (
+                            <>
+                              <div
+                                className="w-3.5 h-3.5 rounded-sm"
+                                style={{ backgroundColor: dbTeams.find(t => t.id === doc.teamId)?.color || '#3b82f6' }}
+                              />
+                              <span className="text-zinc-300 font-medium">
+                                {dbTeams.find(t => t.id === doc.teamId)?.name || 'Unknown Team'}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <div className="w-3.5 h-3.5 rounded-sm border border-zinc-500 border-dashed" />
+                              <span className="text-zinc-400">Assign Team</span>
+                            </>
+                          )}
+                        </button>
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl w-48 p-1 z-[100] text-sm animate-in fade-in zoom-in-95 duration-100"
+                          sideOffset={4}
+                          align="start"
+                        >
+                          <div className="px-2 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                            Select Team
+                          </div>
+                          <div className="max-h-[200px] overflow-y-auto custom-scrollbar space-y-0.5">
+                            <button
+                              onClick={async () => {
+                                if (!doc) return;
+                                try {
+                                  const res = await spacesApi.updateDoc(doc.id, { teamId: null });
+                                  setDoc(res.doc);
+                                } catch (e) { console.error('Failed to clear team', e); }
+                              }}
+                              className={`w-full text-left px-2 py-1.5 rounded-md flex items-center gap-2 hover:bg-zinc-800 transition-colors ${!doc?.teamId ? 'bg-zinc-800/50' : ''}`}
+                            >
+                              <div className="w-3 h-3 rounded-sm border border-zinc-600 border-dashed" />
+                              <span className="text-zinc-300">None</span>
+                            </button>
+                            {dbTeams.map(team => (
+                              <button
+                                key={team.id}
+                                onClick={async () => {
+                                  if (!doc) return;
+                                  try {
+                                    const res = await spacesApi.updateDoc(doc.id, { teamId: team.id });
+                                    setDoc(res.doc);
+                                  } catch (e) { console.error('Failed to set team', e); }
+                                }}
+                                className={`w-full text-left px-2 py-1.5 rounded-md flex items-center gap-2 hover:bg-zinc-800 transition-colors ${doc?.teamId === team.id ? 'bg-zinc-800/50' : ''}`}
+                              >
+                                <div
+                                  className="w-3 h-3 rounded-sm"
+                                  style={{ backgroundColor: team.color || '#3b82f6' }}
+                                />
+                                <span className="text-zinc-300 truncate">{team.name}</span>
+                                {doc?.teamId === team.id && <CheckSquare className="w-3.5 h-3.5 ml-auto text-blue-500" />}
+                              </button>
+                            ))}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                  </>
+                )}
+
                 {savingPage && <span className="text-purple-400 text-[10px] italic ml-2">Saving...</span>}
               </div>
             </div>

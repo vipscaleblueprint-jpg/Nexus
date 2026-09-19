@@ -2696,7 +2696,7 @@ function SubtaskDetailView({
               </div>
               
               {/* Rich comments with reactions + replies */}
-                {loadingActivities ? <CommentSkeleton /> : richComments.map(c => {
+                {false ? <CommentSkeleton /> : richComments.map(c => {
                 const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const dateStr = new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
                 

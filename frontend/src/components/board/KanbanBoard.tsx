@@ -256,10 +256,11 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
   useEffect(() => {
     setIsMounted(true);
+    if (!currentUser) return;
     getRoles()
       .then(setWorkspaceRoles)
-      .catch((err) => console.error('Failed to load roles in board:', err));
-  }, []);
+      .catch((err) => console.warn('Failed to load roles in board:', err));
+  }, [currentUser]);
 
   const roleMap = useMemo(() => {
     const map: Record<string, string> = {};

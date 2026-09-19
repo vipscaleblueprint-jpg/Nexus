@@ -34,15 +34,20 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'priority' | 'description' | null>(null);
   const [dbUsers, setDbUsers] = useState<any[]>([]);
   const [listStatuses, setListStatuses] = useState<any[]>([]);
-  const [optimisticTask, setOptimisticTask] = useState(task);
+  const [optimisticTask, setOptimisticTask] = useState<any>({});
+  const lastOptimisticTime = useRef<number>(0);
 
   const [localDesc, setLocalDesc] = useState(task.description || '');
   useEffect(() => {
     setLocalDesc(task.description || '');
-  }, [task.description]);
+    if (Date.now() - lastOptimisticTime.current > 3000) {
+      setOptimisticTask({});
+    }
+  }, [task]);
 
   const handleDescBlur = () => {
     if (localDesc !== currentTask.description) {
+       lastOptimisticTime.current = Date.now();
        tasksApi.updateTask(currentTask.id, { description: localDesc, userId: currentUser?.id }).catch(err => console.error(err));
        setOptimisticTask((prev: any) => ({ ...prev, description: localDesc }));
     }
@@ -74,33 +79,40 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
       const parsed = JSON.parse(currentTask.status);
       parsedStatusName = parsed.name || parsed.NAME || currentTask.status;
       parsedStatusColor = parsed.color || parsed.COLOR || '#3b82f6';
+    } else if (currentTask.status && typeof currentTask.status === 'object') {
+      parsedStatusName = currentTask.status.name || currentTask.status.NAME || 'Unknown';
+      parsedStatusColor = currentTask.status.color || currentTask.status.COLOR || '#3b82f6';
     }
   } catch (e) {}
   const assignees = currentTask.assignees || [];
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
+    lastOptimisticTime.current = Date.now();
     setOptimisticTask((prev: any) => ({ ...prev, status: JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }) }));
     setOpenDropdown(null);
     try {
       await tasksApi.moveTask(currentTask.id, newStatus, currentTask.listId, currentUser.id);
       toast.success('Status updated');
-      window.dispatchEvent(new CustomEvent('task_activity'));
+      setTimeout(() => window.dispatchEvent(new CustomEvent('task_activity')), 500);
     } catch (e: any) {
       toast.error(e.message || 'Failed to update status');
+      setOptimisticTask({});
     }
   };
 
   const handlePriorityChange = async (p: string | null) => {
     if (!currentUser) return;
+    lastOptimisticTime.current = Date.now();
     setOptimisticTask((prev: any) => ({ ...prev, priority: p }));
     setOpenDropdown(null);
     try {
       await tasksApi.updateTask(currentTask.id, { priority: (p || undefined) as any, userId: currentUser.id });
       toast.success('Priority updated');
-      window.dispatchEvent(new CustomEvent('task_activity'));
+      setTimeout(() => window.dispatchEvent(new CustomEvent('task_activity')), 500);
     } catch (e: any) {
       toast.error('Failed to update priority');
+      setOptimisticTask({});
     }
   };
 
@@ -111,12 +123,14 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
     if (isAssigned) newAssignees = assignees.filter((a: any) => a.id !== user.id);
     else newAssignees = [...assignees, user];
     
+    lastOptimisticTime.current = Date.now();
     setOptimisticTask((prev: any) => ({ ...prev, assignees: newAssignees }));
     try {
       await tasksApi.updateTask(currentTask.id, { assigneeIds: newAssignees.map((a: any) => a.id), userId: currentUser.id });
-      window.dispatchEvent(new CustomEvent('task_activity'));
+      setTimeout(() => window.dispatchEvent(new CustomEvent('task_activity')), 500);
     } catch (e) {
       toast.error('Failed to update assignees');
+      setOptimisticTask({});
     }
   };
 

@@ -1,4 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core';
+import { ReactNodeViewRenderer } from '@tiptap/react';
+import { ToggleNode } from '../nodes/ToggleNode';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -17,13 +19,13 @@ export const ToggleSummary = Node.create({
   parseHTML() {
     return [
       {
-        tag: 'summary',
+        tag: 'div[data-type="toggle-summary"]',
       },
     ];
   },
 
   renderHTML({ HTMLAttributes }) {
-    return ['summary', mergeAttributes(HTMLAttributes, { class: 'cursor-pointer font-bold select-none py-1' }), 0];
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggle-summary', class: 'font-bold py-0.5' }), 0];
   },
 });
 
@@ -42,7 +44,7 @@ export const ToggleContent = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggle-content', class: 'pl-4 border-l border-zinc-200 dark:border-zinc-700 ml-2 mt-1 mb-2' }), 0];
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggle-content', class: 'mt-1 mb-2' }), 0];
   },
 });
 
@@ -61,6 +63,13 @@ export const Toggle = Node.create({
           if (!attributes.id) return {};
           return { id: attributes.id };
         },
+      },
+      open: {
+        default: true,
+        parseHTML: element => element.getAttribute('data-open') === 'true',
+        renderHTML: attributes => {
+          return { 'data-open': attributes.open };
+        },
       }
     };
   },
@@ -68,14 +77,17 @@ export const Toggle = Node.create({
   parseHTML() {
     return [
       {
-        tag: 'details',
+        tag: 'div[data-type="toggle"]',
       },
     ];
   },
 
   renderHTML({ HTMLAttributes }) {
-    // We add 'open' by default so they start expanded
-    return ['details', mergeAttributes({ open: true }, HTMLAttributes, { class: 'mb-2' }), 0];
+    return ['div', mergeAttributes({ 'data-type': 'toggle' }, HTMLAttributes, { class: 'mb-2' }), 0];
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(ToggleNode);
   },
 
   addCommands() {

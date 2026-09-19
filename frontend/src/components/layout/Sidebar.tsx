@@ -268,7 +268,7 @@ function ActiveDragItem({ id, spaces }: { id: string; spaces: Space[] }) {
       )}
       {itemType === 'doc' && (
         <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-[hsl(240,4.8%,95.9%)] bg-[hsl(240,3.7%,15.9%)]">
-          <FileText className="size-3.5 text-purple-400 shrink-0" />
+          <FileText className="size-3.5 text-zinc-400 shrink-0" />
           <span className="truncate">{item.title}</span>
         </div>
       )}
@@ -900,7 +900,7 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
           )}
           <ActionMenu icon={<Plus className="size-3.5" />}>
             <button onClick={(e) => { e.stopPropagation(); onAddFolder(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>
-            <button onClick={(e) => { e.stopPropagation(); onAddDoc(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Doc</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddDoc(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-zinc-400" />Doc</button>
             <button onClick={(e) => { e.stopPropagation(); onAddList(space.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><ListIcon className="size-3.5 text-cyan-400" />Board</button>
           </ActionMenu>
         </div>
@@ -997,7 +997,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
           </ActionMenu>
           <ActionMenu icon={<Plus className="size-3.5" />}>
             <button onClick={(e) => { e.stopPropagation(); onAddFolder(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>
-            <button onClick={(e) => { e.stopPropagation(); onAddDoc(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-purple-400" />Doc</button>
+            <button onClick={(e) => { e.stopPropagation(); onAddDoc(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FileText className="size-3.5 text-zinc-400" />Doc</button>
             <button onClick={(e) => { e.stopPropagation(); onAddList(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><ListIcon className="size-3.5 text-cyan-400" />Board</button>
           </ActionMenu>
         </div>
@@ -1055,7 +1055,7 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={(e) => { if (hasPages) { e.preventDefault(); setIsOpen(!isOpen); } }} className="relative size-3.5 flex items-center justify-center shrink-0">
             {hasPages && <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">{isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}</div>}
-            <div className={`absolute inset-0 flex items-center justify-center ${hasPages ? 'group-hover:opacity-0' : ''} transition-opacity`}><FileText className="size-3.5 text-purple-400" /></div>
+            <div className={`absolute inset-0 flex items-center justify-center ${hasPages ? 'group-hover:opacity-0' : ''} transition-opacity`}><FileText className="size-3.5 text-zinc-400" /></div>
           </div>
           {isEditing ? (
             <input
@@ -1118,7 +1118,7 @@ function PageTreeItem({ page, onAction }: {
     <div className="space-y-px">
       <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="group flex items-center justify-between rounded-md px-2 py-0.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
         <div className="flex items-center gap-2 truncate flex-1">
-          <FileText className="size-3 text-emerald-400 shrink-0 opacity-80" />
+          <FileText className="size-3 text-zinc-400 shrink-0 opacity-80" />
           {isEditing ? (
             <input
               type="text"

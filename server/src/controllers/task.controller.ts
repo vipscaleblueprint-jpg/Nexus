@@ -1192,13 +1192,18 @@ export async function updateSubtask(req: Request, res: Response) {
       }
     }
 
+    let finalCompleted = completed;
+    if (status !== undefined) {
+      finalCompleted = status === 'CLOSED';
+    }
+
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
       data: {
         ...(title !== undefined && { title }),
         ...(description !== undefined && { description }),
         ...(status !== undefined && { status }),
-        ...(completed !== undefined && { completed }),
+        ...(finalCompleted !== undefined && { completed: finalCompleted }),
         ...(assigneeIds !== undefined && Array.isArray(assigneeIds) ? {
           assigneeId: assigneeIds.length > 0 ? assigneeIds[0] : null
         } : {}),

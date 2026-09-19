@@ -48,6 +48,7 @@ model User {
   teamId                String?
   googleId              String?               @unique
   imageUrl              String?
+  apiKeys               ApiKey[]
   uploadedAttachments   Attachment[]
   auditLogs             AuditLog[]
   createdChannels       Channel[]             @relation("ChannelCreatedBy")
@@ -66,13 +67,12 @@ model User {
   Subtask               Subtask[]
   assignedTasks         Task[]                @relation("TaskAssignee")
   createdTasks          Task[]                @relation("TaskCreator")
+  taskComments          TaskComment[]
   taskCommentReactions  TaskCommentReaction[]
   taskNotificationsSent TaskNotification[]    @relation("ActorNotification")
   taskNotifications     TaskNotification[]    @relation("UserNotification")
   team                  Team?                 @relation(fields: [teamId], references: [id])
   assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
-  taskComments          TaskComment[]
-  apiKeys               ApiKey[]
 
   @@index([email])
   @@index([systemRole])
@@ -122,11 +122,11 @@ model List {
   name         String
   spaceId      String?
   folderId     String?
-  externalId   String?      @unique
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   customGroups String[]     @default([])
   order        Int          @default(0)
+  externalId   String?      @unique
   folder       Folder?      @relation(fields: [folderId], references: [id], onDelete: Cascade)
   space        Space?       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   statuses     ListStatus[]
@@ -207,7 +207,6 @@ model Task {
   priority      Priority           @default(MEDIUM)
   listId        String
   creatorId     String
-  externalId    String?            @unique
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   assigneeId    String?
@@ -215,6 +214,7 @@ model Task {
   startDate     DateTime?
   status        String             @default("Pending")
   teamId        String?
+  externalId    String?            @unique
   attachments   Attachment[]
   checklists    Checklist[]
   subtasks      Subtask[]
@@ -241,11 +241,11 @@ model Subtask {
   taskId      String
   createdAt   DateTime      @default(now())
   completed   Boolean       @default(false)
-  status      String?
-  assigneeId  String?
+  status      String?       @default("PENDING")
+  description String?
   dueDate     DateTime?
   priority    Priority      @default(MEDIUM)
-  description String?
+  assigneeId  String?
   checklists  Checklist[]
   User        User?         @relation(fields: [assigneeId], references: [id])
   task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
@@ -297,8 +297,8 @@ model TaskComment {
   replies         TaskComment[]         @relation("CommentReplies")
   subtask         Subtask?              @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
   task            Task                  @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  reactions       TaskCommentReaction[]
   user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reactions       TaskCommentReaction[]
 
   @@index([taskId])
   @@index([subtaskId])
@@ -544,6 +544,19 @@ model Invitation {
   @@index([invitedById])
 }
 
+model ApiKey {
+  id        String    @id @default(uuid())
+  name      String
+  key       String    @unique
+  userId    String
+  createdAt DateTime  @default(now())
+  lastUsed  DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([key])
+}
+
 enum SystemRole {
   ADMIN
   MEMBER
@@ -598,17 +611,4 @@ enum NotificationType {
   REACTION
   DIRECT_MESSAGE
   CHANNEL_MESSAGE
-}
-
-model ApiKey {
-  id        String    @id @default(uuid())
-  name      String
-  key       String    @unique
-  userId    String
-  createdAt DateTime  @default(now())
-  lastUsed  DateTime?
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([key])
 }

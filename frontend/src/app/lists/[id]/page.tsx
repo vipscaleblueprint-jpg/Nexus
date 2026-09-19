@@ -66,10 +66,11 @@ export default function BoardPage() {
   const [editingNameValue, setEditingNameValue] = useState('');
 
   useEffect(() => {
+    if (!currentUser) return;
     getRoles()
       .then(setWorkspaceRoles)
-      .catch((err) => console.error('Failed to load roles in page:', err));
-  }, []);
+      .catch((err) => console.warn('Failed to load roles in page:', err));
+  }, [currentUser]);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,12 +126,12 @@ export default function BoardPage() {
       if (selectedTask) {
         if (url.searchParams.get('task') !== selectedTask.id) {
           url.searchParams.set('task', selectedTask.id);
-          router.replace(url.pathname + url.search, { scroll: false });
+          window.history.replaceState(null, '', url.pathname + url.search);
         }
       } else if (url.searchParams.has('task')) {
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
-        router.replace(url.pathname + url.search, { scroll: false });
+        window.history.replaceState(null, '', url.pathname + url.search);
       }
     }
   }, [selectedTask]);
@@ -431,7 +432,7 @@ export default function BoardPage() {
             <div className="flex flex-col">
               <div className="flex items-center gap-2 mb-2">
                 <button
-                  onClick={() => router.back()}
+                  onClick={() => router.push('/tasks')}
                   className="p-1 rounded-md bg-zinc-800/50 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
                   title="Go back"
                 >
@@ -440,13 +441,13 @@ export default function BoardPage() {
                 <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
                   {list?.space && (
                     <>
-                      <button onClick={() => router.push(`/spaces/${list.space.id}`)} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.space.name}</button>
+                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.space.name}</button>
                       <span className="text-zinc-600">/</span>
                     </>
                   )}
                   {list?.folder && (
                     <>
-                      <button onClick={() => router.push(`/folders/${list.folder.id}`)} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.folder.name}</button>
+                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.folder.name}</button>
                       <span className="text-zinc-600">/</span>
                     </>
                   )}

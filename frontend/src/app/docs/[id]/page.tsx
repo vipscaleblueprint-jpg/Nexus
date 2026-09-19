@@ -302,6 +302,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       if (!taskId) return;
       e.preventDefault();
       e.stopPropagation();
+      console.log(`[DEBUG] Fetching mention for task ID: ${taskId}`);
       const foundTask = tasksMap[taskId] || allTasks.find((t: any) => t.id === taskId);
       if (foundTask) {
         setSelectedTaskForModal(foundTask);
@@ -380,7 +381,6 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const fetchTasks = async () => {
     try {
-      console.time('[DocPage] fetchTasks');
       const res = await tasksApi.getTasks({ lightweight: true });
       if (res.tasks) {
         setAllTasks(res.tasks);
@@ -390,7 +390,6 @@ export default function DocPage({ docId }: { docId?: string }) {
         });
         setTasksMap(map);
       }
-      console.timeEnd('[DocPage] fetchTasks');
     } catch (err) {
       console.warn('Failed to load tasks for doc page linking:', err);
     }
@@ -398,7 +397,6 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const fetchDoc = async () => {
     try {
-      console.time('[DocPage] fetchDoc');
       const docRes = await spacesApi.getDoc(id as string);
       setDoc(docRes.doc);
       if (docRes.doc?.pages?.length > 0 && !activePageRef.current) {
@@ -411,7 +409,6 @@ export default function DocPage({ docId }: { docId?: string }) {
       setError(e.message || 'Failed to load document');
     } finally {
       setLoading(false);
-      console.timeEnd('[DocPage] fetchDoc');
     }
   };
 
@@ -839,8 +836,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                         }`}
                     >
                       {isHeading && (
-                        <div
-                          className="absolute -left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 cursor-pointer p-0.5 rounded hover:bg-zinc-700 z-10 transition-opacity"
+                        <div 
+                          className="absolute -left-2 top-1/2 -translate-y-1/2 cursor-pointer p-0.5 rounded hover:bg-zinc-700 z-10 transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
                             setCollapsedHeaders(prev => {
@@ -928,7 +925,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                             }}
                             className={`flex-1 ${!isLockedBySomeoneElse ? 'cursor-text select-text' : 'cursor-not-allowed text-zinc-500 select-none'} min-h-[24px]`}
                           >
-                            {block.content?.includes('data-type="live-kanban-block"') || block.content?.includes('data-type="mention"') || block.content?.startsWith('{"type":"doc"') ? (
+                            {block.content && (block.content.includes('data-type="live-kanban"') || block.content.includes('data-type="toggle"') || block.content.includes('data-type="task-mention"') || block.content.includes('data-type="live-kanban-block"') || block.content.includes('data-type="mention"') || block.content.startsWith('{"type":"doc"')) ? (
                               <BlockEditor
                                 editable={false}
                                 content={block.content}

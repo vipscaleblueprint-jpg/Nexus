@@ -73,7 +73,7 @@ export const spacesApi = {
     });
   },
 
-  async updateDoc(id: string, data: { title?: string; docDate?: string }): Promise<{ doc: Doc }> {
+  async updateDoc(id: string, data: { title?: string; docDate?: string; teamId?: string | null }): Promise<{ doc: Doc }> {
     return apiClient<{ doc: Doc }>(`/api/spaces/docs/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),

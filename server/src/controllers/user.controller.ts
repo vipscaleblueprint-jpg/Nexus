@@ -60,6 +60,7 @@ export async function listTeams(req: Request, res: Response) {
         members: {
           select: { id: true, name: true, email: true, primaryRole: true },
         },
+        teamRoles: true,
       },
     });
 

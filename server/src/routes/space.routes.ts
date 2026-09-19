@@ -24,6 +24,7 @@ import {
   reorderFolders,
   reorderLists,
   reorderDocs,
+  triggerSyncClients,
 } from '../controllers/space.controller';
 import { idParams, validate } from '../validation';
 import {
@@ -40,6 +41,7 @@ import {
 export const spaceRouter = Router();
 
 spaceRouter.get('/dashboard', getDashboardData);
+spaceRouter.post('/sync-clients', triggerSyncClients);
 
 // Reorder routes (must come before generic /:id routes)
 spaceRouter.put('/reorder', reorderSpaces);

@@ -177,4 +177,10 @@ export const spacesApi = {
       body: JSON.stringify({ items }),
     });
   },
+
+  async syncClients(): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>('/api/spaces/sync-clients', {
+      method: 'POST',
+    });
+  },
 };

@@ -19,6 +19,26 @@ import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
 
+const CommentSkeleton = () => (
+  <div className="space-y-4 animate-pulse mt-4">
+    {[1, 2, 3].map(i => (
+      <div key={i} className="flex flex-col gap-3 p-4 rounded-xl border border-zinc-800/40 bg-[#202024]">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-zinc-800 shrink-0" />
+          <div className="flex-1 flex flex-col gap-2 mt-1">
+            <div className="h-2.5 bg-zinc-800 rounded w-1/3" />
+            <div className="h-2 bg-zinc-800 rounded w-1/4" />
+          </div>
+        </div>
+        <div className="pl-11 space-y-2 mt-1">
+          <div className="h-2 bg-zinc-800 rounded w-3/4" />
+          <div className="h-2 bg-zinc-800 rounded w-1/2" />
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
@@ -350,8 +370,19 @@ export function TaskDetailModalContent({
   }, [task, currentUser, listStatuses, workspaceRoles]);
 
   const assignableUsers = React.useMemo(() => {
-    return dbUsers;
-  }, [dbUsers]);
+    if (!task?.assigneeRoleRestrictions || task.assigneeRoleRestrictions.length === 0) {
+      return dbUsers;
+    }
+    return dbUsers.filter((u) => {
+      const userRoles = [
+        u.primaryRole,
+        u.secondaryRole,
+        u.tertiaryRole,
+        u.minorRole,
+      ].filter(Boolean);
+      return task.assigneeRoleRestrictions!.some((role) => userRoles.includes(role));
+    });
+  }, [dbUsers, task?.assigneeRoleRestrictions]);
 
   // Fetch persistent activities and comments from DB
   const loadActivities = useCallback(async () => {
@@ -1561,7 +1592,7 @@ export function TaskDetailModalContent({
                 </div>
 
                 {/* Sort activities oldest to newest */}
-                {(() => {
+                {loadingActivities ? <CommentSkeleton /> : (() => {
                   const sorted = [...activities].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
                   // Separate comments from non-comments
@@ -1656,7 +1687,7 @@ export function TaskDetailModalContent({
                       )}
 
                       {/* Rich comments with reactions + replies */}
-                      {richComments.map(c => {
+                      {loadingActivities ? <CommentSkeleton /> : richComments.map(c => {
                         const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                         // Group reactions by emoji
                         const reactionGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
@@ -2653,7 +2684,7 @@ function SubtaskDetailView({
               </div>
               
               {/* Rich comments with reactions + replies */}
-              {richComments.map(c => {
+                {loadingActivities ? <CommentSkeleton /> : richComments.map(c => {
                 const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const dateStr = new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
                 
@@ -2831,3 +2862,4 @@ export function TaskDetailModal(props: Props) {
     />
   );
 }
+

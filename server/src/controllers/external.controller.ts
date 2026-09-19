@@ -425,3 +425,72 @@ export async function updateSubtask(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/external/assignable-groups
+// Returns all users, roles, and teams for VIPScale assignee dropdowns
+// ---------------------------------------------------------------------------
+export async function getAssignableGroups(req: Request, res: Response) {
+  try {
+    // Safely query users and include their team relation instead of querying users from within the team
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        primaryRole: true,
+        secondaryRole: true,
+        tertiaryRole: true,
+        minorRole: true,
+        team: { select: { id: true } }
+      }
+    });
+
+    const teams = await prisma.team.findMany({ select: { id: true, name: true } });
+
+    // Map roles to their users
+    const roleUsersMap = new Map<string, string[]>();
+    users.forEach(u => {
+      const addRole = (role?: string | null) => {
+        if (role) {
+          if (!roleUsersMap.has(role)) roleUsersMap.set(role, []);
+          roleUsersMap.get(role)!.push(u.id);
+        }
+      };
+      addRole(u.primaryRole);
+      addRole(u.secondaryRole);
+      addRole(u.tertiaryRole);
+      addRole(u.minorRole);
+    });
+
+    const options = [
+      ...Array.from(roleUsersMap.entries()).map(([role, userIds]) => ({
+        id: `role_${role}`,
+        name: role,
+        type: 'role',
+        userIds
+      })),
+      ...teams.map(t => {
+        // Find all users that belong to this team safely
+        const teamUsers = users.filter(u => u.team?.id === t.id).map(u => u.id);
+        return {
+          id: `team_${t.id}`,
+          name: t.name,
+          type: 'team',
+          userIds: teamUsers
+        };
+      }),
+      ...users.map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        type: 'user'
+      }))
+    ];
+
+    return res.json({ success: true, options });
+  } catch (err: any) {
+    console.error("Error in getAssignableGroups:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}

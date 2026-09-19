@@ -10,10 +10,14 @@ import {
   updateComment,
   deleteComment,
   createSubtask,
-  updateSubtask
+  updateSubtask,
+  getAssignableGroups
 } from '../controllers/external.controller';
 
 const router = Router();
+
+// Assignable Groups (Users, Roles, Teams)
+router.get('/assignable-groups', getAssignableGroups);
 
 // Task Core Operations
 router.get('/tasks', getTasks);

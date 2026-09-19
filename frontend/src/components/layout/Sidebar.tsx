@@ -94,6 +94,7 @@ import {
   LogOut,
   LayoutGrid,
   Code,
+  RefreshCcw,
 } from 'lucide-react';
 
 const VIPSCALE_BASE = 'https://tools.vipscaleph.com';
@@ -530,6 +531,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const [isCreateDocOpen, setIsCreateDocOpen] = useState(false);
   const [isCreatePageOpen, setIsCreatePageOpen] = useState(false);
   const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [activeSpaceId, setActiveSpaceId] = useState<string | undefined>();
   const [activeFolderId, setActiveFolderId] = useState<string | undefined>();
   const [activeDocId, setActiveDocId] = useState<string | undefined>();
@@ -679,6 +681,27 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
           </div>
 
             <div className="border-t border-[hsl(240,3.7%,15.9%)] px-2 py-2 shrink-0 space-y-px flex flex-col items-center">
+              <button 
+                disabled={isSyncing}
+                onClick={async () => {
+                  if (isSyncing) return;
+                  setIsSyncing(true);
+                  try {
+                    await spacesApi.syncClients();
+                    alert('Clients synced successfully!');
+                    loadSpaces();
+                  } catch (e) {
+                    alert('Failed to sync clients.');
+                  } finally {
+                    setIsSyncing(false);
+                  }
+                }}
+                title={collapsed ? 'Sync Clients' : undefined} 
+                className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'} ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <RefreshCcw className={`size-4 shrink-0 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+                {!collapsed && <span>{isSyncing ? 'Syncing...' : 'Sync Clients'}</span>}
+              </button>
               <button title={collapsed ? 'Toggle Theme' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
                 <Moon className="size-4 shrink-0 text-purple-400" />
                 {!collapsed && <span>Toggle Theme</span>}

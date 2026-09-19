@@ -1,6 +1,12 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
+import { syncClients } from './webhook.controller';
+
+export async function triggerSyncClients(req: Request, res: Response) {
+  req.headers['x-api-key'] = process.env.VIPSCALE_API_KEY;
+  return syncClients(req, res);
+}
 
 function collectAllLists(spaces: any[]): { list: any; spaceName?: string; folderName?: string }[] {
   const result: { list: any; spaceName?: string; folderName?: string }[] = [];

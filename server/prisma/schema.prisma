@@ -122,6 +122,7 @@ model List {
   name         String
   spaceId      String?
   folderId     String?
+  externalId   String?      @unique
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   customGroups String[]     @default([])
@@ -206,6 +207,7 @@ model Task {
   priority      Priority           @default(MEDIUM)
   listId        String
   creatorId     String
+  externalId    String?            @unique
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   assigneeId    String?

@@ -20,6 +20,7 @@ import { invitationRouter } from './routes/invitation.routes';
 import { rolesRouter } from './routes/roles.routes';
 import { uploadRouter } from './routes/upload.routes';
 import externalRoutes from './routes/external.routes';
+import webhookRoutes from './routes/webhook.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -108,6 +109,7 @@ app.use('/api/invitations', invitationRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/external', externalRoutes);
+app.use('/api/webhooks', webhookRoutes);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

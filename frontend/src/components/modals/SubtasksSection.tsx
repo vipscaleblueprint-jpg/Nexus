@@ -359,16 +359,18 @@ function SubtaskRow({
 
   // Multi-assignee derived value
   const currentAssignees: any[] = useMemo(() => {
-    if (subtask.assignees && subtask.assignees.length > 0) return subtask.assignees;
-    if (subtask.User) return [subtask.User];
-    if (subtask.assignee) return [subtask.assignee];
+    const s = subtask as any;
+    if (s.assignees && s.assignees.length > 0) return s.assignees;
+    if (s.User) return [s.User];
+    if (s.assignee) return [s.assignee];
     return [];
-  }, [subtask.assignees, subtask.User, subtask.assignee]);
+  }, [subtask]);
 
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
   const handleToggleAssignee = (u: any) => {
-    const latestAssignees = subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
+    const s = subtask as any;
+    const latestAssignees: any[] = s.assignees || (s.User ? [s.User] : (s.assignee ? [s.assignee] : []));
     const isAssigned = latestAssignees.some(a => a.id === u.id);
     const updatedAssignees = isAssigned
       ? latestAssignees.filter((a) => a.id !== u.id)
@@ -593,7 +595,7 @@ function SubtaskRow({
             <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
               <Popover.Trigger asChild>
             {(() => {
-              const statusName = subtask.status ? subtask.status : (subtask.completed ? 'DONE' : 'OPEN');
+              const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
               const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
               const hasCustomColor = !!statusObj?.color;
               const defaultClasses = STATUS_COLORS[subtask.status || ''] ?? (subtask.completed ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25' : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60');

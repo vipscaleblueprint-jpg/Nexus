@@ -13,7 +13,8 @@ import { taskSuggestion } from '../editor/suggestions/taskSuggestion';
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
-  List, ListOrdered, Palette, X, CheckSquare
+  List, ListOrdered, Palette, X, CheckSquare,
+  ListTree
 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 

@@ -53,7 +53,11 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
     try {
-      await tasksApi.moveTask(task.id, newStatus, 'listId' in task ? task.listId : undefined, currentUser.id);
+      if (isSubtask) {
+        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { status: newStatus });
+      } else {
+        await tasksApi.moveTask(task.id, newStatus, 'listId' in task ? task.listId : undefined, currentUser.id);
+      }
       toast.success('Status updated');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update status');
@@ -68,7 +72,11 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     closeDropdown();
     
     try {
-      await tasksApi.updateTask(task.id, { priority: (p || undefined) as any, userId: currentUser.id });
+      if (isSubtask) {
+        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { priority: p || undefined });
+      } else {
+        await tasksApi.updateTask(task.id, { priority: (p || undefined) as any, userId: currentUser.id });
+      }
       toast.success(p ? `Priority set to ${p}` : 'Priority cleared');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update priority');
@@ -106,11 +114,15 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     setTask(prev => ({ ...prev, assignees: newAssignees, assignee: primaryAssignee, assigneeId: primaryAssignee?.id || null, assigneeIds }));
 
     try {
-      await tasksApi.updateTask(task.id, {
-        assigneeIds,
-        assigneeId: primaryAssignee?.id || null,
-        userId: currentUser.id,
-      });
+      if (isSubtask) {
+        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { assigneeIds });
+      } else {
+        await tasksApi.updateTask(task.id, {
+          assigneeIds,
+          assigneeId: primaryAssignee?.id || null,
+          userId: currentUser.id,
+        });
+      }
     } catch (e: any) {
       toast.error(e.message || 'Failed to update assignee');
       setTask(initialTask);
@@ -123,11 +135,15 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     setTask(prev => ({ ...prev, assignees: [], assignee: null, assigneeId: null, assigneeIds: [] }));
     
     try {
-      await tasksApi.updateTask(task.id, {
-        assigneeIds: [],
-        assigneeId: null,
-        userId: currentUser.id,
-      });
+      if (isSubtask) {
+        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { assigneeIds: [] });
+      } else {
+        await tasksApi.updateTask(task.id, {
+          assigneeIds: [],
+          assigneeId: null,
+          userId: currentUser.id,
+        });
+      }
       toast.success('Assignees cleared');
     } catch (e: any) {
       toast.error(e.message || 'Failed to clear assignees');
@@ -215,7 +231,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           <div
             ref={statusTriggerRef}
             className={`${fieldHoverClass} text-zinc-300`}
-            onClick={(e) => { e.stopPropagation(); if (canEditTask) setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >
             {isClosed ? (
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
@@ -263,7 +279,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           <div
             ref={assigneeTriggerRef}
             className={`${fieldHoverClass} text-zinc-400 max-w-[150px]`}
-            onClick={(e) => { e.stopPropagation(); if (canEditTask) setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
           >
             <User className="w-3.5 h-3.5 shrink-0" />
             {assignees.length > 0 ? (
@@ -289,7 +305,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
               <span>-</span>
             )}
           </div>
-          {assignees.length > 0 && canEditTask && (
+          {assignees.length > 0 && (
              <div 
                className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
                onClick={(e) => { e.stopPropagation(); handleClearAssignees(); }}
@@ -338,7 +354,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           <div
             ref={dateTriggerRef}
             className={`${fieldHoverClass} text-zinc-400`}
-            onClick={(e) => { e.stopPropagation(); if (canEditTask) setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
           >
             <Calendar className="w-3.5 h-3.5" />
             <span>
@@ -360,7 +376,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           <div
             ref={priorityTriggerRef}
             className={`${fieldHoverClass} text-zinc-400`}
-            onClick={(e) => { e.stopPropagation(); if (canEditTask) setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           >
             <Flag className="w-3.5 h-3.5" />
             <span>{('priority' in task && task.priority) ? task.priority : '-'}</span>
@@ -517,8 +533,18 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
                   style={{ top: '1.25rem', width: 10 }}
                 />
                 {/* Subtask card */}
-                <div className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg px-2.5 py-2 hover:border-zinc-600 hover:bg-zinc-800 transition-all cursor-pointer">
-                  <CardContent task={{...sub, list: task.list} as any} isSubtask={true} />
+                <div 
+                  className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg px-2.5 py-2 hover:border-zinc-600 hover:bg-zinc-800 transition-all cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('task', task.id);
+                    url.searchParams.set('subtask', sub.id);
+                    window.history.replaceState(null, '', url.pathname + url.search);
+                    if (onClick) onClick(task);
+                  }}
+                >
+                  <CardContent task={{...sub, list: task.list} as any} isSubtask={true} listStatuses={listStatuses} />
                 </div>
               </div>
             );

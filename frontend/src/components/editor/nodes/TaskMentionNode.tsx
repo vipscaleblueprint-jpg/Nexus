@@ -42,6 +42,22 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const [dbUsers, setDbUsers] = useState<any[]>([]);
   const [listStatuses, setListStatuses] = useState<any[]>([]);
 
+  // Local state for read-only interactivity
+  const [localStatus, setLocalStatus] = useState<string>(taskStatus || '');
+  const [localPriority, setLocalPriority] = useState<string>(taskPriority || '');
+  const [localAssignees, setLocalAssignees] = useState<string>(taskAssignees || '');
+
+  // Sync local state when node.attrs change from outside (e.g., initial load)
+  useEffect(() => {
+    if (taskStatus !== localStatus) setLocalStatus(taskStatus || '');
+  }, [taskStatus]);
+  useEffect(() => {
+    if (taskPriority !== localPriority) setLocalPriority(taskPriority || '');
+  }, [taskPriority]);
+  useEffect(() => {
+    if (taskAssignees !== localAssignees) setLocalAssignees(taskAssignees || '');
+  }, [taskAssignees]);
+
   const statusRef = useRef<HTMLSpanElement>(null);
   const priorityRef = useRef<HTMLSpanElement>(null);
   const assigneesRef = useRef<HTMLSpanElement>(null);
@@ -67,12 +83,15 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           taskHasDescription !== !!task.description;
 
         if (shouldUpdate) {
-          updateAttributes({
+          try { updateAttributes({
             taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
             taskAssignees: JSON.stringify(task.assignees || []),
             taskPriority: task.priority || '',
             taskHasDescription: !!task.description
-          });
+          }); } catch (e) {}
+          setLocalStatus(JSON.stringify({ name: task.status, color: getStatusColor(task.status) }));
+          setLocalAssignees(JSON.stringify(task.assignees || []));
+          setLocalPriority(task.priority || '');
         }
       }).catch(() => {});
     }
@@ -122,19 +141,19 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   // Task Mention UI
   let assignees: any[] = [];
-  let parsedStatusName = taskStatus;
+  let parsedStatusName = localStatus;
   let parsedStatusColor = '#3b82f6'; // default blue
 
   try {
-    if (taskAssignees) {
-      assignees = JSON.parse(taskAssignees);
+    if (localAssignees) {
+      assignees = JSON.parse(localAssignees);
     }
   } catch (e) {}
 
   try {
-    if (taskStatus && typeof taskStatus === 'string' && taskStatus.startsWith('{')) {
-      const parsed = JSON.parse(taskStatus);
-      parsedStatusName = parsed.name || parsed.NAME || taskStatus;
+    if (localStatus && typeof localStatus === 'string' && localStatus.startsWith('{')) {
+      const parsed = JSON.parse(localStatus);
+      parsedStatusName = parsed.name || parsed.NAME || localStatus;
       parsedStatusColor = parsed.color || parsed.COLOR || '#3b82f6';
     }
   } catch (e) {}
@@ -143,7 +162,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     if (!currentUser || !taskData) return;
     try {
       await tasksApi.moveTask(id, newStatus, taskData.listId, currentUser.id);
-      updateAttributes({ taskStatus: JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }) });
+      try { updateAttributes({ taskStatus: JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }) }); } catch (e) {}
+      setLocalStatus(JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }));
       toast.success('Status updated');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update status');
@@ -153,7 +173,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   const handlePriorityChange = async (p: string | null) => {
     if (!currentUser) return;
-    updateAttributes({ taskPriority: p || '' });
+    try { updateAttributes({ taskPriority: p || '' }); } catch (e) {}
+    setLocalPriority(p || '');
     setOpenDropdown(null);
     try {
       await tasksApi.updateTask(id, { priority: (p || undefined) as any, userId: currentUser.id });
@@ -172,7 +193,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     } else {
       newAssignees = [...assignees, user];
     }
-    updateAttributes({ taskAssignees: JSON.stringify(newAssignees) });
+    try { updateAttributes({ taskAssignees: JSON.stringify(newAssignees) }); } catch (e) {}
+    setLocalAssignees(JSON.stringify(newAssignees));
     try {
       await tasksApi.updateTask(id, { assigneeIds: newAssignees.map(a => a.id), userId: currentUser.id });
     } catch (e) {
@@ -188,6 +210,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           className="font-medium text-sm text-zinc-700 dark:text-zinc-200 max-w-[200px] truncate cursor-pointer hover:opacity-70 transition-opacity"
           onClick={(e) => {
             e.stopPropagation();
+            console.log(`[DEBUG] Fetching mention for task ID: ${id}`);
             window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id } }));
           }}
           title="Open Task Detail"
@@ -220,9 +243,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         <span 
           ref={priorityRef}
-          className={`flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer transition-colors ${PRIORITY_COLORS[taskPriority] || 'text-zinc-500'}`}
+          className={`flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer transition-colors ${PRIORITY_COLORS[localPriority] || 'text-zinc-500'}`}
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
-          title={taskPriority ? `${taskPriority} Priority` : 'Set Priority'}
+          title={localPriority ? `${localPriority} Priority` : 'Set Priority'}
         >
           <Flag className="w-3 h-3" />
         </span>
@@ -298,7 +321,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
               >
                 <Flag className={`w-3.5 h-3.5 ${p.color}`} />
                 <span className="text-zinc-300 group-hover:text-white transition-colors">{p.label}</span>
-                {p.id === taskPriority && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto" />}
+                {p.id === localPriority && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto" />}
               </button>
             ))}
           </div>

@@ -223,6 +223,16 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
           continue;
         }
 
+        // 1.5. Check if the name matches a TeamRole
+        const matchedTeamRole = await (prisma as any).teamRole.findFirst({
+          where: { name: { equals: aName, mode: 'insensitive' } }
+        });
+
+        if (matchedTeamRole && matchedTeamRole.teamId) {
+          resolvedTeamId = matchedTeamRole.teamId;
+          continue;
+        }
+
         // 2. Check if this matches an individual user by name
         const usersByName = await prisma.user.findMany({
           where: { name: { contains: aName, mode: 'insensitive' } }
@@ -398,17 +408,31 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     }
 
     // Resolve assignee: prefer Team match first, then fall back to individual user lookup
+    let resolvedTeamId: string | null = null;
     const assigneeIdsSet = new Set<string>();
     if (assignee && Array.isArray(assignee)) {
       for (const a of assignee) {
         if (!a.name) continue;
         const aName = a.name;
 
-        // 1. Check if the name matches a Team directly — subtasks don't have teamId, so skip & ignore
+        // 1. Check if the name matches a Team directly
         const matchedTeam = await prisma.team.findFirst({
           where: { name: { equals: aName, mode: 'insensitive' } }
         });
-        if (matchedTeam) continue; // Teams can't be assigned to subtasks; skip
+        if (matchedTeam) {
+          resolvedTeamId = matchedTeam.id;
+          continue;
+        }
+
+        // 1.5. Check if the name matches a TeamRole
+        const matchedTeamRole = await (prisma as any).teamRole.findFirst({
+          where: { name: { equals: aName, mode: 'insensitive' } }
+        });
+
+        if (matchedTeamRole && matchedTeamRole.teamId) {
+          resolvedTeamId = matchedTeamRole.teamId;
+          continue;
+        }
 
         // 2. Check if this matches an individual user by name
         const usersByName = await prisma.user.findMany({
@@ -430,7 +454,11 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         title: title || 'New Subtask',
         taskId: parentTask.id,
         priority: priority ? priority.toUpperCase() : 'MEDIUM',
-        assigneeId: primaryAssigneeId,
+        ...(finalAssigneeIds.length > 0 ? {
+          assigneeId: primaryAssigneeId,
+          assignees: { connect: finalAssigneeIds.map(id => ({ id })) }
+        } : {}),
+        ...(resolvedTeamId ? { teamId: resolvedTeamId } : {})
       }
     });
 

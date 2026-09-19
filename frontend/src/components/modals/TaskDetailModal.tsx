@@ -191,6 +191,7 @@ export function TaskDetailModalContent({
   const [activities, setActivities] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [dbUsers, setDbUsers] = useState<UserModel[]>([]);
+  const [dbTeams, setDbTeams] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -338,12 +339,16 @@ export function TaskDetailModalContent({
     let cancelled = false;
     (async () => {
       try {
-        const res = await usersApi.getUsers();
-        if (!cancelled && res?.users) {
-          setDbUsers(res.users);
+        const [resUsers, resTeams] = await Promise.all([
+          usersApi.getUsers(),
+          usersApi.getTeams()
+        ]);
+        if (!cancelled) {
+          if (resUsers?.users) setDbUsers(resUsers.users);
+          if (resTeams?.teams) setDbTeams(resTeams.teams);
         }
       } catch (e) {
-        console.warn('Failed to load users for assignee picker:', e);
+        console.warn('Failed to load users/teams for picker:', e);
       }
     })();
     return () => {
@@ -1011,6 +1016,7 @@ export function TaskDetailModalContent({
         setActiveSubtask={setActiveSubtask}
         permission={permission}
         listStatuses={internalListStatuses}
+        dbTeams={dbTeams}
       />
     );
   }
@@ -1279,30 +1285,41 @@ export function TaskDetailModalContent({
                         <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
-                            {workspaceRoles.map(role => {
-                              const selected = (task.assigneeRoleRestrictions || []).includes(role.name);
-                              return (
-                                <div
-                                  key={role.id}
-                                  onClick={() => {
-                                    const current = task.assigneeRoleRestrictions || [];
-                                    const next = selected
-                                      ? current.filter(r => r !== role.name)
-                                      : [...current, role.name];
-                                    task.assigneeRoleRestrictions = next;
-                                    const updatedTask = { ...task, assigneeRoleRestrictions: next };
-                                    if (onUpdateTask) onUpdateTask(updatedTask);
-                                    tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any);
-                                  }}
-                                  className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors"
-                                >
-                                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                    {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                  </div>
-                                  {role.name}
+                            {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                            {dbTeams.map(team => (
+                              <div key={team.id} className="mb-2">
+                                <div className="px-2 py-1 text-[10px] text-zinc-400 font-semibold tracking-wide uppercase bg-zinc-800/30">
+                                  {team.name}
                                 </div>
-                              );
-                            })}
+                                {(!team.teamRoles || team.teamRoles.length === 0) && (
+                                  <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+                                )}
+                                {team.teamRoles?.map((role: any) => {
+                                  const selected = (task.assigneeRoleRestrictions || []).includes(role.name);
+                                  return (
+                                    <div
+                                      key={role.id}
+                                      onClick={() => {
+                                        const current = task.assigneeRoleRestrictions || [];
+                                        const next = selected
+                                          ? current.filter(r => r !== role.name)
+                                          : [...current, role.name];
+                                        task.assigneeRoleRestrictions = next;
+                                        const updatedTask = { ...task, assigneeRoleRestrictions: next };
+                                        if (onUpdateTask) onUpdateTask(updatedTask);
+                                        tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any);
+                                      }}
+                                      className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+                                    >
+                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                        {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                      </div>
+                                      {role.name}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
                           </div>
                         </Popover.Content>
                       </Popover.Portal>
@@ -1522,6 +1539,7 @@ export function TaskDetailModalContent({
                 currentUser={currentUser}
                 onOpenSubtask={(subtask) => setActiveSubtask(subtask)}
                 listStatuses={internalListStatuses}
+                teams={dbTeams}
               />
 
               {(!task.subtasks || task.subtasks.length === 0) && !addingSubtask && (
@@ -1993,6 +2011,7 @@ function SubtaskDetailView({
   setActiveSubtask,
   permission,
   listStatuses,
+  dbTeams = [],
 }: {
   subtask: any;
   parentTask: any;
@@ -2004,6 +2023,7 @@ function SubtaskDetailView({
   setActiveSubtask?: (st: any) => void;
   permission?: { allowed: boolean; reason?: string };
   listStatuses?: any[];
+  dbTeams?: any[];
 }) {
   const router = useRouter();
   const [richComments, setRichComments] = useState<any[]>([]);
@@ -2511,10 +2531,59 @@ function SubtaskDetailView({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
-                        <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
-                          <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
-                          <p className="text-[10px] text-zinc-400 px-2 py-1">Not implemented for subtasks</p>
-                        </div>
+                          <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+                            <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
+                            {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                            {dbTeams.map((team: any) => (
+                              <div key={team.id} className="mb-2">
+                                <div className="px-2 py-1 text-[10px] text-zinc-400 font-semibold tracking-wide uppercase bg-zinc-800/30">
+                                  {team.name}
+                                </div>
+                                {(!team.teamRoles || team.teamRoles.length === 0) && (
+                                  <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+                                )}
+                                {team.teamRoles?.map((role: any) => {
+                                  const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
+                                  return (
+                                    <div
+                                      key={role.id}
+                                      onClick={async () => {
+                                        const current = subtask.assigneeRoleRestrictions || [];
+                                        const next = selected
+                                          ? current.filter((r: string) => r !== role.name)
+                                          : [...current, role.name];
+                                        
+                                        // Update optimistically
+                                        const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
+                                        
+                                        // Update state if we had a function for it, but for subtasks in the modal, 
+                                        // it relies on parent task state. We should trigger the api and update the parent task
+                                        try {
+                                          await tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any);
+                                          
+                                          if (onUpdateTask) {
+                                            const updatedTask = {
+                                              ...parentTask,
+                                              subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
+                                            };
+                                            onUpdateTask(updatedTask);
+                                          }
+                                        } catch (err) {
+                                          console.error("Failed to update subtask role restriction", err);
+                                        }
+                                      }}
+                                      className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+                                    >
+                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                        {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                      </div>
+                                      {role.name}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
                       </Popover.Content>
                     </Popover.Portal>
                   </Popover.Root>

@@ -46,6 +46,10 @@ export async function apiClient<T = any>(
 
   const data = await res.json().catch(() => ({}));
 
+  if (res.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    window.location.href = '/login';
+  }
+
   if (!res.ok) {
     throw new Error(data.error || data.message || `HTTP error ${res.status}`);
   }

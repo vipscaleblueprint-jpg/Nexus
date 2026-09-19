@@ -52,12 +52,21 @@ export interface User {
   teamName?: string;
 }
 
+export interface TeamRole {
+  id: string;
+  name: string;
+  teamId: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Team {
   id: string;
   name: string;
   description?: string;
   color?: string;
   members?: User[];
+  teamRoles?: TeamRole[];
 }
 
 export interface Space {
@@ -142,6 +151,8 @@ export interface Task {
   assigneeIds?: string[];
   assigneeRoleRestrictions?: string[];
   teamAssignAccessRole?: string | null;
+  teamId?: string | null;
+  team?: Team | null;
   creatorId: string;
   creator?: User;
   subtasks: Subtask[];
@@ -166,6 +177,8 @@ export interface Subtask {
   taskId: string;
   assignees?: User[];
   assigneeIds?: string[];
+  teamId?: string | null;
+  team?: Team | null;
   priority: Priority;
   dueDate?: string | null;
   assigneeRoleRestrictions?: string[];

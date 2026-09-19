@@ -22,6 +22,7 @@ interface SubtasksSectionProps {
   currentUser?: any;
   onOpenSubtask?: (subtask: Subtask) => void;
   listStatuses?: any[];
+  teams?: any[];
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -330,6 +331,7 @@ function SubtaskRow({
   onAddCommentLocally,
   canEditTask,
   listStatuses,
+  teams = [],
 }: {
   subtask: Subtask;
   users?: any[];
@@ -344,6 +346,7 @@ function SubtaskRow({
   onAddCommentLocally?: (subtaskId: string, comments: any[]) => void;
   canEditTask?: boolean;
   listStatuses?: any[];
+  teams?: any[];
 }) {
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
@@ -677,8 +680,41 @@ function SubtaskRow({
                   <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                     <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                       <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
-                      {/* TODO: Add role restrictions map if needed */}
-                      <p className="text-[10px] text-zinc-400 px-2 py-1">Not implemented for subtasks</p>
+                      {(!teams || teams.length === 0) && (
+                        <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>
+                      )}
+                      {(teams || []).map((team: any) => (
+                        <div key={team.id} className="mb-2">
+                          <div className="px-2 py-1 text-[10px] text-zinc-400 font-semibold tracking-wide uppercase bg-zinc-800/30">
+                            {team.name}
+                          </div>
+                          {(!team.teamRoles || team.teamRoles.length === 0) && (
+                            <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+                          )}
+                          {team.teamRoles?.map((role: any) => {
+                            const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
+                            return (
+                              <div
+                                key={role.id}
+                                onClick={() => {
+                                  if (!canEditTask) return;
+                                  const current = subtask.assigneeRoleRestrictions || [];
+                                  const next = selected
+                                    ? current.filter((r: string) => r !== role.name)
+                                    : [...current, role.name];
+                                  onUpdate(subtask.id, { assigneeRoleRestrictions: next } as any);
+                                }}
+                                className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
+                              >
+                                <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                  {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                <span className="truncate">{role.name}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
                     </div>
                   </Popover.Content>
                 </Popover.Portal>
@@ -1106,7 +1142,7 @@ function SubtaskRow({
   );
 }
 
-export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask, listStatuses }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
+export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask, listStatuses, teams }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isSubmittingSubtask, setIsSubmittingSubtask] = useState(false);
   const [showAllSubtasks, setShowAllSubtasks] = useState(false);
@@ -1232,6 +1268,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
                 onUpdateTask({ ...task, subtasks: optimisticSubtasks });
               }}
               canEditTask={canEditTask}
+              teams={teams}
             />
           ))}
 

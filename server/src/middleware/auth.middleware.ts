@@ -37,7 +37,9 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
     req.token = token;
     next();
   } catch (error) {
-    return res.status(403).json({ error: 'Invalid or expired token' });
+    res.clearCookie('accessToken', { httpOnly: true, sameSite: 'lax' });
+    res.clearCookie('refreshToken', { httpOnly: true, sameSite: 'lax' });
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 

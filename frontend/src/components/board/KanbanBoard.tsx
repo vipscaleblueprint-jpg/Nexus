@@ -20,7 +20,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
-import { Plus, ChevronDown, ChevronRight, X, GripVertical } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, X, GripVertical, Trash2 } from 'lucide-react';
 import { getRoles } from '@/api/roles';
 import { canUserMoveTask, canUserEditTask } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
@@ -40,6 +40,8 @@ interface Props {
   listStatuses?: any[];
   onStatusChange?: (status: string, data: { name?: string, color?: string, allowedRoles?: string[], groupName?: string }) => void | Promise<void>;
   onStatusDelete?: (statusName: string) => void | Promise<void>;
+  onDeleteGroup?: (groupName: string) => void;
+  onStatusReorder?: (activeStatus: string, overStatus: string) => void;
 }
 
 const CATEGORIES = [
@@ -178,8 +180,25 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
     }
   }, [onStatusChange, status, dbStatus, columnThemes]);
 
+  const sortableData = useMemo(() => ({ type: 'Column', status }), [status]);
+  const sortable = useSortable({
+    id: status,
+    data: sortableData,
+    disabled: isCollapsed,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+    opacity: sortable.isDragging ? 0.3 : 1,
+  };
+
   return (
-    <div className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''}`}>
+    <div 
+      ref={sortable.setNodeRef}
+      style={style}
+      className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''} ${sortable.isDragging ? 'z-50 relative' : ''}`}
+    >
       <KanbanColumn
         status={status}
         tasks={tasks}
@@ -199,6 +218,8 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
         onTaskClick={onTaskClick}
         onRoleChange={handleRoleChange}
         onDeleteColumn={onStatusDelete}
+        dragListeners={sortable.listeners}
+        dragAttributes={sortable.attributes}
       />
     </div>
   );
@@ -207,7 +228,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
 export function KanbanBoard({ tasks,  onTaskMove,
   onTaskMovePreview,
   onTaskReorder,
-  onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete }: Props) {
+  onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete, onDeleteGroup, onStatusReorder }: Props) {
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAppStore((s) => s.currentUser);
@@ -604,6 +625,13 @@ export function KanbanBoard({ tasks,  onTaskMove,
       return collisions.filter((c: any) => c.data?.current?.type === 'Group' && c.id !== args.active?.id);
     }
     
+    // Allow columns to be dropped onto columns
+    if (args.active?.data?.current?.type === 'Column') {
+      const collisions = pointerWithin(args);
+      if (collisions.length > 0) return collisions.filter((c: any) => c.data?.current?.type === 'Column' && c.id !== args.active?.id);
+      return closestCenter(args).filter((c: any) => c.data?.current?.type === 'Column' && c.id !== args.active?.id);
+    }
+    
     // For tasks, use pointerWithin to prevent layout shift infinite loops.
     // If the pointer is not strictly within any container, fallback to closestCenter.
     let collisions = pointerWithin(args);
@@ -611,7 +639,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       collisions = closestCenter(args);
     }
     
-    return collisions.filter((c: any) => c.data?.current?.type !== 'Group' && c.id !== args.active?.id);
+    return collisions.filter((c: any) => c.data?.current?.type !== 'Group' && c.data?.current?.type !== 'Column' && c.id !== args.active?.id);
   }, []);
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -628,6 +656,37 @@ export function KanbanBoard({ tasks,  onTaskMove,
           const newOrder = arrayMove(draggableColumns, oldIndex, newIndex);
           onGroupReorder(newOrder.map(c => c.title));
         }
+      }
+      return;
+    }
+
+    if (active.data.current?.type === 'Column') {
+      isDraggingRef.current = false;
+      
+      const activeStatusName = active.id as string;
+      const overId = over?.id as string;
+
+      if (!over || activeStatusName === overId) return;
+
+      let newGroupName = '';
+      if (over.data.current?.type === 'Group') {
+        newGroupName = over.data.current.groupName;
+      } else if (over.data.current?.type === 'Column') {
+        const overCat = categorizedColumns.find(c => c.statuses.includes(overId));
+        if (overCat) newGroupName = overCat.title;
+      }
+
+      if (newGroupName) {
+        const currentCat = categorizedColumns.find(c => c.statuses.includes(activeStatusName));
+        if (currentCat && currentCat.title !== newGroupName) {
+          if (onStatusChange) {
+            onStatusChange(activeStatusName, { groupName: newGroupName });
+          }
+        }
+      }
+
+      if (onStatusReorder) {
+        onStatusReorder(activeStatusName, overId);
       }
       return;
     }
@@ -794,73 +853,92 @@ export function KanbanBoard({ tasks,  onTaskMove,
                             </div>
                           </div>
                           
-                          <button
-                            onClick={() => {
-                              setAddingStatusToGroup(category.title);
-                              setNewStatusName('');
-                            }}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-300 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
-                          >
-                            Add status
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setAddingStatusToGroup(category.title);
+                                setNewStatusName('');
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-300 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+                            >
+                              Add status
+                            </button>
+                            {!category.isPreset && !category.isCatchAll && onDeleteGroup && (
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to delete the group "${category.title}"?`)) {
+                                    onDeleteGroup(category.title);
+                                  }
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="flex items-center justify-center p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                title="Delete group"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </div>
 
                   {/* Columns inside the group */}
                   <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max">
-                    {category.statuses.map((status: string, index: number) => {
-                      const isCollapsed = collapsedColumns[status];
-                      
-                      let groupRunIndex = 0;
-                      let groupRunCount = 1;
-                      let statusesInRun: string[] = [status];
+                    <SortableContext items={category.statuses} strategy={horizontalListSortingStrategy}>
+                      {category.statuses.map((status: string, index: number) => {
+                        const isCollapsed = collapsedColumns[status];
+                        
+                        let groupRunIndex = 0;
+                        let groupRunCount = 1;
+                        let statusesInRun: string[] = [status];
 
-                      if (isCollapsed) {
-                         let start = index;
-                         while (start > 0 && collapsedColumns[category.statuses[start - 1]]) {
-                            start--;
-                         }
-                         groupRunIndex = index - start;
-                         
-                         let end = index;
-                         while (end < category.statuses.length - 1 && collapsedColumns[category.statuses[end + 1]]) {
-                            end++;
-                         }
-                         groupRunCount = end - start + 1;
-                         statusesInRun = category.statuses.slice(start, end + 1);
-                      }
-                      
-                      const isCollapsedGroupLeader = isCollapsed && groupRunIndex === 0;
-                      const isCollapsedFollower = isCollapsed && groupRunIndex > 0;
-                      
-                      const isLast = index === category.statuses.length - 1;
-                      const hasMarginRight = !isLast && !isCollapsedFollower;
+                        if (isCollapsed) {
+                           let start = index;
+                           while (start > 0 && collapsedColumns[category.statuses[start - 1]]) {
+                              start--;
+                           }
+                           groupRunIndex = index - start;
+                           
+                           let end = index;
+                           while (end < category.statuses.length - 1 && collapsedColumns[category.statuses[end + 1]]) {
+                              end++;
+                           }
+                           groupRunCount = end - start + 1;
+                           statusesInRun = category.statuses.slice(start, end + 1);
+                        }
+                        
+                        const isCollapsedGroupLeader = isCollapsed && groupRunIndex === 0;
+                        const isCollapsedFollower = isCollapsed && groupRunIndex > 0;
+                        
+                        const isLast = index === category.statuses.length - 1;
+                        const hasMarginRight = !isLast && !isCollapsedFollower;
 
-                      return (
-                        <MemoizedColumnWrapper
-                          key={status}
-                          status={status}
-                          category={category}
-                          tasks={tasksByStatus[status] || EMPTY_ARRAY}
-                          isCollapsed={isCollapsed}
-                          setCollapsedColumns={setCollapsedColumns}
-                          toggleColumnCollapse={toggleColumnCollapse}
-                          listStatuses={listStatuses}
-                          currentUser={currentUser}
-                          workspaceRoles={workspaceRoles}
-                          roleMap={roleMap}
-                          columnThemes={columnThemes}
-                          setColumnThemes={setColumnThemes}
-                          onStatusChange={onStatusChange}
-                          onStatusDelete={onStatusDelete}
-                          onAddTaskClick={onAddTaskClick}
-                          onTaskClick={onTaskClick}
-                          hasMarginRight={hasMarginRight}
-                          groupRunCount={groupRunCount}
-                          isCollapsedGroupLeader={isCollapsedGroupLeader}
-                        />
-                      );
-                    })}
+                        return (
+                          <MemoizedColumnWrapper
+                            key={status}
+                            status={status}
+                            category={category}
+                            tasks={tasksByStatus[status] || EMPTY_ARRAY}
+                            isCollapsed={isCollapsed}
+                            setCollapsedColumns={setCollapsedColumns}
+                            toggleColumnCollapse={toggleColumnCollapse}
+                            listStatuses={listStatuses}
+                            currentUser={currentUser}
+                            workspaceRoles={workspaceRoles}
+                            roleMap={roleMap}
+                            columnThemes={columnThemes}
+                            setColumnThemes={setColumnThemes}
+                            onStatusChange={onStatusChange}
+                            onStatusDelete={onStatusDelete}
+                            onAddTaskClick={onAddTaskClick}
+                            onTaskClick={onTaskClick}
+                            hasMarginRight={hasMarginRight}
+                            groupRunCount={groupRunCount}
+                            isCollapsedGroupLeader={isCollapsedGroupLeader}
+                            statusesInRun={statusesInRun}
+                          />
+                        );
+                      })}
+                    </SortableContext>
                     {addingStatusToGroup === category.title && (
                       <div className="w-[300px] shrink-0 h-max flex flex-col mt-[2px] ml-2 animate-in fade-in zoom-in-95 duration-200">
                         <div className="group relative flex items-center justify-between gap-3 bg-zinc-800/80 border border-zinc-700/50 rounded-xl p-3 shadow-sm text-left overflow-hidden">

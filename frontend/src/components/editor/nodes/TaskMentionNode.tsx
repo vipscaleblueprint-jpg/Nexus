@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { toast } from '@/lib/toast';
-import { Flag, User as UserIcon, CheckCircle2, AlignLeft } from 'lucide-react';
+import { Flag, User as UserIcon, CheckCircle2, AlignLeft, Shield } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -38,14 +38,16 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const currentUser = useAppStore(s => s.currentUser);
   
   const [taskData, setTaskData] = useState<any>(null);
-  const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'priority' | 'description' | null>(null);
+  const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'priority' | 'description' | 'team' | null>(null);
   const [dbUsers, setDbUsers] = useState<any[]>([]);
+  const [dbTeams, setDbTeams] = useState<any[]>([]);
   const [listStatuses, setListStatuses] = useState<any[]>([]);
 
   // Local state for read-only interactivity
   const [localStatus, setLocalStatus] = useState<string>(taskStatus || '');
   const [localPriority, setLocalPriority] = useState<string>(taskPriority || '');
   const [localAssignees, setLocalAssignees] = useState<string>(taskAssignees || '');
+  const [localTeam, setLocalTeam] = useState<string>(node.attrs.taskTeam || '');
 
   // Sync local state when node.attrs change from outside (e.g., initial load)
   useEffect(() => {
@@ -57,10 +59,14 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   useEffect(() => {
     if (taskAssignees !== localAssignees) setLocalAssignees(taskAssignees || '');
   }, [taskAssignees]);
+  useEffect(() => {
+    if (node.attrs.taskTeam !== localTeam) setLocalTeam(node.attrs.taskTeam || '');
+  }, [node.attrs.taskTeam]);
 
   const statusRef = useRef<HTMLSpanElement>(null);
   const priorityRef = useRef<HTMLSpanElement>(null);
   const assigneesRef = useRef<HTMLSpanElement>(null);
+  const teamRef = useRef<HTMLSpanElement>(null);
   const descTriggerRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -80,17 +86,20 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         const shouldUpdate = currentStatusName !== task.status || 
           taskPriority !== task.priority || 
           (!taskAssignees && task.assignees && task.assignees.length > 0) ||
-          taskHasDescription !== !!task.description;
+          taskHasDescription !== !!task.description ||
+          node.attrs.taskTeam !== (task.team ? JSON.stringify(task.team) : '');
 
         if (shouldUpdate) {
           try { updateAttributes({
             taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
             taskAssignees: JSON.stringify(task.assignees || []),
+            taskTeam: task.team ? JSON.stringify(task.team) : '',
             taskPriority: task.priority || '',
             taskHasDescription: !!task.description
           }); } catch (e) {}
           setLocalStatus(JSON.stringify({ name: task.status, color: getStatusColor(task.status) }));
           setLocalAssignees(JSON.stringify(task.assignees || []));
+          setLocalTeam(task.team ? JSON.stringify(task.team) : '');
           setLocalPriority(task.priority || '');
         }
       }).catch(() => {});
@@ -103,6 +112,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       usersApi.getUsers().then(res => {
         if (!cancelled && res?.users) setDbUsers(res.users);
       }).catch(console.error);
+    } else if (openDropdown === 'team' && dbTeams.length === 0) {
+      usersApi.getTeams().then(res => {
+        if (!cancelled && res?.teams) setDbTeams(res.teams);
+      }).catch(console.error);
     } else if (openDropdown === 'status' && listStatuses.length === 0 && taskData?.listId) {
       spacesApi.getList(taskData.listId).then(res => {
         if (!cancelled && res?.list?.statuses) {
@@ -111,7 +124,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       }).catch(console.error);
     }
     return () => { cancelled = true; };
-  }, [openDropdown, dbUsers.length, listStatuses.length, taskData?.listId]);
+  }, [openDropdown, dbUsers.length, dbTeams.length, listStatuses.length, taskData?.listId]);
   
   if (mentionType === 'status') {
     let statusObj = null;
@@ -143,6 +156,13 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   let assignees: any[] = [];
   let parsedStatusName = localStatus;
   let parsedStatusColor = '#3b82f6'; // default blue
+  let team: any = null;
+
+  try {
+    if (localTeam) {
+      team = JSON.parse(localTeam);
+    }
+  } catch (e) {}
 
   try {
     if (localAssignees) {
@@ -199,6 +219,20 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       await tasksApi.updateTask(id, { assigneeIds: newAssignees.map(a => a.id), userId: currentUser.id });
     } catch (e) {
       toast.error('Failed to update assignees');
+    }
+  };
+
+  const handleTeamChange = async (selectedTeam: any) => {
+    if (!currentUser) return;
+    const teamStr = selectedTeam ? JSON.stringify(selectedTeam) : '';
+    try { updateAttributes({ taskTeam: teamStr }); } catch (e) {}
+    setLocalTeam(teamStr);
+    setOpenDropdown(null);
+    try {
+      await tasksApi.updateTask(id, { teamId: selectedTeam ? selectedTeam.id : null, userId: currentUser.id });
+      toast.success('Team updated');
+    } catch (e) {
+      toast.error('Failed to update team');
     }
   };
 
@@ -277,6 +311,25 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           ) : (
             <span className="w-5 h-5 rounded-full border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 hover:text-zinc-200 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors">
               <UserIcon className="w-3 h-3" />
+            </span>
+          )}
+        </span>
+        <span 
+          ref={teamRef}
+          className="inline-flex items-center justify-center shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
+          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'team' ? null : 'team'); }}
+          title={team ? team.name : 'Assign Team'}
+        >
+          {team ? (
+            <span 
+              className="px-1.5 py-[1px] rounded text-[9px] font-bold uppercase tracking-wider text-white"
+              style={{ backgroundColor: team.color || '#52525b' }}
+            >
+              {team.name.substring(0, 3)}
+            </span>
+          ) : (
+            <span className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors">
+              <Shield className="w-3 h-3" />
             </span>
           )}
         </span>
@@ -364,6 +417,33 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                 </button>
               );
             })}
+          </div>
+        </PortalDropdown>
+      )}
+
+      {openDropdown === 'team' && (
+        <PortalDropdown triggerRef={teamRef} onClose={() => setOpenDropdown(null)}>
+          <div className="w-48 py-1 max-h-60 overflow-y-auto custom-scrollbar">
+            <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Assign Team</div>
+            <button
+               onClick={() => handleTeamChange(null)}
+               className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group"
+            >
+               <Shield className="w-4 h-4 text-zinc-500" />
+               <span className="text-zinc-300">None</span>
+               {!team && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto shrink-0" />}
+            </button>
+            {dbTeams.map(t => (
+              <button
+                key={t.id}
+                onClick={() => handleTeamChange(t)}
+                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group"
+              >
+                <div className="w-4 h-4 rounded" style={{ backgroundColor: t.color || '#52525b' }} />
+                <span className="text-zinc-300 group-hover:text-white transition-colors truncate">{t.name}</span>
+                {team?.id === t.id && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto shrink-0" />}
+              </button>
+            ))}
           </div>
         </PortalDropdown>
       )}

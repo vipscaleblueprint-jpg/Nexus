@@ -364,7 +364,7 @@ function SubtaskRow({
     if (s.User) return [s.User];
     if (s.assignee) return [s.assignee];
     return [];
-  }, [subtask]);
+  }, [subtask.assignees]);
 
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 

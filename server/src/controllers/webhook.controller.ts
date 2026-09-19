@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient, Priority } from '@prisma/client';
 import { io } from '../server';
+import { invalidateCache } from '../services/redisService';
 
 const prisma = new PrismaClient();
 
@@ -121,6 +122,7 @@ export const syncClients = async (req: Request, res: Response) => {
     }
 
     // Trigger full sidebar reload for active clients
+    await invalidateCache('spaces:all', 'dashboard:all', 'lists:all');
     io.emit('spaces_updated');
 
     return res.status(200).json({
@@ -202,32 +204,35 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'No user available to set as creator' });
     }
 
+    // Resolve assignee: prefer Team match first, then fall back to individual user lookup
+    let resolvedTeamId: string | null = null;
     const assigneeIdsSet = new Set<string>();
     if (assignee && Array.isArray(assignee)) {
       for (const a of assignee) {
         if (!a.name) continue;
         const aName = a.name;
 
+        // 1. Check if the name matches a Team directly
+        const matchedTeam = await prisma.team.findFirst({
+          where: { name: { equals: aName, mode: 'insensitive' } }
+        });
+
+        if (matchedTeam) {
+          // Assign the team to the task — don't expand into individual members
+          resolvedTeamId = matchedTeam.id;
+          continue;
+        }
+
+        // 2. Check if this matches an individual user by name
         const usersByName = await prisma.user.findMany({
           where: { name: { contains: aName, mode: 'insensitive' } }
         });
 
         if (usersByName.length > 0) {
           usersByName.forEach(u => assigneeIdsSet.add(u.id));
-        } else {
-          const usersByRole = await prisma.user.findMany({
-            where: {
-              OR: [
-                { primaryRole: { contains: aName, mode: 'insensitive' } },
-                { secondaryRole: { contains: aName, mode: 'insensitive' } },
-                { tertiaryRole: { contains: aName, mode: 'insensitive' } },
-                { minorRole: { contains: aName, mode: 'insensitive' } },
-                { team: { name: { contains: aName, mode: 'insensitive' } } }
-              ]
-            }
-          });
-          usersByRole.forEach(u => assigneeIdsSet.add(u.id));
         }
+        // Note: we intentionally skip the role-based fallback that was expanding
+        // a role name (e.g. "TECH") into all individual team members.
       }
     }
 
@@ -250,6 +255,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         listId: list.id,
         creatorId: creator.id,
         assigneeId: primaryAssigneeId,
+        ...(resolvedTeamId && { teamId: resolvedTeamId }),
         ...(finalAssigneeIds.length > 0 && {
           assignees: {
             connect: finalAssigneeIds.map(id => ({ id }))
@@ -307,6 +313,36 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     io.emit('task_created', newTask);
     io.emit('subtask_created', subtask);
 
+    // Send ASSIGNMENT notifications so the task appears in each assignee's Activity feed
+    const notifyUserIds = new Set<string>(finalAssigneeIds);
+
+    // Also notify all members of the resolved team
+    if (resolvedTeamId) {
+      const teamMembers = await prisma.user.findMany({
+        where: { teamId: resolvedTeamId },
+        select: { id: true }
+      });
+      teamMembers.forEach(m => notifyUserIds.add(m.id));
+    }
+
+    const notifyList = Array.from(notifyUserIds).filter(id => id !== creator.id);
+    if (notifyList.length > 0) {
+      await prisma.taskNotification.createMany({
+        data: notifyList.map(id => ({
+          userId: id,
+          actorId: creator.id,
+          taskId: newTask.id,
+          type: 'ASSIGNMENT' as const,
+          title: `VIP Scale assigned this task to you`,
+        })),
+        skipDuplicates: true,
+      });
+      notifyList.forEach(id => {
+        io.to(`user:${id}`).emit('notification_received');
+      });
+    }
+
+
     return res.status(200).json({ success: true, task: newTask });
   } catch (error: any) {
     console.error('Failed to handle galaxy task:', error);
@@ -361,37 +397,33 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Parent task not found in Nexus' });
     }
 
+    // Resolve assignee: prefer Team match first, then fall back to individual user lookup
     const assigneeIdsSet = new Set<string>();
     if (assignee && Array.isArray(assignee)) {
       for (const a of assignee) {
         if (!a.name) continue;
         const aName = a.name;
 
+        // 1. Check if the name matches a Team directly — subtasks don't have teamId, so skip & ignore
+        const matchedTeam = await prisma.team.findFirst({
+          where: { name: { equals: aName, mode: 'insensitive' } }
+        });
+        if (matchedTeam) continue; // Teams can't be assigned to subtasks; skip
+
+        // 2. Check if this matches an individual user by name
         const usersByName = await prisma.user.findMany({
           where: { name: { contains: aName, mode: 'insensitive' } }
         });
 
         if (usersByName.length > 0) {
           usersByName.forEach(u => assigneeIdsSet.add(u.id));
-        } else {
-          const usersByRole = await prisma.user.findMany({
-            where: {
-              OR: [
-                { primaryRole: { contains: aName, mode: 'insensitive' } },
-                { secondaryRole: { contains: aName, mode: 'insensitive' } },
-                { tertiaryRole: { contains: aName, mode: 'insensitive' } },
-                { minorRole: { contains: aName, mode: 'insensitive' } },
-                { team: { name: { contains: aName, mode: 'insensitive' } } }
-              ]
-            }
-          });
-          usersByRole.forEach(u => assigneeIdsSet.add(u.id));
         }
       }
     }
 
     const finalAssigneeIds = Array.from(assigneeIdsSet);
     const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[0] : null;
+
 
     const subtask = await prisma.subtask.create({
       data: {

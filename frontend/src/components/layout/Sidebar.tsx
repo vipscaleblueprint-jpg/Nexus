@@ -95,6 +95,9 @@ import {
   LayoutGrid,
   Code,
   RefreshCcw,
+  MessageSquareWarning,
+  Link as LinkIcon,
+  Bot,
 } from 'lucide-react';
 
 const VIPSCALE_BASE = 'https://tools.vipscaleph.com';
@@ -109,7 +112,6 @@ interface SidebarProps {
 const managementItems = [
   { title: 'Dashboard', url: '/protected', icon: PanelsTopLeft, color: 'text-purple-500' },
   { title: 'Galaxy Task', url: '/protected/galaxy-task', icon: Rocket, color: 'text-sky-500' },
-  { title: 'QA Listing', url: '/protected/qa-listing', icon: FileText, color: 'text-purple-500' },
   { title: 'SOP', url: '/protected/sop', icon: ScrollText, color: 'text-green-500' },
 ];
 
@@ -121,47 +123,27 @@ const trackerItems = [
 ];
 
 const clientItems = [
-  { title: 'Add Client', url: '/protected/add-client', icon: UserPlus, color: 'text-purple-700' },
-  { title: 'Add Product', url: '/protected/add-product', icon: Package, color: 'text-purple-700' },
-  { title: 'VPS Generator', url: '/protected/vps-generator', icon: Target, color: 'text-orange-500' },
-  { title: 'DM Reply Generator', url: '/protected/dm-reply-generator', icon: Sparkles, color: 'text-purple-500' },
+  { title: 'Client Dashboard', url: '/protected/client-dashboard', icon: Users, color: 'text-purple-500' },
+  { title: 'Client Hour Tracker', url: '/protected/client-hours', icon: Clock, color: 'text-purple-700' },
+  { title: 'Product Dashboard', url: '/protected/product-dashboard', icon: Package, color: 'text-purple-700' },
 ];
 
 const contractsItems = [
   { title: 'All Contracts', url: '/protected/contracts', icon: FileText, color: 'text-amber-500' },
   { title: 'Create Contract', url: '/protected/contracts/new', icon: Sparkles, color: 'text-amber-500' },
   { title: 'Templates', url: '/protected/contracts/templates', icon: ScrollText, color: 'text-amber-500' },
-  { title: 'Proposals Queue', url: '/protected/contracts/proposals', icon: Megaphone, color: 'text-amber-500' },
-  { title: 'Link Management', url: '/protected/contracts/links', icon: ExternalLink, color: 'text-amber-500' },
+  { title: 'Proposals Queue', url: '/protected/contracts/proposals', icon: MessageSquareWarning, color: 'text-amber-500' },
+  { title: 'Link Management', url: '/protected/contracts/links', icon: LinkIcon, color: 'text-amber-500' },
   { title: 'R2 Storage Manager', url: '/protected/contracts/storage', icon: HardDrive, color: 'text-amber-500' },
 ];
 
 const toolsItems = [
+  { title: 'VPS Generator', url: '/protected/vps-generator', icon: Target, color: 'text-orange-500' },
   { title: 'Prompt Generator', url: '/protected/prompt-generator', icon: Sparkles, color: 'text-pink-700' },
   { title: 'Landing Page Copy', url: '/protected/landing-page-copy', icon: PanelsTopLeft, color: 'text-purple-700' },
   { title: 'Video Transcriber', url: '/protected/video-transcriber', icon: FileText, color: 'text-cyan-600' },
   { title: 'Video Downloader', url: '/protected/video-downloader', icon: Download, color: 'text-orange-500' },
   { title: 'Website Audit', url: '/protected/website-audit', icon: Eye, color: 'text-green-600' },
-];
-
-const adsItems = [
-  { title: 'Static Ads Generator', url: '/protected/static-ads-generator', icon: Megaphone, color: 'text-orange-500' },
-  { title: 'Video Ads Script Generator', url: '/protected/video-ads-script-generator', icon: ScrollText, color: 'text-orange-500' },
-];
-
-const contentCreationItems = [
-  { title: 'Gemini Video Generator', url: '/protected/gemini-video-generator', icon: Video, color: 'text-purple-500' },
-  { title: 'Seedance Video Generator', url: '/protected/seedance-video-generator', icon: Video, color: 'text-purple-500' },
-  { title: 'Motion Control', url: '/protected/motion-control', icon: Move, color: 'text-purple-500' },
-  { title: 'Persona Generator', url: '/protected/persona-generator', icon: Users, color: 'text-orange-500' },
-  { title: 'Reel Paraphraser', url: '/protected/reel-paraphraser', icon: Video, color: 'text-orange-500' },
-  { title: 'Reel Script Generator V2', url: '/protected/reel-script-generator-v2', icon: ScrollText, color: 'text-orange-500' },
-  { title: 'Looping and Carousel Copy', url: '/protected/looping-and-carousel-copy', icon: Repeat, color: 'text-orange-500' },
-  { title: 'Pinned Highlights Script', url: '/protected/pinned-highlights-script-generator', icon: UserPlus, color: 'text-orange-500' },
-  { title: 'Caption Generator', url: '/protected/caption-generator', icon: Type, color: 'text-orange-500' },
-  { title: 'Caption Paraphraser', url: '/protected/caption-paraphraser', icon: MessageSquareText, color: 'text-orange-500' },
-  { title: 'Thumbnail Hooks', url: '/protected/thumbnail-hooks', icon: Image, color: 'text-orange-500' },
-  { title: 'Audio Tags', url: '/protected/audio-tags', icon: Music, color: 'text-orange-500' },
 ];
 
 const aiAvatarItems = [
@@ -171,16 +153,19 @@ const aiAvatarItems = [
   { title: 'Photoshoot to Prompt', url: '/protected/photoshoot-to-prompt', icon: Shirt, color: 'text-indigo-500' },
   { title: 'Scene Image to Prompt', url: '/protected/scene-to-prompt', icon: Camera, color: 'text-indigo-500' },
   { title: 'Scene Text to Prompt', url: '/protected/scene-text-to-prompt', icon: TextCursorInput, color: 'text-indigo-500' },
-  { title: 'Kling', url: '/protected/kling', icon: Wand2, color: 'text-indigo-500' },
+  // divider equivalent logic is handled by component structure if needed, just a flat list for now since they are rendered under AI Avatar
   { title: 'Avatar Generator', url: '/protected/avatar-generator', icon: CircleUser, color: 'text-indigo-500' },
   { title: 'Face Analyzer', url: '/protected/face-analyzer', icon: BarChart3, color: 'text-indigo-500' },
   { title: 'Body Analyzer', url: '/protected/body-analyzer', icon: BarChart3, color: 'text-indigo-500' },
+  { title: 'Tag Generator & Scene Analyzer', url: '/protected/tag-generator-scene-analyzer', icon: Upload, color: 'text-indigo-500' },
   { title: 'Poses Generator', url: '/protected/poses-generator', icon: Package, color: 'text-indigo-500' },
   { title: 'Package Generator', url: '/protected/package-generator', icon: Package, color: 'text-indigo-500' },
+  // bottom
   { title: 'Reel Scenes Extractor', url: '/protected/reel-scenes-extractor', icon: ImagePlus, color: 'text-indigo-500' },
 ];
 
 const oldItems = [
+  { title: 'QA Listing', url: '/protected/qa-listing', icon: FileText, color: 'text-purple-500' },
   { title: 'Reel to Prompt', url: '/protected/reel-to-prompt', icon: Film, color: 'text-purple-500' },
   { title: 'Fashion Randomizer', url: '/protected/fashion-randomizer', icon: Shirt, color: 'text-purple-500' },
   { title: 'B-roll Scene to prompt v2', url: '/protected/b-roll-image-to-prompt', icon: ImagePlus, color: 'text-purple-500' },
@@ -188,7 +173,34 @@ const oldItems = [
   { title: 'Reel Scenes Library', url: '/protected/reel-scenes-library', icon: Upload, color: 'text-indigo-500' },
   { title: 'Reel Script Generator', url: '/protected/reel-script-generator', icon: ScrollText, color: 'text-orange-500' },
   { title: 'Time Tracker', url: '/protected/time-entry', icon: Clock, color: 'text-pink-600' },
+  { title: 'DM Reply Generator', url: '/protected/dm-reply-generator', icon: Sparkles, color: 'text-purple-500' },
 ];
+
+const generationDropdownItems = [
+  { title: 'Gemini Video Generator', url: '/protected/gemini-video-generator', icon: Video, color: 'text-purple-500' },
+  { title: 'Seedance Video Generator', url: '/protected/seedance-video-generator', icon: Video, color: 'text-purple-500' },
+  { title: 'Motion Control', url: '/protected/motion-control', icon: Move, color: 'text-purple-500' },
+  { title: 'Kling', url: '/protected/kling', icon: Wand2, color: 'text-indigo-500' },
+];
+
+const adsItems = [
+  { title: 'Static Ads Generator', url: '/protected/static-ads-generator', icon: Megaphone, color: 'text-orange-500' },
+  { title: 'Video Ads Script Generator', url: '/protected/video-ads-script-generator', icon: ScrollText, color: 'text-orange-500' },
+];
+
+const contentCreationItems = [
+  { title: 'Persona Generator', url: '/protected/persona-generator', icon: Users, color: 'text-orange-500' },
+  { title: 'Reel Paraphraser', url: '/protected/reel-paraphraser', icon: Video, color: 'text-orange-500' },
+  { title: 'Reel Script Generator V2', url: '/protected/reel-script-generator-v2', icon: ScrollText, color: 'text-orange-500' },
+  { title: 'Looping and Carousel Copy', url: '/protected/looping-and-carousel-copy', icon: Repeat, color: 'text-orange-500' },
+  { title: 'Pinned Highlights Script Generator', url: '/protected/pinned-highlights-script-generator', icon: UserPlus, color: 'text-orange-500' },
+  // secondary items
+  { title: 'Caption Generator', url: '/protected/caption-generator', icon: Type, color: 'text-orange-500' },
+  { title: 'Caption Paraphraser', url: '/protected/caption-paraphraser', icon: MessageSquareText, color: 'text-orange-500' },
+  { title: 'Thumbnail Hooks', url: '/protected/thumbnail-hooks', icon: Image, color: 'text-orange-500' },
+  { title: 'Audio Tags', url: '/protected/audio-tags', icon: Music, color: 'text-orange-500' },
+];
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -610,40 +622,32 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
           </div>
 
           {/* Scrollable content */}
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            {/* Management */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+
+            {/* ── Management group ── */}
             <div className={`px-2 py-2 ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
               <GroupLabel collapsed={collapsed}>Management</GroupLabel>
               <ul className={`space-y-px w-full ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
-                {managementItems.map((item) => <VipFlatItem key={item.title} {...item} iconClass={item.color} collapsed={collapsed} />)}
+                <VipRow icon={Rocket} iconClass="text-sky-500" label="Management" collapsed={collapsed}>
+                  {managementItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
+                </VipRow>
                 <VipRow icon={Clock} iconClass="text-pink-600" label="Tracker" collapsed={collapsed}>
                   {trackerItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
                 </VipRow>
-              </ul>
-            </div>
-
-            {/* Client */}
-            <div className={`px-2 py-1 ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
-              <GroupLabel collapsed={collapsed}>Client</GroupLabel>
-              <ul className={`space-y-px w-full ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
-                {clientItems.map((item) => <VipFlatItem key={item.title} {...item} iconClass={item.color} collapsed={collapsed} />)}
-              </ul>
-            </div>
-
-            {/* Contracts */}
-            <div className={`px-2 py-1 ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
-              <GroupLabel collapsed={collapsed}>Contracts</GroupLabel>
-              <ul className={`space-y-px w-full ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
-                <VipRow icon={FileText} iconClass="text-amber-500" label="Contracts" collapsed={collapsed}>
+                <VipRow icon={Users} iconClass="text-purple-500" label="Client" collapsed={collapsed}>
+                  {clientItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
+                </VipRow>
+                <VipRow icon={ScrollText} iconClass="text-amber-500" label="Contracts" collapsed={collapsed}>
                   {contractsItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
                 </VipRow>
               </ul>
             </div>
 
-            {/* Collapsible sections */}
+            {/* ── Marketing group ── */}
             <div className={`px-2 py-1 ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
+              <GroupLabel collapsed={collapsed}>Marketing</GroupLabel>
               <ul className={`space-y-px w-full ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
-                <VipRow icon={Wand2} iconClass="text-pink-500" label="Tools" collapsed={collapsed}>
+                <VipRow icon={Sparkles} iconClass="text-pink-700" label="Tools" collapsed={collapsed}>
                   {toolsItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
                 </VipRow>
                 <VipRow icon={Megaphone} iconClass="text-orange-500" label="Ads" collapsed={collapsed}>
@@ -652,71 +656,67 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 <VipRow icon={Video} iconClass="text-orange-500" label="Content Creation" collapsed={collapsed}>
                   {contentCreationItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
                 </VipRow>
+              </ul>
+            </div>
+
+            {/* ── AI Production group ── */}
+            <div className={`px-2 py-1 ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
+              <GroupLabel collapsed={collapsed}>AI Production</GroupLabel>
+              <ul className={`space-y-px w-full ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
                 <VipRow icon={CircleUser} iconClass="text-indigo-500" label="AI Avatar" collapsed={collapsed}>
                   {aiAvatarItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
                 </VipRow>
+                <VipRow icon={Wand2} iconClass="text-purple-500" label="Generation" collapsed={collapsed}>
+                  {generationDropdownItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
+                </VipRow>
+              </ul>
+            </div>
+
+            {/* ── Others group ── */}
+            <div className={`px-2 py-1 ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
+              <GroupLabel collapsed={collapsed}>Others</GroupLabel>
+              <ul className={`space-y-px w-full ${collapsed ? 'flex flex-col items-center gap-1' : ''}`}>
                 <VipRow icon={Archive} iconClass="text-purple-500" label="OLD" labelClass="text-purple-400" collapsed={collapsed}>
                   {oldItems.map((item) => <VipItem key={item.title} {...item} iconClass={item.color} />)}
                 </VipRow>
               </ul>
             </div>
 
-            {/* ── Nexus entry ── */}
-            <div className={`px-2 py-1 border-t border-[hsl(240,3.7%,15.9%)] mt-1 ${collapsed ? 'flex justify-center' : ''}`}>
-              <ul className="space-y-px w-full">
-                <li className="list-none">
-                  <div
-                    className={`flex items-center overflow-hidden rounded-md outline-none transition-colors bg-[hsl(240,3.7%,15.9%)] font-medium ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-left text-sm'}`}
-                    title={collapsed ? 'Nexus' : undefined}
-                  >
-                    <div className="size-4 shrink-0 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
-                      <span className="text-[8px] font-bold text-white leading-none">N</span>
-                    </div>
-                    {!collapsed && <span className="flex-1 truncate">Nexus</span>}
-                    {!collapsed && <ChevronRight className="ml-auto size-4 shrink-0 text-[hsl(240,5.3%,26.1%)]" />}
-                  </div>
-                </li>
-              </ul>
-            </div>
           </div>
 
-            <div className="border-t border-[hsl(240,3.7%,15.9%)] px-2 py-2 shrink-0 space-y-px flex flex-col items-center">
-              <button 
-                disabled={isSyncing}
-                onClick={async () => {
-                  if (isSyncing) return;
-                  setIsSyncing(true);
-                  try {
-                    await spacesApi.syncClients();
-                    alert('Clients synced successfully!');
-                    loadSpaces();
-                  } catch (e) {
-                    alert('Failed to sync clients.');
-                  } finally {
-                    setIsSyncing(false);
-                  }
-                }}
-                title={collapsed ? 'Sync Clients' : undefined} 
-                className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'} ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                <RefreshCcw className={`size-4 shrink-0 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
-                {!collapsed && <span>{isSyncing ? 'Syncing...' : 'Sync Clients'}</span>}
-              </button>
-              <button title={collapsed ? 'Toggle Theme' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
-                <Moon className="size-4 shrink-0 text-purple-400" />
-                {!collapsed && <span>Toggle Theme</span>}
-              </button>
-              <button onClick={() => setIsApiSettingsOpen(true)} title={collapsed ? 'API Integrations' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
-                <Code className="size-4 shrink-0 text-cyan-400" />
-                {!collapsed && <span>API Integrations</span>}
-              </button>
-              <button title={collapsed ? 'Sign Out' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
-                <LogOut className="size-4 shrink-0 text-red-500" />
-                {!collapsed && <span>Sign Out</span>}
-              </button>
+          {/* Footer — matches VIPScale: DM Agent, Nexus (highlighted), Toggle Theme, Sign Out */}
+          <div className="px-2 py-2 shrink-0 space-y-px flex flex-col items-center">
+            <a
+              href="https://dm-agent.vipscaleph.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              title={collapsed ? 'DM Agent' : undefined}
+              className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}
+            >
+              <Bot className="size-4 shrink-0 text-fuchsia-500" style={{ fill: 'currentColor' }} />
+              {!collapsed && <span>DM Agent</span>}
+            </a>
+            <div
+              title={collapsed ? 'Nexus' : undefined}
+              className={`flex items-center overflow-hidden rounded-md outline-none font-medium bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}
+            >
+              <div className="size-4 shrink-0 rounded bg-indigo-500 flex items-center justify-center">
+                <span className="text-[10px] font-bold text-white leading-none">N</span>
+              </div>
+              {!collapsed && <span className="flex-1 truncate">Nexus</span>}
             </div>
+            <button title={collapsed ? 'Toggle Theme' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
+              <Moon className="size-4 shrink-0 text-purple-400" />
+              {!collapsed && <span>Toggle Theme</span>}
+            </button>
+            <button title={collapsed ? 'Sign Out' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
+              <LogOut className="size-4 shrink-0 text-red-500" />
+              {!collapsed && <span>Sign Out</span>}
+            </button>
+          </div>
         </div>
       </div>
+
 
       {/* ── SECONDARY Nexus Sub-Sidebar ───────────────────────── */}
       <div className="h-full w-56 bg-[hsl(240,5.9%,10%)] border-r border-[hsl(240,3.7%,15.9%)] flex flex-col text-[hsl(240,4.8%,95.9%)] shrink-0 transition-all duration-300 ease-in-out">

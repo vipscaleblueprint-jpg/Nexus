@@ -73,6 +73,18 @@ export const TaskMention = Mention.extend({
           if (!attributes.taskHasDescription) return {};
           return { 'data-task-has-description': 'true' };
         },
+      },
+      frozenTaskData: {
+        default: null,
+        parseHTML: element => {
+          const attr = element.getAttribute('data-task-data');
+          if (!attr) return null;
+          try { return JSON.parse(attr); } catch(e) { return null; }
+        },
+        renderHTML: attributes => {
+          if (!attributes.frozenTaskData) return {};
+          return { 'data-task-data': typeof attributes.frozenTaskData === 'object' ? JSON.stringify(attributes.frozenTaskData) : attributes.frozenTaskData };
+        }
       }
     };
   },
@@ -103,7 +115,8 @@ export const TaskMention = Mention.extend({
           'data-task-priority': node.attrs.taskPriority || '',
           'data-task-due-date': node.attrs.taskDueDate || '',
           'data-task-team': node.attrs.taskTeam || '',
-          'data-task-has-description': node.attrs.taskHasDescription ? 'true' : ''
+          'data-task-has-description': node.attrs.taskHasDescription ? 'true' : '',
+          'data-task-data': node.attrs.frozenTaskData ? (typeof node.attrs.frozenTaskData === 'object' ? JSON.stringify(node.attrs.frozenTaskData) : node.attrs.frozenTaskData) : ''
         }
       ),
       node.attrs.label || node.attrs.id

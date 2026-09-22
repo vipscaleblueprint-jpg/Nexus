@@ -159,6 +159,7 @@ model ListStatus {
   listId       String
   createdAt    DateTime @default(now())
   groupName    String?
+  order        Int      @default(0)
   list         List     @relation(fields: [listId], references: [id], onDelete: Cascade)
 
   @@index([listId])
@@ -180,6 +181,7 @@ model Doc {
   pages            Page[]
   teamId           String?
   team             Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  assigneeRoleRestrictions String[] @default([])
 
   @@index([spaceId])
   @@index([folderId])

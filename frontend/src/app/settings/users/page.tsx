@@ -15,7 +15,10 @@ import {
   ExternalLink,
   Pencil,
   Copy,
-  Check
+  Check,
+  ChevronUp,
+  ChevronDown,
+  Filter
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { usersApi } from '@/api/users';
@@ -216,6 +219,12 @@ export default function UsersSettingsPage() {
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'users' | 'roles'>('users');
 
+  type SortColumn = 'name' | 'employment' | 'rating';
+  const [sortColumn, setSortColumn] = useState<SortColumn>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [roleFilter, setRoleFilter] = useState<string>('ALL');
+  const [employmentFilter, setEmploymentFilter] = useState<string>('ALL');
+
   // Modals state
   const [isAddInviteOpen, setIsAddInviteOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -314,17 +323,40 @@ export default function UsersSettingsPage() {
     );
   }
 
-  const filteredUsers = users.filter(
-    (u) =>
-      u.email.toLowerCase().includes(search.toLowerCase()) ||
-      u.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredUsers = users.filter((u) => {
+    const matchesSearch = u.email.toLowerCase().includes(search.toLowerCase()) || u.name.toLowerCase().includes(search.toLowerCase());
+    const matchesRole = roleFilter === 'ALL' || [u.primaryRole, u.secondaryRole, u.tertiaryRole, u.minorRole].includes(roleFilter);
+    const matchesEmployment = employmentFilter === 'ALL' || u.employmentType === employmentFilter;
+    return matchesSearch && matchesRole && matchesEmployment;
+  });
 
   const sortedUsers = [...filteredUsers].sort((a, b) => {
-    if (a.systemRole === 'ADMIN' && b.systemRole !== 'ADMIN') return -1;
-    if (b.systemRole === 'ADMIN' && a.systemRole !== 'ADMIN') return 1;
-    return a.name.localeCompare(b.name);
+    let comparison = 0;
+    if (sortColumn === 'name') {
+      if (a.systemRole === 'ADMIN' && b.systemRole !== 'ADMIN') return sortDirection === 'asc' ? -1 : 1;
+      if (b.systemRole === 'ADMIN' && a.systemRole !== 'ADMIN') return sortDirection === 'asc' ? 1 : -1;
+      comparison = a.name.localeCompare(b.name);
+    } else if (sortColumn === 'employment') {
+      comparison = (a.employmentType || '').localeCompare(b.employmentType || '');
+    } else if (sortColumn === 'rating') {
+      comparison = (a.starRating || 0) - (b.starRating || 0);
+    }
+    return sortDirection === 'asc' ? comparison : -comparison;
   });
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const renderSortIcon = (column: SortColumn) => {
+    if (sortColumn !== column) return <ChevronDown className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100" />;
+    return sortDirection === 'asc' ? <ChevronUp className="w-3 h-3 text-indigo-400" /> : <ChevronDown className="w-3 h-3 text-indigo-400" />;
+  };
 
   const displayedInvites = showAllInvites ? invitations : invitations.slice(0, 5);
 
@@ -368,7 +400,31 @@ export default function UsersSettingsPage() {
 
       {activeTab === 'users' && (
         <div className="space-y-8">
-          <div className="flex justify-end">
+          <div className="flex flex-col sm:flex-row justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  className="pl-8 pr-8 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 appearance-none cursor-pointer"
+                >
+                  <option value="ALL">All Roles</option>
+                  {Object.keys(ROLE_COLORS).map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div className="relative">
+                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+                <select
+                  value={employmentFilter}
+                  onChange={(e) => setEmploymentFilter(e.target.value)}
+                  className="pl-8 pr-8 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 appearance-none cursor-pointer"
+                >
+                  <option value="ALL">All Employment Types</option>
+                  {Object.keys(EMPLOYMENT_LABEL).map(e => <option key={e} value={e}>{EMPLOYMENT_LABEL[e]}</option>)}
+                </select>
+              </div>
+            </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <input
@@ -381,24 +437,146 @@ export default function UsersSettingsPage() {
             </div>
           </div>
 
-      {/* Grid */}
-      {sortedUsers.length === 0 ? (
-        <div className="flex items-center justify-center py-20 text-zinc-600 text-sm">No members found.</div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {sortedUsers.map((user) => (
-            <MemberCard 
-              key={user.id} 
-              user={user} 
-              currentUser={currentUser}
-              onEdit={(u) => setEditingUser(u)} 
-              onDelete={(u) => setDeletingUser(u)}
-              onCopyEmail={handleCopyEmail}
-              copiedEmail={copiedEmail}
-            />
-          ))}
-        </div>
-      )}
+          {/* Members Table */}
+          <div className="bg-[#18181c] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-zinc-800/80 text-zinc-400 font-semibold text-[11px] bg-zinc-900/20">
+                    <th className="px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('name')}>
+                      <div className="flex items-center gap-1.5">User {renderSortIcon('name')}</div>
+                    </th>
+                    <th className="px-6 py-3.5 font-medium">System Role</th>
+                    <th className="px-6 py-3.5 font-medium">Job Roles</th>
+                    <th className="px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('employment')}>
+                      <div className="flex items-center gap-1.5">Employment {renderSortIcon('employment')}</div>
+                    </th>
+                    <th className="px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('rating')}>
+                      <div className="flex items-center gap-1.5">Rating {renderSortIcon('rating')}</div>
+                    </th>
+                    <th className="px-6 py-3.5 font-medium">Daily Sheet</th>
+                    <th className="px-6 py-3.5 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/60">
+                  {sortedUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-10 text-center text-zinc-500 italic">
+                        No members found.
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedUsers.map((user) => {
+                      const initials = user.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+                      const roles = [user.primaryRole, user.secondaryRole, user.tertiaryRole, user.minorRole].filter(Boolean) as string[];
+                      const isCurrent = currentUser?.id === user.id;
+
+                      return (
+                        <tr key={user.id} className="hover:bg-zinc-800/30 transition-colors group">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              {user.avatarUrl ? (
+                                <img src={user.avatarUrl} alt={user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                                  {initials}
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-bold text-white text-xs">{user.name} {isCurrent && '(You)'}</div>
+                                <div className="text-[10px] text-zinc-500">{user.email}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            {user.systemRole === 'ADMIN' ? (
+                              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                                ADMIN
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                                {user.systemRole || 'MEMBER'}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div 
+                              className="flex items-center flex-wrap gap-1.5 cursor-pointer p-1 -m-1 hover:bg-zinc-800/50 rounded transition-colors"
+                              onClick={() => setEditingUser(user)}
+                              title="Click to assign roles"
+                            >
+                              {roles.length > 0 ? (
+                                roles.map((role) => (
+                                  <span key={role} className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${ROLE_COLORS[role] ?? 'bg-zinc-700 text-zinc-300 border-zinc-600'}`}>
+                                    {role}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[10px] text-zinc-500 italic flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
+                                  <Plus className="w-3 h-3" /> Assign
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-zinc-300 font-medium text-[11px]">
+                            {EMPLOYMENT_LABEL[user.employmentType] ?? user.employmentType}
+                          </td>
+                          <td className="px-6 py-4">
+                            <StarRating rating={user.starRating} />
+                          </td>
+                          <td className="px-6 py-4">
+                            {user.dailySheetUrl ? (
+                              <a
+                                href={user.dailySheetUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                              >
+                                Open <ExternalLink className="w-3 h-3" />
+                              </a>
+                            ) : (
+                              <span className="text-zinc-600">None</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <ActionMenu icon={<MoreHorizontal className="w-4 h-4 text-zinc-400" />}>
+                              <button
+                                onClick={() => setEditingUser(user)}
+                                className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700/80 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                              >
+                                <Pencil className="w-3.5 h-3.5 text-zinc-400" />
+                                Edit Roles
+                              </button>
+                              <button
+                                onClick={() => handleCopyEmail(user.email)}
+                                className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700/80 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                              >
+                                {copiedEmail === user.email ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5 text-zinc-400" />
+                                )}
+                                Copy Email
+                              </button>
+                              {!isCurrent && (
+                                <button
+                                  onClick={() => setDeletingUser(user)}
+                                  className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                  Remove User
+                                </button>
+                              )}
+                            </ActionMenu>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
       {/* Bottom Section: Invitations Card */}
       <div className="bg-[#18181c] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl mt-8">

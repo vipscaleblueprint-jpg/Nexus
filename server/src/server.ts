@@ -165,6 +165,18 @@ io.on('connection', (socket) => {
     socket.to(`list:${data.listId}`).emit('list:group_added', data.group);
   });
 
+  socket.on('reorder_groups', (data: { listId: string; customGroups: string[] }) => {
+    socket.to(`list:${data.listId}`).emit('list:groups_reordered', data.customGroups);
+  });
+
+  socket.on('delete_group', (data: { listId: string; group: string }) => {
+    socket.to(`list:${data.listId}`).emit('list:group_deleted', data.group);
+  });
+
+  socket.on('rename_group', (data: { listId: string; oldName: string; newName: string }) => {
+    socket.to(`list:${data.listId}`).emit('list:group_renamed', data);
+  });
+
   // Handle task activity broadcast
   socket.on('task_activity', (data: { listId: string; taskId: string; activity: any }) => {
     socket.to(`list:${data.listId}`).emit('task_activity', data);

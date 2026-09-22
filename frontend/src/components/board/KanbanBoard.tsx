@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   DndContext,
@@ -20,8 +21,9 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
-import { Plus, ChevronDown, ChevronRight, X, GripVertical, Trash2 } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil } from 'lucide-react';
 import { getRoles } from '@/api/roles';
+import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { canUserMoveTask, canUserEditTask } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
@@ -41,52 +43,35 @@ interface Props {
   onStatusChange?: (status: string, data: { name?: string, color?: string, allowedRoles?: string[], groupName?: string }) => void | Promise<void>;
   onStatusDelete?: (statusName: string) => void | Promise<void>;
   onDeleteGroup?: (groupName: string) => void;
-  onStatusReorder?: (activeStatus: string, overStatus: string) => void;
+  onRenameGroup?: (oldName: string, newName: string) => void | Promise<void>;
+  onStatusReorder?: (activeStatus: string, overStatus: string, isOverGroup?: boolean, newGroupName?: string) => void;
 }
 
-const CATEGORIES = [
-  {
-    id: 'client_details',
-    title: 'Client Details',
+const GROUP_STYLES: Record<string, { badgeClass: string; borderColor: string; icon: string }> = {
+  'Client Details': {
     badgeClass: 'bg-cyan-500/15 text-cyan-300',
     borderColor: 'rgba(6, 182, 212, 0.5)',
     icon: '👤',
-    statuses: ['KYC', 'Pin Board'],
   },
-  {
-    id: 'recurring',
-    title: 'Recurring',
+  'Recurring': {
     badgeClass: 'bg-purple-500/15 text-purple-300',
     borderColor: 'rgba(168, 85, 247, 0.5)',
     icon: '🔁',
-    statuses: ['Daily', 'Weekly', 'Monthly'],
   },
-  {
-    id: 'workflow',
-    title: 'Workflow & Progress',
+  'Workflow & Progress': {
     badgeClass: 'bg-indigo-500/15 text-indigo-300',
     borderColor: 'rgba(99, 102, 241, 0.5)',
     icon: '⚡',
-    statuses: [
-      'Pending',
-      'In Progress',
-      'Revision',
-      'Waiting',
-      'In Review',
-      'Checking',
-      'On-Hold',
-      'Closed',
-    ],
-  },
-];
-
-const ALL_CONFIGURED_STATUSES = CATEGORIES.flatMap((c) => c.statuses);
+  }
+};
 
 const SortableGroupWrapper = memo(function SortableGroupWrapper({
   category,
+  activeGroup,
   children,
 }: {
   category: any;
+  activeGroup: any;
   children: (sortable: any) => React.ReactNode;
 }) {
   const isSortable = !category.isCatchAll;
@@ -100,7 +85,7 @@ const SortableGroupWrapper = memo(function SortableGroupWrapper({
   const style = {
     transform: CSS.Transform.toString(sortable.transform),
     transition: sortable.transition,
-    opacity: sortable.isDragging ? 0.3 : 1,
+    opacity: sortable.isDragging || activeGroup?.id === category.id ? 0.3 : 1,
   };
 
   return (
@@ -134,7 +119,8 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   hasMarginRight,
   groupRunCount,
   isCollapsedGroupLeader,
-  statusesInRun
+  statusesInRun,
+  activeColumn
 }: any) {
   const dbStatus = listStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
   const permissionCheck = canUserMoveTask({ status } as any, listStatuses, currentUser, workspaceRoles);
@@ -187,17 +173,19 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
     disabled: isCollapsed,
   });
 
+  const isGhost = sortable.isDragging || activeColumn === status;
+
   const style = {
     transform: CSS.Transform.toString(sortable.transform),
-    transition: sortable.transition,
-    opacity: sortable.isDragging ? 0.3 : 1,
+    transition: sortable.transition ? `${sortable.transition}, opacity 300ms, width 300ms` : 'opacity 300ms, width 300ms',
+    opacity: isGhost ? 0.3 : 1,
   };
 
   return (
     <div 
       ref={sortable.setNodeRef}
       style={style}
-      className={`h-full transition-all duration-300 ${hasMarginRight ? 'mr-4' : ''} ${sortable.isDragging ? 'z-50 relative' : ''}`}
+      className={`h-full ${hasMarginRight ? 'mr-4' : ''} ${isGhost ? 'z-50 relative' : ''}`}
     >
       <KanbanColumn
         status={status}
@@ -220,6 +208,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
         onDeleteColumn={onStatusDelete}
         dragListeners={sortable.listeners}
         dragAttributes={sortable.attributes}
+        isOver={sortable.isOver}
       />
     </div>
   );
@@ -228,27 +217,52 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
 export function KanbanBoard({ tasks,  onTaskMove,
   onTaskMovePreview,
   onTaskReorder,
-  onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete, onDeleteGroup, onStatusReorder }: Props) {
+  onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete, onDeleteGroup, onRenameGroup, onStatusReorder }: Props) {
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAppStore((s) => s.currentUser);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
+  const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
+  
+  const [openGroupMenu, setOpenGroupMenu] = useState<string | null>(null);
+  const [openGroupMenuRect, setOpenGroupMenuRect] = useState<DOMRect | null>(null);
+  const [editingGroup, setEditingGroup] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
+  const [groupToDelete, setGroupToDelete] = useState<string | null>(null);
   
   // Keep track of the latest tasks prop to merge missed websocket updates after drag
   const latestTasksRef = useRef(tasks);
   latestTasksRef.current = tasks;
   
+  const [localStatuses, setLocalStatuses] = useState(listStatuses);
+
+  // Maintain stable IDs for groups so they don't unmount when renamed
+  const groupIdMapRef = useRef<Record<string, string>>({});
+
   // Track dragging state in a ref so it doesn't trigger effect runs
   const isDraggingRef = useRef(false);
 
+  // Close dropdown on outside click or scroll
+  useEffect(() => {
+    if (!openGroupMenu) return;
+    
+    const handleClose = () => setOpenGroupMenu(null);
+    window.addEventListener('click', handleClose);
+    window.addEventListener('scroll', handleClose, true);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('scroll', handleClose, true);
+    };
+  }, [openGroupMenu]);
+
   useEffect(() => {
     if (!isDraggingRef.current) {
-
       setLocalTasks(tasks);
+      setLocalStatuses(listStatuses);
     }
-  }, [tasks]);
+  }, [tasks, listStatuses]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -386,111 +400,46 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
   // Group columns into configured categories + dynamic custom groups
   const categorizedColumns = useMemo(() => {
-    const configuredStatusNames = new Set(ALL_CONFIGURED_STATUSES);
     const sections: any[] = [];
-    const presetTitles = CATEGORIES.map((cat) => cat.title);
+    const processedStatuses = new Set<string>();
 
-    // 1. Predefined categories
-    CATEGORIES.forEach((cat) => {
-      // If listStatuses exists, only keep default statuses that still exist in the DB (haven't been deleted/renamed)
-      const validStatusesForCat = listStatuses.length > 0 
-        ? cat.statuses.filter(statusName => listStatuses.some(s => (s.name || '').trim().toUpperCase() === statusName.toUpperCase()))
-        : cat.statuses;
-
-      const dynamicStatusesForCat = listStatuses
-        .filter((s) => s.groupName === cat.title && !cat.statuses.includes(s.name))
-        .map((s) => s.name);
-        
-      dynamicStatusesForCat.forEach(s => configuredStatusNames.add(s));
+    // 1. Process customGroups in exact order from DB
+    customGroups.forEach((groupName) => {
+      const groupStatuses = localStatuses
+        .filter((s: any) => s.groupName === groupName)
+        .map((s: any) => s.name);
       
-      const unorderedStatuses = [...validStatusesForCat, ...dynamicStatusesForCat];
-      // Sort statuses based on their actual order in listStatuses (which reflects DB insertion order)
-      const orderedStatuses = unorderedStatuses.sort((a, b) => {
-        const indexA = listStatuses.findIndex(s => s.name === a);
-        const indexB = listStatuses.findIndex(s => s.name === b);
-        if (indexA === -1 || indexB === -1) return 0;
-        return indexA - indexB;
-      });
-
-      sections.push({
-        id: `preset_${cat.id}`,
-        title: cat.title,
-        badgeClass: cat.badgeClass,
-        borderColor: cat.borderColor,
-        icon: cat.icon,
-        statuses: orderedStatuses,
-        isPreset: true,
-      });
-    });
-
-    // 2. Custom groups
-    const purelyCustomGroups = customGroups.filter(g => !presetTitles.includes(g));
-
-    purelyCustomGroups.forEach((groupName) => {
-      const groupStatuses = listStatuses
-        .filter((s) => s.groupName === groupName)
-        .map((s) => s.name);
-      
-      sections.push({
-        id: `group_${groupName.replace(/\s+/g, '_').toLowerCase()}`,
-        title: groupName,
+      const styles = GROUP_STYLES[groupName] || {
         badgeClass: 'bg-zinc-500/15 text-zinc-300',
         borderColor: 'rgba(113, 113, 122, 0.5)',
         icon: '📌',
+      };
+
+      if (!groupIdMapRef.current[groupName]) {
+        groupIdMapRef.current[groupName] = `group_${groupName.toLowerCase().replace(/\s+/g, '_')}_${Math.random().toString(36).substr(2, 6)}`;
+      }
+
+      sections.push({
+        id: groupIdMapRef.current[groupName],
+        title: groupName,
+        ...styles,
         statuses: groupStatuses,
-        isPreset: false,
+        isPreset: false, // Everything is fully custom and deletable now
       });
 
-      groupStatuses.forEach((s) => configuredStatusNames.add(s));
+      groupStatuses.forEach((s) => processedStatuses.add(s));
     });
 
-    // Build a master order for groups
-    const masterOrder: string[] = [];
-    presetTitles.forEach(pt => {
-      if (!customGroups.includes(pt)) masterOrder.push(pt);
-    });
-    customGroups.forEach(g => {
-      if (!masterOrder.includes(g)) masterOrder.push(g);
-    });
-    
-    // Catch groups that are in listStatuses but not in customGroups
-    const dynamicGroupNames = new Set(listStatuses.map(s => s.groupName).filter(Boolean));
-    dynamicGroupNames.forEach(dg => {
-      if (dg && !masterOrder.includes(dg)) {
-        masterOrder.push(dg);
-        
-        // Ensure it's added to sections too if it wasn't
-        if (!presetTitles.includes(dg) && !purelyCustomGroups.includes(dg)) {
-          const groupStatuses = listStatuses.filter((s) => s.groupName === dg).map((s) => s.name);
-          sections.push({
-            id: `group_${dg.replace(/\s+/g, '_').toLowerCase()}`,
-            title: dg,
-            badgeClass: 'bg-zinc-500/15 text-zinc-300',
-            borderColor: 'rgba(113, 113, 122, 0.5)',
-            icon: '📌',
-            statuses: groupStatuses,
-            isPreset: false,
-          });
-          groupStatuses.forEach((s) => configuredStatusNames.add(s));
-        }
-      }
-    });
-
-    // 3. Sort sections based on master order
-    const sortedSections = [...sections].sort((a, b) => {
-      return masterOrder.indexOf(a.title) - masterOrder.indexOf(b.title);
-    });
-
-    // 4. Catch-all for any task status or db status that doesn't belong to any group
+    // 2. Catch-all for any task status or db status that doesn't belong to any group at all
     const activeCustom = Array.from(
       new Set([
-        ...Object.keys(tasksByStatus).filter((s) => !configuredStatusNames.has(s)),
-        ...listStatuses.filter(s => !s.groupName && !configuredStatusNames.has(s.name)).map(s => s.name),
+        ...Object.keys(tasksByStatus).filter((s) => !processedStatuses.has(s)),
+        ...localStatuses.filter((s: any) => !processedStatuses.has(s.name)).map((s: any) => s.name),
       ])
     );
 
     if (activeCustom.length > 0) {
-      sortedSections.push({
+      sections.push({
         id: 'custom_catchall',
         title: 'Other Statuses',
         badgeClass: 'bg-zinc-500/15 text-zinc-300',
@@ -501,8 +450,8 @@ export function KanbanBoard({ tasks,  onTaskMove,
       });
     }
 
-    return sortedSections;
-  }, [tasksByStatus, customGroups, listStatuses]);
+    return sections;
+  }, [tasksByStatus, customGroups, localStatuses]);
 
   const sortableColumnIds = useMemo(() => {
     return categorizedColumns.filter(c => !c.isCatchAll).map(c => c.id);
@@ -552,12 +501,17 @@ export function KanbanBoard({ tasks,  onTaskMove,
     isDraggingRef.current = true;
     const { active } = event;
     
-    if (active.data.current?.type === 'Group') {
-      const groupName = active.data.current.groupName;
+    if (active.data?.current?.type === 'Group') {
+      const groupName = active.data?.current?.groupName;
       const category = categorizedColumns.find(c => c.title === groupName);
       if (category) {
         setActiveGroup(category);
       }
+      return;
+    }
+
+    if (active.data?.current?.type === 'Column') {
+      setActiveColumn(active.id as string);
       return;
     }
 
@@ -583,18 +537,72 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
     if (!over) return;
     
-    if (active.data.current?.type === 'Group') return;
+    if (active.data?.current?.type === 'Group') {
+      return;
+    }
 
     const activeId = active.id as string;
     const overId = over.id as string;
 
     if (activeId === overId) return;
 
+    if (active.data?.current?.type === 'Column') {
+      let newGroupName = '';
+      const isOverGroup = over.data?.current?.type === 'Group';
+      
+      if (isOverGroup) {
+        newGroupName = over.data?.current?.groupName;
+      } else {
+        const overCat = categorizedColumns.find(c => c.statuses.includes(overId));
+        newGroupName = overCat ? overCat.title : '';
+      }
+
+      setLocalStatuses((prev: any) => {
+        const oldIndex = prev.findIndex((s: any) => s.name === activeId);
+        let newIndex = prev.findIndex((s: any) => s.name === overId);
+
+        if (oldIndex !== -1) {
+          const oldGroupName = prev[oldIndex].groupName || '';
+          
+          // IMPORTANT: If dragging WITHIN the same group, DO NOT mutate the array during onDragOver!
+          // dnd-kit's SortableContext relies on CSS transforms to simulate the swap visually.
+          // Mutating the array breaks the transforms and causes ghosts to get stuck.
+          if (oldGroupName === newGroupName && !isOverGroup) {
+            return prev;
+          }
+
+          const newStatuses = [...prev];
+          let [removed] = newStatuses.splice(oldIndex, 1);
+          
+          if (newGroupName && removed.groupName !== newGroupName) {
+            removed = { ...removed, groupName: newGroupName };
+          }
+          
+          if (isOverGroup) {
+            const groupStatuses = newStatuses.filter(s => s.groupName === newGroupName);
+            if (groupStatuses.length > 0) {
+              const lastItem = groupStatuses[groupStatuses.length - 1];
+              newIndex = newStatuses.findIndex(s => s.name === lastItem.name) + 1;
+            } else {
+              newIndex = newStatuses.length;
+            }
+          }
+
+          if (newIndex !== -1) {
+            newStatuses.splice(newIndex, 0, removed);
+            return newStatuses;
+          }
+        }
+        return prev;
+      });
+      return;
+    }
+
     const activeTaskIndex = localTasks.findIndex(t => t.id === activeId);
     if (activeTaskIndex === -1) return;
     const activeTask = localTasks[activeTaskIndex];
 
-    let overStatus = over.data?.current?.status;
+    let overStatus = over.data?.current?.type === 'ColumnDrop' ? over.data?.current?.status : over.data?.current?.status;
     if (!overStatus) {
       const overTask = localTasks.find((t) => t.id === overId);
       if (overTask) overStatus = overTask.status;
@@ -619,17 +627,36 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
   const customCollisionDetection = useCallback((args: any) => {
     const isGroupDrag = args.active?.data?.current?.type === 'Group';
+    const isColumnDrag = args.active?.data?.current?.type === 'Column';
     
     if (isGroupDrag) {
-      const collisions = rectIntersection(args);
-      return collisions.filter((c: any) => c.data?.current?.type === 'Group' && c.id !== args.active?.id);
+      let collisions = pointerWithin(args);
+      if (collisions.length === 0) {
+        collisions = closestCenter(args);
+      }
+      const groupIds = categorizedColumns.map(c => c.id);
+      const valid = collisions.filter((c: any) => groupIds.includes(c.id));
+      return valid;
     }
     
-    // Allow columns to be dropped onto columns
-    if (args.active?.data?.current?.type === 'Column') {
-      const collisions = pointerWithin(args);
-      if (collisions.length > 0) return collisions.filter((c: any) => c.data?.current?.type === 'Column' && c.id !== args.active?.id);
-      return closestCenter(args).filter((c: any) => c.data?.current?.type === 'Column' && c.id !== args.active?.id);
+    // Allow columns to be dropped onto columns or groups (empty space)
+    if (isColumnDrag) {
+      // Use rectIntersection instead of pointerWithin so it requires significant overlap (not just the cursor position)
+      // This prevents the column from "jumping" into the next group when only 10% of it crosses the boundary.
+      const collisions = rectIntersection(args);
+      let valid: any[] = [];
+      
+      const columnIds = localStatuses.map((s: any) => s.name);
+      const groupIds = categorizedColumns.map(c => c.id);
+      
+      if (collisions.length > 0) valid = collisions.filter((c: any) => (columnIds.includes(c.id) || groupIds.includes(c.id)));
+      
+      if (valid.length === 0) {
+        const closest = closestCenter(args);
+        valid = closest.filter((c: any) => (columnIds.includes(c.id) || groupIds.includes(c.id)));
+      }
+      
+      return valid;
     }
     
     // For tasks, use pointerWithin to prevent layout shift infinite loops.
@@ -645,7 +672,8 @@ export function KanbanBoard({ tasks,  onTaskMove,
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     
-    if (active.data.current?.type === 'Group') {
+    if (active.data?.current?.type === 'Group') {
+      isDraggingRef.current = false;
       setActiveGroup(null);
       if (over && active.id !== over.id && onGroupReorder) {
         const draggableColumns = categorizedColumns.filter(c => !c.isCatchAll);
@@ -660,8 +688,9 @@ export function KanbanBoard({ tasks,  onTaskMove,
       return;
     }
 
-    if (active.data.current?.type === 'Column') {
+    if (active.data?.current?.type === 'Column') {
       isDraggingRef.current = false;
+      setActiveColumn(null);
       
       const activeStatusName = active.id as string;
       const overId = over?.id as string;
@@ -669,16 +698,18 @@ export function KanbanBoard({ tasks,  onTaskMove,
       if (!over || activeStatusName === overId) return;
 
       let newGroupName = '';
-      if (over.data.current?.type === 'Group') {
-        newGroupName = over.data.current.groupName;
-      } else if (over.data.current?.type === 'Column') {
+      const isOverGroup = over.data?.current?.type === 'Group';
+      if (isOverGroup) {
+        newGroupName = over.data?.current?.groupName;
+      } else if (over.data?.current?.type === 'Column') {
         const overCat = categorizedColumns.find(c => c.statuses.includes(overId));
         if (overCat) newGroupName = overCat.title;
       }
 
       if (newGroupName) {
-        const currentCat = categorizedColumns.find(c => c.statuses.includes(activeStatusName));
-        if (currentCat && currentCat.title !== newGroupName) {
+        // Compare against original listStatuses, because local categorizedColumns might already reflect the DragOver state
+        const originalStatus = listStatuses.find((s: any) => s.name === activeStatusName);
+        if (originalStatus && originalStatus.groupName !== newGroupName) {
           if (onStatusChange) {
             onStatusChange(activeStatusName, { groupName: newGroupName });
           }
@@ -686,7 +717,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       }
 
       if (onStatusReorder) {
-        onStatusReorder(activeStatusName, overId);
+        onStatusReorder(activeStatusName, overId, isOverGroup, newGroupName);
       }
       return;
     }
@@ -755,7 +786,9 @@ export function KanbanBoard({ tasks,  onTaskMove,
     isDraggingRef.current = false;
     setActiveTask(null);
     setActiveGroup(null);
+    setActiveColumn(null);
     setLocalTasks(latestTasksRef.current);
+    setLocalStatuses(listStatuses);
   };
 
   return (
@@ -779,7 +812,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       <div 
         ref={boardContainerRef}
         onWheel={handleWheelScroll}
-        className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 custom-scrollbar transition-all duration-300 ${!activeTask ? 'snap-x snap-mandatory' : ''}`}
+        className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 custom-scrollbar transition-all duration-300`}
       >
         <SortableContext 
           items={sortableColumnIds} 
@@ -793,7 +826,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
             );
 
             return (
-              <SortableGroupWrapper key={category.id} category={category}>
+              <SortableGroupWrapper key={category.id} category={category} activeGroup={activeGroup}>
                 {(sortable: any) => (
                   <>
                     {/* ── COLLAPSED: slim vertical pill ── */}
@@ -841,45 +874,139 @@ export function KanbanBoard({ tasks,  onTaskMove,
                           {...(category.id.startsWith('group_') ? sortable.attributes : {})}
                         >
                           <div className="flex items-center gap-1.5">
-                            <div 
-                               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/5"
-                               onClick={(e) => { e.stopPropagation(); toggleCategory(category.id); }}
-                               title="Collapse section"
-                               onMouseDown={(e) => e.stopPropagation()}
-                            >
-                              <span className="whitespace-nowrap text-zinc-300">{category.title}</span>
-                              <span className="opacity-60 shrink-0 text-zinc-400">({totalCategoryTasks})</span>
-                              <ChevronDown className="w-3 h-3 ml-1 opacity-70 shrink-0 text-zinc-400" />
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => {
-                                setAddingStatusToGroup(category.title);
-                                setNewStatusName('');
-                              }}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-300 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
-                            >
-                              Add status
-                            </button>
-                            {!category.isPreset && !category.isCatchAll && onDeleteGroup && (
-                              <button
-                                onClick={() => {
-                                  if (confirm(`Are you sure you want to delete the group "${category.title}"?`)) {
-                                    onDeleteGroup(category.title);
-                                  }
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                className="flex items-center justify-center p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
-                                title="Delete group"
+                            {editingGroup === category.title ? (
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  value={editingGroupName}
+                                  onChange={(e) => setEditingGroupName(e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onKeyDown={async (e) => {
+                                    e.stopPropagation();
+                                    if (e.key === 'Enter') {
+                                      const newName = editingGroupName.trim();
+                                      const oldName = category.title;
+                                      setEditingGroup(null);
+                                      if (newName && newName !== oldName && onRenameGroup) {
+                                        // Transfer the stable ID to prevent unmounting/flashing
+                                        if (groupIdMapRef.current[oldName]) {
+                                          groupIdMapRef.current[newName] = groupIdMapRef.current[oldName];
+                                        }
+                                        await onRenameGroup(oldName, newName);
+                                      }
+                                    } else if (e.key === 'Escape') {
+                                      setEditingGroup(null);
+                                    }
+                                  }}
+                                  onBlur={async () => {
+                                    if (editingGroup === category.title) {
+                                      const newName = editingGroupName.trim();
+                                      const oldName = category.title;
+                                      setEditingGroup(null);
+                                      if (newName && newName !== oldName && onRenameGroup) {
+                                        // Transfer the stable ID to prevent unmounting/flashing
+                                        if (groupIdMapRef.current[oldName]) {
+                                          groupIdMapRef.current[newName] = groupIdMapRef.current[oldName];
+                                        }
+                                        await onRenameGroup(oldName, newName);
+                                      }
+                                    }
+                                  }}
+                                  className="bg-zinc-800 text-[10px] font-bold uppercase tracking-wider text-white px-2 py-1 rounded outline-none w-40 border border-zinc-700 focus:border-indigo-500"
+                                />
+                            ) : (
+                              <div 
+                                 className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/5"
+                                 onClick={(e) => { e.stopPropagation(); toggleCategory(category.id); }}
+                                 title="Collapse section"
+                                 onMouseDown={(e) => e.stopPropagation()}
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                                <span className="whitespace-nowrap text-zinc-300">{category.title}</span>
+                                <span className="opacity-60 shrink-0 text-zinc-400">({totalCategoryTasks})</span>
+                                <div className="p-0.5 ml-1 rounded transition-all opacity-0 group-hover:opacity-100 hover:bg-zinc-700/50">
+                                  <ChevronDown className="w-3 h-3 shrink-0 text-zinc-400" />
+                                </div>
+                              </div>
                             )}
                           </div>
-                        </div>
+                          
+                          <div className="flex items-center gap-1 relative">
+                             <button
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 if (openGroupMenu === category.title) {
+                                   setOpenGroupMenu(null);
+                                   setOpenGroupMenuRect(null);
+                                 } else {
+                                   setOpenGroupMenu(category.title);
+                                   setOpenGroupMenuRect(e.currentTarget.getBoundingClientRect());
+                                 }
+                               }}
+                               onMouseDown={(e) => e.stopPropagation()}
+                               onPointerDown={(e) => e.stopPropagation()}
+                               className="p-1.5 hover:bg-white/10 rounded-md transition-colors cursor-pointer text-zinc-400 hover:text-white"
+                               title="Group options"
+                             >
+                               <MoreHorizontal className="w-4 h-4" />
+                             </button>
+
+                             {openGroupMenu === category.title && openGroupMenuRect && typeof window !== 'undefined' && createPortal(
+                               <div 
+                                 className="fixed w-40 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl z-[9999] py-1 animate-in fade-in zoom-in-95 duration-100"
+                                 style={{ 
+                                   top: openGroupMenuRect.bottom + 4,
+                                   left: openGroupMenuRect.right - 160 // 160px is w-40
+                                 }}
+                                 onClick={(e) => e.stopPropagation()}
+                                 onMouseDown={(e) => e.stopPropagation()}
+                                 onPointerDown={(e) => e.stopPropagation()}
+                               >
+                                 {!category.isCatchAll && (
+                                   <button
+                                     className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                                     onClick={() => {
+                                       setEditingGroup(category.title);
+                                       setEditingGroupName(category.title);
+                                       setOpenGroupMenu(null);
+                                       setOpenGroupMenuRect(null);
+                                     }}
+                                   >
+                                     <Pencil className="w-3.5 h-3.5" />
+                                     Rename
+                                   </button>
+                                 )}
+                                 <button
+                                   className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                                   onClick={() => {
+                                     setAddingStatusToGroup(category.title);
+                                     setNewStatusName('');
+                                     setOpenGroupMenu(null);
+                                     setOpenGroupMenuRect(null);
+                                   }}
+                                 >
+                                   <Plus className="w-3.5 h-3.5" />
+                                   Add status
+                                 </button>
+                                 {!category.isCatchAll && (
+                                   <button
+                                     className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 flex items-center gap-2 transition-colors cursor-pointer"
+                                     onClick={() => {
+                                       setOpenGroupMenu(null);
+                                       setOpenGroupMenuRect(null);
+                                       setGroupToDelete(category.title);
+                                     }}
+                                   >
+                                     <Trash2 className="w-3.5 h-3.5" />
+                                     Delete
+                                   </button>
+                                 )}
+                               </div>,
+                               document.body
+                             )}
+                           </div>
+                         </div>
 
                   {/* Columns inside the group */}
                   <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max">
@@ -935,6 +1062,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
                             groupRunCount={groupRunCount}
                             isCollapsedGroupLeader={isCollapsedGroupLeader}
                             statusesInRun={statusesInRun}
+                            activeColumn={activeColumn}
                           />
                         );
                       })}
@@ -1028,25 +1156,53 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
       <DragOverlay>
         {activeTask ? <KanbanCard task={activeTask} isOverlay /> : null}
+        {activeColumn ? (() => {
+           const dbStatus = listStatuses.find((s: any) => s.name === activeColumn);
+           return (
+             <div className="flex-shrink-0 flex items-stretch cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
+                <KanbanColumn
+                  status={activeColumn}
+                  tasks={tasksByStatus[activeColumn] || []}
+                  isCollapsed={false}
+                  onToggleCollapse={() => {}}
+                  customTheme={dbStatus?.color || columnThemes[activeColumn]}
+                  roleMap={roleMap}
+                  allowedRoles={dbStatus?.allowedRoles}
+                  listStatuses={listStatuses}
+                  isOverlay={true}
+                />
+             </div>
+           );
+        })() : null}
         {activeGroup ? (
-          <div className="flex-shrink-0 snap-start self-stretch flex items-stretch h-[500px]">
-             <div className="rounded-2xl border bg-[#18181c] h-full p-4 pt-3 flex flex-col shadow-2xl scale-105 opacity-90 cursor-grabbing" style={{ borderColor: activeGroup.borderColor }}>
+          <div className="flex-shrink-0 snap-start self-stretch flex items-stretch h-[500px] z-50 relative cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
+             <div className="rounded-2xl border bg-[#18181c] w-[320px] h-full p-4 pt-3 flex flex-col shadow-2xl" style={{ borderColor: activeGroup.borderColor }}>
                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg mb-3">
                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">{activeGroup.title}</span>
                </div>
                <div className="flex-1 flex gap-4">
-                 {activeGroup.statuses.slice(0, 3).map((status: string) => (
-                   <div key={status} className="w-[280px] h-full rounded-xl bg-white/5 border border-white/5 flex flex-col p-3">
-                     <div className="text-xs font-semibold text-zinc-500 mb-2">{status}</div>
-                     <div className="w-full h-20 bg-white/5 rounded-lg mb-2" />
-                     <div className="w-full h-24 bg-white/5 rounded-lg" />
-                   </div>
-                 ))}
+                 <div className="w-full h-full rounded-xl bg-white/5 border border-white/5 flex flex-col p-3">
+                    <div className="w-full h-20 bg-white/5 rounded-lg mb-2" />
+                    <div className="w-full h-24 bg-white/5 rounded-lg" />
+                 </div>
                </div>
              </div>
           </div>
         ) : null}
       </DragOverlay>
+
+      <ConfirmDeleteModal
+        isOpen={!!groupToDelete}
+        onClose={() => setGroupToDelete(null)}
+        onConfirm={async () => {
+          if (groupToDelete && onDeleteGroup) {
+            await onDeleteGroup(groupToDelete);
+          }
+          setGroupToDelete(null);
+        }}
+        title="Delete Group"
+        itemName={groupToDelete || ''}
+      />
     </DndContext>
   );
 }

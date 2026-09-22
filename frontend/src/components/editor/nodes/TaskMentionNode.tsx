@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { toast } from '@/lib/toast';
-import { Flag, User as UserIcon, CheckCircle2, AlignLeft, Shield } from 'lucide-react';
+import { Flag, User as UserIcon, CheckCircle2, AlignLeft, Shield, Check } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -33,11 +33,20 @@ const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
 
 export const TaskMentionNode = (props: NodeViewProps) => {
   const { node, updateAttributes } = props;
-  const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription } = node.attrs;
+  const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData } = node.attrs;
 
   const currentUser = useAppStore(s => s.currentUser);
   
-  const [taskData, setTaskData] = useState<any>(null);
+  let initialTaskData = null;
+  try {
+    if (typeof frozenTaskData === 'string' && frozenTaskData.startsWith('{')) {
+      initialTaskData = JSON.parse(frozenTaskData);
+    } else if (typeof frozenTaskData === 'object' && frozenTaskData !== null) {
+      initialTaskData = frozenTaskData;
+    }
+  } catch (e) {}
+
+  const [taskData, setTaskData] = useState<any>(initialTaskData);
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'priority' | 'description' | 'team' | null>(null);
   const [dbUsers, setDbUsers] = useState<any[]>([]);
   const [dbTeams, setDbTeams] = useState<any[]>([]);
@@ -83,28 +92,41 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           }
         } catch (e) {}
 
+        const oldFrozen = typeof frozenTaskData === 'string' ? frozenTaskData : JSON.stringify(frozenTaskData);
+        const newFrozen = JSON.stringify(task);
+
+        const currentPriority = taskPriority || null;
+        const currentTeam = node.attrs.taskTeam === 'null' ? null : node.attrs.taskTeam;
+        
         const shouldUpdate = currentStatusName !== task.status || 
-          taskPriority !== task.priority || 
+          currentPriority !== task.priority || 
           (!taskAssignees && task.assignees && task.assignees.length > 0) ||
           taskHasDescription !== !!task.description ||
-          node.attrs.taskTeam !== (task.team ? JSON.stringify(task.team) : '');
+          currentTeam !== (task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null) ||
+          oldFrozen !== newFrozen;
 
         if (shouldUpdate) {
-          try { updateAttributes({
-            taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
-            taskAssignees: JSON.stringify(task.assignees || []),
-            taskTeam: task.team ? JSON.stringify(task.team) : '',
-            taskPriority: task.priority || '',
-            taskHasDescription: !!task.description
-          }); } catch (e) {}
+          try { 
+            updateAttributes({
+              label: task.title,
+              taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
+              taskAssignees: JSON.stringify(task.assignees || []),
+              taskPriority: task.priority || null,
+              taskDueDate: task.dueDate || '',
+              taskTeam: task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null,
+              taskHasDescription: !!task.description,
+              frozenTaskData: task
+            }); 
+          } catch (e) {}
           setLocalStatus(JSON.stringify({ name: task.status, color: getStatusColor(task.status) }));
           setLocalAssignees(JSON.stringify(task.assignees || []));
-          setLocalTeam(task.team ? JSON.stringify(task.team) : '');
+          setLocalTeam(task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : '');
           setLocalPriority(task.priority || '');
         }
       }).catch(() => {});
     }
-  }, [id, mentionType, updateAttributes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, mentionType]);
 
   useEffect(() => {
     let cancelled = false;
@@ -285,6 +307,35 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         </span>
 
         <span 
+          ref={teamRef}
+          className="inline-flex items-center justify-center shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
+          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'team' ? null : 'team'); }}
+          title={taskData?.assigneeRoleRestrictions?.length ? taskData.assigneeRoleRestrictions.join(', ') : 'Assign Role'}
+        >
+          {(taskData?.assigneeRoleRestrictions && taskData.assigneeRoleRestrictions.length > 0) ? (
+            <span className="flex items-center">
+              {taskData.assigneeRoleRestrictions.map((role: string, i: number) => {
+                const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                const bgColor = colors[i % colors.length];
+                return (
+                  <div 
+                    key={role} 
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 border-white dark:border-[#1a1a1a] ${i > 0 ? '-ml-2' : ''} shadow-sm relative transition-transform ${bgColor}`}
+                    style={{ zIndex: 10 - i }}
+                    title={role}
+                  >
+                    {role.substring(0, 2).toUpperCase()}
+                  </div>
+                );
+              })}
+            </span>
+          ) : (
+            <span className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors">
+              <Shield className="w-3 h-3" />
+            </span>
+          )}
+        </span>
+        <span 
           ref={assigneesRef}
           className="inline-flex items-center -space-x-1 shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
@@ -311,25 +362,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           ) : (
             <span className="w-5 h-5 rounded-full border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 hover:text-zinc-200 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors">
               <UserIcon className="w-3 h-3" />
-            </span>
-          )}
-        </span>
-        <span 
-          ref={teamRef}
-          className="inline-flex items-center justify-center shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
-          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'team' ? null : 'team'); }}
-          title={team ? team.name : 'Assign Team'}
-        >
-          {team ? (
-            <span 
-              className="px-1.5 py-[1px] rounded text-[9px] font-bold uppercase tracking-wider text-white"
-              style={{ backgroundColor: team.color || '#52525b' }}
-            >
-              {team.name.substring(0, 3)}
-            </span>
-          ) : (
-            <span className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors">
-              <Shield className="w-3 h-3" />
             </span>
           )}
         </span>
@@ -423,27 +455,84 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
       {openDropdown === 'team' && (
         <PortalDropdown triggerRef={teamRef} onClose={() => setOpenDropdown(null)}>
-          <div className="w-48 py-1 max-h-60 overflow-y-auto custom-scrollbar">
-            <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Assign Team</div>
-            <button
-               onClick={() => handleTeamChange(null)}
-               className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group"
-            >
-               <Shield className="w-4 h-4 text-zinc-500" />
-               <span className="text-zinc-300">None</span>
-               {!team && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto shrink-0" />}
-            </button>
-            {dbTeams.map(t => (
-              <button
-                key={t.id}
-                onClick={() => handleTeamChange(t)}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group"
-              >
-                <div className="w-4 h-4 rounded" style={{ backgroundColor: t.color || '#52525b' }} />
-                <span className="text-zinc-300 group-hover:text-white transition-colors truncate">{t.name}</span>
-                {team?.id === t.id && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto shrink-0" />}
-              </button>
-            ))}
+          <div className="bg-[#1c1c1e] border border-zinc-800/60 rounded-xl shadow-2xl w-64 p-2 z-[100] animate-in fade-in zoom-in-95 duration-100">
+            <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+              {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+              <div className="flex flex-col gap-3 mt-1">
+                {dbTeams.map(t => (
+                  <div key={t.id} className="flex flex-col">
+                    {(() => {
+                      const teamRoles = t.teamRoles || [];
+                      const current = taskData?.assigneeRoleRestrictions || [];
+                      const hasRoles = teamRoles.length > 0;
+                      const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                      const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                      
+                      return (
+                            <div 
+                              onClick={() => {
+                                if (!hasRoles) return;
+                                let next = [...current];
+                                if (allSelected) {
+                                  next = next.filter((r: string) => !teamRoles.find((tr: any) => tr.name === r));
+                                } else {
+                                  const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                  next = [...next, ...toAdd];
+                                }
+                                handleTeamChange(t);
+                                if (taskData) {
+                                  setTaskData({ ...taskData, assigneeRoleRestrictions: next, teamId: t.id });
+                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id } as any).catch(console.error);
+                                }
+                              }}
+                          className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                        >
+                          {hasRoles && (
+                            <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${allSelected || someSelected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
+                              {allSelected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
+                              {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-zinc-300 rounded-full" />}
+                            </div>
+                          )}
+                          <span className="text-[11px] font-bold tracking-wide uppercase text-zinc-400">{t.name}</span>
+                        </div>
+                      );
+                    })()}
+                    {(!t.teamRoles || t.teamRoles.length === 0) && (
+                      <div className="px-2 py-1 text-[10px] text-zinc-600 italic">No roles</div>
+                    )}
+                    {t.teamRoles && t.teamRoles.length > 0 && (
+                      <div className="flex flex-col ml-[13px] pl-4 py-1 border-l border-zinc-800/60 mt-1 space-y-0.5">
+                        {t.teamRoles.map((role: any) => {
+                          const selected = (taskData?.assigneeRoleRestrictions || []).includes(role.name);
+                          return (
+                            <div
+                              key={role.id}
+                              onClick={() => {
+                                const current = taskData?.assigneeRoleRestrictions || [];
+                                const next = selected
+                                  ? current.filter((r: string) => r !== role.name)
+                                  : [...current, role.name];
+                                handleTeamChange(t);
+                                if (taskData) {
+                                  setTaskData({ ...taskData, assigneeRoleRestrictions: next, teamId: t.id });
+                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id } as any).catch(console.error);
+                                }
+                              }}
+                              className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"
+                            >
+                              <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
+                                {selected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
+                              </div>
+                              {role.name}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </PortalDropdown>
       )}

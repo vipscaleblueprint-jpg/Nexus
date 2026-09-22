@@ -103,6 +103,8 @@ export interface CreateDocParams {
 export interface UpdateDocParams {
   title?: string;
   docDate?: string;
+  teamId?: string | null;
+  assigneeRoleRestrictions?: string[];
 }
 
 export interface PageResponse {

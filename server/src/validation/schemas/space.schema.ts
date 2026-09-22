@@ -27,6 +27,8 @@ export const updateDocSchema = z
   .object({
     title: shortText('title').optional(),
     docDate: isoDate.optional(),
+    teamId: z.string().nullable().optional(),
+    assigneeRoleRestrictions: z.array(z.string()).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

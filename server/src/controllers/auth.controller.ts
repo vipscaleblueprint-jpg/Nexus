@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import { jwtVerify } from 'jose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 type SystemRole = 'ADMIN' | 'MEMBER';
@@ -521,12 +520,15 @@ export async function ssoAuth(req: Request, res: Response) {
       log.error('Missing SSO_SHARED_SECRET');
       return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
     }
-    const ssoSecret = new TextEncoder().encode(ssoSecretStr);
 
-    const { payload } = await jwtVerify(token, ssoSecret, {
+    // Standard HS256 JWT: signed by tools with the `jose` library, verified
+    // here with `jsonwebtoken` (already a dependency for our own tokens).
+    // `jose` v6 is ESM-only and this server compiles to CommonJS, so pulling
+    // it in here just to verify a plain JWT isn't worth the require() crash.
+    const payload = jwt.verify(token, ssoSecretStr, {
       issuer: 'tools.vipscaleph.com',
       audience: 'nexus',
-    });
+    }) as { email?: string; name?: string };
 
     const email = payload.email as string;
     const name = payload.name as string;

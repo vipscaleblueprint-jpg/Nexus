@@ -97,7 +97,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     if (!t.assigneeRoleRestrictions?.length) return dbUsers;
     const requiredRoles = t.assigneeRoleRestrictions.map((r: string) => r.trim().toUpperCase());
     return dbUsers.filter((u: any) => {
-      const uRoles = [u.primaryRole, u.secondaryRole, u.tertiaryRole, u.minorRole]
+      const uRoles = (u.roles || [])
         .filter(Boolean).map((r: any) => r.trim().toUpperCase());
       return requiredRoles.some((req: string) => uRoles.includes(req));
     });

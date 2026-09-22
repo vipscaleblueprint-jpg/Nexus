@@ -44,10 +44,7 @@ export interface User {
   employmentType: EmploymentType;
   isActive: boolean;
   systemRole: SystemRole;
-  primaryRole?: string | null;
-  secondaryRole?: string | null;
-  tertiaryRole?: string | null;
-  minorRole?: string | null;
+  roles: string[];
   teamId?: string;
   teamName?: string;
 }

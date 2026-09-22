@@ -101,11 +101,11 @@ function MemberCard({
     .slice(0, 2)
     .toUpperCase();
 
-  const roles = [user.primaryRole, user.secondaryRole, user.tertiaryRole, user.minorRole].filter(Boolean) as string[];
+  const roles = user.roles || [];
   const isCurrent = currentUser?.id === user.id;
 
   return (
-    <div 
+    <div
       onClick={() => onEdit(user)}
       className="bg-[#18181c] border border-zinc-800/80 rounded-2xl p-4 space-y-3 hover:border-zinc-600 cursor-pointer transition-all shadow-lg relative group"
     >
@@ -325,7 +325,7 @@ export default function UsersSettingsPage() {
 
   const filteredUsers = users.filter((u) => {
     const matchesSearch = u.email.toLowerCase().includes(search.toLowerCase()) || u.name.toLowerCase().includes(search.toLowerCase());
-    const matchesRole = roleFilter === 'ALL' || [u.primaryRole, u.secondaryRole, u.tertiaryRole, u.minorRole].includes(roleFilter);
+    const matchesRole = roleFilter === 'ALL' || (u.roles || []).includes(roleFilter);
     const matchesEmployment = employmentFilter === 'ALL' || u.employmentType === employmentFilter;
     return matchesSearch && matchesRole && matchesEmployment;
   });
@@ -468,7 +468,7 @@ export default function UsersSettingsPage() {
                   ) : (
                     sortedUsers.map((user) => {
                       const initials = user.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-                      const roles = [user.primaryRole, user.secondaryRole, user.tertiaryRole, user.minorRole].filter(Boolean) as string[];
+                      const roles = user.roles || [];
                       const isCurrent = currentUser?.id === user.id;
 
                       return (

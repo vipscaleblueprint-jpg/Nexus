@@ -69,28 +69,19 @@ function generateTokens(user: {
   id: string;
   email: string;
   systemRole: SystemRole;
-  primaryRole: string | null;
-  secondaryRole: string | null;
-  tertiaryRole: string | null;
-  minorRole: string | null;
+  roles: string[];
 }) {
-  const roles: string[] = [];
-  if (user.primaryRole) roles.push(user.primaryRole);
-  if (user.secondaryRole) roles.push(user.secondaryRole);
-  if (user.tertiaryRole) roles.push(user.tertiaryRole);
-  if (user.minorRole) roles.push(user.minorRole);
-
   const payload = {
     id: user.id,
     email: user.email,
     systemRole: user.systemRole,
-    roles,
+    roles: user.roles,
   };
 
   const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '1d' });
   const refreshToken = jwt.sign({ id: user.id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
 
-  return { accessToken, refreshToken, roles };
+  return { accessToken, refreshToken, roles: user.roles };
 }
 
 export async function signup(req: Request, res: Response) {
@@ -111,10 +102,7 @@ export async function signup(req: Request, res: Response) {
         password: hashedPassword,
         name: data.name,
         systemRole: data.systemRole || 'MEMBER',
-        primaryRole: data.primaryRole,
-        secondaryRole: data.secondaryRole,
-        tertiaryRole: data.tertiaryRole,
-        minorRole: data.minorRole,
+        roles: data.roles || [],
         employmentType: data.employmentType || 'FULL_TIME',
         dailySheetUrl: data.dailySheetUrl,
         starRating: data.starRating || 1,
@@ -135,10 +123,6 @@ export async function signup(req: Request, res: Response) {
         email: user.email,
         name: user.name,
         systemRole: user.systemRole,
-        primaryRole: user.primaryRole,
-        secondaryRole: user.secondaryRole,
-        tertiaryRole: user.tertiaryRole,
-        minorRole: user.minorRole,
         roles,
         starRating: user.starRating,
         employmentType: user.employmentType,
@@ -187,10 +171,6 @@ export async function login(req: Request, res: Response) {
         name: user.name,
         avatarUrl: user.avatarUrl,
         systemRole: user.systemRole,
-        primaryRole: user.primaryRole,
-        secondaryRole: user.secondaryRole,
-        tertiaryRole: user.tertiaryRole,
-        minorRole: user.minorRole,
         roles,
         starRating: user.starRating,
         employmentType: user.employmentType,
@@ -363,10 +343,7 @@ export async function getMe(req: AuthRequest, res: Response) {
         employmentType: true,
         isActive: true,
         systemRole: true,
-        primaryRole: true,
-        secondaryRole: true,
-        tertiaryRole: true,
-        minorRole: true,
+        roles: true,
         lastLoginAt: true,
         createdAt: true,
         team: true,

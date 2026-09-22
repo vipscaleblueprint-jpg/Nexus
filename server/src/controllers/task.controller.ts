@@ -31,7 +31,7 @@ const taskInclude = {
   subtasks: {
     include: {
       User: { select: { id: true, name: true, email: true, avatarUrl: true } },
-      assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true, secondaryRole: true } },
+      assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
       team: { select: { id: true, name: true, color: true } },
       comments: { 
         include: {
@@ -56,7 +56,7 @@ const taskInclude = {
     } 
   },
   assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
-  assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true } },
+  assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
   creator: { select: { id: true, name: true, email: true } },
   list: {
     select: {
@@ -280,12 +280,12 @@ async function checkCanMoveFromStatus(
 
     const user = await prisma.user.findUnique({
       where: { id: authReqUser.id },
-      select: { primaryRole: true, secondaryRole: true, tertiaryRole: true, minorRole: true, systemRole: true },
+      select: { roles: true, systemRole: true },
     });
 
     const isAdmin =
       (user && user.systemRole === 'ADMIN') ||
-      (user && user.primaryRole?.trim().toUpperCase() === 'ADMIN') ||
+      (user && user.roles[0]?.trim().toUpperCase() === 'ADMIN') ||
       (authReqUser.systemRole === 'ADMIN');
 
     if (isAdmin) {
@@ -302,9 +302,9 @@ async function checkCanMoveFromStatus(
       return match ? match.name.toUpperCase() : r.toUpperCase();
     });
 
-    const userRoles = [user.primaryRole, user.secondaryRole, user.tertiaryRole, user.minorRole]
+    const userRoles = user.roles
       .filter(Boolean)
-      .map((r: any) => r.trim().toUpperCase());
+      .map((r: string) => r.trim().toUpperCase());
 
     const hasAccess = allowedNames.some((r: any) => userRoles.includes(r));
     if (!hasAccess) {
@@ -325,10 +325,7 @@ async function resolveUsersFromRoles(roleRestrictions: string[]): Promise<string
   const users = await prisma.user.findMany({
     where: {
       OR: [
-        { primaryRole: { in: roleRestrictions, mode: 'insensitive' } },
-        { secondaryRole: { in: roleRestrictions, mode: 'insensitive' } },
-        { tertiaryRole: { in: roleRestrictions, mode: 'insensitive' } },
-        { minorRole: { in: roleRestrictions, mode: 'insensitive' } },
+        { roles: { hasSome: roleRestrictions } },
         {
           team: {
             teamRoles: {
@@ -439,7 +436,7 @@ export async function updateTask(req: Request, res: Response) {
       if (idsToFetch.length > 0) {
         payload.assignees = await prisma.user.findMany({
           where: { id: { in: idsToFetch } },
-          select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true }
+          select: { id: true, name: true, email: true, avatarUrl: true, roles: true }
         });
       } else {
         payload.assignees = [];
@@ -1093,7 +1090,7 @@ export async function getLiveBlocksData(req: Request, res: Response) {
         subtasks: true,
         checklists: { include: { items: true } },
         assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
-        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, primaryRole: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
         creator: { select: { id: true, name: true, email: true } },
         list: {
           select: {

@@ -437,10 +437,7 @@ export async function getAssignableGroups(req: Request, res: Response) {
         id: true,
         name: true,
         email: true,
-        primaryRole: true,
-        secondaryRole: true,
-        tertiaryRole: true,
-        minorRole: true,
+        roles: true,
         team: { select: { id: true } }
       }
     });
@@ -462,14 +459,11 @@ export async function getAssignableGroups(req: Request, res: Response) {
           roleUsersMap.get(role)!.push(u.id);
         }
       };
-      addRole(u.primaryRole);
-      addRole(u.secondaryRole);
-      addRole(u.tertiaryRole);
-      addRole(u.minorRole);
+      u.roles.forEach(addRole);
     });
 
     const options = [
-      // Generic roles derived from user.primaryRole etc. (TECH, PM, AUDITOR...)
+      // Generic roles derived from user.roles (TECH, PM, AUDITOR...)
       ...Array.from(roleUsersMap.entries()).map(([role, userIds]) => ({
         id: `role_${role}`,
         name: role,

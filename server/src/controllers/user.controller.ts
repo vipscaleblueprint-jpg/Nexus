@@ -18,10 +18,7 @@ const rosterSelect = {
   employmentType: true,
   isActive: true,
   systemRole: true,
-  primaryRole: true,
-  secondaryRole: true,
-  tertiaryRole: true,
-  minorRole: true,
+  roles: true,
   createdAt: true,
   team: true,
 };
@@ -58,7 +55,7 @@ export async function listTeams(req: Request, res: Response) {
     const teams = await prisma.team.findMany({
       include: {
         members: {
-          select: { id: true, name: true, email: true, primaryRole: true },
+          select: { id: true, name: true, email: true, roles: true },
         },
         teamRoles: true,
       },
@@ -79,10 +76,7 @@ export async function updateUser(req: Request, res: Response) {
     const {
       dailySheetUrl,
       starRating,
-      primaryRole,
-      secondaryRole,
-      tertiaryRole,
-      minorRole,
+      roles,
       systemRole,
       employmentType,
       isActive,
@@ -93,10 +87,7 @@ export async function updateUser(req: Request, res: Response) {
       data: {
         ...(dailySheetUrl !== undefined && { dailySheetUrl }),
         ...(starRating !== undefined && { starRating }),
-        ...(primaryRole !== undefined && { primaryRole }),
-        ...(secondaryRole !== undefined && { secondaryRole }),
-        ...(tertiaryRole !== undefined && { tertiaryRole }),
-        ...(minorRole !== undefined && { minorRole }),
+        ...(roles !== undefined && { roles }),
         ...(systemRole !== undefined && { systemRole }),
         ...(employmentType !== undefined && { employmentType }),
         ...(isActive !== undefined && { isActive }),

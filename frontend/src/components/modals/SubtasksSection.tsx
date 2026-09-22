@@ -826,7 +826,7 @@ function SubtaskRow({
                       {users?.map((u: any) => {
                         const isAssigned = isUserAssigned(u.id);
                         const initials = (u.name || 'U').substring(0, 2).toUpperCase();
-                        const role = u.primaryRole || u.secondaryRole || '';
+                        const role = u.roles?.[0] || '';
                         const avatarColors = ['bg-violet-600','bg-blue-600','bg-emerald-600','bg-rose-600','bg-amber-600','bg-cyan-600','bg-fuchsia-600'];
                         const avatarBg = avatarColors[(u.name || '').charCodeAt(0) % avatarColors.length];
                         return (
@@ -1030,8 +1030,7 @@ function SubtaskRow({
                       const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());
                       const isCompleted = !!item?.completed;
 
-                      const roles = [currentUser?.primaryRole, currentUser?.secondaryRole, currentUser?.tertiaryRole, currentUser?.minorRole]
-                        .map(r => r?.toLowerCase() || '');
+                      const roles: string[] = (currentUser?.roles || []).map((r: string) => r?.toLowerCase() || '');
                       const isAdmin = currentUser?.systemRole === 'ADMIN';
 
                       let canCheck = isAdmin;

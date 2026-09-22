@@ -43,7 +43,7 @@ function MemberCard({ user }: { user: User }) {
     .slice(0, 2)
     .toUpperCase();
 
-  const roles = [user.primaryRole, user.secondaryRole, user.tertiaryRole, user.minorRole].filter(Boolean) as string[];
+  const roles = user.roles || [];
 
   return (
     <div className="bg-[#18181c] border border-zinc-800/80 rounded-2xl p-4 space-y-3 hover:border-zinc-700/80 transition-all shadow-lg">

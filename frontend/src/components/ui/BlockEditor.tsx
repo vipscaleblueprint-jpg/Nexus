@@ -4,6 +4,7 @@ import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import TextStyle from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
+import Highlight from '@tiptap/extension-highlight';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import { TaskMention } from '../editor/extensions/TaskMention';
@@ -14,7 +15,7 @@ import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
   List, ListOrdered, Palette, X, CheckSquare,
-  ListTree
+  ListTree, ChevronRight, Heading1, Heading2, Heading3, Highlighter
 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
@@ -48,6 +49,7 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
       Underline,
       TextStyle,
       Color,
+      Highlight.configure({ multicolor: true }),
       TaskList,
       TaskItem.configure({
         nested: true,
@@ -82,7 +84,7 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 prose-p:my-0 prose-headings:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0',
+        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0',
       },
     },
     onCreate: ({ editor }) => {
@@ -182,7 +184,8 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
             taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
             taskAssignees: JSON.stringify(task.assignees || []),
             taskPriority: task.priority || '',
-            taskDueDate: task.dueDate || ''
+            taskDueDate: task.dueDate || '',
+            frozenTaskData: JSON.stringify(task)
           });
           modified = true;
         }
@@ -240,6 +243,7 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
     '#06b6d4', '#3b82f6',
     '#6366f1', '#8b5cf6',
     '#d946ef', '#f43f5e',
+    'transparent'
   ];
 
   return (
@@ -247,30 +251,56 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
           <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999 }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-[99999]">
+            
+            {/* Headings */}
+            <button
+              onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 1 }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Heading 1"
+            >
+              <Heading1 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 2 }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Heading 2"
+            >
+              <Heading2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 3 }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Heading 3"
+            >
+              <Heading3 className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-zinc-700 mx-1" />
+
             <button
               onClick={() => editor.chain().focus().toggleBold().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('bold') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bold') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Bold"
             >
               <Bold className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleItalic().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('italic') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('italic') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Italic"
             >
               <Italic className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleUnderline().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('underline') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('underline') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Underline"
             >
               <UnderlineIcon className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleStrike().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('strike') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('strike') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Strikethrough"
             >
               <Strikethrough className="w-3.5 h-3.5" />
@@ -279,22 +309,32 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
             <div className="w-px h-4 bg-zinc-700 mx-1" />
 
             <button
+              onClick={() => (editor.chain().focus() as any).setToggle().run()}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('toggle') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              title="Toggle / Collapsible"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-zinc-700 mx-1" />
+
+            <button
               onClick={() => editor.chain().focus().setTextAlign('left').run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'left' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'left' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Align Left"
             >
               <AlignLeft className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().setTextAlign('center').run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'center' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'center' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Align Center"
             >
               <AlignCenter className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().setTextAlign('right').run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'right' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'right' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Align Right"
             >
               <AlignRight className="w-3.5 h-3.5" />
@@ -304,21 +344,21 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
 
             <button
               onClick={() => editor.chain().focus().toggleBulletList().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('bulletList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bulletList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Bullet List"
             >
               <List className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleOrderedList().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('orderedList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('orderedList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Numbered List"
             >
               <ListOrdered className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleTaskList().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('taskList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('taskList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
               title="Task List"
             >
               <CheckSquare className="w-3.5 h-3.5" />
@@ -327,29 +367,52 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
             <div className="w-px h-4 bg-zinc-700 mx-1" />
 
             <div className="relative group/color">
-              <button className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 flex items-center gap-1" title="Text Color">
+              <button onMouseDown={e => e.preventDefault()} className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 cursor-pointer flex items-center gap-1" title="Text Color">
                 <Palette className="w-3.5 h-3.5" />
               </button>
 
-              <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:flex bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 z-[99999] w-max max-w-[160px] flex-wrap justify-center">
-                {colors.map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => editor.chain().focus().setColor(color).run()}
-                    className="w-4 h-4 rounded-full border border-zinc-700 hover:scale-125 transition-transform cursor-pointer shadow-sm"
-                    style={{ backgroundColor: color }}
-                    title={color}
-                  />
-                ))}
-                <button
-                  onClick={() => editor.chain().focus().unsetColor().run()}
-                  className="w-4 h-4 rounded-full border border-zinc-700 bg-transparent flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-                  title="Remove Color"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
+              <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:block z-[99999]" onMouseDown={e => e.preventDefault()}>
+                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-[160px] flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
+                  {colors.map((color) => (
+                    <button
+                      key={`text-${color}`}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => color === 'transparent' ? editor.chain().focus().unsetColor().run() : editor.chain().focus().setColor(color).run()}
+                      className="w-4 h-4 rounded-full border border-zinc-700 hover:scale-125 transition-transform cursor-pointer shadow-sm relative overflow-hidden"
+                      style={{ backgroundColor: color === 'transparent' ? '#000' : color }}
+                      title={color === 'transparent' ? 'Remove Color' : color}
+                    >
+                      {color === 'transparent' && <div className="absolute inset-0 w-full h-full border-t-2 border-red-500 rotate-45 transform origin-center" />}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
+
+            {/* Background / Highlight Color */}
+            <div className="relative group/highlight ml-0.5">
+              <button onMouseDown={e => e.preventDefault()} className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 cursor-pointer flex items-center gap-1" title="Background Color">
+                <Highlighter className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/highlight:block z-[99999]" onMouseDown={e => e.preventDefault()}>
+                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-[160px] flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
+                  {colors.map((color) => (
+                    <button
+                      key={`bg-${color}`}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => color === 'transparent' ? editor.chain().focus().unsetHighlight().run() : editor.chain().focus().setHighlight({ color }).run()}
+                      className="w-4 h-4 rounded-full border border-zinc-700 hover:scale-125 transition-transform cursor-pointer shadow-sm relative overflow-hidden"
+                      style={{ backgroundColor: color === 'transparent' ? '#000' : color }}
+                      title={color === 'transparent' ? 'Remove Background' : color}
+                    >
+                       {color === 'transparent' && <div className="absolute inset-0 w-full h-full border-t-2 border-red-500 rotate-45 transform origin-center" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
           </BubbleMenu>
         </div>
       </div>

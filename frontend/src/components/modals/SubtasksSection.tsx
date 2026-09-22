@@ -685,34 +685,67 @@ function SubtaskRow({
                       )}
                       {(teams || []).map((team: any) => (
                         <div key={team.id} className="mb-2">
-                          <div className="px-2 py-1 text-[10px] text-zinc-400 font-semibold tracking-wide uppercase bg-zinc-800/30">
-                            {team.name}
-                          </div>
+                          {(() => {
+                            const teamRoles = team.teamRoles || [];
+                            const current = subtask.assigneeRoleRestrictions || [];
+                            const hasRoles = teamRoles.length > 0;
+                            const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                            const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                            
+                            return (
+                              <div 
+                                onClick={() => {
+                                  if (!hasRoles || !canEditTask) return;
+                                  let next = [...current];
+                                  if (allSelected) {
+                                    next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                  } else {
+                                    const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                    next = [...next, ...toAdd];
+                                  }
+                                  onUpdate(subtask.id, { assigneeRoleRestrictions: next } as any);
+                                }}
+                                className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles && canEditTask ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'} ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
+                              >
+                                {hasRoles && (
+                                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                    {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                                    {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                                  </div>
+                                )}
+                                <span>{team.name}</span>
+                              </div>
+                            );
+                          })()}
                           {(!team.teamRoles || team.teamRoles.length === 0) && (
                             <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
                           )}
-                          {team.teamRoles?.map((role: any) => {
-                            const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
-                            return (
-                              <div
-                                key={role.id}
-                                onClick={() => {
-                                  if (!canEditTask) return;
-                                  const current = subtask.assigneeRoleRestrictions || [];
-                                  const next = selected
-                                    ? current.filter((r: string) => r !== role.name)
-                                    : [...current, role.name];
-                                  onUpdate(subtask.id, { assigneeRoleRestrictions: next } as any);
-                                }}
-                                className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
-                              >
-                                <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                  {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                </div>
-                                <span className="truncate">{role.name}</span>
-                              </div>
-                            );
-                          })}
+                          {team.teamRoles && team.teamRoles.length > 0 && (
+                            <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                              {team.teamRoles.map((role: any) => {
+                                const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
+                                return (
+                                  <div
+                                    key={role.id}
+                                    onClick={() => {
+                                      if (!canEditTask) return;
+                                      const current = subtask.assigneeRoleRestrictions || [];
+                                      const next = selected
+                                        ? current.filter((r: string) => r !== role.name)
+                                        : [...current, role.name];
+                                      onUpdate(subtask.id, { assigneeRoleRestrictions: next } as any);
+                                    }}
+                                    className={`flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
+                                  >
+                                    <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                      {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                    </div>
+                                    <span className="truncate">{role.name}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

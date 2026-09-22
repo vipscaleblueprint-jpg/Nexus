@@ -224,6 +224,37 @@ export default function BoardPage() {
       setCustomGroups(prev => prev.includes(group) ? prev : [...prev, group]);
     });
 
+    s.on('list:groups_reordered', (newGroups: string[]) => {
+      setCustomGroups(newGroups);
+    });
+
+    s.on('list:group_deleted', (group: string) => {
+      setCustomGroups(prev => prev.filter(g => g !== group));
+      // Move orphaned statuses locally
+      setList((prev: any) => {
+        if (!prev || !prev.statuses) return prev;
+        return {
+          ...prev,
+          statuses: prev.statuses.map((s: any) => 
+            s.groupName === group ? { ...s, groupName: null } : s
+          )
+        };
+      });
+    });
+
+    s.on('list:group_renamed', (data: { oldName: string; newName: string }) => {
+      setCustomGroups(prev => prev.map(g => g === data.oldName ? data.newName : g));
+      setList((prev: any) => {
+        if (!prev || !prev.statuses) return prev;
+        return {
+          ...prev,
+          statuses: prev.statuses.map((s: any) => 
+            s.groupName === data.oldName ? { ...s, groupName: data.newName } : s
+          )
+        };
+      });
+    });
+
     // Real-time: task reorder within a column
     s.on('task_reorder', (data: { status: string; taskIds: string[] }) => {
       setList((prev: any) => {
@@ -604,13 +635,67 @@ export default function BoardPage() {
                   });
                   socket?.emit('add_group', { listId: id, group });
                 }}
-                onDeleteGroup={(groupToDelete) => {
-                  setCustomGroups(prev => {
-                    const newGroups = prev.filter(g => g !== groupToDelete);
-                    spacesApi.updateList(id as string, { customGroups: newGroups }).catch(console.error);
-                    return newGroups;
-                  });
-                  socket?.emit('delete_group', { listId: id, group: groupToDelete });
+                onDeleteGroup={async (groupToDelete) => {
+                  try {
+                    const newGroups = customGroups.filter(g => g !== groupToDelete);
+                    setCustomGroups(newGroups);
+                    socket?.emit('delete_group', { listId: id, group: groupToDelete });
+                    
+                    setList((prev: any) => {
+                      if (!prev || !prev.statuses) return prev;
+                      return {
+                        ...prev,
+                        statuses: prev.statuses.map((s: any) => 
+                          s.groupName === groupToDelete ? { ...s, groupName: null } : s
+                        )
+                      };
+                    });
+
+                    await spacesApi.updateList(id as string, { customGroups: newGroups });
+                    
+                    const statusesToUpdate = list?.statuses?.filter((s: any) => s.groupName === groupToDelete) || [];
+                    for (const status of statusesToUpdate) {
+                      await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${status.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nexus_token')}` },
+                        body: JSON.stringify({ groupName: null })
+                      });
+                    }
+                  } catch (e: any) {
+                    console.error('Failed to delete group', e);
+                    toast.error(e.message || 'Failed to delete group');
+                  }
+                }}
+                onRenameGroup={async (oldName, newName) => {
+                  try {
+                    const newGroups = customGroups.map(g => g === oldName ? newName : g);
+                    setCustomGroups(newGroups);
+                    socket?.emit('rename_group', { listId: id, oldName, newName });
+                    
+                    setList((prev: any) => {
+                      if (!prev || !prev.statuses) return prev;
+                      return {
+                        ...prev,
+                        statuses: prev.statuses.map((s: any) => 
+                          s.groupName === oldName ? { ...s, groupName: newName } : s
+                        )
+                      };
+                    });
+
+                    await spacesApi.updateList(id as string, { customGroups: newGroups });
+
+                    const statusesToUpdate = list?.statuses?.filter((s: any) => s.groupName === oldName) || [];
+                    for (const status of statusesToUpdate) {
+                      await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${status.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nexus_token')}` },
+                        body: JSON.stringify({ groupName: newName })
+                      });
+                    }
+                  } catch (e: any) {
+                    console.error('Failed to rename group', e);
+                    toast.error(e.message || 'Failed to rename group');
+                  }
                 }}
                 onStatusDelete={async (statusName) => {
                   try {
@@ -633,6 +718,46 @@ export default function BoardPage() {
                     console.error('Failed to delete status', e);
                     toast.error(e.message || 'Failed to delete status');
                   }
+                }}
+                onStatusReorder={(activeStatusName, overId, isOverGroup, newGroupName) => {
+                  setList((prev: any) => {
+                    const oldIndex = prev.statuses.findIndex((s: any) => s.name === activeStatusName);
+                    let newIndex = prev.statuses.findIndex((s: any) => s.name === overId);
+                    
+                    if (newIndex === -1 && isOverGroup && newGroupName) {
+                      // Find the last item in the new group to insert after it
+                      const groupStatuses = prev.statuses.filter((s: any) => s.groupName === newGroupName && s.name !== activeStatusName);
+                      if (groupStatuses.length > 0) {
+                        const lastItem = groupStatuses[groupStatuses.length - 1];
+                        newIndex = prev.statuses.findIndex((s: any) => s.name === lastItem.name) + 1;
+                      } else {
+                        // Empty group, just put it at the end of the statuses array (or keep current index)
+                        newIndex = prev.statuses.length;
+                      }
+                    }
+
+                    if (oldIndex !== -1 && newIndex !== -1) {
+                      const newStatuses = [...prev.statuses];
+                      const [removed] = newStatuses.splice(oldIndex, 1);
+                      // If newIndex was found using findIndex, it might need adjustment since we removed an item before it.
+                      // Wait, standard arrayMove handles this. Let's just adjust newIndex if oldIndex < newIndex.
+                      let insertIndex = newIndex;
+                      if (oldIndex < newIndex && !isOverGroup) {
+                        insertIndex -= 1;
+                      }
+                      newStatuses.splice(insertIndex, 0, removed);
+                      
+                      const orderedStatusIds = newStatuses.map((s: any) => s.id).filter(Boolean);
+                      fetch(`${API_BASE_URL}/api/lists/${id}/statuses/reorder`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nexus_token')}` },
+                        body: JSON.stringify({ listId: id, orderedStatusIds })
+                      }).catch(console.error);
+                      
+                      return { ...prev, statuses: newStatuses };
+                    }
+                    return prev;
+                  });
                 }}
                 onGroupReorder={(newGroups) => {
                   setCustomGroups(newGroups);

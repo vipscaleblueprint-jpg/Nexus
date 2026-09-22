@@ -12,7 +12,7 @@ export async function listLists(req: Request, res: Response) {
 
     const lists = await prisma.list.findMany({
       include: {
-        statuses: { orderBy: { createdAt: 'asc' } },
+        statuses: { orderBy: { order: 'asc' } },
         tasks: {
           include: {
             subtasks: {
@@ -43,7 +43,7 @@ export async function getList(req: Request, res: Response) {
       include: {
         space: { select: { id: true, name: true, color: true } },
         folder: { select: { id: true, name: true } },
-        statuses: { orderBy: { createdAt: 'asc' } },
+        statuses: { orderBy: { order: 'asc' } },
         tasks: {
           orderBy: { createdAt: 'asc' },
           select: {
@@ -109,7 +109,12 @@ export async function createList(req: Request, res: Response) {
   try {
     const { name, spaceId, folderId } = req.body;
     const list = await prisma.list.create({
-      data: { name, spaceId: spaceId || null, folderId: folderId || null },
+      data: { 
+        name, 
+        spaceId: spaceId || null, 
+        folderId: folderId || null,
+        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress']
+      },
     });
 
     const defaultStatusesToSeed = DEFAULT_STATUSES.map(s => {
@@ -277,12 +282,34 @@ export async function updateStatus(req: Request, res: Response) {
 }
 
 // DELETE /api/lists/:id/statuses/:statusId
-export async function deleteStatus(req: Request, res: Response) {
+export const deleteStatus = async (req: Request, res: Response) => {
   try {
     await prisma.listStatus.delete({ where: { id: req.params.statusId } });
-    return res.json({ message: 'Status deleted successfully' });
+    return res.json({ success: true });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Status not found' });
     return res.status(500).json({ error: err.message });
   }
-}
+};
+
+// PATCH /api/lists/:id/statuses/reorder
+export const reorderStatuses = async (req: Request, res: Response) => {
+  try {
+    const { listId, orderedStatusIds } = req.body;
+    
+    // Use transaction to update all orders
+    const updates = orderedStatusIds.map((statusId: string, index: number) => {
+      return prisma.listStatus.update({
+        where: { id: statusId },
+        data: { order: index },
+      });
+    });
+
+    await prisma.$transaction(updates);
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('Failed to reorder statuses:', err);
+    return res.status(500).json({ error: err.message });
+  }
+};

@@ -498,13 +498,14 @@ export async function getDoc(req: Request, res: Response) {
 // PATCH /api/spaces/docs/:id
 export async function updateDoc(req: Request, res: Response) {
   try {
-    const { title, docDate, teamId } = req.body;
+    const { title, docDate, teamId, assigneeRoleRestrictions } = req.body;
     const doc = await prisma.doc.update({
       where: { id: req.params.id },
       data: {
         ...(title && { title }),
         ...(docDate && { docDate: new Date(docDate) }),
         ...(teamId !== undefined && { teamId }),
+        ...(assigneeRoleRestrictions !== undefined && { assigneeRoleRestrictions }),
       },
     });
     await invalidateCache('spaces:all', 'dashboard:all');

@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { jwtVerify } from 'jose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 type SystemRole = 'ADMIN' | 'MEMBER';
@@ -501,5 +502,74 @@ export async function resetPassword(req: Request, res: Response) {
     return res.json({ message: 'Password reset successfully. You may now sign in.' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Reset password failed' });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// SSO AUTH FLOW
+// -----------------------------------------------------------------------------
+
+export async function ssoAuth(req: Request, res: Response) {
+  const token = req.query.token as string;
+  if (!token) {
+    return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
+  }
+
+  try {
+    const ssoSecretStr = process.env.SSO_SHARED_SECRET?.trim();
+    if (!ssoSecretStr) {
+      log.error('Missing SSO_SHARED_SECRET');
+      return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
+    }
+    const ssoSecret = new TextEncoder().encode(ssoSecretStr);
+
+    const { payload } = await jwtVerify(token, ssoSecret, {
+      issuer: 'tools.vipscaleph.com',
+      audience: 'nexus',
+    });
+
+    const email = payload.email as string;
+    const name = payload.name as string;
+
+    if (!email) {
+      return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
+    }
+
+    // 1. Find or create the user in the database
+    let user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      const randomPassword = await bcrypt.hash(Math.random().toString(36), 10);
+      user = await prisma.user.create({
+        data: {
+          email,
+          name: name || email.split('@')[0],
+          password: randomPassword,
+          systemRole: 'MEMBER',
+          employmentType: 'FULL_TIME',
+          starRating: 1,
+        },
+      });
+    } else {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      });
+    }
+
+    // 2. Generate the JWT tokens
+    const { accessToken, refreshToken } = generateTokens(user);
+
+    // 3. Store the refresh token in the DB/Redis
+    await storeRefreshToken(user.id, refreshToken);
+
+    // 4. Set HttpOnly Cookies on the response object
+    setAuthCookies(res, accessToken, refreshToken, true);
+
+    // 5. Send them into the app
+    return res.redirect(FRONTEND_URL);
+  } catch (err: any) {
+    log.error({ err }, `SSO Auth handoff failed: ${errMsg(err)}`);
+    return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
   }
 }

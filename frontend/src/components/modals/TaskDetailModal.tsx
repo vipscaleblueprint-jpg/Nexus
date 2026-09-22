@@ -1044,10 +1044,9 @@ export function TaskDetailModalContent({
             <button
               onClick={() => {
                 onClose();
-                router.push('/tasks');
               }}
               className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
-              title="Go Back to All Tasks"
+              title="Close"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -1057,7 +1056,7 @@ export function TaskDetailModalContent({
                 {task.list.space && (
                   <>
                     <button 
-                      onClick={() => { onClose(); router.push('/tasks'); }}
+                      onClick={() => { onClose(); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -1072,7 +1071,7 @@ export function TaskDetailModalContent({
                 {task.list.folder && (
                   <>
                     <button 
-                      onClick={() => { onClose(); router.push('/tasks'); }}
+                      onClick={() => { onClose(); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <Folder className="w-3.5 h-3.5 shrink-0" />
@@ -1129,7 +1128,6 @@ export function TaskDetailModalContent({
             <button
               onClick={() => {
                 onClose();
-                router.push('/tasks');
               }}
               className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
             >
@@ -1299,37 +1297,72 @@ export function TaskDetailModalContent({
                             {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
                             {dbTeams.map(team => (
                               <div key={team.id} className="mb-2">
-                                <div className="px-2 py-1 text-[10px] text-zinc-400 font-semibold tracking-wide uppercase bg-zinc-800/30">
-                                  {team.name}
-                                </div>
+                                  {(() => {
+                                    const teamRoles = team.teamRoles || [];
+                                    const current = task.assigneeRoleRestrictions || [];
+                                    const hasRoles = teamRoles.length > 0;
+                                    const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                                    const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                                    
+                                    return (
+                                      <div 
+                                        onClick={() => {
+                                          if (!hasRoles) return;
+                                          let next = [...current];
+                                          if (allSelected) {
+                                            next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                          } else {
+                                            const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                            next = [...next, ...toAdd];
+                                          }
+                                          const updatedTask = { ...task, assigneeRoleRestrictions: next };
+                                          if (onUpdateTask) onUpdateTask(updatedTask);
+                                          tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                        }}
+                                        className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                                      >
+                                        {hasRoles && (
+                                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                            {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                                            {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                                          </div>
+                                        )}
+                                        <span>{team.name}</span>
+                                      </div>
+                                    );
+                                  })()}
                                 {(!team.teamRoles || team.teamRoles.length === 0) && (
                                   <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
                                 )}
-                                {team.teamRoles?.map((role: any) => {
-                                  const selected = (task.assigneeRoleRestrictions || []).includes(role.name);
-                                  return (
-                                    <div
-                                      key={role.id}
-                                      onClick={() => {
-                                        const current = task.assigneeRoleRestrictions || [];
-                                        const next = selected
-                                          ? current.filter(r => r !== role.name)
-                                          : [...current, role.name];
-                                        // Optimistically update immediately — no mutation of task ref
-                                        const updatedTask = { ...task, assigneeRoleRestrictions: next };
-                                        if (onUpdateTask) onUpdateTask(updatedTask);
-                                        // Fire API in background
-                                        tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
-                                      }}
-                                      className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
-                                    >
-                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                        {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                      </div>
-                                      {role.name}
-                                    </div>
-                                  );
-                                })}
+                                {team.teamRoles && team.teamRoles.length > 0 && (
+                                  <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                                    {team.teamRoles.map((role: any) => {
+                                      const selected = (task.assigneeRoleRestrictions || []).includes(role.name);
+                                      return (
+                                        <div
+                                          key={role.id}
+                                          onClick={() => {
+                                            const current = task.assigneeRoleRestrictions || [];
+                                            const next = selected
+                                              ? current.filter(r => r !== role.name)
+                                              : [...current, role.name];
+                                            // Optimistically update immediately — no mutation of task ref
+                                            const updatedTask = { ...task, assigneeRoleRestrictions: next };
+                                            if (onUpdateTask) onUpdateTask(updatedTask);
+                                            // Fire API in background
+                                            tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                          }}
+                                          className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
+                                        >
+                                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                            {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                          </div>
+                                          {role.name}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -2548,48 +2581,90 @@ function SubtaskDetailView({
                             {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
                             {dbTeams.map((team: any) => (
                               <div key={team.id} className="mb-2">
-                                <div className="px-2 py-1 text-[10px] text-zinc-400 font-semibold tracking-wide uppercase bg-zinc-800/30">
-                                  {team.name}
-                                </div>
+                                  {(() => {
+                                    const teamRoles = team.teamRoles || [];
+                                    const current = subtask.assigneeRoleRestrictions || [];
+                                    const hasRoles = teamRoles.length > 0;
+                                    const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                                    const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                                    
+                                    return (
+                                      <div 
+                                        onClick={() => {
+                                          if (!hasRoles) return;
+                                          let next = [...current];
+                                          if (allSelected) {
+                                            next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                          } else {
+                                            const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                            next = [...next, ...toAdd];
+                                          }
+                                          
+                                          const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
+                                          if (onUpdateTask) {
+                                            const updatedTask = {
+                                              ...parentTask,
+                                              subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
+                                            };
+                                            onUpdateTask(updatedTask);
+                                          }
+                                          tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                        }}
+                                        className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                                      >
+                                        {hasRoles && (
+                                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                            {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                                            {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                                          </div>
+                                        )}
+                                        <span>{team.name}</span>
+                                      </div>
+                                    );
+                                  })()}
                                 {(!team.teamRoles || team.teamRoles.length === 0) && (
                                   <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
                                 )}
-                                {team.teamRoles?.map((role: any) => {
-                                  const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
-                                  return (
-                                    <div
-                                      key={role.id}
-                                      onClick={() => {
-                                        const current = subtask.assigneeRoleRestrictions || [];
-                                        const next = selected
-                                          ? current.filter((r: string) => r !== role.name)
-                                          : [...current, role.name];
-                                        
-                                        // Optimistically update immediately before API call
-                                        const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
-                                        if (onUpdateTask) {
-                                          const updatedTask = {
-                                            ...parentTask,
-                                            subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
-                                          };
-                                          onUpdateTask(updatedTask);
-                                        }
+                                {team.teamRoles && team.teamRoles.length > 0 && (
+                                  <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                                    {team.teamRoles.map((role: any) => {
+                                      const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
+                                      return (
+                                        <div
+                                          key={role.id}
+                                          onClick={() => {
+                                            const current = subtask.assigneeRoleRestrictions || [];
+                                            const next = selected
+                                              ? current.filter((r: string) => r !== role.name)
+                                              : [...current, role.name];
+                                            
+                                            // Optimistically update immediately before API call
+                                            const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
+                                            if (onUpdateTask) {
+                                              const updatedTask = {
+                                                ...parentTask,
+                                                subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
+                                              };
+                                              onUpdateTask(updatedTask);
+                                            }
 
-                                        // Fire API in background
-                                        tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any)
-                                          .catch((err: any) => {
-                                            console.error("Failed to update subtask role restriction", err);
-                                          });
-                                      }}
-                                      className="flex items-center gap-2 cursor-pointer px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
-                                    >
-                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                        {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                      </div>
-                                      {role.name}
-                                    </div>
-                                  );
-                                })}
+                                            // Fire API in background
+                                            tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any)
+                                              .catch((err: any) => {
+                                                console.error("Failed to update subtask role restriction", err);
+                                              });
+                                          }}
+                                          className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
+                                        >
+                                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                            {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                          </div>
+                                          {role.name}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>

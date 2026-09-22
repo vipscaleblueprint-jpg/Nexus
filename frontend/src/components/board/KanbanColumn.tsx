@@ -30,6 +30,8 @@ interface Props {
   listStatuses?: any[];
   dragListeners?: any;
   dragAttributes?: any;
+  isOverlay?: boolean;
+  isOver?: boolean;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -142,16 +144,17 @@ export const KanbanColumn = memo(function KanbanColumn({
   onDeleteColumn,
   dragListeners,
   dragAttributes,
+  isOverlay = false,
+  isOver = false,
 }: Props) {
 
-
   const droppableData = useMemo(() => ({
-    type: 'Column',
+    type: 'ColumnDrop',
     status,
   }), [status]);
 
-  const { setNodeRef, isOver } = useDroppable({
-    id: status,
+  const { setNodeRef: setColumnDropRef } = useDroppable({
+    id: `columnDrop-${status}`,
     data: droppableData,
   });
 
@@ -232,7 +235,7 @@ export const KanbanColumn = memo(function KanbanColumn({
       className={`flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out relative hover:z-50 focus-within:z-50 overflow-hidden ${
         isCollapsed 
           ? `w-11 h-full bg-[#141418] rounded-2xl border border-zinc-800/50` 
-          : `w-[350px] max-h-full rounded-2xl ${colors.bg} border border-zinc-800/50`
+          : `w-[350px] ${isOverlay ? 'h-fit max-h-[80vh]' : 'max-h-full'} rounded-2xl ${colors.bg} border border-zinc-800/50`
       }`}
       style={{
         animation: isShaking ? 'kanban-shake 0.4s cubic-bezier(.36,.07,.19,.97) both' : 'none',
@@ -276,7 +279,7 @@ export const KanbanColumn = memo(function KanbanColumn({
       {/* ── EXPANDED VIEW ── */}
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div 
-          className="flex flex-col px-3 pt-3 pb-2 shrink-0 group/colheader cursor-grab active:cursor-grabbing"
+          className={`flex flex-col px-3 pt-3 pb-2 shrink-0 group/colheader ${isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'}`}
           {...dragListeners}
           {...dragAttributes}
         >
@@ -345,7 +348,7 @@ export const KanbanColumn = memo(function KanbanColumn({
         </div>
 
         <div
-          ref={setNodeRef}
+          ref={setColumnDropRef}
           className={`px-2 pb-2 flex flex-col gap-2 overflow-y-auto transition-colors custom-scrollbar ${colors.scrollThumb} flex-1 min-h-0 ${
             isOver ? 'bg-black/5' : ''
           }`}

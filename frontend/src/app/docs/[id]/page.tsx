@@ -43,6 +43,7 @@ import {
   Folder,
   Circle,
   Flag,
+  Check,
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 
@@ -228,18 +229,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [subpageLimit, setSubpageLimit] = useState(10);
-  const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(new Set());
 
-  const getHeadingLevel = (content?: string): number => {
-    if (!content) return 0;
-    if (content.includes('"type":"heading"')) {
-      const match = content.match(/"level":(\d)/);
-      if (match) return parseInt(match[1]);
-    }
-    const match = content.match(/<h(\d)/);
-    if (match) return parseInt(match[1]);
-    return 0;
-  };
 
   // Global hover card state
   const [hoverCardData, setHoverCardData] = useState<any>(null);
@@ -484,7 +474,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   const handleCreatePage = async (parentPageId?: string) => {
     try {
       const cleanBlocks: DocBlock[] = [
-        { id: `blk-${Date.now()}`, type: 'task', content: '', status: 'DAILY' },
+        { id: `blk-${Date.now()}`, type: 'text', content: '' },
       ];
 
       const res = await spacesApi.createPage({
@@ -563,10 +553,15 @@ export default function DocPage({ docId }: { docId?: string }) {
       e.preventDefault();
       handleAddBlock('text', blockId);
     } else if (e.key === 'Backspace') {
-      e.preventDefault();
-      handleDeleteBlock(blockId);
-      if (index > 0) {
-        handleFocusBlock(blocks[index - 1].id);
+      // Only delete the block itself when it's truly empty — let the editor handle normal deletions
+      const block = blocks.find(b => b.id === blockId);
+      const isEmpty = !block?.content || block.content === '' || block.content === '<p></p>' || block.content === '<p><br></p>';
+      if (isEmpty) {
+        e.preventDefault();
+        handleDeleteBlock(blockId);
+        if (index > 0) {
+          handleFocusBlock(blocks[index - 1].id);
+        }
       }
     }
   };
@@ -748,73 +743,119 @@ export default function DocPage({ docId }: { docId?: string }) {
                 <span className="font-semibold text-zinc-300">{currentUser?.name || 'Hannah'}</span>
                 <span className="text-zinc-600">•</span>
                 <span className="text-zinc-400">Last updated today</span>
-                {!doc?.isDailyRollover && (
+                {false && !doc?.isDailyRollover && (
                   <>
                     <span className="text-zinc-600">•</span>
                     <Popover.Root>
                       <Popover.Trigger asChild>
-                        <button className="flex items-center gap-1.5 px-2 py-0.5 rounded-md hover:bg-zinc-800 transition-colors cursor-pointer border border-transparent hover:border-zinc-700">
-                          {doc?.teamId ? (
-                            <>
-                              <div
-                                className="w-3.5 h-3.5 rounded-sm"
-                                style={{ backgroundColor: dbTeams.find(t => t.id === doc.teamId)?.color || '#3b82f6' }}
-                              />
-                              <span className="text-zinc-300 font-medium">
-                                {dbTeams.find(t => t.id === doc.teamId)?.name || 'Unknown Team'}
-                              </span>
-                            </>
+                        <button className="flex items-center gap-1.5 rounded-md hover:bg-zinc-800/60 transition-colors cursor-pointer px-1.5 py-1">
+                          {(doc?.assigneeRoleRestrictions && doc.assigneeRoleRestrictions.length > 0) ? (
+                            <span className="flex items-center">
+                              {doc.assigneeRoleRestrictions.map((role: string, i: number) => {
+                                const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                                const bgColor = colors[i % colors.length];
+                                return (
+                                  <div 
+                                    key={role} 
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white border-2 border-[#0d0d0d] ${i > 0 ? '-ml-2' : ''} shadow-sm relative transition-transform ${bgColor}`}
+                                    style={{ zIndex: 10 - i }}
+                                    title={role}
+                                  >
+                                    {role.substring(0, 2).toUpperCase()}
+                                  </div>
+                                );
+                              })}
+                            </span>
                           ) : (
-                            <>
-                              <div className="w-3.5 h-3.5 rounded-sm border border-zinc-500 border-dashed" />
-                              <span className="text-zinc-400">Assign Team</span>
-                            </>
+                            <div className="w-4 h-4 rounded-sm border border-dashed border-zinc-600" title="Assign Role" />
                           )}
                         </button>
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl w-48 p-1 z-[100] text-sm animate-in fade-in zoom-in-95 duration-100"
+                          className="bg-[#1c1c1e] border border-zinc-800/60 rounded-xl shadow-2xl w-64 p-2 z-[100] animate-in fade-in zoom-in-95 duration-100"
                           sideOffset={4}
                           align="start"
                         >
-                          <div className="px-2 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
-                            Select Team
-                          </div>
-                          <div className="max-h-[200px] overflow-y-auto custom-scrollbar space-y-0.5">
-                            <button
-                              onClick={async () => {
-                                if (!doc) return;
-                                try {
-                                  const res = await spacesApi.updateDoc(doc.id, { teamId: null });
-                                  setDoc(res.doc);
-                                } catch (e) { console.error('Failed to clear team', e); }
-                              }}
-                              className={`w-full text-left px-2 py-1.5 rounded-md flex items-center gap-2 hover:bg-zinc-800 transition-colors ${!doc?.teamId ? 'bg-zinc-800/50' : ''}`}
-                            >
-                              <div className="w-3 h-3 rounded-sm border border-zinc-600 border-dashed" />
-                              <span className="text-zinc-300">None</span>
-                            </button>
-                            {dbTeams.map(team => (
-                              <button
-                                key={team.id}
-                                onClick={async () => {
-                                  if (!doc) return;
-                                  try {
-                                    const res = await spacesApi.updateDoc(doc.id, { teamId: team.id });
-                                    setDoc(res.doc);
-                                  } catch (e) { console.error('Failed to set team', e); }
-                                }}
-                                className={`w-full text-left px-2 py-1.5 rounded-md flex items-center gap-2 hover:bg-zinc-800 transition-colors ${doc?.teamId === team.id ? 'bg-zinc-800/50' : ''}`}
-                              >
-                                <div
-                                  className="w-3 h-3 rounded-sm"
-                                  style={{ backgroundColor: team.color || '#3b82f6' }}
-                                />
-                                <span className="text-zinc-300 truncate">{team.name}</span>
-                                {doc?.teamId === team.id && <CheckSquare className="w-3.5 h-3.5 ml-auto text-blue-500" />}
-                              </button>
-                            ))}
+                          <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+                            {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                            <div className="flex flex-col gap-3 mt-1">
+                              {dbTeams.map(team => (
+                                <div key={team.id} className="flex flex-col">
+                                    {(() => {
+                                      const teamRoles = team.teamRoles || [];
+                                      const current = doc?.assigneeRoleRestrictions || [];
+                                      const hasRoles = teamRoles.length > 0;
+                                      const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                                      const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                                      
+                                      return (
+                                        <div 
+                                          onClick={async (e) => {
+                                            e.preventDefault();
+                                            if (!hasRoles || !doc) return;
+                                            let next = [...current];
+                                            if (allSelected) {
+                                              next = next.filter((r: string) => !teamRoles.find((tr: any) => tr.name === r));
+                                            } else {
+                                              const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                              next = [...next, ...toAdd];
+                                            }
+                                            const updatedDoc = { ...doc, assigneeRoleRestrictions: next, teamId: team.id };
+                                            setDoc(updatedDoc);
+                                            try {
+                                              await spacesApi.updateDoc(doc.id, { assigneeRoleRestrictions: next, teamId: team.id });
+                                            } catch (err) { console.error('Failed to update roles', err); }
+                                          }}
+                                          className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                                        >
+                                          {hasRoles && (
+                                            <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${allSelected || someSelected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
+                                              {allSelected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
+                                              {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-zinc-300 rounded-full" />}
+                                            </div>
+                                          )}
+                                          <span className="text-[11px] font-bold tracking-wide uppercase text-zinc-400">{team.name}</span>
+                                        </div>
+                                      );
+                                    })()}
+                                  {(!team.teamRoles || team.teamRoles.length === 0) && (
+                                    <div className="px-2 py-1 text-[10px] text-zinc-600 italic">No roles</div>
+                                  )}
+                                  {team.teamRoles && team.teamRoles.length > 0 && (
+                                    <div className="flex flex-col ml-[13px] pl-4 py-1 border-l border-zinc-800/60 mt-1 space-y-0.5">
+                                      {team.teamRoles.map((role: any) => {
+                                        const selected = (doc?.assigneeRoleRestrictions || []).includes(role.name);
+                                        return (
+                                          <div
+                                            key={role.id}
+                                            onClick={async (e) => {
+                                              e.preventDefault();
+                                              if (!doc) return;
+                                              const current = doc.assigneeRoleRestrictions || [];
+                                              const next = selected
+                                                ? current.filter((r: string) => r !== role.name)
+                                                : [...current, role.name];
+                                              const updatedDoc = { ...doc, assigneeRoleRestrictions: next, teamId: team.id };
+                                              setDoc(updatedDoc);
+                                              try {
+                                                await spacesApi.updateDoc(doc.id, { assigneeRoleRestrictions: next, teamId: team.id });
+                                              } catch (e) { console.error('Failed to update role', e); }
+                                            }}
+                                            className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"
+                                          >
+                                            <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
+                                              {selected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
+                                            </div>
+                                            {role.name}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </Popover.Content>
                       </Popover.Portal>
@@ -878,16 +919,7 @@ export default function DocPage({ docId }: { docId?: string }) {
             {/* ── Freeform Writable Canvas Blocks ── */}
             <div className="space-y-1.5 pt-2">
               {(() => {
-                let currentActiveHeaders: { id: string, level: number }[] = [];
-                const visibleBlocks = blocks.filter(block => {
-                  const level = getHeadingLevel(block.content);
-                  if (level > 0) {
-                    currentActiveHeaders = currentActiveHeaders.filter(h => h.level < level);
-                    currentActiveHeaders.push({ id: block.id, level });
-                  }
-                  const isHidden = currentActiveHeaders.some(h => collapsedHeaders.has(h.id) && h.id !== block.id);
-                  return !isHidden;
-                });
+                const visibleBlocks = blocks;
 
                 if (blocks.length === 0) {
                   return (
@@ -908,34 +940,15 @@ export default function DocPage({ docId }: { docId?: string }) {
 
                 return visibleBlocks.map((block, index) => {
                   const isLockedBySomeoneElse = block.lockedBy && block.lockedBy !== currentUser?.id;
-                  const headingLevel = getHeadingLevel(block.content);
-                  const isHeading = headingLevel > 0;
-                  const isCollapsed = collapsedHeaders.has(block.id);
 
                   return (
                     <div
                       key={block.id}
-                      className={`flex items-center justify-between py-1 px-2 rounded-md group transition-colors relative ${block.type === 'callout'
+                      className={`flex items-center justify-between py-1 rounded-md group transition-colors relative ${block.type === 'callout'
                         ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
-                        : 'hover:bg-zinc-800/40'
+                        : 'hover:bg-zinc-800/40 pl-6 pr-2'
                         }`}
                     >
-                      {isHeading && (
-                        <div 
-                          className="absolute -left-2 top-1/2 -translate-y-1/2 cursor-pointer p-0.5 rounded hover:bg-zinc-700 z-10 transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setCollapsedHeaders(prev => {
-                              const next = new Set(prev);
-                              if (next.has(block.id)) next.delete(block.id);
-                              else next.add(block.id);
-                              return next;
-                            });
-                          }}
-                        >
-                          <ChevronRight className={`w-3.5 h-3.5 text-zinc-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
-                        </div>
-                      )}
                       <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-20 relative">
 
                         {block.type === 'callout' && (
@@ -1014,7 +1027,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                               <BlockEditor
                                 editable={false}
                                 content={block.content}
-                                onChange={() => { }}
+                                onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
                                 onBlur={() => { }}
                               />
                             ) : (

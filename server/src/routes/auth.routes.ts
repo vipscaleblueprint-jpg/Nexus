@@ -11,6 +11,7 @@ import {
   resetPassword,
   googleAuth,
   googleCallback,
+  ssoAuth,
 } from '../controllers/auth.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { validateBody } from '../validation';
@@ -35,6 +36,9 @@ authRouter.post('/reset-password', validateBody(resetPasswordSchema), resetPassw
 // Google OAuth Routes
 authRouter.get('/google', googleAuth);
 authRouter.get('/google/callback', googleCallback);
+
+// SSO Route
+authRouter.get('/sso', ssoAuth);
 
 // Authenticated Routes
 authRouter.post('/logout', authenticateToken, logout);

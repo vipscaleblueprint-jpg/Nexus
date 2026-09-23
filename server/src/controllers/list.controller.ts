@@ -141,7 +141,7 @@ export async function createList(req: Request, res: Response) {
 // PATCH /api/lists/:id
 export async function updateList(req: Request, res: Response) {
   try {
-    const { name, customGroups } = req.body;
+    const { name, customGroups, applyToAll } = req.body;
     const list = await prisma.list.update({
       where: { id: req.params.id },
       data: {
@@ -149,6 +149,21 @@ export async function updateList(req: Request, res: Response) {
         ...(customGroups && { customGroups }),
       },
     });
+
+    if (applyToAll && customGroups) {
+      const allLists = await prisma.list.findMany({ select: { id: true, customGroups: true } });
+      const newGroup = customGroups[customGroups.length - 1]; 
+      
+      const updatePromises = allLists.map(l => {
+        if (!l.customGroups.includes(newGroup)) {
+          return prisma.list.update({
+            where: { id: l.id },
+            data: { customGroups: { push: newGroup } } 
+          });
+        }
+      });
+      await Promise.all(updatePromises.filter(Boolean));
+    }
 
     await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
 
@@ -226,22 +241,64 @@ const DEFAULT_STATUS_THEMES: Record<string, string> = {
   CANCELLED: 'rose',
 };
 
-
 // POST /api/lists/:id/statuses
 export async function createStatus(req: Request, res: Response) {
   try {
-    const { name, color, allowedRoles, groupName } = req.body;
+    const { name, color, allowedRoles, groupName, applyToAll } = req.body;
     const defaultColor = DEFAULT_STATUS_THEMES[name] || 'zinc';
-    const status = await prisma.listStatus.create({
-      data: {
-        name,
-        color: color || defaultColor,
-        allowedRoles: allowedRoles || [],
-        groupName: groupName || null,
-        listId: req.params.id,
-      },
-    });
-    return res.status(201).json({ status });
+
+    if (applyToAll) {
+      const allLists = await prisma.list.findMany({
+        include: { statuses: { select: { name: true } } }
+      });
+      
+      const statusesToCreate = allLists
+        .filter(l => !l.statuses.some(s => s.name === name))
+        .map(l => ({
+          name,
+          color: color || defaultColor,
+          allowedRoles: allowedRoles || [],
+          groupName: groupName || null,
+          listId: l.id,
+        }));
+      
+      if (statusesToCreate.length > 0) {
+        await prisma.listStatus.createMany({
+          data: statusesToCreate,
+        });
+      }
+
+      let status = await prisma.listStatus.findFirst({
+        where: { listId: req.params.id, name },
+      });
+      
+      if (!status) {
+        status = await prisma.listStatus.create({
+          data: {
+            name,
+            color: color || defaultColor,
+            allowedRoles: allowedRoles || [],
+            groupName: groupName || null,
+            listId: req.params.id,
+          },
+        });
+      }
+
+      await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
+      return res.status(201).json({ status });
+    } else {
+      const status = await prisma.listStatus.create({
+        data: {
+          name,
+          color: color || defaultColor,
+          allowedRoles: allowedRoles || [],
+          groupName: groupName || null,
+          listId: req.params.id,
+        },
+      });
+      await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
+      return res.status(201).json({ status });
+    }
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

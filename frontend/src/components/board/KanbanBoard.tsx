@@ -22,7 +22,6 @@ import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
 import { Plus, ChevronDown, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil } from 'lucide-react';
-import { getRoles } from '@/api/roles';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { canUserMoveTask, canUserEditTask } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
@@ -37,14 +36,14 @@ interface Props {
   onAddTaskClick?: (status: string) => void;
   onTaskClick?: (task: Task) => void;
   customGroups: string[];
-  onAddGroup: (group: string) => void;
+  onAddGroup: (group: string, applyToAll?: boolean) => void;
   onGroupReorder?: (newGroups: string[]) => void;
   listStatuses?: any[];
-  onStatusChange?: (status: string, data: { name?: string, color?: string, allowedRoles?: string[], groupName?: string }) => void | Promise<void>;
+  onStatusChange?: (status: string, data: { name?: string, color?: string, allowedRoles?: string[], groupName?: string, applyToAll?: boolean }) => void | Promise<void>;
   onStatusDelete?: (statusName: string) => void | Promise<void>;
   onDeleteGroup?: (groupName: string) => void;
   onRenameGroup?: (oldName: string, newName: string) => void | Promise<void>;
-  onStatusReorder?: (activeStatus: string, overStatus: string, isOverGroup?: boolean, newGroupName?: string) => void;
+  onStatusReorder?: (newStatuses: any[]) => void;
 }
 
 const GROUP_STYLES: Record<string, { badgeClass: string; borderColor: string; icon: string }> = {
@@ -131,7 +130,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
         const next = { ...prev };
         statusesInRun.forEach((s: string) => { next[s] = false; });
         if (typeof window !== 'undefined') {
-          try { localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next)); } catch {}
+          try { localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next)); } catch { }
         }
         return next;
       });
@@ -182,7 +181,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   };
 
   return (
-    <div 
+    <div
       ref={sortable.setNodeRef}
       style={style}
       className={`h-full ${hasMarginRight ? 'mr-4' : ''} ${isGhost ? 'z-50 relative' : ''}`}
@@ -214,40 +213,46 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   );
 });
 
-export function KanbanBoard({ tasks,  onTaskMove,
+export function KanbanBoard({ tasks, onTaskMove,
   onTaskMovePreview,
   onTaskReorder,
   onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete, onDeleteGroup, onRenameGroup, onStatusReorder }: Props) {
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
-  const currentUser = useAppStore((s) => s.currentUser);
+  const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache } = useAppStore();
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
-  
+
   const [openGroupMenu, setOpenGroupMenu] = useState<string | null>(null);
   const [openGroupMenuRect, setOpenGroupMenuRect] = useState<DOMRect | null>(null);
   const [editingGroup, setEditingGroup] = useState<string | null>(null);
   const [editingGroupName, setEditingGroupName] = useState('');
   const [groupToDelete, setGroupToDelete] = useState<string | null>(null);
-  
+
   // Keep track of the latest tasks prop to merge missed websocket updates after drag
   const latestTasksRef = useRef(tasks);
   latestTasksRef.current = tasks;
-  
+
   const [localStatuses, setLocalStatuses] = useState(listStatuses);
+  const latestLocalStatusesRef = useRef(listStatuses);
+  latestLocalStatusesRef.current = localStatuses;
 
   // Maintain stable IDs for groups so they don't unmount when renamed
   const groupIdMapRef = useRef<Record<string, string>>({});
 
   // Track dragging state in a ref so it doesn't trigger effect runs
   const isDraggingRef = useRef(false);
+  const [pendingAction, setPendingAction] = useState<{ type: 'status' | 'group', name: string, groupName?: string } | null>(null);
+  const pendingStatusUpdateRef = useRef<number>(0);
+  // Snapshot of localStatuses at drag start — used to rollback on cancel
+  const localStatusesSnapshotRef = useRef<any[]>([]);
 
   // Close dropdown on outside click or scroll
   useEffect(() => {
     if (!openGroupMenu) return;
-    
+
     const handleClose = () => setOpenGroupMenu(null);
     window.addEventListener('click', handleClose);
     window.addEventListener('scroll', handleClose, true);
@@ -258,9 +263,21 @@ export function KanbanBoard({ tasks,  onTaskMove,
   }, [openGroupMenu]);
 
   useEffect(() => {
-    if (!isDraggingRef.current) {
+    const isStatusUpdatePending = Date.now() - pendingStatusUpdateRef.current < 2000;
+    const isDragging = isDraggingRef.current;
+
+    if (!isDragging) {
       setLocalTasks(tasks);
-      setLocalStatuses(listStatuses);
+
+      // Only resync statuses from server if we didn't JUST optimistically update them
+      if (!isStatusUpdatePending) {
+        setLocalStatuses(listStatuses);
+      } else {
+        // Clear the ref after 2 seconds to allow future natural syncs
+        setTimeout(() => {
+          pendingStatusUpdateRef.current = 0;
+        }, 2000);
+      }
     }
   }, [tasks, listStatuses]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
@@ -268,7 +285,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       try {
         const saved = localStorage.getItem('nexus_board_collapsed_categories');
         if (saved) return JSON.parse(saved);
-      } catch {}
+      } catch { }
     }
     return {};
   });
@@ -277,7 +294,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       try {
         const saved = localStorage.getItem('nexus_board_collapsed_columns');
         if (saved) return JSON.parse(saved);
-      } catch {}
+      } catch { }
     }
     return {};
   });
@@ -286,15 +303,13 @@ export function KanbanBoard({ tasks,  onTaskMove,
   const [addingStatusToGroup, setAddingStatusToGroup] = useState<string | null>(null);
   const [newStatusName, setNewStatusName] = useState('');
   const [columnThemes, setColumnThemes] = useState<Record<string, string>>({});
-  const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
     if (!currentUser) return;
-    getRoles()
-      .then(setWorkspaceRoles)
-      .catch((err) => console.warn('Failed to load roles in board:', err));
+    hydrateRolesFromCache();
+    loadRoles();
   }, [currentUser]);
 
   const roleMap = useMemo(() => {
@@ -310,11 +325,11 @@ export function KanbanBoard({ tasks,  onTaskMove,
     setCollapsedCategories((prev) => {
       const isCurrentlyCollapsed = prev[categoryId];
       const next = { ...prev, [categoryId]: !isCurrentlyCollapsed };
-      
+
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('nexus_board_collapsed_categories', JSON.stringify(next));
-        } catch {}
+        } catch { }
       }
 
       // If we are uncollapsing the category,ALSO uncollapse all columns inside it
@@ -322,16 +337,16 @@ export function KanbanBoard({ tasks,  onTaskMove,
         const cat = categorizedColumns.find(c => c.id === categoryId);
         if (cat) {
           setCollapsedColumns(prevCols => {
-             const nextCols = { ...prevCols };
-             cat.statuses.forEach((status: string) => {
-               nextCols[status] = false;
-             });
-             if (typeof window !== 'undefined') {
-               try {
-                 localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(nextCols));
-               } catch {}
-             }
-             return nextCols;
+            const nextCols = { ...prevCols };
+            cat.statuses.forEach((status: string) => {
+              nextCols[status] = false;
+            });
+            if (typeof window !== 'undefined') {
+              try {
+                localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(nextCols));
+              } catch { }
+            }
+            return nextCols;
           });
         }
       }
@@ -408,7 +423,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       const groupStatuses = localStatuses
         .filter((s: any) => s.groupName === groupName)
         .map((s: any) => s.name);
-      
+
       const styles = GROUP_STYLES[groupName] || {
         badgeClass: 'bg-zinc-500/15 text-zinc-300',
         borderColor: 'rgba(113, 113, 122, 0.5)',
@@ -463,7 +478,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next));
-        } catch {}
+        } catch { }
       }
 
       // Check if newly collapsed column causes category to auto-collapse
@@ -477,7 +492,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
               if (typeof window !== 'undefined') {
                 try {
                   localStorage.setItem('nexus_board_collapsed_categories', JSON.stringify(pcNext));
-                } catch {}
+                } catch { }
               }
               return pcNext;
             });
@@ -491,16 +506,19 @@ export function KanbanBoard({ tasks,  onTaskMove,
 
   const handleAddGroup = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && newGroup.trim()) {
-      onAddGroup(newGroup.trim());
+      setPendingAction({ type: 'group', name: newGroup.trim() });
+      setNewGroup('');
+      setIsAddingGroup(false);
+    } else if (e.key === 'Escape') {
       setNewGroup('');
       setIsAddingGroup(false);
     }
-  }, [newGroup, onAddGroup]);
+  }, [newGroup]);
 
   const handleDragStart = (event: DragStartEvent) => {
     isDraggingRef.current = true;
     const { active } = event;
-    
+
     if (active.data?.current?.type === 'Group') {
       const groupName = active.data?.current?.groupName;
       const category = categorizedColumns.find(c => c.title === groupName);
@@ -511,6 +529,8 @@ export function KanbanBoard({ tasks,  onTaskMove,
     }
 
     if (active.data?.current?.type === 'Column') {
+      // Snapshot current state so we can rollback if the drag is cancelled
+      localStatusesSnapshotRef.current = [...latestLocalStatusesRef.current];
       setActiveColumn(active.id as string);
       return;
     }
@@ -536,7 +556,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
     const { active, over } = event;
 
     if (!over) return;
-    
+
     if (active.data?.current?.type === 'Group') {
       return;
     }
@@ -547,14 +567,15 @@ export function KanbanBoard({ tasks,  onTaskMove,
     if (activeId === overId) return;
 
     if (active.data?.current?.type === 'Column') {
-      let newGroupName = '';
       const isOverGroup = over.data?.current?.type === 'Group';
-      
+      // Determine the target group BEFORE the state mutation
+      let newGroupName = '';
       if (isOverGroup) {
-        newGroupName = over.data?.current?.groupName;
+        newGroupName = over.data?.current?.groupName || '';
       } else {
-        const overCat = categorizedColumns.find(c => c.statuses.includes(overId));
-        newGroupName = overCat ? overCat.title : '';
+        // Find which group the column we're hovering over belongs to
+        const overStatus = localStatuses.find((s: any) => s.name === overId);
+        newGroupName = overStatus?.groupName || '';
       }
 
       setLocalStatuses((prev: any) => {
@@ -567,36 +588,35 @@ export function KanbanBoard({ tasks,  onTaskMove,
           // IMPORTANT: If dragging WITHIN the same group, DO NOT mutate the array during onDragOver!
           // dnd-kit's SortableContext relies on CSS transforms to simulate the swap visually.
           // Mutating the array breaks the transforms and causes ghosts to get stuck.
-          if (oldGroupName === newGroupName && !isOverGroup) {
+          if (oldGroupName === newGroupName) {
             return prev;
           }
 
-          const newStatuses = [...prev];
-          let [removed] = newStatuses.splice(oldIndex, 1);
-          
-          if (newGroupName && removed.groupName !== newGroupName) {
-            removed = { ...removed, groupName: newGroupName };
-          }
-          
+          // Find the new index in the base array before any splicing
           if (isOverGroup) {
-            const groupStatuses = newStatuses.filter(s => s.groupName === newGroupName);
+            const groupStatuses = prev.filter((s: any) => (s.groupName || '') === newGroupName);
             if (groupStatuses.length > 0) {
               const lastItem = groupStatuses[groupStatuses.length - 1];
-              newIndex = newStatuses.findIndex(s => s.name === lastItem.name) + 1;
+              newIndex = prev.findIndex((s: any) => s.name === lastItem.name) + 1;
             } else {
-              newIndex = newStatuses.length;
+              newIndex = prev.length;
             }
           }
 
-          if (newIndex !== -1) {
-            newStatuses.splice(newIndex, 0, removed);
-            return newStatuses;
-          }
+          if (newIndex === -1) return prev;
+
+          // Update the groupName on the item being dragged
+          const updatedStatuses = prev.map((s: any, idx: number) => 
+            idx === oldIndex ? { ...s, groupName: newGroupName } : s
+          );
+
+          return arrayMove(updatedStatuses, oldIndex, newIndex);
         }
         return prev;
       });
       return;
     }
+
 
     const activeTaskIndex = localTasks.findIndex(t => t.id === activeId);
     if (activeTaskIndex === -1) return;
@@ -628,7 +648,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
   const customCollisionDetection = useCallback((args: any) => {
     const isGroupDrag = args.active?.data?.current?.type === 'Group';
     const isColumnDrag = args.active?.data?.current?.type === 'Column';
-    
+
     if (isGroupDrag) {
       let collisions = pointerWithin(args);
       if (collisions.length === 0) {
@@ -638,40 +658,40 @@ export function KanbanBoard({ tasks,  onTaskMove,
       const valid = collisions.filter((c: any) => groupIds.includes(c.id));
       return valid;
     }
-    
+
     // Allow columns to be dropped onto columns or groups (empty space)
     if (isColumnDrag) {
       // Use rectIntersection instead of pointerWithin so it requires significant overlap (not just the cursor position)
       // This prevents the column from "jumping" into the next group when only 10% of it crosses the boundary.
       const collisions = rectIntersection(args);
       let valid: any[] = [];
-      
+
       const columnIds = localStatuses.map((s: any) => s.name);
       const groupIds = categorizedColumns.map(c => c.id);
-      
+
       if (collisions.length > 0) valid = collisions.filter((c: any) => (columnIds.includes(c.id) || groupIds.includes(c.id)));
-      
+
       if (valid.length === 0) {
         const closest = closestCenter(args);
         valid = closest.filter((c: any) => (columnIds.includes(c.id) || groupIds.includes(c.id)));
       }
-      
+
       return valid;
     }
-    
+
     // For tasks, use pointerWithin to prevent layout shift infinite loops.
     // If the pointer is not strictly within any container, fallback to closestCenter.
     let collisions = pointerWithin(args);
     if (collisions.length === 0) {
       collisions = closestCenter(args);
     }
-    
+
     return collisions.filter((c: any) => c.data?.current?.type !== 'Group' && c.data?.current?.type !== 'Column' && c.id !== args.active?.id);
   }, []);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    
+
     if (active.data?.current?.type === 'Group') {
       isDraggingRef.current = false;
       setActiveGroup(null);
@@ -679,7 +699,7 @@ export function KanbanBoard({ tasks,  onTaskMove,
         const draggableColumns = categorizedColumns.filter(c => !c.isCatchAll);
         const oldIndex = draggableColumns.findIndex(c => c.id === active.id);
         const newIndex = draggableColumns.findIndex(c => c.id === over.id);
-        
+
         if (oldIndex !== -1 && newIndex !== -1) {
           const newOrder = arrayMove(draggableColumns, oldIndex, newIndex);
           onGroupReorder(newOrder.map(c => c.title));
@@ -691,33 +711,104 @@ export function KanbanBoard({ tasks,  onTaskMove,
     if (active.data?.current?.type === 'Column') {
       isDraggingRef.current = false;
       setActiveColumn(null);
-      
+
       const activeStatusName = active.id as string;
       const overId = over?.id as string;
 
-      if (!over || activeStatusName === overId) return;
-
-      let newGroupName = '';
-      const isOverGroup = over.data?.current?.type === 'Group';
-      if (isOverGroup) {
-        newGroupName = over.data?.current?.groupName;
-      } else if (over.data?.current?.type === 'Column') {
-        const overCat = categorizedColumns.find(c => c.statuses.includes(overId));
-        if (overCat) newGroupName = overCat.title;
+      if (!over) {
+        // Drag cancelled (dropped outside) — restore the pre-drag snapshot
+        console.log(`%c[DragEnd COLUMN] Cancelled (no over) — rolling back to snapshot`, 'color: #e74c3c');
+        if (localStatusesSnapshotRef.current.length > 0) {
+          setLocalStatuses(localStatusesSnapshotRef.current);
+        }
+        return;
       }
 
-      if (newGroupName) {
-        // Compare against original listStatuses, because local categorizedColumns might already reflect the DragOver state
-        const originalStatus = listStatuses.find((s: any) => s.name === activeStatusName);
-        if (originalStatus && originalStatus.groupName !== newGroupName) {
-          if (onStatusChange) {
-            onStatusChange(activeStatusName, { groupName: newGroupName });
+      const activeStatusInSnapshot = localStatusesSnapshotRef.current.find((s: any) => s.name === activeStatusName);
+      const sourceGroupName = activeStatusInSnapshot?.groupName || '';
+      
+      const isOverGroup = over.data?.current?.type === 'Group';
+
+      let newGroupName = '';
+      if (isOverGroup) {
+        newGroupName = over.data?.current?.groupName || '';
+      } else {
+        // If we dropped on another column, get its group from the snapshot
+        const overStatusInSnapshot = localStatusesSnapshotRef.current.find((s: any) => s.name === overId);
+        newGroupName = overStatusInSnapshot?.groupName || '';
+        if (!newGroupName) {
+          const overCat = categorizedColumns.find(c => c.statuses.includes(overId));
+          if (overCat) newGroupName = overCat.title;
+        }
+      }
+
+      // If active === over, newGroupName (calculated from snapshot) will falsely match sourceGroupName.
+      // But DragOver may have already moved it to a new group in localStatuses!
+      // So we check localStatuses to see if it actually changed groups.
+      const activeStatusCurrently = localStatuses.find((s: any) => s.name === activeStatusName);
+      const currentGroupName = activeStatusCurrently?.groupName || sourceGroupName;
+
+      if (activeStatusName === overId) {
+        if (sourceGroupName === currentGroupName) {
+          if (localStatusesSnapshotRef.current.length > 0) {
+            latestLocalStatusesRef.current = localStatusesSnapshotRef.current;
+            setLocalStatuses(localStatusesSnapshotRef.current);
           }
+          return;
+        } else {
+          // It dropped on itself, but it DID change groups (cross-group drop).
+          // newGroupName should be the group it currently resides in.
+          newGroupName = currentGroupName;
+        }
+      }
+
+      const isWithinGroup = sourceGroupName === newGroupName;
+
+      // DragOver skipped array mutation for same-group movements (relies on CSS transforms).
+      // For cross-group, it also skipped mutation once it entered the new group.
+      // We must apply the final reorder here using the clean snapshot as the base to perfectly match page.tsx.
+      let finalArray: any[] = [];
+
+      if (!isWithinGroup) {
+        // For cross-group drops, DragOver perfectly calculated the final array order.
+        // We just keep the live state!
+        finalArray = latestLocalStatusesRef.current;
+      } else {
+        // For same-group drops, DragOver skipped mutation to allow CSS transforms.
+        // We must calculate the final array order from the snapshot.
+        const base = [...localStatusesSnapshotRef.current];
+        const oldIdx = base.findIndex((s: any) => s.name === activeStatusName);
+        let newIdx = base.findIndex((s: any) => s.name === overId);
+
+        if (newIdx === -1 && isOverGroup && newGroupName) {
+          const groupStatuses = base.filter((s: any) => s.groupName === newGroupName && s.name !== activeStatusName);
+          newIdx = groupStatuses.length > 0
+            ? base.findIndex((s: any) => s.name === groupStatuses[groupStatuses.length - 1].name) + 1
+            : base.length;
+        }
+
+        if (oldIdx !== -1 && newIdx !== -1) {
+          finalArray = arrayMove(base, oldIdx, newIdx);
+        } else {
+          finalArray = base;
+        }
+      }
+
+      latestLocalStatusesRef.current = finalArray;
+      setLocalStatuses(finalArray);
+
+      // Lock against useEffect overwriting our optimistic local state
+      pendingStatusUpdateRef.current = Date.now();
+
+      // Fire backend API calls
+      if (newGroupName && newGroupName !== sourceGroupName) {
+        if (onStatusChange) {
+          onStatusChange(activeStatusName, { groupName: newGroupName });
         }
       }
 
       if (onStatusReorder) {
-        onStatusReorder(activeStatusName, overId, isOverGroup, newGroupName);
+        onStatusReorder(finalArray);
       }
       return;
     }
@@ -809,72 +900,70 @@ export function KanbanBoard({ tasks,  onTaskMove,
           <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
         </div>
       ) : (
-      <div 
-        ref={boardContainerRef}
-        onWheel={handleWheelScroll}
-        className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 custom-scrollbar transition-all duration-300`}
-      >
-        <SortableContext 
-          items={sortableColumnIds} 
-          strategy={horizontalListSortingStrategy}
+        <div
+          ref={boardContainerRef}
+          onWheel={handleWheelScroll}
+          className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 custom-scrollbar transition-all duration-300`}
         >
-          {categorizedColumns.map((category) => {
-            const isCollapsed = Boolean(collapsedCategories[category.id]);
-            const totalCategoryTasks = category.statuses.reduce(
-              (sum: number, s: string) => sum + (tasksByStatus[s]?.length || 0),
-              0
-            );
+          <SortableContext
+            items={sortableColumnIds}
+            strategy={horizontalListSortingStrategy}
+          >
+            {categorizedColumns.map((category) => {
+              const isCollapsed = Boolean(collapsedCategories[category.id]);
+              const totalCategoryTasks = category.statuses.reduce(
+                (sum: number, s: string) => sum + (tasksByStatus[s]?.length || 0),
+                0
+              );
 
-            return (
-              <SortableGroupWrapper key={category.id} category={category} activeGroup={activeGroup}>
-                {(sortable: any) => (
-                  <>
-                    {/* ── COLLAPSED: slim vertical pill ── */}
-                    <button
-                      onClick={() => toggleCategory(category.id)}
-                      title={`Expand ${category.title}`}
-                      className={`relative flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-500 ease-in-out overflow-hidden select-none whitespace-nowrap rounded-xl border ${category.badgeClass} ${
-                        isCollapsed 
-                          ? 'max-w-[48px] w-12 opacity-80 hover:opacity-100 hover:brightness-110' 
-                          : 'max-w-0 w-0 opacity-0 border-transparent p-0 mx-0'
-                      }`}
-                    >
-                      <div className="flex flex-col items-center justify-center w-12 min-h-[200px] h-full shrink-0">
-                        <ChevronRight className="w-4 h-4 shrink-0 mb-2" />
-                        <span
-                          className="text-[11px] font-bold uppercase tracking-widest"
-                          style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}
-                        >
-                          {totalCategoryTasks} task{totalCategoryTasks !== 1 ? 's' : ''} · {category.statuses.length} cols
-                        </span>
-                      </div>
-                    </button>
-
-                    {/* ── EXPANDED: bordered group box ── */}
-                    <div 
-                      className={`relative flex flex-col h-full min-h-[200px] transition-all duration-500 ease-in-out ${
-                        isCollapsed 
-                          ? 'max-w-0 opacity-0 mx-0' 
-                          : 'max-w-[5000px] opacity-100'
-                      }`}
-                    >
-                      {/* Inner container with overflow-hidden to clip contents during animation */}
-                      <div 
-                        className="rounded-2xl border bg-[#18181c] h-full p-4 pt-3 overflow-hidden flex flex-col shadow-sm shadow-black/20"
-                        style={{ borderColor: category.borderColor }}
+              return (
+                <SortableGroupWrapper key={category.id} category={category} activeGroup={activeGroup}>
+                  {(sortable: any) => (
+                    <>
+                      {/* ── COLLAPSED: slim vertical pill ── */}
+                      <button
+                        onClick={() => toggleCategory(category.id)}
+                        title={`Expand ${category.title}`}
+                        className={`relative flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-500 ease-in-out overflow-hidden select-none whitespace-nowrap rounded-xl border ${category.badgeClass} ${isCollapsed
+                            ? 'max-w-[48px] w-12 opacity-80 hover:opacity-100 hover:brightness-110'
+                            : 'max-w-0 w-0 opacity-0 border-transparent p-0 mx-0'
+                          }`}
                       >
-                        {/* Group Header */}
-                        <div 
-                          className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing"
-                          onMouseDown={!category.id.startsWith('group_') ? handleHeaderMouseDown : undefined}
-                          onMouseLeave={!category.id.startsWith('group_') ? handleHeaderMouseLeave : undefined}
-                          onMouseUp={!category.id.startsWith('group_') ? handleHeaderMouseUp : undefined}
-                          onMouseMove={!category.id.startsWith('group_') ? handleHeaderMouseMove : undefined}
-                          {...(category.id.startsWith('group_') ? sortable.listeners : {})}
-                          {...(category.id.startsWith('group_') ? sortable.attributes : {})}
+                        <div className="flex flex-col items-center justify-center w-12 min-h-[200px] h-full shrink-0">
+                          <ChevronRight className="w-4 h-4 shrink-0 mb-2" />
+                          <span
+                            className="text-[11px] font-bold uppercase tracking-widest"
+                            style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}
+                          >
+                            {totalCategoryTasks} task{totalCategoryTasks !== 1 ? 's' : ''} · {category.statuses.length} cols
+                          </span>
+                        </div>
+                      </button>
+
+                      {/* ── EXPANDED: bordered group box ── */}
+                      <div
+                        className={`relative flex flex-col h-full min-h-[200px] transition-all duration-500 ease-in-out ${isCollapsed
+                            ? 'max-w-0 opacity-0 mx-0'
+                            : 'max-w-[5000px] opacity-100'
+                          }`}
+                      >
+                        {/* Inner container with overflow-hidden to clip contents during animation */}
+                        <div
+                          className="rounded-2xl border bg-[#18181c] h-full p-4 pt-3 overflow-hidden flex flex-col shadow-sm shadow-black/20"
+                          style={{ borderColor: category.borderColor }}
                         >
-                          <div className="flex items-center gap-1.5">
-                            {editingGroup === category.title ? (
+                          {/* Group Header */}
+                          <div
+                            className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing"
+                            onMouseDown={!category.id.startsWith('group_') ? handleHeaderMouseDown : undefined}
+                            onMouseLeave={!category.id.startsWith('group_') ? handleHeaderMouseLeave : undefined}
+                            onMouseUp={!category.id.startsWith('group_') ? handleHeaderMouseUp : undefined}
+                            onMouseMove={!category.id.startsWith('group_') ? handleHeaderMouseMove : undefined}
+                            {...(category.id.startsWith('group_') ? sortable.listeners : {})}
+                            {...(category.id.startsWith('group_') ? sortable.attributes : {})}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              {editingGroup === category.title ? (
                                 <input
                                   type="text"
                                   autoFocus
@@ -916,280 +1005,327 @@ export function KanbanBoard({ tasks,  onTaskMove,
                                   }}
                                   className="bg-zinc-800 text-[10px] font-bold uppercase tracking-wider text-white px-2 py-1 rounded outline-none w-40 border border-zinc-700 focus:border-indigo-500"
                                 />
-                            ) : (
-                              <div 
-                                 className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/5"
-                                 onClick={(e) => { e.stopPropagation(); toggleCategory(category.id); }}
-                                 title="Collapse section"
-                                 onMouseDown={(e) => e.stopPropagation()}
+                              ) : (
+                                <div
+                                  className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/5"
+                                  onClick={(e) => { e.stopPropagation(); toggleCategory(category.id); }}
+                                  title="Collapse section"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                  <span className="whitespace-nowrap text-zinc-300">{category.title}</span>
+                                  <span className="opacity-60 shrink-0 text-zinc-400">({totalCategoryTasks})</span>
+                                  <div className="p-0.5 ml-1 rounded transition-all opacity-0 group-hover:opacity-100 hover:bg-zinc-700/50">
+                                    <ChevronDown className="w-3 h-3 shrink-0 text-zinc-400" />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1 relative">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (openGroupMenu === category.title) {
+                                    setOpenGroupMenu(null);
+                                    setOpenGroupMenuRect(null);
+                                  } else {
+                                    setOpenGroupMenu(category.title);
+                                    setOpenGroupMenuRect(e.currentTarget.getBoundingClientRect());
+                                  }
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                className="p-1.5 hover:bg-white/10 rounded-md transition-colors cursor-pointer text-zinc-400 hover:text-white"
+                                title="Group options"
                               >
-                                <span className="whitespace-nowrap text-zinc-300">{category.title}</span>
-                                <span className="opacity-60 shrink-0 text-zinc-400">({totalCategoryTasks})</span>
-                                <div className="p-0.5 ml-1 rounded transition-all opacity-0 group-hover:opacity-100 hover:bg-zinc-700/50">
-                                  <ChevronDown className="w-3 h-3 shrink-0 text-zinc-400" />
+                                <MoreHorizontal className="w-4 h-4" />
+                              </button>
+
+                              {openGroupMenu === category.title && openGroupMenuRect && typeof window !== 'undefined' && createPortal(
+                                <div
+                                  className="fixed w-40 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl z-[9999] py-1 animate-in fade-in zoom-in-95 duration-100"
+                                  style={{
+                                    top: openGroupMenuRect.bottom + 4,
+                                    left: openGroupMenuRect.right - 160 // 160px is w-40
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                >
+                                  {!category.isCatchAll && (
+                                    <button
+                                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                                      onClick={() => {
+                                        setEditingGroup(category.title);
+                                        setEditingGroupName(category.title);
+                                        setOpenGroupMenu(null);
+                                        setOpenGroupMenuRect(null);
+                                      }}
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                      Rename
+                                    </button>
+                                  )}
+                                  <button
+                                    className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                                    onClick={() => {
+                                      setAddingStatusToGroup(category.title);
+                                      setNewStatusName('');
+                                      setOpenGroupMenu(null);
+                                      setOpenGroupMenuRect(null);
+                                    }}
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    Add status
+                                  </button>
+                                  {!category.isCatchAll && (
+                                    <button
+                                      className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 flex items-center gap-2 transition-colors cursor-pointer"
+                                      onClick={() => {
+                                        setOpenGroupMenu(null);
+                                        setOpenGroupMenuRect(null);
+                                        setGroupToDelete(category.title);
+                                      }}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      Delete
+                                    </button>
+                                  )}
+                                </div>,
+                                document.body
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Columns inside the group */}
+                          <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max">
+                            <SortableContext items={category.statuses} strategy={horizontalListSortingStrategy}>
+                              {category.statuses.map((status: string, index: number) => {
+                                const isCollapsed = collapsedColumns[status];
+
+                                let groupRunIndex = 0;
+                                let groupRunCount = 1;
+                                let statusesInRun: string[] = [status];
+
+                                if (isCollapsed) {
+                                  let start = index;
+                                  while (start > 0 && collapsedColumns[category.statuses[start - 1]]) {
+                                    start--;
+                                  }
+                                  groupRunIndex = index - start;
+
+                                  let end = index;
+                                  while (end < category.statuses.length - 1 && collapsedColumns[category.statuses[end + 1]]) {
+                                    end++;
+                                  }
+                                  groupRunCount = end - start + 1;
+                                  statusesInRun = category.statuses.slice(start, end + 1);
+                                }
+
+                                const isCollapsedGroupLeader = isCollapsed && groupRunIndex === 0;
+                                const isCollapsedFollower = isCollapsed && groupRunIndex > 0;
+
+                                const isLast = index === category.statuses.length - 1;
+                                const hasMarginRight = !isLast && !isCollapsedFollower;
+
+                                return (
+                                  <MemoizedColumnWrapper
+                                    key={status}
+                                    status={status}
+                                    category={category}
+                                    tasks={tasksByStatus[status] || EMPTY_ARRAY}
+                                    isCollapsed={isCollapsed}
+                                    setCollapsedColumns={setCollapsedColumns}
+                                    toggleColumnCollapse={toggleColumnCollapse}
+                                    listStatuses={listStatuses}
+                                    currentUser={currentUser}
+                                    workspaceRoles={workspaceRoles}
+                                    roleMap={roleMap}
+                                    columnThemes={columnThemes}
+                                    setColumnThemes={setColumnThemes}
+                                    onStatusChange={onStatusChange}
+                                    onStatusDelete={onStatusDelete}
+                                    onAddTaskClick={onAddTaskClick}
+                                    onTaskClick={onTaskClick}
+                                    hasMarginRight={hasMarginRight}
+                                    groupRunCount={groupRunCount}
+                                    isCollapsedGroupLeader={isCollapsedGroupLeader}
+                                    statusesInRun={statusesInRun}
+                                    activeColumn={activeColumn}
+                                  />
+                                );
+                              })}
+                            </SortableContext>
+                            {addingStatusToGroup === category.title && (
+                              <div className="w-[300px] shrink-0 h-max flex flex-col mt-[2px] ml-2 animate-in fade-in zoom-in-95 duration-200">
+                                <div className="group relative flex items-center justify-between gap-3 bg-zinc-800/80 border border-zinc-700/50 rounded-xl p-3 shadow-sm text-left overflow-hidden">
+                                  <div className="w-2.5 h-2.5 rounded bg-zinc-500 shrink-0" />
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    placeholder="Status name"
+                                    value={newStatusName}
+                                    onChange={(e) => setNewStatusName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        if (newStatusName.trim() && onStatusChange) {
+                                          setPendingAction({ type: 'status', name: newStatusName.trim(), groupName: addingStatusToGroup || undefined });
+                                        }
+                                        setAddingStatusToGroup(null);
+                                        setNewStatusName('');
+                                      } else if (e.key === 'Escape') {
+                                        setAddingStatusToGroup(null);
+                                        setNewStatusName('');
+                                      }
+                                    }}
+                                    className="bg-transparent border-none text-[13px] font-semibold text-zinc-200 placeholder-zinc-500 focus:outline-none w-full"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      setAddingStatusToGroup(null);
+                                      setNewStatusName('');
+                                    }}
+                                    className="text-zinc-500 hover:text-zinc-300 transition-colors p-1"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
                                 </div>
                               </div>
                             )}
                           </div>
-                          
-                          <div className="flex items-center gap-1 relative">
-                             <button
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 if (openGroupMenu === category.title) {
-                                   setOpenGroupMenu(null);
-                                   setOpenGroupMenuRect(null);
-                                 } else {
-                                   setOpenGroupMenu(category.title);
-                                   setOpenGroupMenuRect(e.currentTarget.getBoundingClientRect());
-                                 }
-                               }}
-                               onMouseDown={(e) => e.stopPropagation()}
-                               onPointerDown={(e) => e.stopPropagation()}
-                               className="p-1.5 hover:bg-white/10 rounded-md transition-colors cursor-pointer text-zinc-400 hover:text-white"
-                               title="Group options"
-                             >
-                               <MoreHorizontal className="w-4 h-4" />
-                             </button>
-
-                             {openGroupMenu === category.title && openGroupMenuRect && typeof window !== 'undefined' && createPortal(
-                               <div 
-                                 className="fixed w-40 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl z-[9999] py-1 animate-in fade-in zoom-in-95 duration-100"
-                                 style={{ 
-                                   top: openGroupMenuRect.bottom + 4,
-                                   left: openGroupMenuRect.right - 160 // 160px is w-40
-                                 }}
-                                 onClick={(e) => e.stopPropagation()}
-                                 onMouseDown={(e) => e.stopPropagation()}
-                                 onPointerDown={(e) => e.stopPropagation()}
-                               >
-                                 {!category.isCatchAll && (
-                                   <button
-                                     className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
-                                     onClick={() => {
-                                       setEditingGroup(category.title);
-                                       setEditingGroupName(category.title);
-                                       setOpenGroupMenu(null);
-                                       setOpenGroupMenuRect(null);
-                                     }}
-                                   >
-                                     <Pencil className="w-3.5 h-3.5" />
-                                     Rename
-                                   </button>
-                                 )}
-                                 <button
-                                   className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
-                                   onClick={() => {
-                                     setAddingStatusToGroup(category.title);
-                                     setNewStatusName('');
-                                     setOpenGroupMenu(null);
-                                     setOpenGroupMenuRect(null);
-                                   }}
-                                 >
-                                   <Plus className="w-3.5 h-3.5" />
-                                   Add status
-                                 </button>
-                                 {!category.isCatchAll && (
-                                   <button
-                                     className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 flex items-center gap-2 transition-colors cursor-pointer"
-                                     onClick={() => {
-                                       setOpenGroupMenu(null);
-                                       setOpenGroupMenuRect(null);
-                                       setGroupToDelete(category.title);
-                                     }}
-                                   >
-                                     <Trash2 className="w-3.5 h-3.5" />
-                                     Delete
-                                   </button>
-                                 )}
-                               </div>,
-                               document.body
-                             )}
-                           </div>
-                         </div>
-
-                  {/* Columns inside the group */}
-                  <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max">
-                    <SortableContext items={category.statuses} strategy={horizontalListSortingStrategy}>
-                      {category.statuses.map((status: string, index: number) => {
-                        const isCollapsed = collapsedColumns[status];
-                        
-                        let groupRunIndex = 0;
-                        let groupRunCount = 1;
-                        let statusesInRun: string[] = [status];
-
-                        if (isCollapsed) {
-                           let start = index;
-                           while (start > 0 && collapsedColumns[category.statuses[start - 1]]) {
-                              start--;
-                           }
-                           groupRunIndex = index - start;
-                           
-                           let end = index;
-                           while (end < category.statuses.length - 1 && collapsedColumns[category.statuses[end + 1]]) {
-                              end++;
-                           }
-                           groupRunCount = end - start + 1;
-                           statusesInRun = category.statuses.slice(start, end + 1);
-                        }
-                        
-                        const isCollapsedGroupLeader = isCollapsed && groupRunIndex === 0;
-                        const isCollapsedFollower = isCollapsed && groupRunIndex > 0;
-                        
-                        const isLast = index === category.statuses.length - 1;
-                        const hasMarginRight = !isLast && !isCollapsedFollower;
-
-                        return (
-                          <MemoizedColumnWrapper
-                            key={status}
-                            status={status}
-                            category={category}
-                            tasks={tasksByStatus[status] || EMPTY_ARRAY}
-                            isCollapsed={isCollapsed}
-                            setCollapsedColumns={setCollapsedColumns}
-                            toggleColumnCollapse={toggleColumnCollapse}
-                            listStatuses={listStatuses}
-                            currentUser={currentUser}
-                            workspaceRoles={workspaceRoles}
-                            roleMap={roleMap}
-                            columnThemes={columnThemes}
-                            setColumnThemes={setColumnThemes}
-                            onStatusChange={onStatusChange}
-                            onStatusDelete={onStatusDelete}
-                            onAddTaskClick={onAddTaskClick}
-                            onTaskClick={onTaskClick}
-                            hasMarginRight={hasMarginRight}
-                            groupRunCount={groupRunCount}
-                            isCollapsedGroupLeader={isCollapsedGroupLeader}
-                            statusesInRun={statusesInRun}
-                            activeColumn={activeColumn}
-                          />
-                        );
-                      })}
-                    </SortableContext>
-                    {addingStatusToGroup === category.title && (
-                      <div className="w-[300px] shrink-0 h-max flex flex-col mt-[2px] ml-2 animate-in fade-in zoom-in-95 duration-200">
-                        <div className="group relative flex items-center justify-between gap-3 bg-zinc-800/80 border border-zinc-700/50 rounded-xl p-3 shadow-sm text-left overflow-hidden">
-                          <div className="w-2.5 h-2.5 rounded bg-zinc-500 shrink-0" />
-                          <input
-                            type="text"
-                            autoFocus
-                            placeholder="Status name"
-                            value={newStatusName}
-                            onChange={(e) => setNewStatusName(e.target.value)}
-                            onKeyDown={async (e) => {
-                              if (e.key === 'Enter') {
-                                if (newStatusName.trim() && onStatusChange) {
-                                  try {
-                                    await onStatusChange(newStatusName.trim(), { groupName: addingStatusToGroup || undefined });
-                                  } catch (error) {
-                                    console.error(error);
-                                  }
-                                }
-                                setAddingStatusToGroup(null);
-                                setNewStatusName('');
-                              } else if (e.key === 'Escape') {
-                                setAddingStatusToGroup(null);
-                                setNewStatusName('');
-                              }
-                            }}
-                            className="bg-transparent border-none text-[13px] font-semibold text-zinc-200 placeholder-zinc-500 focus:outline-none w-full"
-                          />
-                          <button
-                            onClick={() => {
-                              setAddingStatusToGroup(null);
-                              setNewStatusName('');
-                            }}
-                            className="text-zinc-500 hover:text-zinc-300 transition-colors p-1"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
                         </div>
                       </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              </>
-            )}
-            </SortableGroupWrapper>
-          );
-        })}
-        </SortableContext>
-        
-        {/* Add Group Column / Input */}
-        <div className="flex-shrink-0 w-[350px] snap-start">
-          <div className="flex flex-col pt-3">
-            {!isAddingGroup ? (
-              <button 
-                onClick={() => setIsAddingGroup(true)}
-                className="flex items-center gap-1 text-base font-semibold text-zinc-500 hover:text-zinc-700 transition-colors mb-2 cursor-pointer"
-              >
-                <Plus className="w-5 h-5" /> Add group
-              </button>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <button 
-                  onClick={() => setIsAddingGroup(false)}
-                  className="flex items-center gap-1 text-base font-semibold text-zinc-500 hover:text-zinc-300 transition-colors mb-1 cursor-pointer"
+                    </>
+                  )}
+                </SortableGroupWrapper>
+              );
+            })}
+          </SortableContext>
+
+          {/* Add Group Column / Input */}
+          <div className="flex-shrink-0 w-[350px] snap-start">
+            <div className="flex flex-col pt-3">
+              {!isAddingGroup ? (
+                <button
+                  onClick={() => setIsAddingGroup(true)}
+                  className="flex items-center gap-1 text-base font-semibold text-zinc-500 hover:text-zinc-700 transition-colors mb-2 cursor-pointer"
                 >
                   <Plus className="w-5 h-5" /> Add group
                 </button>
-                <div className="flex items-center gap-2 p-1.5 border border-zinc-700 bg-[#18181c] rounded-lg shadow-sm">
-                  <div className="w-4 h-4 rounded bg-amber-500 ml-1 shrink-0" />
-                  <input 
-                    type="text" 
-                    placeholder="Group name" 
-                    value={newGroup}
-                    onChange={(e) => setNewGroup(e.target.value)}
-                    onKeyDown={handleAddGroup}
-                    autoFocus
-                    className="bg-transparent border-none text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none w-full"
-                  />
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() => setIsAddingGroup(false)}
+                    className="flex items-center gap-1 text-base font-semibold text-zinc-500 hover:text-zinc-300 transition-colors mb-1 cursor-pointer"
+                  >
+                    <Plus className="w-5 h-5" /> Add group
+                  </button>
+                  <div className="flex items-center gap-2 p-1.5 border border-zinc-700 bg-[#18181c] rounded-lg shadow-sm">
+                    <div className="w-4 h-4 rounded bg-amber-500 ml-1 shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Group name"
+                      value={newGroup}
+                      onChange={(e) => setNewGroup(e.target.value)}
+                      onKeyDown={handleAddGroup}
+                      autoFocus
+                      className="bg-transparent border-none text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none w-full"
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
-      </div>
       )}
 
       <DragOverlay>
         {activeTask ? <KanbanCard task={activeTask} isOverlay /> : null}
         {activeColumn ? (() => {
-           const dbStatus = listStatuses.find((s: any) => s.name === activeColumn);
-           return (
-             <div className="flex-shrink-0 flex items-stretch cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
-                <KanbanColumn
-                  status={activeColumn}
-                  tasks={tasksByStatus[activeColumn] || []}
-                  isCollapsed={false}
-                  onToggleCollapse={() => {}}
-                  customTheme={dbStatus?.color || columnThemes[activeColumn]}
-                  roleMap={roleMap}
-                  allowedRoles={dbStatus?.allowedRoles}
-                  listStatuses={listStatuses}
-                  isOverlay={true}
-                />
-             </div>
-           );
+          const dbStatus = listStatuses.find((s: any) => s.name === activeColumn);
+          return (
+            <div className="flex-shrink-0 flex items-stretch cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
+              <KanbanColumn
+                status={activeColumn}
+                tasks={tasksByStatus[activeColumn] || []}
+                isCollapsed={false}
+                onToggleCollapse={() => { }}
+                customTheme={dbStatus?.color || columnThemes[activeColumn]}
+                roleMap={roleMap}
+                allowedRoles={dbStatus?.allowedRoles}
+                listStatuses={listStatuses}
+                isOverlay={true}
+              />
+            </div>
+          );
         })() : null}
         {activeGroup ? (
           <div className="flex-shrink-0 snap-start self-stretch flex items-stretch h-[500px] z-50 relative cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
-             <div className="rounded-2xl border bg-[#18181c] w-[320px] h-full p-4 pt-3 flex flex-col shadow-2xl" style={{ borderColor: activeGroup.borderColor }}>
-               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg mb-3">
-                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">{activeGroup.title}</span>
-               </div>
-               <div className="flex-1 flex gap-4">
-                 <div className="w-full h-full rounded-xl bg-white/5 border border-white/5 flex flex-col p-3">
-                    <div className="w-full h-20 bg-white/5 rounded-lg mb-2" />
-                    <div className="w-full h-24 bg-white/5 rounded-lg" />
-                 </div>
-               </div>
-             </div>
+            <div className="rounded-2xl border bg-[#18181c] w-[320px] h-full p-4 pt-3 flex flex-col shadow-2xl" style={{ borderColor: activeGroup.borderColor }}>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg mb-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">{activeGroup.title}</span>
+              </div>
+              <div className="flex-1 flex gap-4">
+                <div className="w-full h-full rounded-xl bg-white/5 border border-white/5 flex flex-col p-3">
+                  <div className="w-full h-20 bg-white/5 rounded-lg mb-2" />
+                  <div className="w-full h-24 bg-white/5 rounded-lg" />
+                </div>
+              </div>
+            </div>
           </div>
         ) : null}
       </DragOverlay>
+
+
+      {pendingAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-[#18181b] border border-zinc-800/80 rounded-2xl p-6 w-[440px] shadow-2xl shadow-black/50 flex flex-col relative">
+            <div>
+              <h3 className="text-xl font-bold text-white tracking-tight mb-2">Apply This {pendingAction.type === 'status' ? 'Status' : 'Group'}</h3>
+              <p className="text-[14px] text-zinc-400 leading-relaxed">
+                This new {pendingAction.type} will be added to this board. Do you want it available on all boards in your workspace, or just this one? You can usually change this later.
+              </p>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  if (pendingAction.type === 'group') {
+                    onAddGroup(pendingAction.name, false);
+                  } else if (onStatusChange) {
+                    onStatusChange(pendingAction.name, { groupName: pendingAction.groupName, applyToAll: false });
+                  }
+                  setPendingAction(null);
+                }}
+                className="flex-1 px-4 py-2 bg-zinc-800/60 hover:bg-zinc-700 border border-zinc-700/50 text-zinc-200 hover:text-white rounded-lg text-sm font-medium transition-all cursor-pointer flex justify-center items-center"
+              >
+                This Board Only
+              </button>
+              <button
+                onClick={() => {
+                  if (pendingAction.type === 'group') {
+                    onAddGroup(pendingAction.name, true);
+                  } else if (onStatusChange) {
+                    onStatusChange(pendingAction.name, { groupName: pendingAction.groupName, applyToAll: true });
+                  }
+                  setPendingAction(null);
+                }}
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold transition-all cursor-pointer flex justify-center items-center"
+              >
+                All Boards
+              </button>
+            </div>
+            <div className="mt-3 flex justify-center">
+              <button
+                onClick={() => setPendingAction(null)}
+                className="px-4 py-1.5 bg-transparent hover:bg-zinc-800/30 text-zinc-500 hover:text-zinc-300 rounded-lg text-[13px] font-medium transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDeleteModal
         isOpen={!!groupToDelete}

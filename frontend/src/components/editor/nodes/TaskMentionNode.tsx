@@ -3,8 +3,9 @@ import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { toast } from '@/lib/toast';
-import { Flag, User as UserIcon, CheckCircle2, AlignLeft, Shield, Check } from 'lucide-react';
+import { Flag, User as UserIcon, CheckCircle2, AlignLeft, Shield, Check, Users2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const STATUS_COLORS: Record<string, string> = {
   'KYC': '#06b6d4',
@@ -36,6 +37,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData } = node.attrs;
 
   const currentUser = useAppStore(s => s.currentUser);
+  const globalTask = useAppStore(s => s.tasksIndex[id]);
+  const updateTaskStore = useAppStore(s => s.updateTask);
   
   let initialTaskData = null;
   try {
@@ -48,9 +51,25 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   const [taskData, setTaskData] = useState<any>(initialTaskData);
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'priority' | 'description' | 'team' | null>(null);
-  const [dbUsers, setDbUsers] = useState<any[]>([]);
-  const [dbTeams, setDbTeams] = useState<any[]>([]);
-  const [listStatuses, setListStatuses] = useState<any[]>([]);
+  const [fallbackListStatuses, setFallbackListStatuses] = useState<any[]>([]);
+
+  const workspaceUsers = useAppStore(s => s.workspaceUsers);
+  const workspaceTeams = useAppStore(s => s.workspaceTeams);
+  const allLists = useAppStore(s => s.allLists);
+  const hasLoadedUsers = useAppStore(s => s.hasLoadedUsers);
+  const hasLoadedTeams = useAppStore(s => s.hasLoadedTeams);
+  const loadUsers = useAppStore(s => s.loadUsers);
+  const loadTeams = useAppStore(s => s.loadTeams);
+
+  const dbUsers = workspaceUsers;
+  const dbTeams = workspaceTeams;
+  
+  const listStatuses = React.useMemo(() => {
+    if (fallbackListStatuses.length > 0) return fallbackListStatuses;
+    if (!taskData?.listId) return [];
+    const found = allLists.find(l => l.id === taskData.listId);
+    return found?.statuses || [];
+  }, [allLists, taskData?.listId, fallbackListStatuses]);
 
   // Local state for read-only interactivity
   const [localStatus, setLocalStatus] = useState<string>(taskStatus || '');
@@ -79,74 +98,78 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const descTriggerRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (mentionType !== 'status' && id) {
-      tasksApi.getTask(id).then(({ task }) => {
-        if (!task) return;
-        setTaskData(task);
-        let currentStatusName = '';
-        try {
-          if (taskStatus && taskStatus.startsWith('{')) {
-            currentStatusName = JSON.parse(taskStatus).name;
-          } else {
-            currentStatusName = taskStatus;
-          }
-        } catch (e) {}
+    if (mentionType === 'status' || !id) return;
 
-        const oldFrozen = typeof frozenTaskData === 'string' ? frozenTaskData : JSON.stringify(frozenTaskData);
-        const newFrozen = JSON.stringify(task);
-
-        const currentPriority = taskPriority || null;
-        const currentTeam = node.attrs.taskTeam === 'null' ? null : node.attrs.taskTeam;
-        
-        const shouldUpdate = currentStatusName !== task.status || 
-          currentPriority !== task.priority || 
-          (!taskAssignees && task.assignees && task.assignees.length > 0) ||
-          taskHasDescription !== !!task.description ||
-          currentTeam !== (task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null) ||
-          oldFrozen !== newFrozen;
-
-        if (shouldUpdate) {
-          try { 
-            updateAttributes({
-              label: task.title,
-              taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
-              taskAssignees: JSON.stringify(task.assignees || []),
-              taskPriority: task.priority || null,
-              taskDueDate: task.dueDate || '',
-              taskTeam: task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null,
-              taskHasDescription: !!task.description,
-              frozenTaskData: task
-            }); 
-          } catch (e) {}
-          setLocalStatus(JSON.stringify({ name: task.status, color: getStatusColor(task.status) }));
-          setLocalAssignees(JSON.stringify(task.assignees || []));
-          setLocalTeam(task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : '');
-          setLocalPriority(task.priority || '');
+    const handleTaskData = (task: any) => {
+      if (!task) return;
+      setTaskData(task);
+      let currentStatusName = '';
+      try {
+        if (taskStatus && taskStatus.startsWith('{')) {
+          currentStatusName = JSON.parse(taskStatus).name;
+        } else {
+          currentStatusName = taskStatus;
         }
+      } catch (e) {}
+
+      const oldFrozen = typeof frozenTaskData === 'string' ? frozenTaskData : JSON.stringify(frozenTaskData);
+      const newFrozen = JSON.stringify(task);
+
+      const currentPriority = taskPriority || null;
+      const currentTeam = node.attrs.taskTeam === 'null' ? null : node.attrs.taskTeam;
+      
+      const shouldUpdate = currentStatusName !== task.status || 
+        currentPriority !== task.priority || 
+        (!taskAssignees && task.assignees && task.assignees.length > 0) ||
+        taskHasDescription !== !!task.description ||
+        currentTeam !== (task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null) ||
+        oldFrozen !== newFrozen;
+
+      if (shouldUpdate) {
+        try { 
+          updateAttributes({
+            label: task.title,
+            taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
+            taskAssignees: JSON.stringify(task.assignees || []),
+            taskPriority: task.priority || null,
+            taskDueDate: task.dueDate || '',
+            taskTeam: task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null,
+            taskHasDescription: !!task.description,
+            frozenTaskData: task
+          }); 
+        } catch (e) {}
+        setLocalStatus(JSON.stringify({ name: task.status, color: getStatusColor(task.status) }));
+        setLocalAssignees(JSON.stringify(task.assignees || []));
+        setLocalTeam(task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : '');
+        setLocalPriority(task.priority || '');
+      }
+    };
+
+    if (globalTask) {
+      handleTaskData(globalTask);
+    } else {
+      tasksApi.getTask(id).then(({ task }) => {
+        handleTaskData(task);
       }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, mentionType]);
+  }, [id, mentionType, globalTask]);
 
   useEffect(() => {
     let cancelled = false;
-    if (openDropdown === 'assignee' && dbUsers.length === 0) {
-      usersApi.getUsers().then(res => {
-        if (!cancelled && res?.users) setDbUsers(res.users);
-      }).catch(console.error);
-    } else if (openDropdown === 'team' && dbTeams.length === 0) {
-      usersApi.getTeams().then(res => {
-        if (!cancelled && res?.teams) setDbTeams(res.teams);
-      }).catch(console.error);
+    if (openDropdown === 'assignee' && !hasLoadedUsers) {
+      loadUsers().catch(console.error);
+    } else if (openDropdown === 'team' && !hasLoadedTeams) {
+      loadTeams().catch(console.error);
     } else if (openDropdown === 'status' && listStatuses.length === 0 && taskData?.listId) {
       spacesApi.getList(taskData.listId).then(res => {
         if (!cancelled && res?.list?.statuses) {
-          setListStatuses(res.list.statuses);
+          setFallbackListStatuses(res.list.statuses);
         }
       }).catch(console.error);
     }
     return () => { cancelled = true; };
-  }, [openDropdown, dbUsers.length, dbTeams.length, listStatuses.length, taskData?.listId]);
+  }, [openDropdown, hasLoadedUsers, hasLoadedTeams, loadUsers, loadTeams, listStatuses.length, taskData?.listId]);
   
   if (mentionType === 'status') {
     let statusObj = null;
@@ -202,6 +225,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || !taskData) return;
+    const optimisticTask = { ...taskData, status: newStatus };
+    updateTaskStore(optimisticTask);
+    
     try {
       await tasksApi.moveTask(id, newStatus, taskData.listId, currentUser.id);
       try { updateAttributes({ taskStatus: JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }) }); } catch (e) {}
@@ -218,6 +244,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     try { updateAttributes({ taskPriority: p || '' }); } catch (e) {}
     setLocalPriority(p || '');
     setOpenDropdown(null);
+    if (taskData) {
+      updateTaskStore({ ...taskData, priority: p });
+    }
     try {
       await tasksApi.updateTask(id, { priority: (p || undefined) as any, userId: currentUser.id });
       toast.success('Priority updated');
@@ -237,6 +266,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     }
     try { updateAttributes({ taskAssignees: JSON.stringify(newAssignees) }); } catch (e) {}
     setLocalAssignees(JSON.stringify(newAssignees));
+    if (taskData) {
+      updateTaskStore({ ...taskData, assignees: newAssignees, assigneeIds: newAssignees.map(a => a.id) });
+    }
     try {
       await tasksApi.updateTask(id, { assigneeIds: newAssignees.map(a => a.id), userId: currentUser.id });
     } catch (e) {
@@ -250,6 +282,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     try { updateAttributes({ taskTeam: teamStr }); } catch (e) {}
     setLocalTeam(teamStr);
     setOpenDropdown(null);
+    if (taskData) {
+      updateTaskStore({ ...taskData, team: selectedTeam, teamId: selectedTeam ? selectedTeam.id : null });
+    }
     try {
       await tasksApi.updateTask(id, { teamId: selectedTeam ? selectedTeam.id : null, userId: currentUser.id });
       toast.success('Team updated');
@@ -260,7 +295,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   return (
     <NodeViewWrapper as="span" className="inline-block align-middle mx-1 group" data-drag-handle>
-      <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 dark:hover:bg-[#1f1f1f] transition-colors duration-200 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800">
+      <motion.span layout className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 dark:hover:bg-[#1f1f1f] transition-colors duration-200 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800">
         
         <span 
           className="font-medium text-sm text-zinc-700 dark:text-zinc-200 max-w-[200px] truncate cursor-pointer hover:opacity-70 transition-opacity"
@@ -306,44 +341,65 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           <Flag className="w-3 h-3" />
         </span>
 
-        <span 
+        <motion.span layout
           ref={teamRef}
           className="inline-flex items-center justify-center shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'team' ? null : 'team'); }}
           title={taskData?.assigneeRoleRestrictions?.length ? taskData.assigneeRoleRestrictions.join(', ') : 'Assign Role'}
         >
-          {(taskData?.assigneeRoleRestrictions && taskData.assigneeRoleRestrictions.length > 0) ? (
-            <span className="flex items-center">
-              {taskData.assigneeRoleRestrictions.map((role: string, i: number) => {
+          <AnimatePresence mode="popLayout">
+            {(taskData?.assigneeRoleRestrictions && taskData.assigneeRoleRestrictions.length > 0) ? (
+              taskData.assigneeRoleRestrictions.map((role: string, i: number) => {
                 const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                 const bgColor = colors[i % colors.length];
                 return (
-                  <div 
-                    key={role} 
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 border-white dark:border-[#1a1a1a] ${i > 0 ? '-ml-2' : ''} shadow-sm relative transition-transform ${bgColor}`}
+                  <motion.div 
+                    key={role}
+                    layout
+                    initial={{ opacity: 0, scale: 0.5 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.5 }}
+                    transition={{ duration: 0.2 }}
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 border-white dark:border-[#1a1a1a] ${i > 0 ? '-ml-2' : ''} shadow-sm relative ${bgColor}`}
                     style={{ zIndex: 10 - i }}
                     title={role}
                   >
                     {role.substring(0, 2).toUpperCase()}
-                  </div>
+                  </motion.div>
                 );
-              })}
-            </span>
-          ) : (
-            <span className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors">
-              <Shield className="w-3 h-3" />
-            </span>
-          )}
-        </span>
-        <span 
+              })
+            ) : (
+              <motion.span 
+                key="empty-team"
+                layout
+                initial={{ opacity: 0, scale: 0.5 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.5 }}
+                className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
+              >
+                <Shield className="w-3 h-3" />
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.span>
+        <motion.span layout
           ref={assigneesRef}
           className="inline-flex items-center -space-x-1 shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
         >
-          {assignees.length > 0 ? (
-            <>
-              {assignees.slice(0, 3).map((user: any) => (
-                <span key={user.id} className="w-5 h-5 rounded-full overflow-hidden border-2 border-white dark:border-[#1a1a1a] z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center">
+          <AnimatePresence mode="popLayout">
+            {assignees.length > 0 ? (
+              assignees.slice(0, 3).map((user: any, i: number) => (
+                <motion.span 
+                  key={user.id} 
+                  layout
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.5 }}
+                  transition={{ duration: 0.2 }}
+                  className="w-5 h-5 rounded-full overflow-hidden border-2 border-white dark:border-[#1a1a1a] z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center relative shadow-sm"
+                  style={{ zIndex: 10 - i, marginLeft: i > 0 ? '-4px' : '0' }}
+                >
                   {user.avatarUrl ? (
                     <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover rounded-full" />
                   ) : (
@@ -351,31 +407,33 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                       {user.name?.charAt(0).toUpperCase()}
                     </span>
                   )}
-                </span>
-              ))}
-              {assignees.length > 3 && (
-                <span className="w-5 h-5 rounded-full border-2 border-white dark:border-[#1a1a1a] bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-[9px] font-medium z-10 shrink-0">
-                  +{assignees.length - 3}
-                </span>
-              )}
-            </>
-          ) : (
-            <span className="w-5 h-5 rounded-full border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 hover:text-zinc-200 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors">
-              <UserIcon className="w-3 h-3" />
-            </span>
-          )}
-        </span>
-      </span>
+                </motion.span>
+              ))
+            ) : (
+              <motion.span 
+                key="empty-assignees"
+                layout
+                initial={{ opacity: 0, scale: 0.5 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.5 }}
+                className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
+              >
+                <Users2 className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" />
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.span>
+      </motion.span>
 
       {openDropdown === 'status' && (
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
           <div className="w-48 py-1">
             <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Change Status</div>
-            {listStatuses.length > 0 ? listStatuses.map(s => (
+            {listStatuses.length > 0 ? listStatuses.map((s: any) => (
               <button
                 key={s.id}
-                onClick={() => handleStatusChange(s.name)}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(s.name); }}
+                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 cursor-pointer transition-colors"
               >
                 <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
                 <span className="text-zinc-300">{s.name}</span>
@@ -401,8 +459,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
             ].map(p => (
               <button
                 key={p.id || 'clear'}
-                onClick={() => handlePriorityChange(p.id)}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handlePriorityChange(p.id); }}
+                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group cursor-pointer transition-colors"
               >
                 <Flag className={`w-3.5 h-3.5 ${p.color}`} />
                 <span className="text-zinc-300 group-hover:text-white transition-colors">{p.label}</span>
@@ -434,8 +492,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
               return (
                 <button
                   key={user.id}
-                  onClick={() => handleAssigneeToggle(user)}
-                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleAssigneeToggle(user); }}
+                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group cursor-pointer transition-colors"
                 >
                   {user.avatarUrl ? (
                     <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
@@ -470,7 +528,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                       
                       return (
                             <div 
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
                                 if (!hasRoles) return;
                                 let next = [...current];
                                 if (allSelected) {
@@ -479,9 +539,15 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                                   const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
                                   next = [...next, ...toAdd];
                                 }
-                                handleTeamChange(t);
+                                
+                                const teamStr = t ? JSON.stringify(t) : '';
+                                try { updateAttributes({ taskTeam: teamStr }); } catch (e) {}
+                                setLocalTeam(teamStr);
+                                
                                 if (taskData) {
-                                  setTaskData({ ...taskData, assigneeRoleRestrictions: next, teamId: t.id });
+                                  const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t };
+                                  setTaskData(updatedTask);
+                                  updateTaskStore(updatedTask);
                                   tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id } as any).catch(console.error);
                                 }
                               }}
@@ -507,14 +573,22 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                           return (
                             <div
                               key={role.id}
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
                                 const current = taskData?.assigneeRoleRestrictions || [];
                                 const next = selected
                                   ? current.filter((r: string) => r !== role.name)
                                   : [...current, role.name];
-                                handleTeamChange(t);
+                                  
+                                const teamStr = t ? JSON.stringify(t) : '';
+                                try { updateAttributes({ taskTeam: teamStr }); } catch (e) {}
+                                setLocalTeam(teamStr);
+                                
                                 if (taskData) {
-                                  setTaskData({ ...taskData, assigneeRoleRestrictions: next, teamId: t.id });
+                                  const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t };
+                                  setTaskData(updatedTask);
+                                  updateTaskStore(updatedTask);
                                   tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id } as any).catch(console.error);
                                 }
                               }}

@@ -186,7 +186,7 @@ function WorkspaceDashboardContent({
 }: WorkspaceDashboardProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentUser, allLists, allDocs } = useAppStore();
+  const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache } = useAppStore();
 
   const [searchQuery, setSearchQuery] = useState("");
   // All Tasks Filters & Sort
@@ -201,8 +201,6 @@ function WorkspaceDashboardContent({
     searchParams?.get("filter") === "my" || activeView === "my" ? "my" : "all",
   );
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loadingTasks, setLoadingTasks] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
@@ -259,24 +257,12 @@ function WorkspaceDashboardContent({
     }
   }, [allLists, selectedListId]);
 
-  // 1. Fetch all tasks from API
-  const fetchTasks = useCallback(async (silent = false) => {
-    try {
-      if (!silent) setLoadingTasks(true);
-      const res = await tasksApi.getTasks();
-      if (res?.tasks) {
-        setTasks(res.tasks);
-      }
-    } catch (err) {
-      console.error("Failed to load tasks for dashboard:", err);
-    } finally {
-      if (!silent) setLoadingTasks(false);
-    }
-  }, []);
-
+  // 1. Fetch all tasks from API and Hydrate from Cache
   useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
+    hydrateTasksFromCache();
+    loadTasks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 2. Real-time Synchronization via Socket.io
   useEffect(() => {
@@ -288,10 +274,7 @@ function WorkspaceDashboardContent({
     });
 
     s.on("task:created", (newTask: Task) => {
-      setTasks((prev) => {
-        if (prev.some((t) => t.id === newTask.id)) return prev;
-        return [newTask, ...prev];
-      });
+      addTask(newTask);
     });
 
     s.on("task:updated", (updatedTask: Task) => {
@@ -300,22 +283,14 @@ function WorkspaceDashboardContent({
         return;
       }
       
-      setTasks((prev) => {
-        const exists = prev.some((t) => t.id === updatedTask.id);
-        if (!exists) {
-          return [updatedTask, ...prev];
-        }
-        return prev.map((t) =>
-          t.id === updatedTask.id ? { ...t, ...updatedTask } : t,
-        );
-      });
+      updateTask(updatedTask);
       setSelectedTask((prev) =>
         prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev,
       );
     });
 
     s.on("task:deleted", ({ id }: { id: string }) => {
-      setTasks((prev) => prev.filter((t) => t.id !== id));
+      removeTask(id);
       setSelectedTask((prev) => (prev?.id === id ? null : prev));
     });
 
@@ -327,11 +302,11 @@ function WorkspaceDashboardContent({
   // Refresh tasks on window focus (guarantees instant sync if coming back from another tab)
   useEffect(() => {
     const handleFocus = () => {
-      fetchTasks(true);
+      loadTasks(true);
     };
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
-  }, [fetchTasks]);
+  }, [loadTasks]);
 
   const handleTabChange = (tab: "all" | "my" | "clients" | "priorities") => {
     setCurrentTab(tab);
@@ -740,7 +715,7 @@ function WorkspaceDashboardContent({
       });
 
       if (res?.task) {
-        setTasks((prev) => [res.task, ...prev]);
+        addTask(res.task);
         toast.success(`Task "${trimmed}" created!`);
       }
       setInlineTaskTitle("");
@@ -789,40 +764,30 @@ function WorkspaceDashboardContent({
     return <DashboardSkeleton />;
   }
 
-  if (selectedTask) {
-    return (
-      <div className="w-full h-full">
-        <TaskDetailModal
-          isOpen={!!selectedTask}
-          onClose={() => setSelectedTask(null)}
-          task={selectedTask}
-          socket={socket}
-          workspaceRoles={workspaceRoles}
-          onUpdateTask={(updatedTask) => {
-            pendingTaskUpdatesRef.current[updatedTask.id] = Date.now();
-            setSelectedTask(updatedTask);
-            setTasks((prev) =>
-              prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)),
-            );
-          }}
-          onStatusChange={(newStatus) => {
-            if (selectedTask) {
-              const updated = { ...selectedTask, status: newStatus };
-              pendingTaskUpdatesRef.current[updated.id] = Date.now();
-              setSelectedTask(updated);
-              setTasks((prev) =>
-                prev.map((t) => (t.id === updated.id ? updated : t)),
-              );
-            }
-          }}
-        />
-      </div>
-    );
-  }
-
-
   return (
-    <div className="p-6 w-full h-full space-y-6">
+    <div className="p-6 w-full h-full space-y-6 relative">
+      <TaskDetailModal
+        isOpen={!!selectedTask}
+        onClose={() => setSelectedTask(null)}
+        task={selectedTask || null}
+        mode="full"
+        socket={socket}
+        workspaceRoles={workspaceRoles}
+        onUpdateTask={(updatedTask) => {
+          pendingTaskUpdatesRef.current[updatedTask.id] = Date.now();
+          setSelectedTask(updatedTask);
+          updateTask(updatedTask);
+        }}
+        onStatusChange={(newStatus) => {
+          if (selectedTask) {
+            const updated = { ...selectedTask, status: newStatus };
+            pendingTaskUpdatesRef.current[updated.id] = Date.now();
+            setSelectedTask(updated);
+            updateTask(updated);
+          }
+        }}
+      />
+
       {/* ClickUp Header & Quick Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>

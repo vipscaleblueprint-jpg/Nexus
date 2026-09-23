@@ -3,6 +3,7 @@ import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, C
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
 import { BlockEditor } from '../ui/BlockEditor';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -48,6 +49,7 @@ interface Props {
   onUpdateTask?: (task: Task) => void;
   listStatuses?: any[];
   workspaceRoles?: any[];
+  mode?: 'modal' | 'full';
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -184,14 +186,16 @@ export function TaskDetailModalContent({
   onUpdateTask,
   listStatuses = [],
   workspaceRoles = [],
+  mode = 'modal',
 }: Props) {
   const router = useRouter();
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [comment, setComment] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editCommentText, setEditCommentText] = useState('');
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
-  const [dbUsers, setDbUsers] = useState<UserModel[]>([]);
-  const [dbTeams, setDbTeams] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -331,30 +335,20 @@ export function TaskDetailModalContent({
     }
   }), []);
 
-  const { currentUser } = useAppStore();
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists } = useAppStore();
 
   // Fetch real users from DB for assignee picker
   useEffect(() => {
     if (!currentUser) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [resUsers, resTeams] = await Promise.all([
-          usersApi.getUsers(),
-          usersApi.getTeams()
-        ]);
-        if (!cancelled) {
-          if (resUsers?.users) setDbUsers(resUsers.users);
-          if (resTeams?.teams) setDbTeams(resTeams.teams);
-        }
-      } catch (e) {
-        console.warn('Failed to load users/teams for picker:', e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser]);
+    if (workspaceUsers.length === 0) {
+      hydrateUsersFromCache();
+      loadUsers();
+    }
+    if (workspaceTeams.length === 0) {
+      hydrateTeamsFromCache();
+      loadTeams();
+    }
+  }, [currentUser, workspaceUsers.length, workspaceTeams.length, hydrateUsersFromCache, loadUsers, hydrateTeamsFromCache, loadTeams]);
 
   const onUpdateTaskRef = useRef(onUpdateTask);
   useEffect(() => {
@@ -377,18 +371,18 @@ export function TaskDetailModalContent({
 
   const assignableUsers = React.useMemo(() => {
     if (!task?.assigneeRoleRestrictions || task.assigneeRoleRestrictions.length === 0) {
-      return dbUsers;
+      return workspaceUsers;
     }
     // Build a map of TeamRole name -> teamId for fast lookup
     const teamRoleToTeamId = new Map<string, string>();
-    dbTeams.forEach((team: any) => {
+    workspaceTeams.forEach((team: any) => {
       (team.teamRoles || []).forEach((tr: any) => {
         teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
       });
     });
 
-    return dbUsers.filter((u) => {
-      const userRoles = (u.roles || []) as string[];
+      return workspaceUsers.filter((u) => {
+        const userRoles = (u.roles || []) as string[];
       return task.assigneeRoleRestrictions!.some((role) => {
         // Check generic role match (TECH, PM, AUDITOR...)
         if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
@@ -398,7 +392,7 @@ export function TaskDetailModalContent({
         return false;
       });
     });
-  }, [dbUsers, dbTeams, task?.assigneeRoleRestrictions]);
+  }, [workspaceUsers, workspaceTeams, task?.assigneeRoleRestrictions]);
 
 
   // Fetch persistent activities and comments from DB
@@ -447,6 +441,22 @@ export function TaskDetailModalContent({
       console.warn('Reply failed:', err);
     } finally {
       setIsSubmittingReply(false);
+    }
+  };
+
+  const handleSaveEdit = async (commentId: string) => {
+    if (!editCommentText.trim() || !task?.id || isSubmittingEdit) return;
+    setIsSubmittingEdit(true);
+    try {
+      await tasksApi.updateComment(task.id, commentId, editCommentText.trim());
+      setEditingCommentId(null);
+      setEditCommentText('');
+      const res = await tasksApi.getComments(task.id);
+      if (res?.comments) setRichComments(res.comments);
+    } catch (err) {
+      console.warn('Edit failed:', err);
+    } finally {
+      setIsSubmittingEdit(false);
     }
   };
 
@@ -510,15 +520,20 @@ export function TaskDetailModalContent({
   useEffect(() => {
     if (!currentUser) return;
     if (task?.listId && (!listStatuses || listStatuses.length === 0)) {
-      spacesApi.getList(task.listId).then((res: any) => {
-        if (res?.list?.statuses) {
-          setInternalListStatuses(res.list.statuses);
-        }
-      }).catch((err: any) => console.warn(err));
+      const cachedList = allLists.find(l => l.id === task.listId);
+      if (cachedList?.statuses) {
+        setInternalListStatuses(cachedList.statuses);
+      } else {
+        spacesApi.getList(task.listId).then((res: any) => {
+          if (res?.list?.statuses) {
+            setInternalListStatuses(res.list.statuses);
+          }
+        }).catch((err: any) => console.warn(err));
+      }
     } else if (listStatuses && listStatuses.length > 0) {
       setInternalListStatuses(listStatuses);
     }
-  }, [task?.listId, listStatuses, currentUser]);
+  }, [task?.listId, listStatuses, currentUser, allLists]);
 
   // Keep localTitle in sync with task prop changes
   useEffect(() => {
@@ -1022,19 +1037,23 @@ export function TaskDetailModalContent({
         onClose={() => setActiveSubtask(null)}
         currentUser={currentUser}
         socket={socket}
-        dbUsers={dbUsers}
+        workspaceUsers={workspaceUsers}
         onUpdateTask={onUpdateTask}
         setActiveSubtask={setActiveSubtask}
         permission={permission}
         listStatuses={internalListStatuses}
-        dbTeams={dbTeams}
+        workspaceTeams={workspaceTeams}
       />
     );
   }
 
   return (
     <>
-      <div
+      <motion.div
+        initial={mode === 'full' ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={mode === 'full' ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
+        transition={mode === 'full' ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 25 }}
         className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
         onClick={e => e.stopPropagation()}
       >
@@ -1205,7 +1224,7 @@ export function TaskDetailModalContent({
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {((internalListStatuses && internalListStatuses.length > 0) ? internalListStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map(s => (
                                     <div
@@ -1267,21 +1286,28 @@ export function TaskDetailModalContent({
                     <Popover.Root>
                       <Popover.Trigger asChild>
                         {(task.assigneeRoleRestrictions && task.assigneeRoleRestrictions.length > 0) ? (
-                          <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                          <motion.div layout className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                            <AnimatePresence>
                             {task.assigneeRoleRestrictions.map((role, i) => {
                               const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                               const bgColor = colors[i % colors.length];
                               return (
-                                <div 
+                                <motion.div 
                                   key={role} 
-                                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
+                                  initial={{ opacity: 0, scale: 0.5 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  exit={{ opacity: 0, scale: 0.5 }}
+                                  transition={{ duration: 0.2 }}
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative ${bgColor}`}
+                                  style={{ zIndex: 10 - i }}
                                   title={role}
                                 >
                                   {role.substring(0, 2).toUpperCase()}
-                                </div>
+                                </motion.div>
                               );
                             })}
-                          </div>
+                            </AnimatePresence>
+                          </motion.div>
                         ) : (
                           <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                             <Plus className="w-3 h-3" />
@@ -1291,11 +1317,11 @@ export function TaskDetailModalContent({
                         )}
                       </Popover.Trigger>
                       <Popover.Portal>
-                        <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                        <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
-                            {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
-                            {dbTeams.map(team => (
+                            {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                            {workspaceTeams.map(team => (
                               <div key={team.id} className="mb-2">
                                   {(() => {
                                     const teamRoles = team.teamRoles || [];
@@ -1371,7 +1397,7 @@ export function TaskDetailModalContent({
                     </Popover.Root>
                     <Popover.Root open={isAssigneeOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsAssigneeOpen(open)}>
                       <Popover.Trigger asChild>
-                        <div
+                        <motion.div layout
                           title={currentAssignees.map((u) => u.name).join(', ')}
                           className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${
                             canAssignTask 
@@ -1382,8 +1408,18 @@ export function TaskDetailModalContent({
                           {currentAssignees.length > 0 ? (
                             <>
                               <div className="flex items-center -space-x-1.5">
-                                {currentAssignees.slice(0, 2).map((u) => (
-                                  <div key={u.id} className="relative ring-2 ring-[#121212] rounded-full shrink-0" title={u.name}>
+                                <AnimatePresence>
+                                {currentAssignees.slice(0, 2).map((u, i) => (
+                                  <motion.div 
+                                    key={u.id} 
+                                    initial={{ opacity: 0, scale: 0.5 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.5 }}
+                                    transition={{ duration: 0.2 }}
+                                    style={{ zIndex: 10 - i }}
+                                    className="relative ring-2 ring-[#121212] rounded-full shrink-0" 
+                                    title={u.name}
+                                  >
                                     {u.avatarUrl ? (
                                       <img src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
                                     ) : (
@@ -1391,16 +1427,26 @@ export function TaskDetailModalContent({
                                         {(u.name || 'U').substring(0, 2).toUpperCase()}
                                       </div>
                                     )}
-                                  </div>
+                                  </motion.div>
                                 ))}
+                                </AnimatePresence>
+                                <AnimatePresence>
                                 {currentAssignees.length > 2 && (
-                                  <div className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0">
+                                  <motion.div 
+                                    key="overflow"
+                                    initial={{ opacity: 0, scale: 0.5 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.5 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0"
+                                  >
                                     +{currentAssignees.length - 2}
-                                  </div>
+                                  </motion.div>
                                 )}
+                                </AnimatePresence>
                               </div>
                               {currentAssignees.length === 1 && (
-                                <span className="truncate max-w-[100px]">{currentAssignees[0].name}</span>
+                                <motion.span layout className="truncate max-w-[100px]">{currentAssignees[0].name}</motion.span>
                               )}
                             </>
                           ) : (
@@ -1410,7 +1456,7 @@ export function TaskDetailModalContent({
                               {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
                             </>
                           )}
-                        </div>
+                        </motion.div>
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
@@ -1514,7 +1560,7 @@ export function TaskDetailModalContent({
                       </div>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[200] w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
+                      <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
                         {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map(p => (
                           <div
                             key={p}
@@ -1577,14 +1623,14 @@ export function TaskDetailModalContent({
                 onUpdateTask={(updatedTask) => {
                   if (onUpdateTask) onUpdateTask(updatedTask);
                 }}
-                users={dbUsers}
+                users={workspaceUsers}
                 addingSubtask={addingSubtask}
                 setAddingSubtask={setAddingSubtask}
                 socket={socket}
                 currentUser={currentUser}
                 onOpenSubtask={(subtask) => setActiveSubtask(subtask)}
                 listStatuses={internalListStatuses}
-                teams={dbTeams}
+                teams={workspaceTeams}
               />
 
               {(!task.subtasks || task.subtasks.length === 0) && !addingSubtask && (
@@ -1600,7 +1646,7 @@ export function TaskDetailModalContent({
                 <AuditSection
                   task={task}
                   title={task.title}
-                  users={dbUsers || []}
+                  users={workspaceUsers || []}
                   checklists={task.checklists || []}
                   currentUser={currentUser}
                   onUpdateChecklists={(checklists) => {
@@ -1609,7 +1655,7 @@ export function TaskDetailModalContent({
                 />
                 <ChecklistsSection
                   task={task}
-                  users={dbUsers || []}
+                  users={workspaceUsers || []}
                   checklists={task.checklists || []}
                   currentUser={currentUser}
                   onUpdateChecklists={(checklists) => {
@@ -1788,24 +1834,62 @@ export function TaskDetailModalContent({
                                     {(comment.user?.name || 'U').charAt(0).toUpperCase()}
                                   </div>
                                 )}
-                                <div className="flex-1 flex items-center gap-2">
-                                  <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
-                                  <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
+                                <div className="flex-1 flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
+                                    <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
+                                  </div>
+                                  {comment.user?.id === currentUser?.id && (
+                                    <button
+                                      onClick={() => {
+                                        if (editingCommentId === comment.id) {
+                                          setEditingCommentId(null);
+                                        } else {
+                                          setEditingCommentId(comment.id);
+                                          setEditCommentText(comment.content);
+                                        }
+                                      }}
+                                      className="text-zinc-500 hover:text-zinc-300 transition-colors p-1"
+                                      title="Edit Comment"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
                                 </div>
                               </div>
-                              <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-                                  {(() => {
-                                    let text = comment.content || '';
-                                    dbUsers.forEach(u => {
-                                      if (text.includes(`@${u.name}`)) {
-                                        text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
-                                      }
-                                    });
-                                    return text;
-                                  })()}
-                                </ReactMarkdown>
-                              </div>
+                              
+                              {editingCommentId === comment.id ? (
+                                <div className="pl-11 flex gap-2 w-full">
+                                  <input
+                                    value={editCommentText}
+                                    onChange={e => setEditCommentText(e.target.value)}
+                                    disabled={isSubmittingEdit}
+                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEdit(comment.id); } }}
+                                    className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
+                                    autoFocus
+                                  />
+                                  <button onClick={() => handleSaveEdit(comment.id)} disabled={isSubmittingEdit || !editCommentText.trim() || editCommentText === comment.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50">
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50">
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
+                                    {(() => {
+                                      let text = comment.content || '';
+                                      workspaceUsers.forEach(u => {
+                                        if (text.includes(`@${u.name}`)) {
+                                          text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
+                                        }
+                                      });
+                                      return text;
+                                    })()}
+                                  </ReactMarkdown>
+                                </div>
+                              )}
                               {/* Reaction pills */}
                               {Object.keys(cGroups).length > 0 && (
                                 <div className="flex flex-wrap gap-1 pl-11">
@@ -1927,7 +2011,7 @@ export function TaskDetailModalContent({
                       People
                     </div>
                     <div className="max-h-48 overflow-y-auto">
-                      {dbUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).map(u => (
+                      {workspaceUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).map(u => (
                         <div
                           key={u.id}
                           className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
@@ -1951,7 +2035,7 @@ export function TaskDetailModalContent({
                           <span>{u.name}</span>
                         </div>
                       ))}
-                      {dbUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).length === 0 && (
+                      {workspaceUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).length === 0 && (
                         <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
                       )}
                     </div>
@@ -2008,12 +2092,12 @@ export function TaskDetailModalContent({
           </div>
 
         </div>
-      </div>
+      </motion.div>
 
       {/* Lightbox Modal */}
       {lightboxImage && (
         <div
-          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
+          className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
           <button
@@ -2051,29 +2135,32 @@ function SubtaskDetailView({
   onClose,
   currentUser,
   socket,
-  dbUsers,
+  workspaceUsers,
   onUpdateTask,
   setActiveSubtask,
   permission,
   listStatuses,
-  dbTeams = [],
+  workspaceTeams = [],
 }: {
   subtask: any;
   parentTask: any;
   onClose: () => void;
   currentUser?: any;
   socket?: any;
-  dbUsers?: any[];
+  workspaceUsers?: any[];
   onUpdateTask?: (task: any) => void;
   setActiveSubtask?: (st: any) => void;
   permission?: { allowed: boolean; reason?: string };
   listStatuses?: any[];
-  dbTeams?: any[];
+  workspaceTeams?: any[];
 }) {
   const router = useRouter();
   const [richComments, setRichComments] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [comment, setComment] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editCommentText, setEditCommentText] = useState('');
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localDesc, setLocalDesc] = useState(subtask.description || '');
   const [isStatusOpen, setIsStatusOpen] = useState(false);
@@ -2303,6 +2390,22 @@ function SubtaskDetailView({
     }
   };
 
+  const handleSaveEdit = async (commentId: string) => {
+    if (!editCommentText.trim() || !parentTask?.id || isSubmittingEdit) return;
+    setIsSubmittingEdit(true);
+    try {
+      await tasksApi.updateComment(parentTask.id, commentId, editCommentText.trim());
+      setEditingCommentId(null);
+      setEditCommentText('');
+      const res = await tasksApi.getComments(parentTask.id, subtask.id);
+      if (res?.comments) setRichComments(res.comments);
+    } catch (err) {
+      console.warn('Edit failed:', err);
+    } finally {
+      setIsSubmittingEdit(false);
+    }
+  };
+
   const handleTitleBlur = () => {
     if (localTitle !== subtask.title) {
       if (onUpdateTask) {
@@ -2318,7 +2421,11 @@ function SubtaskDetailView({
   const assignee = subtask.assignee;
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ type: "spring", stiffness: 300, damping: 25 }}
       className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
       onClick={(e) => e.stopPropagation()}
     >
@@ -2492,7 +2599,7 @@ function SubtaskDetailView({
                             </div>
                           </Popover.Trigger>
                           <Popover.Portal>
-                            <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                            <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                               <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                 {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
                                   <div
@@ -2575,11 +2682,11 @@ function SubtaskDetailView({
                       )}
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                      <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
-                            {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
-                            {dbTeams.map((team: any) => (
+                            {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                            {workspaceTeams.map((team: any) => (
                               <div key={team.id} className="mb-2">
                                   {(() => {
                                     const teamRoles = team.teamRoles || [];
@@ -2776,7 +2883,7 @@ function SubtaskDetailView({
         task={parentTask}
         title={subtask.title}
         subtaskId={subtask.id}
-        users={dbUsers || []}
+        users={workspaceUsers || []}
         checklists={subtask.checklists || []}
         currentUser={currentUser}
         onUpdateChecklists={(checklists) => {
@@ -2791,7 +2898,7 @@ function SubtaskDetailView({
       <ChecklistsSection
         task={parentTask}
         subtaskId={subtask.id}
-        users={dbUsers || []}
+        users={workspaceUsers || []}
         checklists={subtask.checklists || []}
         currentUser={currentUser}
         onUpdateChecklists={(checklists) => {
@@ -2871,17 +2978,54 @@ function SubtaskDetailView({
                           {(c.user?.name || 'U').charAt(0).toUpperCase()}
                         </div>
                       )}
-                      <div className="flex-1 flex items-center gap-2">
-                        <span className="text-zinc-200 font-medium text-[13px]">{c.user?.name || 'Someone'}</span>
-                        <span className="text-[11px] text-zinc-500">{dateStr} {timeStr}</span>
+                      <div className="flex-1 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-zinc-200 font-medium text-[13px]">{c.user?.name || 'Someone'}</span>
+                          <span className="text-[11px] text-zinc-500">{dateStr} {timeStr}</span>
+                        </div>
+                        {c.user?.id === currentUser?.id && (
+                          <button
+                            onClick={() => {
+                              if (editingCommentId === c.id) {
+                                setEditingCommentId(null);
+                              } else {
+                                setEditingCommentId(c.id);
+                                setEditCommentText(c.content);
+                              }
+                            }}
+                            className="text-zinc-500 hover:text-zinc-300 transition-colors p-1"
+                            title="Edit Comment"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                     
-                    <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                        {c.content}
-                      </ReactMarkdown>
-                    </div>
+                    {editingCommentId === c.id ? (
+                      <div className="pl-11 flex gap-2 w-full">
+                        <input
+                          value={editCommentText}
+                          onChange={e => setEditCommentText(e.target.value)}
+                          disabled={isSubmittingEdit}
+                          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEdit(c.id); } }}
+                          className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
+                          autoFocus
+                        />
+                        <button onClick={() => handleSaveEdit(c.id)} disabled={isSubmittingEdit || !editCommentText.trim() || editCommentText === c.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50">
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                          {c.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
                     
                     {/* Reaction pills */}
                     {Object.keys(cGroups).length > 0 && (
@@ -2973,7 +3117,7 @@ function SubtaskDetailView({
           </div>
         </div >
       </div >
-    </div >
+    </motion.div >
   );
 }
 
@@ -3014,20 +3158,58 @@ export function TaskDetailModal(props: Props) {
     }
   }, [props.task]);
 
+  useEffect(() => {
+    if (props.isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [props.isOpen]);
+
 
   const handleUpdateTask = (updatedTask: Task) => {
     setFullTask(updatedTask);
     if (props.onUpdateTask) props.onUpdateTask(updatedTask);
   };
 
-  if (!props.isOpen && !fullTask) return null;
-
   return (
-    <TaskDetailModalContent
-      {...props}
-      task={fullTask}
-      onUpdateTask={handleUpdateTask}
-    />
+    <AnimatePresence>
+      {props.isOpen && fullTask && (
+        <motion.div
+          initial={{ opacity: props.mode === 'full' ? 1 : 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: props.mode === 'full' ? 1 : 0 }}
+          transition={{ duration: props.mode === 'full' ? 0 : 0.15 }}
+          className={
+            props.mode === 'full'
+              ? "absolute inset-0 z-[100] bg-[#121212] flex flex-col cursor-default"
+              : "fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+          }
+          onClick={props.mode === 'full' ? undefined : () => props.onClose()}
+        >
+          {props.mode === 'full' ? (
+            <TaskDetailModalContent
+              {...props}
+              task={fullTask}
+              onUpdateTask={handleUpdateTask}
+            />
+          ) : (
+            <div className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col cursor-default" onClick={e => e.stopPropagation()}>
+              <TaskDetailModalContent
+                {...props}
+                task={fullTask}
+                onUpdateTask={handleUpdateTask}
+              />
+            </div>
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
+
+
 

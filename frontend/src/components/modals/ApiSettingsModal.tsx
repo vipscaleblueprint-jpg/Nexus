@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Key, Plus, Trash2, Code, Activity, Copy, Check } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { usersApi } from '@/api';
@@ -18,7 +19,7 @@ interface ApiSettingsModalProps {
 }
 
 export function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalProps) {
-  const { currentUser } = useAppStore();
+  const currentUser = useAppStore(state => state.currentUser);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [newKeyName, setNewKeyName] = useState('');
@@ -78,8 +79,10 @@ export function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalProps) {
 
   const baseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '') + '/api/external';
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+  if (typeof window === 'undefined') return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-2xl bg-[hsl(240,5.9%,10%)] border border-[hsl(240,3.7%,15.9%)] rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
 
         {/* Header */}
@@ -93,7 +96,7 @@ export function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalProps) {
               <p className="text-xs text-[hsl(240,5%,64.9%)]">Manage API keys and connect external tools like n8n or spreadsheets.</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-[hsl(240,5%,64.9%)] hover:text-white hover:bg-[hsl(240,3.7%,15.9%)] rounded-lg transition-colors">
+          <button onClick={onClose} className="p-2 text-[hsl(240,5%,64.9%)] hover:text-white hover:bg-[hsl(240,3.7%,15.9%)] rounded-lg transition-colors cursor-pointer">
             <X className="size-5" />
           </button>
         </div>
@@ -293,6 +296,7 @@ x-api-key: nx_your_api_key_here`}</pre>
 
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

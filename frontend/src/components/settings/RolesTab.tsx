@@ -209,7 +209,7 @@ export function RolesTab() {
                           <button onClick={() => handleUpdateTeam(team.id)} className="p-1 text-emerald-500 hover:bg-emerald-500/10 rounded">
                             <Check className="w-4 h-4" />
                           </button>
-                          <button onClick={() => setEditingTeamId(null)} className="p-1 text-zinc-500 hover:bg-zinc-800 rounded">
+                          <button onClick={() => setEditingTeamId(null)} className="p-1 text-zinc-500 hover:bg-zinc-800 rounded cursor-pointer">
                             <X className="w-4 h-4" />
                           </button>
                         </div>
@@ -275,7 +275,7 @@ export function RolesTab() {
                               <button onClick={() => handleUpdateRole(team.id, role.id)} className="p-1 text-emerald-500 hover:bg-emerald-500/10 rounded">
                                 <Check className="w-4 h-4" />
                               </button>
-                              <button onClick={() => setEditingRoleId(null)} className="p-1 text-zinc-500 hover:bg-zinc-800 rounded">
+                              <button onClick={() => setEditingRoleId(null)} className="p-1 text-zinc-500 hover:bg-zinc-800 rounded cursor-pointer">
                                 <X className="w-4 h-4" />
                               </button>
                             </div>
@@ -320,7 +320,7 @@ export function RolesTab() {
                           <button onClick={() => handleAddRole(team.id)} className="p-1 text-emerald-500 hover:bg-emerald-500/10 rounded">
                             <Check className="w-4 h-4" />
                           </button>
-                          <button onClick={() => { setAddingRoleToTeamId(null); setNewRoleName(''); }} className="p-1 text-zinc-500 hover:bg-zinc-800 rounded">
+                          <button onClick={() => { setAddingRoleToTeamId(null); setNewRoleName(''); }} className="p-1 text-zinc-500 hover:bg-zinc-800 rounded cursor-pointer">
                             <X className="w-4 h-4" />
                           </button>
                         </div>

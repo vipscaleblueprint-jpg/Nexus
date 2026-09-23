@@ -13,10 +13,19 @@ interface AuditSectionProps {
   onUpdateChecklists: (checklists: Checklist[]) => void;
   currentUser?: UserModel | null;
 }
-export const getRequiredAudits = (taskTitle: string) => {
+export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
   const t = taskTitle.toLowerCase();
   const audits = new Set<string>();
-  
+
+  // Whatever auditor role was actually assigned (e.g. via the Galaxy "--Audit - <Role> -" subtask)
+  // determines the required audit item directly, regardless of what the task title says.
+  (auditorRoles || []).forEach((role) => {
+    const r = role.toLowerCase();
+    if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
+    if (r.includes('design')) audits.add('Design Audit');
+    if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
+  });
+
   // 3. Websites, Links, Landing Pages -> ALL THREE
   if (t.match(/website|page|funnel|link|domain|hosting|web|app/)) {
     audits.add('UI UX Audit');
@@ -48,8 +57,16 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   const [isProcessing, setIsProcessing] = useState(false);
 
   const auditChecklist = checklists.find(c => c.name.toLowerCase() === 'audit');
-  
-  const requiredAuditItems = getRequiredAudits(title);
+
+  // Roles suggested by the auditor: from the specific "--Audit" subtask when one is targeted,
+  // otherwise from every "--Audit" subtask attached to this task.
+  const auditorRoles = subtaskId
+    ? (task.subtasks?.find((s: any) => s.id === subtaskId)?.assigneeRoleRestrictions || [])
+    : (task.subtasks || [])
+        .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
+        .flatMap((s: any) => s.assigneeRoleRestrictions || []);
+
+  const requiredAuditItems = getRequiredAudits(title, auditorRoles);
 
   const getAuditItem = (text: string) => {
     return auditChecklist?.items?.find(i => i.text.toLowerCase() === text.toLowerCase());

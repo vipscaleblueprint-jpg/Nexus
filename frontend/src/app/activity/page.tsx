@@ -153,7 +153,7 @@ export default function ActivityPage() {
                 {items.map((n, i) => (
                   <div 
                     key={n.id} 
-                    className={`group flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.02] ${
+                    className={`group flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.02] cursor-pointer ${
                       i !== items.length - 1 ? 'border-b border-white/5' : ''
                     } ${!n.isRead ? 'bg-[#5f5ce6]/5' : ''}`}
                     onClick={() => { if (!n.isRead) handleMarkAsRead(n.id); }}

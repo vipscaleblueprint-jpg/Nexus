@@ -206,10 +206,29 @@ export async function listSpaces(req: Request, res: Response) {
       } as any);
     }
 
+    const allDocsList = collectAllDocs(resultSpaces);
+    const dailyRolloverDocs = await prisma.doc.findMany({
+      where: { isDailyRollover: true },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+      include: {
+        pages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            ...pageSelectConfig,
+            subpages: {
+              orderBy: { createdAt: 'asc' },
+              select: pageSelectConfig,
+            },
+          },
+        },
+      },
+    });
+    dailyRolloverDocs.forEach((d) => allDocsList.push({ doc: d }));
+
     const payload = {
       spaces: resultSpaces,
       allLists: collectAllLists(resultSpaces),
-      allDocs: collectAllDocs(resultSpaces),
+      allDocs: allDocsList,
     };
 
     await setCache('spaces:all', payload, 300);
@@ -297,11 +316,26 @@ export async function getDashboardData(req: Request, res: Response) {
       orderBy: { name: 'asc' },
     });
 
+    const allDocsList = collectAllDocs(resultSpaces);
+    const dailyRolloverDocs = await prisma.doc.findMany({
+      where: { isDailyRollover: true },
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+      include: {
+        pages: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            subpages: { orderBy: { createdAt: 'asc' } },
+          },
+        },
+      },
+    });
+    dailyRolloverDocs.forEach((d) => allDocsList.push({ doc: d }));
+
     const payload = {
       spaces: resultSpaces,
       users,
       allLists: collectAllLists(resultSpaces),
-      allDocs: collectAllDocs(resultSpaces),
+      allDocs: allDocsList,
     };
     await setCache('dashboard:all', payload, 300);
 

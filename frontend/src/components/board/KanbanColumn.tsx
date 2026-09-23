@@ -144,8 +144,8 @@ export const KanbanColumn = memo(function KanbanColumn({
   onDeleteColumn,
   dragListeners,
   dragAttributes,
-  isOverlay = false,
-  isOver = false,
+  isOverlay,
+  isOver,
 }: Props) {
 
   const droppableData = useMemo(() => ({

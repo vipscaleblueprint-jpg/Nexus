@@ -9,6 +9,7 @@ import {
   createAttachmentUrl,
   createTaskComment,
   getTaskComments,
+  updateTaskComment,
   toggleCommentReaction,
   getTaskActivities,
   getLiveBlocksData,
@@ -51,6 +52,7 @@ taskRouter.post('/:id/attachments', optionalAuthenticateToken, validate({ params
 taskRouter.delete('/:id/attachments/:attachmentId', optionalAuthenticateToken, validate({ params: idParams }), deleteTaskAttachment);
 taskRouter.post('/:id/comments', validate({ params: idParams }), createTaskComment);
 taskRouter.get('/:id/comments', validate({ params: idParams }), getTaskComments);
+taskRouter.patch('/:id/comments/:commentId', updateTaskComment);
 taskRouter.post('/:id/comments/:commentId/reactions', toggleCommentReaction);
 taskRouter.get('/:id/activities', validate({ params: idParams }), getTaskActivities);
 

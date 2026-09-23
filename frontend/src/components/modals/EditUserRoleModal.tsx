@@ -148,7 +148,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
         aria-modal="true"
         aria-labelledby="edit-role-title"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 no-scrollbar"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 no-scrollbar"
       >
         {/* Header */}
         <div className="sticky top-0 z-10 px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/90 backdrop-blur">
@@ -166,7 +166,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
           <button
             onClick={onClose}
             aria-label="Close"
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -207,7 +207,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
               <button
                 type="button"
                 onClick={() => setSystemRole('MEMBER')}
-                className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
+                className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all cursor-pointer ${
                   systemRole === 'MEMBER'
                     ? 'bg-zinc-800/90 border-zinc-500 text-white shadow-sm'
                     : 'bg-[#131316] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
@@ -220,7 +220,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
               <button
                 type="button"
                 onClick={() => setSystemRole('ADMIN')}
-                className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
+                className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all cursor-pointer ${
                   systemRole === 'ADMIN'
                     ? 'bg-yellow-500/10 border-yellow-500/50 text-yellow-200 shadow-sm'
                     : 'bg-[#131316] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
@@ -250,7 +250,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
                   key={type}
                   type="button"
                   onClick={() => setEmploymentType(type)}
-                  className={`py-2 px-2 rounded-xl border text-center font-medium text-xs transition-all ${
+                  className={`py-2 px-2 rounded-xl border text-center font-medium text-xs transition-all cursor-pointer ${
                     employmentType === type
                       ? 'bg-zinc-200 text-zinc-950 border-zinc-200 font-semibold shadow'
                       : 'bg-[#131316] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
@@ -354,7 +354,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
                     key={val}
                     type="button"
                     onClick={() => setStarRating(val)}
-                    className="p-0.5 hover:scale-110 transition-transform"
+                    className="p-0.5 hover:scale-110 transition-transform cursor-pointer"
                   >
                     <Star
                       className={`w-4 h-4 ${
@@ -375,7 +375,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
               <button
                 type="button"
                 onClick={() => setIsActive(!isActive)}
-                className={`w-full h-[38px] px-3 rounded-xl border text-center font-medium text-xs transition-all ${
+                className={`w-full h-[38px] px-3 rounded-xl border text-center font-medium text-xs transition-all cursor-pointer ${
                   isActive
                     ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
                     : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'

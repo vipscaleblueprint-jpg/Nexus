@@ -1,27 +1,32 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
-import { useAppStore } from '@/lib/store';
-import { User } from '@/lib/types';
-import { authApi } from '@/api';
-import { ExternalLink, LogOut, ChevronDown, PanelLeft } from 'lucide-react';
+import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useAppStore } from "@/lib/store";
+import { User } from "@/lib/types";
+import { authApi } from "@/api";
+import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
+import { ApiSettingsModal } from "@/components/modals/ApiSettingsModal";
 
 const PAGE_TITLES: Record<string, string> = {
-  '/': 'Nexus Workspace',
-  '/team': 'Member Directory',
-  '/settings': 'Account Settings',
-  '/settings/users': 'Admin Settings',
+  "/": "Nexus Workspace",
+  "/team": "Member Directory",
+  "/settings": "Account Settings",
+  "/settings/users": "Admin Settings",
 };
 
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
-  const { currentUser, setCurrentUser, isSidebarCollapsed, toggleSidebar } = useAppStore();
+  const currentUser = useAppStore(state => state.currentUser);
+  const setCurrentUser = useAppStore(state => state.setCurrentUser);
+  const isSidebarCollapsed = useAppStore(state => state.isSidebarCollapsed);
+  const toggleSidebar = useAppStore(state => state.toggleSidebar);
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
 
-  const title = PAGE_TITLES[pathname] ?? 'Nexus';
+  const title = PAGE_TITLES[pathname] ?? "Nexus";
 
   const handleLogout = async () => {
     try {
@@ -31,10 +36,10 @@ export function Header() {
         await authApi.logout();
       }
     } catch (e) {
-      console.warn('Logout server call failed:', e);
+      console.warn("Logout server call failed:", e);
     } finally {
       setCurrentUser(null);
-      router.push('/login');
+      router.push("/login");
     }
   };
 
@@ -91,7 +96,7 @@ export function Header() {
             </div>
 
             <span className="font-semibold text-zinc-200 text-xs truncate max-w-[100px] hidden sm:inline">
-              {activeUser.name.split(' ')[0]}
+              {activeUser.name.split(" ")[0]}
             </span>
 
             <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
@@ -106,13 +111,15 @@ export function Header() {
                 <div className="truncate">
                   <div className="font-bold text-zinc-100 truncate flex items-center gap-1.5">
                     {activeUser.name}
-                    {activeUser.systemRole === 'ADMIN' && (
+                    {activeUser.systemRole === "ADMIN" && (
                       <span className="text-[9px] px-1.5 py-0.5 bg-zinc-200 text-zinc-950 font-extrabold rounded">
                         ADMIN
                       </span>
                     )}
                   </div>
-                  <div className="text-[10px] text-zinc-400 truncate">{activeUser.email}</div>
+                  <div className="text-[10px] text-zinc-400 truncate">
+                    {activeUser.email}
+                  </div>
                 </div>
               </div>
 
@@ -120,7 +127,7 @@ export function Header() {
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-400">Star Rating:</span>
                   <span className="text-amber-400 font-bold">
-                    {'⭐'.repeat(activeUser.starRating || 1)}
+                    {"⭐".repeat(activeUser.starRating || 1)}
                   </span>
                 </div>
 
@@ -150,21 +157,32 @@ export function Header() {
                 <button
                   onClick={() => {
                     setIsProfileOpen(false);
-                    router.push('/settings');
+                    router.push("/settings");
                   }}
                   className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
                 >
                   <span className="truncate">Account Settings</span>
                 </button>
-                {activeUser.systemRole === 'ADMIN' && (
+                <button
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    setIsApiSettingsOpen(true);
+                  }}
+                  className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                >
+                  <span className="truncate text-indigo-400">API Settings</span>
+                </button>
+                {activeUser.systemRole === "ADMIN" && (
                   <button
                     onClick={() => {
                       setIsProfileOpen(false);
-                      router.push('/settings/users');
+                      router.push("/settings/users");
                     }}
                     className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
                   >
-                    <span className="truncate text-yellow-400">Admin Settings</span>
+                    <span className="truncate text-yellow-400">
+                      Admin Settings
+                    </span>
                   </button>
                 )}
                 <button
@@ -179,6 +197,10 @@ export function Header() {
           )}
         </div>
       </div>
+      <ApiSettingsModal
+        isOpen={isApiSettingsOpen}
+        onClose={() => setIsApiSettingsOpen(false)}
+      />
     </header>
   );
 }

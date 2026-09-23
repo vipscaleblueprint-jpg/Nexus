@@ -14,6 +14,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { usersApi } from '@/api/users';
 import * as Popover from '@radix-ui/react-popover';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileText,
   ChevronRight,
@@ -167,23 +168,31 @@ function SidebarPageItem({
         </div>
       </div>
 
-      {expanded && hasChildren && (
-        <div className="space-y-0.5 mt-0.5">
-          {sortedSubpages.map((sub: any) => (
-            <SidebarPageItem
-              key={sub.id}
-              page={sub}
-              activePageId={activePageId}
-              onSelect={onSelect}
-              onAddSubpage={onAddSubpage}
-              onRename={onRename}
-              onDelete={onDelete}
-              depth={depth + 1}
-              isJournal={isJournal}
-            />
-          ))}
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {expanded && hasChildren && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="space-y-0.5 mt-0.5 overflow-hidden"
+          >
+            {sortedSubpages.map((sub: any) => (
+              <SidebarPageItem
+                key={sub.id}
+                page={sub}
+                activePageId={activePageId}
+                onSelect={onSelect}
+                onAddSubpage={onAddSubpage}
+                onRename={onRename}
+                onDelete={onDelete}
+                depth={depth + 1}
+                isJournal={isJournal}
+              />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -206,10 +215,11 @@ const getTaskStatusBadgeColor = (status?: string) => {
 export default function DocPage({ docId }: { docId?: string }) {
   const params = useParams<{ id: string }>();
   const id = docId || params?.id;
-  const { currentUser, setCurrentUser } = useAppStore();
+  const { currentUser, setCurrentUser, tasks, tasksIndex, loadTasks, hydrateTasksFromCache, updateTask } = useAppStore();
   const [doc, setDoc] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRolePopoverOpen, setIsRolePopoverOpen] = useState(false);
 
   const docRef = useRef<any>(null);
   useEffect(() => {
@@ -280,8 +290,6 @@ export default function DocPage({ docId }: { docId?: string }) {
   }, [hoverCardPos]);
 
   const [dbTeams, setDbTeams] = useState<any[]>([]);
-  const [allTasks, setAllTasks] = useState<Task[]>([]);
-  const [tasksMap, setTasksMap] = useState<Record<string, Task>>({});
   const [selectedTaskForModal, setSelectedTaskForModal] = useState<Task | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
@@ -296,7 +304,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       e.preventDefault();
       e.stopPropagation();
       console.log(`[DEBUG] Fetching mention for task ID: ${taskId}`);
-      const foundTask = tasksMap[taskId] || allTasks.find((t: any) => t.id === taskId);
+      const foundTask = tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
       if (foundTask) {
         setSelectedTaskForModal(foundTask);
         setIsTaskModalOpen(true);
@@ -314,13 +322,13 @@ export default function DocPage({ docId }: { docId?: string }) {
     };
     document.addEventListener('click', handleDocClick);
     return () => document.removeEventListener('click', handleDocClick);
-  }, [tasksMap, allTasks]);
+  }, [tasksIndex, tasks]);
 
   useEffect(() => {
     const handleOpenTaskDetail = async (e: any) => {
       const taskId = e.detail?.taskId;
       if (!taskId) return;
-      const foundTask = tasksMap[taskId] || allTasks.find((t: any) => t.id === taskId);
+      const foundTask = tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
       if (foundTask) {
         setSelectedTaskForModal(foundTask);
         setIsTaskModalOpen(true);
@@ -341,7 +349,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     return () => {
       window.removeEventListener('open-task-detail', handleOpenTaskDetail as any);
     };
-  }, [tasksMap, allTasks]);
+  }, [tasksIndex, tasks]);
 
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
@@ -372,27 +380,14 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   };
 
-  const fetchTasksAndTeams = async () => {
+  const fetchTeams = async () => {
     try {
-      const [tasksRes, teamsRes] = await Promise.all([
-        tasksApi.getTasks({ lightweight: true }),
-        usersApi.getTeams()
-      ]);
-      
-      if (tasksRes.tasks) {
-        setAllTasks(tasksRes.tasks);
-        const map: Record<string, Task> = {};
-        tasksRes.tasks.forEach((t) => {
-          map[t.id] = t;
-        });
-        setTasksMap(map);
-      }
-      
+      const teamsRes = await usersApi.getTeams();
       if (teamsRes?.teams) {
         setDbTeams(teamsRes.teams);
       }
     } catch (err) {
-      console.warn('Failed to load tasks or teams:', err);
+      console.warn('Failed to load teams:', err);
     }
   };
 
@@ -422,7 +417,9 @@ export default function DocPage({ docId }: { docId?: string }) {
           if (!cancelled && user) setCurrentUser(user);
         } catch { }
       }
-      fetchTasksAndTeams(); // Non-blocking so document loads instantly
+      hydrateTasksFromCache();
+      loadTasks(); // Fetch tasks from store without blocking doc fetch
+      fetchTeams(); // Non-blocking so document loads instantly
       await fetchDoc();
     })();
     return () => {
@@ -616,8 +613,8 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleOpenTaskModal = async (taskId: string) => {
-    if (tasksMap[taskId]) {
-      setSelectedTaskForModal(tasksMap[taskId]);
+    if (tasksIndex[taskId]) {
+      setSelectedTaskForModal(tasksIndex[taskId]);
       setIsTaskModalOpen(true);
     } else {
       try {
@@ -648,7 +645,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     setIsLinkModalOpen(false);
   };
 
-  const filteredTasks = allTasks.filter((t) =>
+  const filteredTasks = tasks.filter((t) =>
     t.title.toLowerCase().includes(taskSearchQuery.toLowerCase())
   );
 
@@ -743,10 +740,10 @@ export default function DocPage({ docId }: { docId?: string }) {
                 <span className="font-semibold text-zinc-300">{currentUser?.name || 'Hannah'}</span>
                 <span className="text-zinc-600">•</span>
                 <span className="text-zinc-400">Last updated today</span>
-                {false && !doc?.isDailyRollover && (
+                {!doc?.isDailyRollover && (
                   <>
                     <span className="text-zinc-600">•</span>
-                    <Popover.Root>
+                    <Popover.Root open={isRolePopoverOpen} onOpenChange={setIsRolePopoverOpen}>
                       <Popover.Trigger asChild>
                         <button className="flex items-center gap-1.5 rounded-md hover:bg-zinc-800/60 transition-colors cursor-pointer px-1.5 py-1">
                           {(doc?.assigneeRoleRestrictions && doc.assigneeRoleRestrictions.length > 0) ? (
@@ -757,7 +754,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                                 return (
                                   <div 
                                     key={role} 
-                                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white border-2 border-[#0d0d0d] ${i > 0 ? '-ml-2' : ''} shadow-sm relative transition-transform ${bgColor}`}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white border-2 border-[#0d0d0d] ${i > 0 ? '-ml-2' : ''} shadow-sm relative transition-transform ${bgColor} animate-in fade-in zoom-in-50 duration-300`}
                                     style={{ zIndex: 10 - i }}
                                     title={role}
                                   >
@@ -807,6 +804,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                                               await spacesApi.updateDoc(doc.id, { assigneeRoleRestrictions: next, teamId: team.id });
                                             } catch (err) { console.error('Failed to update roles', err); }
                                           }}
+                                          onPointerDown={(e) => e.preventDefault()}
                                           className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
                                         >
                                           {hasRoles && (
@@ -842,6 +840,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                                                 await spacesApi.updateDoc(doc.id, { assigneeRoleRestrictions: next, teamId: team.id });
                                               } catch (e) { console.error('Failed to update role', e); }
                                             }}
+                                            onPointerDown={(e) => e.preventDefault()}
                                             className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"
                                           >
                                             <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
@@ -1162,24 +1161,16 @@ export default function DocPage({ docId }: { docId?: string }) {
       )}
 
       {/* ── Task Detail Modal Trigger ── */}
-      {isTaskModalOpen && selectedTaskForModal && (
-        <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
-          onClick={(e) => { if (e.target === e.currentTarget) setIsTaskModalOpen(false); }}
-        >
-          <div className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col">
-            <TaskDetailModal
-              isOpen={isTaskModalOpen}
-              onClose={() => setIsTaskModalOpen(false)}
-              task={selectedTaskForModal}
-              onUpdateTask={(updatedTask: any) => {
-                setSelectedTaskForModal(updatedTask);
-                setTasksMap((prev) => ({ ...prev, [updatedTask.id]: updatedTask }));
-              }}
-            />
-          </div>
-        </div>
-      )}
+      <TaskDetailModal
+        isOpen={isTaskModalOpen}
+        onClose={() => setIsTaskModalOpen(false)}
+        task={selectedTaskForModal || null}
+        mode="modal"
+        onUpdateTask={(updatedTask: any) => {
+          setSelectedTaskForModal(updatedTask);
+          updateTask(updatedTask);
+        }}
+      />
 
       {/* Global Task Hover Card */}
       {hoverCardPos && hoverCardData && (

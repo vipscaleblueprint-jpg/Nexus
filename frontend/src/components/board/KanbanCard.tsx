@@ -37,18 +37,16 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
   const [isDescOpen, setIsDescOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'status'|'assignee'|'date'|'priority'|null>(null);
-  const [dbUsers, setDbUsers] = useState<any[]>([]);
-  const currentUser = useAppStore((s) => s.currentUser);
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache } = useAppStore();
 
   useEffect(() => {
     let cancelled = false;
-    if (openDropdown === 'assignee' && dbUsers.length === 0) {
-      usersApi.getUsers().then(res => {
-        if (!cancelled && res?.users) setDbUsers(res.users);
-      }).catch(console.error);
+    if (openDropdown === 'assignee' && workspaceUsers.length === 0) {
+      hydrateUsersFromCache();
+      loadUsers();
     }
     return () => { cancelled = true; };
-  }, [openDropdown, dbUsers.length]);
+  }, [openDropdown, workspaceUsers.length, hydrateUsersFromCache, loadUsers]);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
@@ -94,14 +92,14 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
   // Role-based filter: which users can be assigned (assigneeRoleRestrictions)
   const assignableUsers = useMemo(() => {
     const t = task as any;
-    if (!t.assigneeRoleRestrictions?.length) return dbUsers;
+    if (!t.assigneeRoleRestrictions?.length) return workspaceUsers;
     const requiredRoles = t.assigneeRoleRestrictions.map((r: string) => r.trim().toUpperCase());
-    return dbUsers.filter((u: any) => {
-      const uRoles = (u.roles || [])
+      return workspaceUsers.filter((u: any) => {
+        const uRoles = (u.roles || [])
         .filter(Boolean).map((r: any) => r.trim().toUpperCase());
       return requiredRoles.some((req: string) => uRoles.includes(req));
     });
-  }, [dbUsers, (task as any).assigneeRoleRestrictions]);
+  }, [workspaceUsers, (task as any).assigneeRoleRestrictions]);
 
   const handleAssigneeToggle = async (user: any) => {
     if (!currentUser) return;
@@ -622,3 +620,4 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
     </div>
   );
 });
+

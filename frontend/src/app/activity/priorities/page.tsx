@@ -1,12 +1,17 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useAppStore } from '@/lib/store';
 import { Loader2 } from 'lucide-react';
 import DocPage from '@/app/docs/[id]/page';
 
 export default function PrioritiesPage() {
-  const { allDocs } = useAppStore();
+  const { allDocs, loadSpaces } = useAppStore();
   const priorityDoc = allDocs.find((d: any) => d.doc.isDailyRollover === true);
+
+  useEffect(() => {
+    loadSpaces();
+  }, [loadSpaces]);
 
   if (!priorityDoc) {
     return (

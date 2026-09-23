@@ -5,6 +5,7 @@ import { getRoles } from '@/api/roles';
 import type { WorkspaceRole } from '@/types/models';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { toast } from '@/lib/toast';
+import { useAppStore } from '@/lib/store';
 
 interface EditColumnModalProps {
   isOpen: boolean;
@@ -40,6 +41,32 @@ export function EditColumnModal({
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isRendered, setIsRendered] = useState(isOpen);
+  const [isVisible, setIsVisible] = useState(false);
+  const workspaceTeams = useAppStore(state => state.workspaceTeams);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsRendered(true);
+      document.body.style.overflow = 'hidden';
+      // Small delay to ensure the element is rendered before adding the visible class
+      const frame = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setIsVisible(true));
+      });
+      return () => cancelAnimationFrame(frame);
+    } else {
+      setIsVisible(false);
+      document.body.style.overflow = '';
+      const timer = setTimeout(() => setIsRendered(false), 200);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
 
   useEffect(() => {
     setName(status);
@@ -85,7 +112,7 @@ export function EditColumnModal({
     });
   };
 
-  if (!isOpen) return null;
+  if (!isRendered) return null;
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -124,16 +151,16 @@ export function EditColumnModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div className={`fixed inset-0 z-[100] overflow-y-auto overscroll-contain flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity duration-200 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
       <div 
-        className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        className={`w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ${isVisible ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-4 border-b border-zinc-800">
           <h2 className="text-lg font-semibold text-zinc-100">Edit Column</h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-zinc-800 rounded-md text-zinc-400 transition-colors"
+            className="p-1 hover:bg-zinc-800 rounded-md text-zinc-400 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -160,7 +187,7 @@ export function EditColumnModal({
                 <button
                   key={t}
                   onClick={() => setSelectedTheme(t)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all flex-shrink-0 cursor-pointer ${
                     THEMES[t as keyof typeof THEMES].badge.split(' ')[0]
                   } ${
                     selectedTheme === t
@@ -192,7 +219,7 @@ export function EditColumnModal({
               <button
                 type="button"
                 onClick={() => setAccessType('all')}
-                className={`flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
+                className={`flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all cursor-pointer ${
                   accessType === 'all'
                     ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400'
                     : 'border-zinc-800 bg-zinc-900/50 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
@@ -204,7 +231,7 @@ export function EditColumnModal({
               <button
                 type="button"
                 onClick={() => setAccessType('restricted')}
-                className={`flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
+                className={`flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all cursor-pointer ${
                   accessType === 'restricted'
                     ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400'
                     : 'border-zinc-800 bg-zinc-900/50 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
@@ -216,7 +243,7 @@ export function EditColumnModal({
             </div>
 
             {accessType === 'restricted' && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-lg max-h-44 overflow-y-auto custom-scrollbar p-1 animate-in slide-in-from-top-2 duration-200">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-lg max-h-44 overflow-y-auto overscroll-contain custom-scrollbar p-1 animate-in slide-in-from-top-2 duration-200">
                 {isLoadingRoles ? (
                   <div className="p-4 flex justify-center"><div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>
                 ) : selectableRoles.length === 0 ? (
@@ -225,29 +252,70 @@ export function EditColumnModal({
                     No custom roles available
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1">
-                    {selectableRoles.map((role) => {
-                      const selected = isRoleSelected(role);
+                  <div className="flex flex-col gap-1 pr-1">
+                    {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                    {workspaceTeams.map(team => {
+                      const teamRoles = (team.teamRoles || []).filter((r: any) => {
+                        const upper = r.name.trim().toUpperCase();
+                        return upper !== 'ADMIN' && upper !== 'ADMINISTRATOR';
+                      });
+                      const hasRoles = teamRoles.length > 0;
+                      const allSelected = hasRoles && teamRoles.every((r: any) => isRoleSelected(r));
+                      const someSelected = hasRoles && teamRoles.some((r: any) => isRoleSelected(r));
+
                       return (
-                        <button
-                          key={role.id}
-                          type="button"
-                          onClick={() => toggleRole(role)}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left ${
-                            selected ? 'bg-indigo-500/15 text-indigo-200 font-medium' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-300'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${role.color || 'bg-zinc-500'}`} />
-                            <span className="truncate">{role.name}</span>
+                        <div key={team.id} className="mb-2">
+                          <div
+                            onClick={() => {
+                              if (!hasRoles) return;
+                              if (allSelected) {
+                                // Deselect all
+                                setAllowedRoles(prev => prev.filter(r => !teamRoles.find((tr: any) => tr.name === r || tr.id === r || tr.name.toUpperCase() === r.toUpperCase())));
+                              } else {
+                                // Select all missing
+                                const toAdd = teamRoles.filter((tr: any) => !isRoleSelected(tr)).map((tr: any) => tr.name);
+                                setAllowedRoles(prev => [...prev, ...toAdd]);
+                              }
+                            }}
+                            className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                          >
+                            {hasRoles && (
+                              <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                                {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                              </div>
+                            )}
+                            <span>{team.name}</span>
                           </div>
-                          {selected && <Check className="w-4 h-4 text-indigo-400 shrink-0" />}
-                        </button>
+                          {(!team.teamRoles || teamRoles.length === 0) && (
+                            <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+                          )}
+                          {teamRoles.length > 0 && (
+                            <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                              {teamRoles.map((role: any) => {
+                                const selected = isRoleSelected(role);
+                                return (
+                                  <div
+                                    key={role.id}
+                                    onClick={() => toggleRole(role)}
+                                    className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
+                                  >
+                                    <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                      {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                    </div>
+                                    {role.name}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
                 )}
               </div>
+
             )}
           </div>
         </div>
@@ -256,7 +324,7 @@ export function EditColumnModal({
           <button
             type="button"
             onClick={() => setIsDeleteModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-colors cursor-pointer"
           >
             <Trash2 className="w-4 h-4" />
             Delete
@@ -267,7 +335,7 @@ export function EditColumnModal({
               type="button"
               disabled={isSaving}
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
             >
               Cancel
             </button>
@@ -275,7 +343,7 @@ export function EditColumnModal({
               type="button"
               disabled={isSaving}
               onClick={handleSave}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50 cursor-pointer"
             >
               {isSaving ? (
                 <>

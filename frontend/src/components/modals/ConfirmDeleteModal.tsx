@@ -44,7 +44,7 @@ export function ConfirmDeleteModal({
           </h2>
           <button
             onClick={onClose}
-            className="p-1 rounded-md hover:bg-red-900/40 text-red-400/70 hover:text-red-400 transition-colors"
+            className="p-1 rounded-md hover:bg-red-900/40 text-red-400/70 hover:text-red-400 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>

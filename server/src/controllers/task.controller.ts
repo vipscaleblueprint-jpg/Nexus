@@ -862,6 +862,43 @@ export async function createTaskComment(req: Request, res: Response) {
   }
 }
 
+// PATCH /api/tasks/:id/comments/:commentId
+export async function updateTaskComment(req: Request, res: Response) {
+  try {
+    const { id: taskId, commentId } = req.params;
+    const { content, listId } = req.body;
+    
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Content cannot be empty' });
+    }
+
+    const comment = await prisma.taskComment.update({
+      where: { id: commentId, taskId },
+      data: { content: content.trim() },
+      include: {
+        reactions: { include: { user: { select: { id: true, name: true } } } },
+        replies: {
+          include: {
+            reactions: { include: { user: { select: { id: true, name: true } } } },
+          },
+        },
+        user: { select: { id: true, name: true, avatarUrl: true, email: true } }
+      }
+    });
+
+    const payload = { taskId, comment };
+    if (listId) {
+      io.to(`list:${listId}`).emit('task:comment_updated', payload);
+    } else {
+      io.emit('task:comment_updated', payload);
+    }
+
+    return res.json({ comment });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // POST /api/tasks/:id/comments/:commentId/reactions - toggle (add or remove)
 export async function toggleCommentReaction(req: Request, res: Response) {
   try {

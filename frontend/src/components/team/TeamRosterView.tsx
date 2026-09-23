@@ -29,7 +29,7 @@ export function TeamRosterView({ users, isLoading = false }: TeamRosterViewProps
       u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term);
 
     const matchesRole =
-      roleFilter === 'ALL' || u.primaryRole === roleFilter || u.systemRole === roleFilter;
+      roleFilter === 'ALL' || (u.roles || []).includes(roleFilter) || u.systemRole === roleFilter;
 
     return matchesSearch && matchesRole;
   });
@@ -145,18 +145,20 @@ function MemberCard({ user }: { user: User }) {
 
       {/* Roles */}
       <div className="flex items-center gap-1 flex-wrap">
-        {user.primaryRole && (
-          <span className="px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-800/60 text-[10px] font-semibold">
-            {user.primaryRole}
-          </span>
-        )}
-        {user.secondaryRole && (
-          <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px]">
-            {user.secondaryRole}
-          </span>
-        )}
-        {!user.primaryRole && !user.secondaryRole && (
+        {(user.roles || []).length === 0 ? (
           <span className="text-[10px] text-zinc-500 italic">No job roles assigned</span>
+        ) : (
+          user.roles.map((role, i) =>
+            i === 0 ? (
+              <span key={role} className="px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-800/60 text-[10px] font-semibold">
+                {role}
+              </span>
+            ) : (
+              <span key={role} className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px]">
+                {role}
+              </span>
+            )
+          )
         )}
       </div>
 

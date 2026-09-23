@@ -31,15 +31,7 @@ export function canUserMoveTask(
   });
 
   // Extract all roles assigned to current user
-  const rawRoles = [
-    currentUser.primaryRole,
-    currentUser.secondaryRole,
-    currentUser.tertiaryRole,
-    currentUser.minorRole,
-    ...((currentUser as any).roles || []),
-  ];
-
-  const userRoles = rawRoles
+  const userRoles = (currentUser.roles || [])
     .filter(Boolean)
     .map((r: string) => r.trim().toUpperCase());
 
@@ -71,13 +63,8 @@ export function canUserEditTask(
   if (!currentUser) return { allowed: false, reason: 'Please sign in.' };
 
   const required = t.teamAssignAccessRole.trim().toUpperCase();
-  const userRoles = [
-    currentUser.primaryRole,
-    currentUser.secondaryRole,
-    currentUser.tertiaryRole,
-    currentUser.minorRole,
-    ...((currentUser as any).roles || []),
-  ].filter(Boolean).map((r: string) => r.trim().toUpperCase());
+  const userRoles = (currentUser.roles || [])
+    .filter(Boolean).map((r: string) => r.trim().toUpperCase());
 
   if (userRoles.includes(required)) return { allowed: true };
 

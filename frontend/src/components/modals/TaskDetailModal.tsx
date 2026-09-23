@@ -381,8 +381,8 @@ export function TaskDetailModalContent({
       });
     });
 
-    return workspaceUsers.filter((u) => {
-      const userRoles = [u.primaryRole, u.secondaryRole, u.tertiaryRole, u.minorRole].filter(Boolean) as string[];
+      return workspaceUsers.filter((u) => {
+        const userRoles = (u.roles || []) as string[];
       return task.assigneeRoleRestrictions!.some((role) => {
         // Check generic role match (TECH, PM, AUDITOR...)
         if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
@@ -1506,7 +1506,7 @@ export function TaskDetailModalContent({
                                       )}
                                       <div className="flex flex-col truncate">
                                         <span className="truncate text-xs font-medium text-zinc-200">{u.name}</span>
-                                        <span className="truncate text-[10px] text-zinc-500">{u.primaryRole || u.email}</span>
+                                        <span className="truncate text-[10px] text-zinc-500">{u.roles?.[0] || u.email}</span>
                                       </div>
                                     </div>
                                     {assigned && (
@@ -3210,4 +3210,6 @@ export function TaskDetailModal(props: Props) {
     </AnimatePresence>
   );
 }
+
+
 

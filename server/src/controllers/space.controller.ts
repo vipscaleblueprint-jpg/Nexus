@@ -290,7 +290,7 @@ export async function getDashboardData(req: Request, res: Response) {
         email: true,
         avatarUrl: true,
         imageUrl: true,
-        primaryRole: true,
+        roles: true,
       },
       orderBy: { name: 'asc' },
     });

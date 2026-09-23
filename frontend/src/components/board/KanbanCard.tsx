@@ -94,8 +94,8 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     const t = task as any;
     if (!t.assigneeRoleRestrictions?.length) return workspaceUsers;
     const requiredRoles = t.assigneeRoleRestrictions.map((r: string) => r.trim().toUpperCase());
-    return workspaceUsers.filter((u: any) => {
-      const uRoles = [u.primaryRole, u.secondaryRole, u.tertiaryRole, u.minorRole]
+      return workspaceUsers.filter((u: any) => {
+        const uRoles = (u.roles || [])
         .filter(Boolean).map((r: any) => r.trim().toUpperCase());
       return requiredRoles.some((req: string) => uRoles.includes(req));
     });
@@ -620,3 +620,4 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
     </div>
   );
 });
+

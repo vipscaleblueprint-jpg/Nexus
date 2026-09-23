@@ -55,10 +55,7 @@ model User {
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   systemRole            SystemRole            @default(MEMBER)
-  primaryRole           String?
-  secondaryRole         String?
-  tertiaryRole          String?
-  minorRole             String?
+  roles                 String[]              @default([])
   teamId                String?
   googleId              String?               @unique
   imageUrl              String?
@@ -92,7 +89,7 @@ model User {
   @@index([email])
   @@index([systemRole])
   @@index([teamId])
-  @@index([primaryRole])
+  @@index([roles])
 }
 
 model Space {

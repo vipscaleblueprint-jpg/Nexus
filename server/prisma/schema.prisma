@@ -59,6 +59,7 @@ model User {
   teamId                String?
   googleId              String?               @unique
   imageUrl              String?
+  credits               BigInt?
   apiKeys               ApiKey[]
   uploadedAttachments   Attachment[]
   auditLogs             AuditLog[]

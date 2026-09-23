@@ -154,6 +154,22 @@ export async function getCache<T>(key: string): Promise<T | null> {
   return null;
 }
 
+/** Wipes every cache:* entry, leaving refresh tokens, OTPs, and blacklisted tokens untouched. */
+export async function clearAllCache(): Promise<number> {
+  try {
+    const keys = await redis.keys('cache:*');
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+    inMemoryCacheStore.clear();
+    return keys.length;
+  } catch (err) {
+    log.error({ err }, `clearAllCache failed: ${errMsg(err)}`);
+    inMemoryCacheStore.clear();
+    return 0;
+  }
+}
+
 export async function invalidateCache(...keys: string[]) {
   for (const key of keys) {
     try {

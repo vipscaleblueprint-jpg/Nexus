@@ -1,9 +1,32 @@
 import { Request, Response } from 'express';
 import { PrismaClient, Priority } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 
 const prisma = new PrismaClient();
+
+// Galaxy-created tasks/subtasks are authored by this system account rather than
+// whichever admin happens to be oldest, so the Activity feed reads "VIP Scale created this task".
+async function getOrCreateVipScaleUser() {
+  let vipScaleUser = await prisma.user.findFirst({
+    where: { name: { equals: 'VIP Scale', mode: 'insensitive' } }
+  });
+
+  if (!vipScaleUser) {
+    const password = await bcrypt.hash(Math.random().toString(36), 10);
+    vipScaleUser = await prisma.user.create({
+      data: {
+        name: 'VIP Scale',
+        email: 'vipscale@system.local',
+        password,
+        systemRole: 'ADMIN',
+      }
+    });
+  }
+
+  return vipScaleUser;
+}
 
 const requireApiKey = (req: Request, res: Response) => {
   const apiKey = req.headers['x-api-key'];
@@ -150,6 +173,88 @@ export const syncClients = async (req: Request, res: Response) => {
   }
 };
 
+// VIPScale's assistant.employment_type has one more value ("regular") than Nexus's
+// EmploymentType enum, so it needs an explicit mapping rather than a direct cast.
+const EMPLOYMENT_TYPE_MAP: Record<string, 'FULL_TIME' | 'PART_TIME' | 'INTERN' | 'CONTRACTOR'> = {
+  'full-time': 'FULL_TIME',
+  'part-time': 'PART_TIME',
+  'intern': 'INTERN',
+  'regular': 'CONTRACTOR',
+};
+
+function toBigIntOrNull(value: unknown): bigint | null {
+  if (value === null || value === undefined || value === '') return null;
+  try {
+    return BigInt(Math.trunc(Number(value)));
+  } catch {
+    return null;
+  }
+}
+
+export const syncUsers = async (req: Request, res: Response) => {
+  if (!requireApiKey(req, res)) return;
+
+  try {
+    const isDev = process.env.NODE_ENV === 'development';
+    const toolsUrl = process.env.TOOLS_VIP_URL || (isDev ? 'http://localhost:3001' : 'https://tools.vipscaleph.com');
+    const response = await fetch(`${toolsUrl}/api/assistants`, {
+      headers: {
+        'x-api-key': process.env.VIPSCALE_API_KEY || ''
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch assistants from tools.vip: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    if (!data.success || !data.assistants) {
+      throw new Error('Invalid response format from tools.vip assistants API');
+    }
+
+    const createdUsers: string[] = [];
+    const updatedUsers: string[] = [];
+
+    for (const assistant of data.assistants) {
+      if (!assistant.email) continue;
+
+      const fields = {
+        name: assistant.name || assistant.email,
+        dailySheetUrl: assistant.daily_schedule_sheet ?? null,
+        starRating: assistant.star != null ? Math.round(Number(assistant.star)) : 1,
+        employmentType: EMPLOYMENT_TYPE_MAP[assistant.employment_type] || 'FULL_TIME',
+        isActive: assistant.is_active ?? true,
+        roles: Array.isArray(assistant.roles) ? assistant.roles : [],
+        credits: toBigIntOrNull(assistant.credits),
+      };
+
+      const existing = await prisma.user.findUnique({ where: { email: assistant.email } });
+
+      if (existing) {
+        await prisma.user.update({ where: { id: existing.id }, data: fields });
+        updatedUsers.push(assistant.email);
+      } else {
+        const password = await bcrypt.hash(Math.random().toString(36), 10);
+        await prisma.user.create({ data: { ...fields, email: assistant.email, password } });
+        createdUsers.push(assistant.email);
+      }
+    }
+
+    await invalidateCache('users:all');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Users synced successfully',
+      syncedCount: data.assistants.length,
+      newUsersCreated: createdUsers,
+      updatedUsers
+    });
+  } catch (error: any) {
+    console.error('Failed to sync users:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
 export const handleGalaxyTask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
 
@@ -202,20 +307,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     }
 
     // Creator should be "VIP Scale"
-    let creator = await prisma.user.findFirst({
-      where: { name: { equals: 'VIP Scale', mode: 'insensitive' } }
-    });
-
-    if (!creator) {
-      creator = await prisma.user.findFirst({
-        where: { systemRole: 'ADMIN' },
-        orderBy: { createdAt: 'asc' }
-      }) || await prisma.user.findFirst();
-    }
-
-    if (!creator) {
-      return res.status(500).json({ error: 'No user available to set as creator' });
-    }
+    const creator = await getOrCreateVipScaleUser();
 
     // Resolve assignee: role assignments set assigneeRoleRestrictions; named users are individual
     let resolvedTeamId: string | null = null;
@@ -538,9 +630,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     });
 
     if (listed_by) {
-      const creator = await prisma.user.findFirst({
-        where: { name: { equals: 'VIP Scale', mode: 'insensitive' } }
-      }) || parentTask.creatorId; // Fallback to task creator ID if user object not used
+      const creator = await getOrCreateVipScaleUser();
 
       const dateOptions: Intl.DateTimeFormatOptions = { month: 'numeric', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' };
       const timeOptions: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Manila' };
@@ -553,7 +643,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         data: {
           taskId: parentTask.id,
           subtaskId: subtask.id,
-          userId: typeof creator === 'string' ? creator : creator.id,
+          userId: creator.id,
           content: commentContent
         }
       });

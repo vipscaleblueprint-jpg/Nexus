@@ -10,6 +10,7 @@ This file serves as a directory of active rules and workflows for this repositor
 - **Security & Secrets**: `.agents/rules/security.mdc`
 - **DB Migration Workflow**: `.agents/skills/db-migration/SKILL.md`
 - **Architecture Overview**: `.agents/skills/architecture/SKILL.md`
+- **Daily Log Formatting**: `.agents/rules/daily-log-formatting.mdc`
 
 ## Real-Time & Websockets
 - **True Collaborative Drag-and-Drop:** To achieve instant cross-client drag-and-drop syncing (ClickUp-style), emit lightweight preview websocket events (e.g., `task_move_preview`) continuously during `onDragOver`, rather than waiting for `onDragEnd` API calls.

@@ -56,6 +56,13 @@ export const tasksApi = {
     });
   },
 
+  async updateComment(taskId: string, commentId: string, content: string, listId?: string): Promise<{ comment: any }> {
+    return apiClient<{ comment: any }>(`/api/tasks/${taskId}/comments/${commentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ content, listId }),
+    });
+  },
+
   async toggleCommentReaction(taskId: string, commentId: string, emoji: string, userId: string): Promise<{ reactions: any[]; toggled: string }> {
     return apiClient<{ reactions: any[]; toggled: string }>(`/api/tasks/${taskId}/comments/${commentId}/reactions`, {
       method: 'POST',

@@ -1029,6 +1029,10 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
   onAddPage: (docId: string) => void;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isActive = pathname === `/docs/${doc.id}` && !searchParams?.get('page');
+
   const [isOpen, setIsOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(doc.title);
@@ -1051,7 +1055,11 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
 
   return (
     <div className="space-y-px">
-      <div className="group flex items-center justify-between rounded-md px-2 py-1 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
+      <div className={`group flex items-center justify-between rounded-md px-2 py-1 text-xs cursor-pointer transition-colors ${
+        isActive 
+          ? 'bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]' 
+          : 'text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)]'
+      }`}>
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={(e) => { if (hasPages) { e.preventDefault(); setIsOpen(!isOpen); } }} className="relative size-3.5 flex items-center justify-center shrink-0">
             {hasPages && <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">{isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}</div>}
@@ -1094,6 +1102,10 @@ function PageTreeItem({ page, onAction }: {
   page: Page;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isActive = pathname === `/docs/${page.docId}` && searchParams?.get('page') === page.id;
+
   const [isOpen, setIsOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(page.title);
@@ -1116,7 +1128,11 @@ function PageTreeItem({ page, onAction }: {
 
   return (
     <div className="space-y-px">
-      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className="group flex items-center justify-between rounded-md px-2 py-0.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] cursor-pointer hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
+      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className={`group flex items-center justify-between rounded-md px-2 py-0.5 text-xs cursor-pointer transition-colors ${
+        isActive
+          ? 'bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]'
+          : 'text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)]'
+      }`}>
         <div className="flex items-center gap-2 truncate flex-1">
           <FileText className="size-3 text-zinc-400 shrink-0 opacity-80" />
           {isEditing ? (
@@ -1156,6 +1172,9 @@ function ListTreeItem({ list, onAction }: {
   list: List;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
+  const pathname = usePathname();
+  const isActive = pathname === `/lists/${list.id}` || pathname.startsWith(`/lists/${list.id}/`);
+
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(list.name);
 
@@ -1175,7 +1194,11 @@ function ListTreeItem({ list, onAction }: {
   };
 
   return (
-    <div className="group flex items-center justify-between rounded-md px-2 py-1 text-xs text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)] transition-colors">
+    <div className={`group flex items-center justify-between rounded-md px-2 py-1 text-xs transition-colors ${
+      isActive
+        ? 'bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]'
+        : 'text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)]'
+    }`}>
       <div className="flex items-center gap-2 truncate flex-1">
         <ListIcon className="size-3.5 text-blue-400 shrink-0" />
         {isEditing ? (

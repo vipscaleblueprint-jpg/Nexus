@@ -22,10 +22,10 @@ import {
 import { ListSkeleton } from '@/components/ui/Skeleton';
 
 import { KanbanBoard } from '@/components/board/KanbanBoard';
+import { arrayMove } from '@dnd-kit/sortable';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
-import { arrayMove } from '@dnd-kit/sortable';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
 import { toast } from '@/lib/toast';
@@ -413,49 +413,48 @@ export default function BoardPage() {
   };
 
   return (
-    <>
+    <div className="w-full h-full relative flex flex-col">
+      <TaskDetailModal
+        isOpen={!!selectedTask}
+        onClose={() => setSelectedTask(null)}
+        task={selectedTask || null}
+        mode="full"
+        socket={socket}
+        listStatuses={list?.statuses || []}
+        workspaceRoles={workspaceRoles}
+        onStatusChange={(newStatus) => {
+          if (selectedTask) {
+            const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
+            if (!check.allowed) {
+              toast.error(check.reason || 'You do not have permission to move tasks from this status');
+              return;
+            }
+            handleTaskMove(selectedTask.id, newStatus);
+            setSelectedTask({ ...selectedTask, status: newStatus });
+          }
+        }}
+        onUpdateTask={async (updatedTask) => {
+          if (selectedTask && updatedTask.status !== selectedTask.status) {
+            const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
+            if (!check.allowed) {
+              toast.error(check.reason || 'You do not have permission to move tasks from this status');
+              return;
+            }
+          }
+
+          // Sync board and modal state
+          setSelectedTask(updatedTask);
+          setList((prev: any) => ({
+            ...prev,
+            tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
+          }));
+        }}
+      />
+      
       {loading ? (
         <ListSkeleton />
       ) : error ? (
         <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>
-      ) : selectedTask ? (
-        <div className="w-full h-full">
-          <TaskDetailModal
-            isOpen={!!selectedTask}
-            onClose={() => setSelectedTask(null)}
-            task={selectedTask}
-            socket={socket}
-            listStatuses={list?.statuses || []}
-            workspaceRoles={workspaceRoles}
-            onStatusChange={(newStatus) => {
-              if (selectedTask) {
-                const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
-                if (!check.allowed) {
-                  toast.error(check.reason || 'You do not have permission to move tasks from this status');
-                  return;
-                }
-                handleTaskMove(selectedTask.id, newStatus);
-                setSelectedTask({ ...selectedTask, status: newStatus });
-              }
-            }}
-            onUpdateTask={async (updatedTask) => {
-              if (selectedTask && updatedTask.status !== selectedTask.status) {
-                const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
-                if (!check.allowed) {
-                  toast.error(check.reason || 'You do not have permission to move tasks from this status');
-                  return;
-                }
-              }
-
-              // Sync board and modal state
-              setSelectedTask(updatedTask);
-              setList((prev: any) => ({
-                ...prev,
-                tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
-              }));
-            }}
-          />
-        </div>
       ) : (
         <div className="w-full h-full flex flex-col px-6 pt-6 overflow-hidden">
           {/* Header */}
@@ -580,8 +579,22 @@ export default function BoardPage() {
                     if (data.groupName !== undefined) {
                       payload.groupName = data.groupName;
                     }
-                    
+
                     if (existingStatus) {
+                      // ⚡ Optimistic update FIRST — so props.listStatuses converges immediately.
+                      // This prevents the 2s pendingLock in KanbanBoard from expiring with stale data.
+                      setList((prev: any) => ({
+                        ...prev,
+                        statuses: prev.statuses.map((s: any) =>
+                          s.id === existingStatus.id ? { ...s, ...payload } : s
+                        ),
+                        tasks: (prev.tasks || []).map((t: any) =>
+                          t.status === existingStatus.name && data.name
+                            ? { ...t, status: data.name }
+                            : t
+                        )
+                      }));
+
                       const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${existingStatus.id}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
@@ -589,19 +602,19 @@ export default function BoardPage() {
                       });
                       if (res.ok) {
                         const updated = await res.json();
+                        // Confirm with the real server data
                         setList((prev: any) => ({
                           ...prev,
                           statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? updated.status : s),
-                          tasks: (prev.tasks || []).map((t: any) => 
-                            t.status === existingStatus.name && data.name
-                              ? { ...t, status: data.name }
-                              : t
-                          )
                         }));
-
                       } else {
+                        // Rollback optimistic update on failure
                         const errData = await res.json().catch(() => ({}));
                         toast.error(errData.error || 'Failed to update column');
+                        setList((prev: any) => ({
+                          ...prev,
+                          statuses: prev.statuses.map((s: any) => s.id === existingStatus.id ? existingStatus : s),
+                        }));
                       }
                     } else {
                       const res = await fetch(`${API_BASE_URL}/api/lists/${id}/statuses`, {
@@ -615,7 +628,6 @@ export default function BoardPage() {
                           ...prev,
                           statuses: [...(prev.statuses || []), created.status]
                         }));
-
                       } else {
                         const errData = await res.json().catch(() => ({}));
                         toast.error(errData.error || 'Failed to save column settings');
@@ -626,11 +638,11 @@ export default function BoardPage() {
                     toast.error(e.message || 'Failed to update status');
                   }
                 }}
-                onAddGroup={(group) => {
+                onAddGroup={(group, applyToAll) => {
                   setCustomGroups(prev => {
                     const newGroups = [...prev, group];
                     // Persist to backend
-                    spacesApi.updateList(id as string, { customGroups: newGroups }).catch(console.error);
+                    spacesApi.updateList(id as string, { customGroups: newGroups, applyToAll }).catch(console.error);
                     return newGroups;
                   });
                   socket?.emit('add_group', { listId: id, group });
@@ -719,44 +731,22 @@ export default function BoardPage() {
                     toast.error(e.message || 'Failed to delete status');
                   }
                 }}
-                onStatusReorder={(activeStatusName, overId, isOverGroup, newGroupName) => {
+                onStatusReorder={(newStatuses: any[]) => {
+                  // KanbanBoard fully owns the drag logic and passes the final ordered array here.
                   setList((prev: any) => {
-                    const oldIndex = prev.statuses.findIndex((s: any) => s.name === activeStatusName);
-                    let newIndex = prev.statuses.findIndex((s: any) => s.name === overId);
+                    if (!prev?.statuses) return prev;
                     
-                    if (newIndex === -1 && isOverGroup && newGroupName) {
-                      // Find the last item in the new group to insert after it
-                      const groupStatuses = prev.statuses.filter((s: any) => s.groupName === newGroupName && s.name !== activeStatusName);
-                      if (groupStatuses.length > 0) {
-                        const lastItem = groupStatuses[groupStatuses.length - 1];
-                        newIndex = prev.statuses.findIndex((s: any) => s.name === lastItem.name) + 1;
-                      } else {
-                        // Empty group, just put it at the end of the statuses array (or keep current index)
-                        newIndex = prev.statuses.length;
-                      }
-                    }
+                    const orderedStatusIds = newStatuses.map((s: any) => s.id).filter(Boolean);
 
-                    if (oldIndex !== -1 && newIndex !== -1) {
-                      const newStatuses = [...prev.statuses];
-                      const [removed] = newStatuses.splice(oldIndex, 1);
-                      // If newIndex was found using findIndex, it might need adjustment since we removed an item before it.
-                      // Wait, standard arrayMove handles this. Let's just adjust newIndex if oldIndex < newIndex.
-                      let insertIndex = newIndex;
-                      if (oldIndex < newIndex && !isOverGroup) {
-                        insertIndex -= 1;
-                      }
-                      newStatuses.splice(insertIndex, 0, removed);
-                      
-                      const orderedStatusIds = newStatuses.map((s: any) => s.id).filter(Boolean);
-                      fetch(`${API_BASE_URL}/api/lists/${id}/statuses/reorder`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nexus_token')}` },
-                        body: JSON.stringify({ listId: id, orderedStatusIds })
-                      }).catch(console.error);
-                      
-                      return { ...prev, statuses: newStatuses };
-                    }
-                    return prev;
+                    // Fire API fire-and-forget — do NOT await
+                    fetch(`${API_BASE_URL}/api/lists/${id}/statuses/reorder`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nexus_token')}` },
+                      body: JSON.stringify({ listId: id, orderedStatusIds })
+                    }).catch(console.error);
+
+                    // Update parent state to instantly reflect the perfect local drag result
+                    return { ...prev, statuses: newStatuses };
                   });
                 }}
                 onGroupReorder={(newGroups) => {
@@ -881,6 +871,6 @@ export default function BoardPage() {
         listId={id as string}
         onSave={handleAddTask}
       />
-    </>
+    </div>
   );
 }

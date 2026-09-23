@@ -18,7 +18,8 @@ import {
   Check,
   ChevronUp,
   ChevronDown,
-  Filter
+  Filter,
+  Shield
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { usersApi } from '@/api/users';
@@ -26,7 +27,7 @@ import { invitationsApi } from '@/api/invitations';
 import { User, Invitation, WorkspaceRole } from '@/lib/types';
 import { AddInvitationModal } from '@/components/modals/AddInvitationModal';
 import { EditUserRoleModal } from '@/components/modals/EditUserRoleModal';
-import { RolesTab } from '@/components/settings/RolesTab';
+import { RoleManagementModal } from '@/components/modals/RoleManagementModal';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { SettingsSkeleton, MemberSkeleton } from '@/components/ui/Skeleton';
@@ -217,7 +218,7 @@ export default function UsersSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'users' | 'roles'>('users');
+  const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
 
   type SortColumn = 'name' | 'employment' | 'rating';
   const [sortColumn, setSortColumn] = useState<SortColumn>('name');
@@ -364,7 +365,7 @@ export default function UsersSettingsPage() {
     <div className="p-8 w-full max-w-7xl mx-auto space-y-8 font-sans">
       
       {/* Header and Search */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-2">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 border-b border-zinc-800/80 pb-6">
         <div>
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Users className="w-5 h-5 text-zinc-400" />
@@ -372,34 +373,16 @@ export default function UsersSettingsPage() {
           </h1>
           <p className="text-zinc-500 text-sm mt-0.5">Manage workspace members, invitations, and custom roles.</p>
         </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex space-x-1 border-b border-zinc-800/80 mb-6">
         <button
-          onClick={() => setActiveTab('users')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'users'
-              ? 'border-indigo-500 text-indigo-400'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-          }`}
+          onClick={() => setIsRoleModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50"
         >
-          Users & Invitations
-        </button>
-        <button
-          onClick={() => setActiveTab('roles')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'roles'
-              ? 'border-indigo-500 text-indigo-400'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-          }`}
-        >
-          Role Management
+          <Shield className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Role Management</span>
         </button>
       </div>
 
-      {activeTab === 'users' && (
-        <div className="space-y-8">
+      <div className="space-y-8">
           <div className="flex flex-col sm:flex-row justify-between gap-4">
             <div className="flex items-center gap-2">
               <div className="relative">
@@ -706,9 +689,11 @@ export default function UsersSettingsPage() {
         )}
       </div>
       </div>
-      )}
 
-      {activeTab === 'roles' && <RolesTab />}
+      <RoleManagementModal 
+        isOpen={isRoleModalOpen} 
+        onClose={() => setIsRoleModalOpen(false)} 
+      />
 
       {/* Modals */}
       <AddInvitationModal

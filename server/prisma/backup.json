@@ -1,0 +1,3394 @@
+{
+  "team": [
+    {
+      "id": "f2a9396c-b009-4bde-bb8a-c856051eee97",
+      "name": "Internal Ops Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:37.945Z",
+      "updatedAt": "2026-09-23T08:28:37.945Z"
+    },
+    {
+      "id": "7a8177ac-671a-4b07-8da7-81e43ed02984",
+      "name": "Management Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:38.968Z",
+      "updatedAt": "2026-09-23T08:28:38.968Z"
+    },
+    {
+      "id": "5fefff56-e7b5-4881-a907-722c679c366f",
+      "name": "Audit Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:40.134Z",
+      "updatedAt": "2026-09-23T08:28:40.134Z"
+    },
+    {
+      "id": "2686bf81-29d5-4329-a04a-1e3bb955bbbb",
+      "name": "Design Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:40.999Z",
+      "updatedAt": "2026-09-23T08:28:40.999Z"
+    },
+    {
+      "id": "284fb1c5-83fb-4be2-b2ff-7bc0b3c0b0b9",
+      "name": "Production Management Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:41.444Z",
+      "updatedAt": "2026-09-23T08:28:41.444Z"
+    },
+    {
+      "id": "e4e4d558-c27c-4052-a823-e58e76ef1709",
+      "name": "Production Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:42.149Z",
+      "updatedAt": "2026-09-23T08:28:42.149Z"
+    },
+    {
+      "id": "48f96a75-ef13-42ae-963d-e3a58957695a",
+      "name": "Strategy Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:43.115Z",
+      "updatedAt": "2026-09-23T08:28:43.115Z"
+    },
+    {
+      "id": "e7482863-2794-4be6-814b-a8cd7f483d29",
+      "name": "Dev Management Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:43.701Z",
+      "updatedAt": "2026-09-23T08:28:43.701Z"
+    },
+    {
+      "id": "c6b733e5-6387-408b-bf21-03d4889b31b5",
+      "name": "Dev Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:44.093Z",
+      "updatedAt": "2026-09-23T08:28:44.093Z"
+    },
+    {
+      "id": "4e7a9b11-27d9-43de-aaeb-b3f566319484",
+      "name": "Marketing Team",
+      "description": null,
+      "color": "#52525B",
+      "createdAt": "2026-09-23T08:28:44.894Z",
+      "updatedAt": "2026-09-23T08:28:44.894Z"
+    }
+  ],
+  "workspaceRole": [],
+  "teamRole": [
+    {
+      "id": "8f049a04-89a1-48f4-9d3e-695557a031ce",
+      "name": "Lead Generation",
+      "teamId": "f2a9396c-b009-4bde-bb8a-c856051eee97",
+      "createdAt": "2026-09-23T08:28:38.335Z"
+    },
+    {
+      "id": "b84ddb37-264d-4bf5-a5e4-661401c007ef",
+      "name": "Sales",
+      "teamId": "f2a9396c-b009-4bde-bb8a-c856051eee97",
+      "createdAt": "2026-09-23T08:28:38.770Z"
+    },
+    {
+      "id": "4d071344-bf08-4a26-9e5f-964e057af821",
+      "name": "Project Managers",
+      "teamId": "7a8177ac-671a-4b07-8da7-81e43ed02984",
+      "createdAt": "2026-09-23T08:28:39.186Z"
+    },
+    {
+      "id": "75bf000c-9665-4251-beb6-fb633eeba4eb",
+      "name": "Client Relationship Manager",
+      "teamId": "7a8177ac-671a-4b07-8da7-81e43ed02984",
+      "createdAt": "2026-09-23T08:28:39.384Z"
+    },
+    {
+      "id": "2fd4f0e5-9afe-4e3a-9cdb-1c9c9df1ced0",
+      "name": "Funnel Auditor",
+      "teamId": "5fefff56-e7b5-4881-a907-722c679c366f",
+      "createdAt": "2026-09-23T08:28:40.332Z"
+    },
+    {
+      "id": "3bf40be0-4840-45df-85ce-710360538660",
+      "name": "Design Auditor",
+      "teamId": "5fefff56-e7b5-4881-a907-722c679c366f",
+      "createdAt": "2026-09-23T08:28:40.545Z"
+    },
+    {
+      "id": "15b520d6-022a-447c-b4c7-e0963a9c78a1",
+      "name": "UI UX Auditor",
+      "teamId": "5fefff56-e7b5-4881-a907-722c679c366f",
+      "createdAt": "2026-09-23T08:28:40.781Z"
+    },
+    {
+      "id": "353dac77-c6da-4902-821a-78a2c5daa007",
+      "name": "Design",
+      "teamId": "2686bf81-29d5-4329-a04a-1e3bb955bbbb",
+      "createdAt": "2026-09-23T08:28:41.246Z"
+    },
+    {
+      "id": "ffdb4c2c-8461-4729-b90c-d624ec168816",
+      "name": "Production Project Manager",
+      "teamId": "284fb1c5-83fb-4be2-b2ff-7bc0b3c0b0b9",
+      "createdAt": "2026-09-23T08:28:41.957Z"
+    },
+    {
+      "id": "0850fb9b-ad50-4f0f-ae51-c1664f8a83b6",
+      "name": "Production",
+      "teamId": "e4e4d558-c27c-4052-a823-e58e76ef1709",
+      "createdAt": "2026-09-23T08:28:42.342Z"
+    },
+    {
+      "id": "c7a8418a-9f8e-491a-8c37-1dc30ab13d3c",
+      "name": "AI Scene Prompt Director",
+      "teamId": "e4e4d558-c27c-4052-a823-e58e76ef1709",
+      "createdAt": "2026-09-23T08:28:42.540Z"
+    },
+    {
+      "id": "2485b2a0-67ae-4c34-9782-fa0663ab4261",
+      "name": "Motion Graphics",
+      "teamId": "e4e4d558-c27c-4052-a823-e58e76ef1709",
+      "createdAt": "2026-09-23T08:28:42.732Z"
+    },
+    {
+      "id": "09a00133-6d70-42cd-9021-c38d4700b39d",
+      "name": "3D Design",
+      "teamId": "e4e4d558-c27c-4052-a823-e58e76ef1709",
+      "createdAt": "2026-09-23T08:28:42.924Z"
+    },
+    {
+      "id": "996effce-27b2-4246-8732-45ba6fd2f9d2",
+      "name": "Funnel Strategist",
+      "teamId": "48f96a75-ef13-42ae-963d-e3a58957695a",
+      "createdAt": "2026-09-23T08:28:43.308Z"
+    },
+    {
+      "id": "9b85581f-d1a1-4a26-bc4d-9a59eab79894",
+      "name": "Funnel Builder",
+      "teamId": "48f96a75-ef13-42ae-963d-e3a58957695a",
+      "createdAt": "2026-09-23T08:28:43.500Z"
+    },
+    {
+      "id": "29ade9f4-6151-4a88-a1e3-5bc9775982e1",
+      "name": "Dev Project Manager",
+      "teamId": "e7482863-2794-4be6-814b-a8cd7f483d29",
+      "createdAt": "2026-09-23T08:28:43.895Z"
+    },
+    {
+      "id": "1c09c26f-86c6-4c58-92ea-740f41f66ffa",
+      "name": "Back-end Developer",
+      "teamId": "c6b733e5-6387-408b-bf21-03d4889b31b5",
+      "createdAt": "2026-09-23T08:28:44.288Z"
+    },
+    {
+      "id": "c28f55f9-50f2-4076-b763-5790e6074719",
+      "name": "Dev Ops",
+      "teamId": "c6b733e5-6387-408b-bf21-03d4889b31b5",
+      "createdAt": "2026-09-23T08:28:44.491Z"
+    },
+    {
+      "id": "6a6c0e19-a0a1-47b3-b8f7-38fde4f32af7",
+      "name": "Developer",
+      "teamId": "c6b733e5-6387-408b-bf21-03d4889b31b5",
+      "createdAt": "2026-09-23T08:28:44.694Z"
+    },
+    {
+      "id": "64d4ec96-934d-4473-a543-80b08de7675a",
+      "name": "All",
+      "teamId": "4e7a9b11-27d9-43de-aaeb-b3f566319484",
+      "createdAt": "2026-09-23T08:28:45.087Z"
+    }
+  ],
+  "user": [
+    {
+      "id": "a2f9d6e7-2045-460f-af7e-939e2948d406",
+      "email": "zybryxmontinola.edu@gmail.com",
+      "password": "$2a$10$yP.cz.920rOiYta2A1wON.VcJ39u2Fkp2qtJ932wPhOgdzST9FwvG",
+      "name": "Zybryx",
+      "avatarUrl": null,
+      "dailySheetUrl": null,
+      "starRating": 1,
+      "employmentType": "FULL_TIME",
+      "isActive": true,
+      "lastLoginAt": null,
+      "createdAt": "2026-09-23T08:28:45.359Z",
+      "updatedAt": "2026-09-23T08:28:45.359Z",
+      "systemRole": "ADMIN",
+      "roles": [],
+      "teamId": "c6b733e5-6387-408b-bf21-03d4889b31b5",
+      "googleId": null,
+      "imageUrl": null
+    },
+    {
+      "id": "329b5697-1591-443e-a387-8511df3fe91b",
+      "email": "jenesia.red07@gmail.com",
+      "password": "$2a$10$yP.cz.920rOiYta2A1wON.VcJ39u2Fkp2qtJ932wPhOgdzST9FwvG",
+      "name": "Jenesia",
+      "avatarUrl": null,
+      "dailySheetUrl": null,
+      "starRating": 1,
+      "employmentType": "FULL_TIME",
+      "isActive": true,
+      "lastLoginAt": null,
+      "createdAt": "2026-09-23T08:28:45.750Z",
+      "updatedAt": "2026-09-23T08:28:45.750Z",
+      "systemRole": "ADMIN",
+      "roles": [],
+      "teamId": "7a8177ac-671a-4b07-8da7-81e43ed02984",
+      "googleId": null,
+      "imageUrl": null
+    },
+    {
+      "id": "bc74d7a0-e1e0-4a18-bf59-4e733fa25c92",
+      "email": "aaronpaulv.vipscaleph@gmail.com",
+      "password": "$2a$10$nKzXUQkML4v2lM38xZbbb.BdNaYkDY0J3r9rBv5eOcKgQOZA2gDZa",
+      "name": "Aaron Paul Villanueva",
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocJxcWU9tmSn98EwLaLaxRLQZ6MJsfRkZI-OHmN5TQh6bv8Yog=s96-c",
+      "dailySheetUrl": null,
+      "starRating": 1,
+      "employmentType": "FULL_TIME",
+      "isActive": true,
+      "lastLoginAt": "2026-09-23T08:36:53.124Z",
+      "createdAt": "2026-09-23T08:29:51.984Z",
+      "updatedAt": "2026-09-23T08:49:42.141Z",
+      "systemRole": "ADMIN",
+      "roles": [],
+      "teamId": null,
+      "googleId": "118129174029282473809",
+      "imageUrl": "https://lh3.googleusercontent.com/a/ACg8ocJxcWU9tmSn98EwLaLaxRLQZ6MJsfRkZI-OHmN5TQh6bv8Yog=s96-c"
+    }
+  ],
+  "space": [
+    {
+      "id": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "name": "VIP Scale",
+      "icon": "rocket",
+      "color": null,
+      "ownerId": "a2f9d6e7-2045-460f-af7e-939e2948d406",
+      "createdAt": "2026-09-23T08:28:45.951Z",
+      "updatedAt": "2026-09-23T08:28:45.951Z",
+      "order": 0
+    }
+  ],
+  "folder": [
+    {
+      "id": "b71091bd-1828-4d60-80a8-2a62e5b92b88",
+      "name": "Startups",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "createdAt": "2026-09-23T08:28:46.337Z",
+      "updatedAt": "2026-09-23T08:28:46.337Z",
+      "parentFolderId": null,
+      "order": 0
+    },
+    {
+      "id": "a21040db-e0b1-45b9-a24f-916082a6021c",
+      "name": "Admin",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "createdAt": "2026-09-23T08:28:46.854Z",
+      "updatedAt": "2026-09-23T08:28:46.854Z",
+      "parentFolderId": null,
+      "order": 1
+    },
+    {
+      "id": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "name": "Client Dashboard",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "createdAt": "2026-09-23T08:28:47.174Z",
+      "updatedAt": "2026-09-23T08:28:47.174Z",
+      "parentFolderId": null,
+      "order": 2
+    },
+    {
+      "id": "9069f678-4214-4edc-8119-5a2eeac8e7ea",
+      "name": "Human Resource",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "createdAt": "2026-09-23T08:28:47.375Z",
+      "updatedAt": "2026-09-23T08:28:47.375Z",
+      "parentFolderId": null,
+      "order": 3
+    },
+    {
+      "id": "deee3a9c-b991-4d04-bdd8-0d9f1a9014fa",
+      "name": "Dormant Clients",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "createdAt": "2026-09-23T08:28:47.569Z",
+      "updatedAt": "2026-09-23T08:28:47.569Z",
+      "parentFolderId": null,
+      "order": 4
+    }
+  ],
+  "list": [
+    {
+      "id": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "name": "123 Financial Group - Jen Richardson",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:37.745Z",
+      "updatedAt": "2026-09-23T08:30:37.745Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "9dd4ec68-7041-4f7c-b58e-3b9b9773f7cd",
+      "name": "Ana James",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:40.475Z",
+      "updatedAt": "2026-09-23T08:30:40.475Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "c156a8fb-061f-46dd-a032-afe99e06aa37",
+      "name": "Ana James - Course",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:43.047Z",
+      "updatedAt": "2026-09-23T08:30:43.047Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "76bbb3ea-04d3-4590-9f78-bdc5df3bcbd9",
+      "name": "Ana James - Conceal Co",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:45.208Z",
+      "updatedAt": "2026-09-23T08:30:45.208Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "719c89f0-7041-49a5-bb8a-5785be8d6ee9",
+      "name": "Ana James - Social Media",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:49.118Z",
+      "updatedAt": "2026-09-23T08:30:49.118Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "bf4e58a7-c110-4187-862b-1ad8c2457669",
+      "name": "Brooke Tucci",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:53.300Z",
+      "updatedAt": "2026-09-23T08:30:53.300Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "e0661cbf-7d1b-4648-a573-b508eea38a78",
+      "name": "Caryn Meininger | Coach | Chrome",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:55.437Z",
+      "updatedAt": "2026-09-23T08:30:55.437Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "62201fee-7708-403f-8cff-868c2adc6b21",
+      "name": "Chad Gibson | TLA Academy | Mozzilla ...",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:57.530Z",
+      "updatedAt": "2026-09-23T08:30:57.530Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "c77bc487-5953-4241-978f-ef8fd8bfcd2c",
+      "name": "Charmaine Schembri",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:30:59.761Z",
+      "updatedAt": "2026-09-23T08:30:59.761Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "c280c759-18b6-412c-9863-f2a3e3c28538",
+      "name": "Danni Pomplun | Stacy Brogan",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:01.645Z",
+      "updatedAt": "2026-09-23T08:31:01.645Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "6d08f31f-071d-44ce-9ae5-aa2d53dd52fc",
+      "name": "David Wright, Spatial Monkey",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:03.889Z",
+      "updatedAt": "2026-09-23T08:31:03.889Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "db9a1817-da39-4b6d-be25-4410bfda410e",
+      "name": "Dilan Abeya",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:06.324Z",
+      "updatedAt": "2026-09-23T08:31:06.324Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "14bea335-c5db-41fd-89c9-530112638833",
+      "name": "Dr. Lisa Muehlenbein",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:09.260Z",
+      "updatedAt": "2026-09-23T08:31:09.260Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "64117f6c-e56e-4786-9f1e-bee2899f7d85",
+      "name": "Duncan Campbell",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:11.789Z",
+      "updatedAt": "2026-09-23T08:31:11.789Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "eb1cc8e4-23f9-4d11-8336-33a11ade48ab",
+      "name": "Gabi Metz - Katharina Espinoza",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:14.010Z",
+      "updatedAt": "2026-09-23T08:31:14.010Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "2681d801-d963-4196-94a4-fe637532d5ec",
+      "name": "Georgia Human",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:16.194Z",
+      "updatedAt": "2026-09-23T08:31:16.194Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "09eb9bd4-fe91-41e0-844f-8638a69aeb4b",
+      "name": "Gianna Rielle",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:18.418Z",
+      "updatedAt": "2026-09-23T08:31:18.418Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "2e4be92e-5b69-4365-b4e3-cacd817b7449",
+      "name": "Gianni Logan | Accountant Coach | Goo...",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:20.869Z",
+      "updatedAt": "2026-09-23T08:31:20.869Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "543af75a-72fd-4248-b43e-179cfdf1233f",
+      "name": "Harmony",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:23.530Z",
+      "updatedAt": "2026-09-23T08:31:23.530Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "fb86211d-adeb-467b-adaa-45b9e48d1cee",
+      "name": "Jen Maldonado",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:25.543Z",
+      "updatedAt": "2026-09-23T08:31:25.543Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "c940659f-b515-463b-8ce8-e1c991b325bc",
+      "name": "Jenesia Red",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:28.259Z",
+      "updatedAt": "2026-09-23T08:31:28.259Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "82251cca-0d95-431d-bb36-0e3e6d63cf55",
+      "name": "Joel Viavattene",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:30.826Z",
+      "updatedAt": "2026-09-23T08:31:30.826Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "9d8d2328-147c-468f-a99f-dc1c4feca359",
+      "name": "Joshua Lanphear",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:34.179Z",
+      "updatedAt": "2026-09-23T08:31:34.179Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "1f778ff3-09f3-453d-90a0-63cac554b1a6",
+      "name": "Katharina Espinoza | The Soul Agency | ...",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:36.842Z",
+      "updatedAt": "2026-09-23T08:31:36.842Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "cf4c6823-f6ba-4a79-b794-aefb8a2d7082",
+      "name": "Katy Poole",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:38.851Z",
+      "updatedAt": "2026-09-23T08:31:38.851Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "6454c265-cd28-41d1-883e-8d8a6824a6c7",
+      "name": "Kelly Riley",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:41.304Z",
+      "updatedAt": "2026-09-23T08:31:41.304Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "1182b9c6-d441-4d78-aa74-ff61ea91afbe",
+      "name": "Lisa Kenton",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:43.768Z",
+      "updatedAt": "2026-09-23T08:31:43.768Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "9ab892ec-7a7e-4a6a-97cc-52f6f186c82c",
+      "name": "Matthew Jordan Smith",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:46.130Z",
+      "updatedAt": "2026-09-23T08:31:46.130Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "8e89e67d-c9b4-4e5b-84e0-ae89cc8732b6",
+      "name": "Melinda Willingham",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:48.404Z",
+      "updatedAt": "2026-09-23T08:31:48.404Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "334d6c73-fe2a-4305-8477-5a193db2c9a3",
+      "name": "Milana - Katharina Espinoza",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:50.558Z",
+      "updatedAt": "2026-09-23T08:31:50.558Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "f84539f5-13fc-4b10-afa7-b2290df4da89",
+      "name": "Nicola Ducharme",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:52.819Z",
+      "updatedAt": "2026-09-23T08:31:52.819Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "cb35f710-efb3-4af2-93e3-8b8725b760a7",
+      "name": "Snaply",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:54.684Z",
+      "updatedAt": "2026-09-23T08:31:54.684Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "1976387e-a713-4657-8dfe-52a81ee2d37b",
+      "name": "Theresa Barnabei",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:56.776Z",
+      "updatedAt": "2026-09-23T08:31:56.776Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "1afa3639-3355-4a70-9927-0aa4f3b250be",
+      "name": "Veronica | The Queen's Soulmate",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:31:58.948Z",
+      "updatedAt": "2026-09-23T08:31:58.948Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "25a90fd4-a59b-4f58-8853-1c12aafcc4e8",
+      "name": "Xfinite",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:32:01.473Z",
+      "updatedAt": "2026-09-23T08:32:01.473Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "12f09689-66a9-4cae-ba24-b5663e084f23",
+      "name": "Zoe - Katharina Espinoza",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "e9fbc999-1ebe-49f4-bcb6-6d391beb01fa",
+      "createdAt": "2026-09-23T08:32:04.115Z",
+      "updatedAt": "2026-09-23T08:32:04.115Z",
+      "customGroups": [],
+      "order": 0,
+      "externalId": null
+    },
+    {
+      "id": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "name": "Test",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "b71091bd-1828-4d60-80a8-2a62e5b92b88",
+      "createdAt": "2026-09-23T08:33:42.356Z",
+      "updatedAt": "2026-09-23T08:33:42.356Z",
+      "customGroups": [
+        "Client Details",
+        "Recurring",
+        "Workflow & Progress"
+      ],
+      "order": 0,
+      "externalId": null
+    }
+  ],
+  "listStatus": [
+    {
+      "id": "81c2429c-2d18-4abe-8f1f-3d72c8941f54",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "createdAt": "2026-09-23T08:30:38.571Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "ee1991de-5b3a-4c53-bfa3-61c4a3838979",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "createdAt": "2026-09-23T08:30:39.079Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "b02ee300-5e6e-4dbf-8bd6-6d14c9d7e871",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "createdAt": "2026-09-23T08:30:39.350Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "5c88bd6c-0271-4116-aeac-2b4e72828b89",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "createdAt": "2026-09-23T08:30:39.551Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "5b249370-e15b-45f1-bde2-d6cbffe3a0b7",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "createdAt": "2026-09-23T08:30:39.748Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "2ecbaaba-bc30-4ea7-afb3-e81f67fc6b38",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "createdAt": "2026-09-23T08:30:40.057Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "5aa2b208-66a6-4fef-a1cd-06bf5f6546aa",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "9dd4ec68-7041-4f7c-b58e-3b9b9773f7cd",
+      "createdAt": "2026-09-23T08:30:41.234Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "01f1267e-5975-4ec9-af39-a4c9ce2130d0",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "9dd4ec68-7041-4f7c-b58e-3b9b9773f7cd",
+      "createdAt": "2026-09-23T08:30:41.435Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "5c91f941-4bf0-4da7-9681-de82015a9a3d",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "9dd4ec68-7041-4f7c-b58e-3b9b9773f7cd",
+      "createdAt": "2026-09-23T08:30:41.641Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "2f23878f-3d16-49c0-a168-062babd4a8c4",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "9dd4ec68-7041-4f7c-b58e-3b9b9773f7cd",
+      "createdAt": "2026-09-23T08:30:41.917Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "06513de0-7bd3-4908-9ff3-d70436ec6bbe",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "9dd4ec68-7041-4f7c-b58e-3b9b9773f7cd",
+      "createdAt": "2026-09-23T08:30:42.119Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "84094377-6407-41fd-9fd7-a69c7d6cf42e",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "9dd4ec68-7041-4f7c-b58e-3b9b9773f7cd",
+      "createdAt": "2026-09-23T08:30:42.317Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "84b48dfc-e13c-4d01-b7f0-c78d6d73a8b9",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "c156a8fb-061f-46dd-a032-afe99e06aa37",
+      "createdAt": "2026-09-23T08:30:43.241Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "66a5dae8-a129-42f2-b30b-e86c42e769cc",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "c156a8fb-061f-46dd-a032-afe99e06aa37",
+      "createdAt": "2026-09-23T08:30:43.895Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "0ad20b45-4680-4ebc-9f11-98c447b41d5e",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "c156a8fb-061f-46dd-a032-afe99e06aa37",
+      "createdAt": "2026-09-23T08:30:44.098Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "614e6c56-0f91-44dd-8ecc-2427230ebc82",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "c156a8fb-061f-46dd-a032-afe99e06aa37",
+      "createdAt": "2026-09-23T08:30:44.293Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "dac4d0b4-bdca-492e-bd15-4451b704293e",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "c156a8fb-061f-46dd-a032-afe99e06aa37",
+      "createdAt": "2026-09-23T08:30:44.501Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "ceea0fc5-5dea-4d90-ad93-d7b56c4bd428",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "c156a8fb-061f-46dd-a032-afe99e06aa37",
+      "createdAt": "2026-09-23T08:30:44.747Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "e58e8704-ae52-4ce4-b6d4-083608a4b870",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "76bbb3ea-04d3-4590-9f78-bdc5df3bcbd9",
+      "createdAt": "2026-09-23T08:30:45.413Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "032408ad-46ee-40b1-a8b6-24aea3ee5444",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "76bbb3ea-04d3-4590-9f78-bdc5df3bcbd9",
+      "createdAt": "2026-09-23T08:30:45.679Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "9ffd49a4-6045-419c-b646-202821b119d3",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "76bbb3ea-04d3-4590-9f78-bdc5df3bcbd9",
+      "createdAt": "2026-09-23T08:30:45.925Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "49dfc6da-124b-4e1f-8564-c3682e2146ba",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "76bbb3ea-04d3-4590-9f78-bdc5df3bcbd9",
+      "createdAt": "2026-09-23T08:30:46.557Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "2d0118e6-497e-43f4-a2cb-b8cce5d1a7c3",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "76bbb3ea-04d3-4590-9f78-bdc5df3bcbd9",
+      "createdAt": "2026-09-23T08:30:47.154Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "4f70986c-bd27-44a7-99bd-21988619e32c",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "76bbb3ea-04d3-4590-9f78-bdc5df3bcbd9",
+      "createdAt": "2026-09-23T08:30:48.300Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "4be237b8-0d63-479e-80ff-2c754362cc62",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "719c89f0-7041-49a5-bb8a-5785be8d6ee9",
+      "createdAt": "2026-09-23T08:30:49.690Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "baaa1ff1-64cf-4cb7-9c9c-7459b883f0cf",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "719c89f0-7041-49a5-bb8a-5785be8d6ee9",
+      "createdAt": "2026-09-23T08:30:50.837Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "01cd9db7-9e1a-4341-8ea8-e3535e0a25e0",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "719c89f0-7041-49a5-bb8a-5785be8d6ee9",
+      "createdAt": "2026-09-23T08:30:51.775Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "dd046983-d3b9-4d66-9180-0fbf1af5bc91",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "719c89f0-7041-49a5-bb8a-5785be8d6ee9",
+      "createdAt": "2026-09-23T08:30:51.970Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "172614d6-a997-43ad-9518-28de23b9dca1",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "719c89f0-7041-49a5-bb8a-5785be8d6ee9",
+      "createdAt": "2026-09-23T08:30:52.163Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "87baa114-158f-43a4-bc8b-694c39a984d8",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "719c89f0-7041-49a5-bb8a-5785be8d6ee9",
+      "createdAt": "2026-09-23T08:30:52.357Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "2ffa5176-2099-4f40-ae74-455cb8f1a269",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "bf4e58a7-c110-4187-862b-1ad8c2457669",
+      "createdAt": "2026-09-23T08:30:53.514Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "e42bc53b-fe80-46e1-83a0-a6d9c1c07f75",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "bf4e58a7-c110-4187-862b-1ad8c2457669",
+      "createdAt": "2026-09-23T08:30:54.245Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "9b0bda6e-2ae3-471d-9d1b-acd6eee1cd3d",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "bf4e58a7-c110-4187-862b-1ad8c2457669",
+      "createdAt": "2026-09-23T08:30:54.456Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "3f8ffca4-bfb1-4854-bf19-719a66ed4411",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "bf4e58a7-c110-4187-862b-1ad8c2457669",
+      "createdAt": "2026-09-23T08:30:54.649Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "40ad198c-e91b-402e-9a4c-1d44696b1488",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "bf4e58a7-c110-4187-862b-1ad8c2457669",
+      "createdAt": "2026-09-23T08:30:54.845Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "b2efd6a9-2e94-4cc9-8601-94acbc8e91ff",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "bf4e58a7-c110-4187-862b-1ad8c2457669",
+      "createdAt": "2026-09-23T08:30:55.044Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "9d4d96f0-bb00-4d91-964c-ec645396ef7d",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "e0661cbf-7d1b-4648-a573-b508eea38a78",
+      "createdAt": "2026-09-23T08:30:55.633Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "715dc41a-2c7e-4985-91b4-c05b0d2dfa5c",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "e0661cbf-7d1b-4648-a573-b508eea38a78",
+      "createdAt": "2026-09-23T08:30:55.878Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "5727a2b3-b92e-4f16-8ccc-68f2a55ab80d",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "e0661cbf-7d1b-4648-a573-b508eea38a78",
+      "createdAt": "2026-09-23T08:30:56.075Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "2b66f70a-b0ba-4063-91bf-31fb45d713e5",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "e0661cbf-7d1b-4648-a573-b508eea38a78",
+      "createdAt": "2026-09-23T08:30:56.270Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "8de1e617-1e8e-4332-b322-28cdc59a2530",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "e0661cbf-7d1b-4648-a573-b508eea38a78",
+      "createdAt": "2026-09-23T08:30:56.902Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "b266b337-2e26-47c0-9b53-fd304fe460ff",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "e0661cbf-7d1b-4648-a573-b508eea38a78",
+      "createdAt": "2026-09-23T08:30:57.113Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "691ba1f0-afa9-4779-b86b-fb7d7bdc02dc",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "62201fee-7708-403f-8cff-868c2adc6b21",
+      "createdAt": "2026-09-23T08:30:57.731Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "50630346-6fac-42a9-aa83-03b5655da195",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "62201fee-7708-403f-8cff-868c2adc6b21",
+      "createdAt": "2026-09-23T08:30:57.963Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "8ee01742-e72c-4315-8e01-435782bef571",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "62201fee-7708-403f-8cff-868c2adc6b21",
+      "createdAt": "2026-09-23T08:30:58.182Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "0cf8e9f5-10a9-4770-ad33-710a6f97e05d",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "62201fee-7708-403f-8cff-868c2adc6b21",
+      "createdAt": "2026-09-23T08:30:58.380Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "358e472d-66ad-4e51-9022-09c03e8bd281",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "62201fee-7708-403f-8cff-868c2adc6b21",
+      "createdAt": "2026-09-23T08:30:58.756Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "9459b981-b3e4-4533-8eda-e07989bbf059",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "62201fee-7708-403f-8cff-868c2adc6b21",
+      "createdAt": "2026-09-23T08:30:58.962Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "48fd07b7-7ae3-4a49-920b-c6668fc8d042",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "c77bc487-5953-4241-978f-ef8fd8bfcd2c",
+      "createdAt": "2026-09-23T08:30:59.960Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "ab6328b6-506a-4be9-bc86-99fd763e2999",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "c77bc487-5953-4241-978f-ef8fd8bfcd2c",
+      "createdAt": "2026-09-23T08:31:00.220Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "bc1677c4-bd10-4355-947d-deafe26cb148",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "c77bc487-5953-4241-978f-ef8fd8bfcd2c",
+      "createdAt": "2026-09-23T08:31:00.416Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "704f7394-5457-4023-b583-c7ac7d3e08a2",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "c77bc487-5953-4241-978f-ef8fd8bfcd2c",
+      "createdAt": "2026-09-23T08:31:00.611Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "a6b943a2-245d-40bb-bb55-017399ff0b85",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "c77bc487-5953-4241-978f-ef8fd8bfcd2c",
+      "createdAt": "2026-09-23T08:31:00.947Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "11555041-2a06-4bad-85d1-74f191d050c8",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "c77bc487-5953-4241-978f-ef8fd8bfcd2c",
+      "createdAt": "2026-09-23T08:31:01.228Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "bbc44e98-4da4-4a21-8fdb-7547c362188f",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "c280c759-18b6-412c-9863-f2a3e3c28538",
+      "createdAt": "2026-09-23T08:31:02.231Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "60b419ba-ab78-40dc-a6b7-6bf7549c43c0",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "c280c759-18b6-412c-9863-f2a3e3c28538",
+      "createdAt": "2026-09-23T08:31:02.510Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "5f31ea9f-f7c9-4e89-be9d-8ddd293a755c",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "c280c759-18b6-412c-9863-f2a3e3c28538",
+      "createdAt": "2026-09-23T08:31:02.837Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "0374627f-9094-4c96-bb90-f3bc7ee8cefb",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "c280c759-18b6-412c-9863-f2a3e3c28538",
+      "createdAt": "2026-09-23T08:31:03.062Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "c227ba75-991d-47f9-8e92-a41402b84353",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "c280c759-18b6-412c-9863-f2a3e3c28538",
+      "createdAt": "2026-09-23T08:31:03.293Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "32b4b62b-c608-42d8-8e90-97687750f099",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "c280c759-18b6-412c-9863-f2a3e3c28538",
+      "createdAt": "2026-09-23T08:31:03.491Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "fc5a4891-a5d3-4968-bb17-a84d406c8a3c",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "6d08f31f-071d-44ce-9ae5-aa2d53dd52fc",
+      "createdAt": "2026-09-23T08:31:04.145Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "3f812481-8592-416f-b9ee-393006fcffb6",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "6d08f31f-071d-44ce-9ae5-aa2d53dd52fc",
+      "createdAt": "2026-09-23T08:31:04.893Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "b737011f-9e7b-45c1-87ad-6041a531263a",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "6d08f31f-071d-44ce-9ae5-aa2d53dd52fc",
+      "createdAt": "2026-09-23T08:31:05.124Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "1dc06038-4be4-4153-abf6-d0267ad09ae4",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "6d08f31f-071d-44ce-9ae5-aa2d53dd52fc",
+      "createdAt": "2026-09-23T08:31:05.321Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "75162832-ca99-47ff-80eb-08f157677b24",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "6d08f31f-071d-44ce-9ae5-aa2d53dd52fc",
+      "createdAt": "2026-09-23T08:31:05.669Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "803fad22-95ad-42eb-a36b-cea39cb874bb",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "6d08f31f-071d-44ce-9ae5-aa2d53dd52fc",
+      "createdAt": "2026-09-23T08:31:05.883Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "3b4a2e46-bda2-48ca-b705-d5246cd10e8f",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "db9a1817-da39-4b6d-be25-4410bfda410e",
+      "createdAt": "2026-09-23T08:31:06.665Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "24cac3b4-dd61-47b2-bfc4-84ca38ec4efa",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "db9a1817-da39-4b6d-be25-4410bfda410e",
+      "createdAt": "2026-09-23T08:31:07.554Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "3b6b9473-7a76-4663-b70e-0151764d8f34",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "db9a1817-da39-4b6d-be25-4410bfda410e",
+      "createdAt": "2026-09-23T08:31:08.112Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "b741f6f1-e3ee-40ad-b8af-6353f462d3c4",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "db9a1817-da39-4b6d-be25-4410bfda410e",
+      "createdAt": "2026-09-23T08:31:08.317Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "5c94775c-f7fb-4512-88ab-80cb46bde9cc",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "db9a1817-da39-4b6d-be25-4410bfda410e",
+      "createdAt": "2026-09-23T08:31:08.665Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "b16b17e5-1af4-4a61-8cbf-6b700b0cd435",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "db9a1817-da39-4b6d-be25-4410bfda410e",
+      "createdAt": "2026-09-23T08:31:08.872Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "8f2b4855-1a54-4300-b147-c5118b78ff48",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "14bea335-c5db-41fd-89c9-530112638833",
+      "createdAt": "2026-09-23T08:31:09.500Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "904b1a54-50c0-43cb-91ac-3745041f3167",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "14bea335-c5db-41fd-89c9-530112638833",
+      "createdAt": "2026-09-23T08:31:10.218Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "eda4a5e0-4152-47de-95c3-ab5b2b9663c6",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "14bea335-c5db-41fd-89c9-530112638833",
+      "createdAt": "2026-09-23T08:31:10.531Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "44f6724e-f709-402d-afa9-c313459a1211",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "14bea335-c5db-41fd-89c9-530112638833",
+      "createdAt": "2026-09-23T08:31:10.738Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "afde0880-b7c1-4aef-9f89-529d95698c51",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "14bea335-c5db-41fd-89c9-530112638833",
+      "createdAt": "2026-09-23T08:31:11.157Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "ff4ce8e6-7362-43dc-b14f-d021a484f441",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "14bea335-c5db-41fd-89c9-530112638833",
+      "createdAt": "2026-09-23T08:31:11.381Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "7bcc1624-c47f-4c82-9e24-77fb32eac28f",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "64117f6c-e56e-4786-9f1e-bee2899f7d85",
+      "createdAt": "2026-09-23T08:31:12.044Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "8577c82f-ff9c-467d-b470-ea031cb49d94",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "64117f6c-e56e-4786-9f1e-bee2899f7d85",
+      "createdAt": "2026-09-23T08:31:12.250Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "515d655c-1b1b-465a-ad01-09b03f0410dd",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "64117f6c-e56e-4786-9f1e-bee2899f7d85",
+      "createdAt": "2026-09-23T08:31:12.879Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "8b9555bc-6054-4fca-a21c-bcdc9669b9b2",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "64117f6c-e56e-4786-9f1e-bee2899f7d85",
+      "createdAt": "2026-09-23T08:31:13.110Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "818446ae-82f1-4f9f-8970-42c3898e7b7c",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "64117f6c-e56e-4786-9f1e-bee2899f7d85",
+      "createdAt": "2026-09-23T08:31:13.324Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "da39a97f-1805-4f23-8139-1ba2665459e7",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "64117f6c-e56e-4786-9f1e-bee2899f7d85",
+      "createdAt": "2026-09-23T08:31:13.536Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "cafdf3a3-d46b-412f-ad16-b98c8979cd9a",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "eb1cc8e4-23f9-4d11-8336-33a11ade48ab",
+      "createdAt": "2026-09-23T08:31:14.222Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "6a31e1d6-41d3-4e75-b1db-a9f21b0fe044",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "eb1cc8e4-23f9-4d11-8336-33a11ade48ab",
+      "createdAt": "2026-09-23T08:31:14.514Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "d7dd46c8-6d7d-4cc1-84c4-deb4c3c43bd6",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "eb1cc8e4-23f9-4d11-8336-33a11ade48ab",
+      "createdAt": "2026-09-23T08:31:14.725Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "11407b32-0631-4d6e-8c2b-4ea1b7ae7e8c",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "eb1cc8e4-23f9-4d11-8336-33a11ade48ab",
+      "createdAt": "2026-09-23T08:31:14.921Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "5b372e3d-3da4-4f5f-938e-cb7c49138b5b",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "eb1cc8e4-23f9-4d11-8336-33a11ade48ab",
+      "createdAt": "2026-09-23T08:31:15.540Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "ea86a28d-e2aa-4267-8332-72f5a1d1382a",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "eb1cc8e4-23f9-4d11-8336-33a11ade48ab",
+      "createdAt": "2026-09-23T08:31:15.737Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "437b52fd-b8c9-4325-9fca-9036087b3683",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "2681d801-d963-4196-94a4-fe637532d5ec",
+      "createdAt": "2026-09-23T08:31:16.389Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "4e16c22a-98c7-4852-891f-2a00d3ea4aad",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "2681d801-d963-4196-94a4-fe637532d5ec",
+      "createdAt": "2026-09-23T08:31:16.613Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "1d3f729d-4061-493c-a24e-e9d49438d55c",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "2681d801-d963-4196-94a4-fe637532d5ec",
+      "createdAt": "2026-09-23T08:31:16.824Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "e00079f9-4773-4b02-9d21-698de54ed9ee",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "2681d801-d963-4196-94a4-fe637532d5ec",
+      "createdAt": "2026-09-23T08:31:17.024Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "378db66e-1b43-48ad-968d-f4c9b950f4a7",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "2681d801-d963-4196-94a4-fe637532d5ec",
+      "createdAt": "2026-09-23T08:31:17.314Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "11061cd1-16d4-48fb-958a-5867c60f0b50",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "2681d801-d963-4196-94a4-fe637532d5ec",
+      "createdAt": "2026-09-23T08:31:17.541Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "54349363-1994-4018-aae6-4bc5b430a8c7",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "09eb9bd4-fe91-41e0-844f-8638a69aeb4b",
+      "createdAt": "2026-09-23T08:31:18.616Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "e1152c9c-b51f-4cd8-8f09-3c902d15dc02",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "09eb9bd4-fe91-41e0-844f-8638a69aeb4b",
+      "createdAt": "2026-09-23T08:31:18.822Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "c5f9247d-7e72-4ebc-9efe-80e94651c818",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "09eb9bd4-fe91-41e0-844f-8638a69aeb4b",
+      "createdAt": "2026-09-23T08:31:19.140Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "eeeea75a-c70a-4851-9686-1d2ec196db04",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "09eb9bd4-fe91-41e0-844f-8638a69aeb4b",
+      "createdAt": "2026-09-23T08:31:19.338Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "4703cef9-512a-4b79-9d1e-092c4a39ccaa",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "09eb9bd4-fe91-41e0-844f-8638a69aeb4b",
+      "createdAt": "2026-09-23T08:31:19.532Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "2b6e372b-2bb4-44a9-8e98-af4a7430fe6b",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "09eb9bd4-fe91-41e0-844f-8638a69aeb4b",
+      "createdAt": "2026-09-23T08:31:19.738Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "1cb2b5bc-17d6-4e28-93f8-fcef690e6fea",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "2e4be92e-5b69-4365-b4e3-cacd817b7449",
+      "createdAt": "2026-09-23T08:31:21.164Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "bc12de2a-6045-4b17-8c1a-2fc8336f912c",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "2e4be92e-5b69-4365-b4e3-cacd817b7449",
+      "createdAt": "2026-09-23T08:31:21.532Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "f9d13155-4f9f-4df6-bc7b-38e7d94f78bc",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "2e4be92e-5b69-4365-b4e3-cacd817b7449",
+      "createdAt": "2026-09-23T08:31:21.810Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "ddd96159-82bd-4e74-ba21-5ab0b9402e4c",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "2e4be92e-5b69-4365-b4e3-cacd817b7449",
+      "createdAt": "2026-09-23T08:31:22.011Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "40ca2f70-2db8-4b9a-9125-70c2227afdfb",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "2e4be92e-5b69-4365-b4e3-cacd817b7449",
+      "createdAt": "2026-09-23T08:31:22.399Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "98b50990-beb9-4f2e-991e-6007fd7a99ec",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "2e4be92e-5b69-4365-b4e3-cacd817b7449",
+      "createdAt": "2026-09-23T08:31:22.599Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "05e27ad0-41bb-49c5-b6c8-fb8dd57defb2",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "543af75a-72fd-4248-b43e-179cfdf1233f",
+      "createdAt": "2026-09-23T08:31:23.824Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "5f3c266f-d603-4955-b895-02ea67deb024",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "543af75a-72fd-4248-b43e-179cfdf1233f",
+      "createdAt": "2026-09-23T08:31:24.123Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "acb22281-3134-4eb7-8ea1-cbdc8230558d",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "543af75a-72fd-4248-b43e-179cfdf1233f",
+      "createdAt": "2026-09-23T08:31:24.325Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "f7140224-91e4-4ea8-b63d-3ead9db7f51b",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "543af75a-72fd-4248-b43e-179cfdf1233f",
+      "createdAt": "2026-09-23T08:31:24.543Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "62c1e4b9-7aa9-439e-976a-8cb27550ca4d",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "543af75a-72fd-4248-b43e-179cfdf1233f",
+      "createdAt": "2026-09-23T08:31:24.750Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "52c12c55-1626-480b-833b-84f29a6d5b98",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "543af75a-72fd-4248-b43e-179cfdf1233f",
+      "createdAt": "2026-09-23T08:31:24.975Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "96f39732-87df-4716-a1f0-019850dfe31a",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "fb86211d-adeb-467b-adaa-45b9e48d1cee",
+      "createdAt": "2026-09-23T08:31:26.192Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "b087db34-2dcd-41e0-bf27-62e9c6550e6a",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "fb86211d-adeb-467b-adaa-45b9e48d1cee",
+      "createdAt": "2026-09-23T08:31:26.685Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "eb36acd2-b911-4ea8-80f7-4e7d51ac464d",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "fb86211d-adeb-467b-adaa-45b9e48d1cee",
+      "createdAt": "2026-09-23T08:31:26.993Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "e0484d1a-a58d-44d3-8695-77c1912da69a",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "fb86211d-adeb-467b-adaa-45b9e48d1cee",
+      "createdAt": "2026-09-23T08:31:27.381Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "c8ae1311-fdaa-4359-b91a-b4779fb574ca",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "fb86211d-adeb-467b-adaa-45b9e48d1cee",
+      "createdAt": "2026-09-23T08:31:27.580Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "7a0e09ac-3098-41fc-b7d9-8b90f1f4763e",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "fb86211d-adeb-467b-adaa-45b9e48d1cee",
+      "createdAt": "2026-09-23T08:31:27.835Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "38a0e76b-c43e-4584-9dc4-3a64a061c059",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "c940659f-b515-463b-8ce8-e1c991b325bc",
+      "createdAt": "2026-09-23T08:31:28.854Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "285fc8ab-7a66-4d2a-9681-956ac970baec",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "c940659f-b515-463b-8ce8-e1c991b325bc",
+      "createdAt": "2026-09-23T08:31:29.092Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "44cdef7f-76e3-4304-aca7-42fd1070d385",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "c940659f-b515-463b-8ce8-e1c991b325bc",
+      "createdAt": "2026-09-23T08:31:29.422Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "283d46ce-864d-42fe-9e83-2b6ce3c233d7",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "c940659f-b515-463b-8ce8-e1c991b325bc",
+      "createdAt": "2026-09-23T08:31:29.737Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "cb6ee2e7-20ae-4516-8e0d-6aba02ae2013",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "c940659f-b515-463b-8ce8-e1c991b325bc",
+      "createdAt": "2026-09-23T08:31:30.058Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "adf9769a-b924-419e-9beb-1bbac0edc0ac",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "c940659f-b515-463b-8ce8-e1c991b325bc",
+      "createdAt": "2026-09-23T08:31:30.426Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "1e664554-ac56-4163-abd4-05c97eeb02d8",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "82251cca-0d95-431d-bb36-0e3e6d63cf55",
+      "createdAt": "2026-09-23T08:31:31.518Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "858909b3-0d29-4675-b804-76a75b11dabc",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "82251cca-0d95-431d-bb36-0e3e6d63cf55",
+      "createdAt": "2026-09-23T08:31:31.887Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "6bc50ce1-d5d7-4092-aed7-4900f59df281",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "82251cca-0d95-431d-bb36-0e3e6d63cf55",
+      "createdAt": "2026-09-23T08:31:32.143Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "f12d8dd1-55e1-4447-831d-f0344351ecf4",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "82251cca-0d95-431d-bb36-0e3e6d63cf55",
+      "createdAt": "2026-09-23T08:31:32.366Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "acf7a1d1-793c-4570-ba36-e82d3a8397ae",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "82251cca-0d95-431d-bb36-0e3e6d63cf55",
+      "createdAt": "2026-09-23T08:31:32.938Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "1a9de9f2-1cac-43e9-9425-f579641a49a4",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "82251cca-0d95-431d-bb36-0e3e6d63cf55",
+      "createdAt": "2026-09-23T08:31:33.305Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "d63e43d1-8af4-4709-9157-eb49f1d9a3ae",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "9d8d2328-147c-468f-a99f-dc1c4feca359",
+      "createdAt": "2026-09-23T08:31:34.379Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "5e3b71d7-8999-4bed-8b22-db77742cb513",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "9d8d2328-147c-468f-a99f-dc1c4feca359",
+      "createdAt": "2026-09-23T08:31:34.597Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "dd1ea312-f53d-43c9-b778-86ffa9e4dcf8",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "9d8d2328-147c-468f-a99f-dc1c4feca359",
+      "createdAt": "2026-09-23T08:31:34.813Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "df50fea9-89a3-4d69-bf1e-81460e0b064b",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "9d8d2328-147c-468f-a99f-dc1c4feca359",
+      "createdAt": "2026-09-23T08:31:35.018Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "923a7f02-8898-4511-9bcd-27bb32e51986",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "9d8d2328-147c-468f-a99f-dc1c4feca359",
+      "createdAt": "2026-09-23T08:31:35.245Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "ee2728aa-697f-45ce-bc86-349a69426107",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "9d8d2328-147c-468f-a99f-dc1c4feca359",
+      "createdAt": "2026-09-23T08:31:35.875Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "fad916ba-5dc7-4b19-8c16-dce1b86551e6",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "1f778ff3-09f3-453d-90a0-63cac554b1a6",
+      "createdAt": "2026-09-23T08:31:37.060Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "078cb21f-2311-4b8f-a7c6-e8563e6f8fdb",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "1f778ff3-09f3-453d-90a0-63cac554b1a6",
+      "createdAt": "2026-09-23T08:31:37.353Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "dac674b7-0e6e-4f47-8c41-90d4beb2799e",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "1f778ff3-09f3-453d-90a0-63cac554b1a6",
+      "createdAt": "2026-09-23T08:31:37.836Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "669f2de7-57db-4eea-b217-96d4eda69ddb",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "1f778ff3-09f3-453d-90a0-63cac554b1a6",
+      "createdAt": "2026-09-23T08:31:38.063Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "a2ab8b52-a303-421c-ac76-810f3ba5a517",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "1f778ff3-09f3-453d-90a0-63cac554b1a6",
+      "createdAt": "2026-09-23T08:31:38.266Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "5e804901-f73d-4092-9370-c673cc5bb95b",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "1f778ff3-09f3-453d-90a0-63cac554b1a6",
+      "createdAt": "2026-09-23T08:31:38.465Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "2b25ada4-3662-4acf-96f9-87459c3c95b3",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "cf4c6823-f6ba-4a79-b794-aefb8a2d7082",
+      "createdAt": "2026-09-23T08:31:39.505Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "8c3ecd90-d82d-42f6-a891-e480b159434f",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "cf4c6823-f6ba-4a79-b794-aefb8a2d7082",
+      "createdAt": "2026-09-23T08:31:39.775Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "a0229583-c021-483b-9ef8-9840a9931b26",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "cf4c6823-f6ba-4a79-b794-aefb8a2d7082",
+      "createdAt": "2026-09-23T08:31:39.971Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "ba91d0d7-4bad-4502-9c69-eaa121186ca9",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "cf4c6823-f6ba-4a79-b794-aefb8a2d7082",
+      "createdAt": "2026-09-23T08:31:40.170Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "5ca9be78-e76f-4bf1-a338-cada103aff9e",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "cf4c6823-f6ba-4a79-b794-aefb8a2d7082",
+      "createdAt": "2026-09-23T08:31:40.372Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "78308578-b607-48fb-a98b-a8a778bc3668",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "cf4c6823-f6ba-4a79-b794-aefb8a2d7082",
+      "createdAt": "2026-09-23T08:31:40.578Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "8b67e484-f8ae-4a25-b261-bc70c9098451",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "6454c265-cd28-41d1-883e-8d8a6824a6c7",
+      "createdAt": "2026-09-23T08:31:42.375Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "4c110571-6ad1-4049-a1c5-279afee3afe5",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "6454c265-cd28-41d1-883e-8d8a6824a6c7",
+      "createdAt": "2026-09-23T08:31:42.571Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "a095e0a7-5b68-4cbf-a409-ecd613e2d814",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "6454c265-cd28-41d1-883e-8d8a6824a6c7",
+      "createdAt": "2026-09-23T08:31:42.771Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "6a876cca-7f40-40cb-9796-050c83d4c8c0",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "6454c265-cd28-41d1-883e-8d8a6824a6c7",
+      "createdAt": "2026-09-23T08:31:42.966Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "a12e5f1c-caf1-43db-a60b-0b3ad161978a",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "6454c265-cd28-41d1-883e-8d8a6824a6c7",
+      "createdAt": "2026-09-23T08:31:43.159Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "c2202e17-1653-4c00-98f5-8719776951c4",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "6454c265-cd28-41d1-883e-8d8a6824a6c7",
+      "createdAt": "2026-09-23T08:31:43.358Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "48b3141b-7452-4fdf-becb-5715f516f750",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "1182b9c6-d441-4d78-aa74-ff61ea91afbe",
+      "createdAt": "2026-09-23T08:31:43.988Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "91524fc5-cc81-4c51-9eb3-9bc84f92fe19",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "1182b9c6-d441-4d78-aa74-ff61ea91afbe",
+      "createdAt": "2026-09-23T08:31:44.183Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "94a61a80-aa34-4319-8dee-8dc7ffd21ae4",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "1182b9c6-d441-4d78-aa74-ff61ea91afbe",
+      "createdAt": "2026-09-23T08:31:45.042Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "9d270725-5ba2-4e18-b7ea-81bfb911d437",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "1182b9c6-d441-4d78-aa74-ff61ea91afbe",
+      "createdAt": "2026-09-23T08:31:45.241Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "bbd74bbf-1956-41cc-a8fe-2d087f7d4033",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "1182b9c6-d441-4d78-aa74-ff61ea91afbe",
+      "createdAt": "2026-09-23T08:31:45.444Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "4a2fb654-48be-4774-8eea-61c320eaccb5",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "1182b9c6-d441-4d78-aa74-ff61ea91afbe",
+      "createdAt": "2026-09-23T08:31:45.669Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "cbefb3e7-0a55-47f6-b308-cbf9d9c34c71",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "9ab892ec-7a7e-4a6a-97cc-52f6f186c82c",
+      "createdAt": "2026-09-23T08:31:46.353Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "a5c82a0c-9f7c-49ab-a576-65a34ba11f59",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "9ab892ec-7a7e-4a6a-97cc-52f6f186c82c",
+      "createdAt": "2026-09-23T08:31:46.614Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "f26fa819-d297-4535-89e1-0f70a284585b",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "9ab892ec-7a7e-4a6a-97cc-52f6f186c82c",
+      "createdAt": "2026-09-23T08:31:46.831Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "4811ad5a-1427-4679-bc18-f8fdf97414b1",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "9ab892ec-7a7e-4a6a-97cc-52f6f186c82c",
+      "createdAt": "2026-09-23T08:31:47.491Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "2e2ce8f8-f69f-4a77-af38-962ad2970adc",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "9ab892ec-7a7e-4a6a-97cc-52f6f186c82c",
+      "createdAt": "2026-09-23T08:31:47.690Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "41a7b4be-09e2-4086-81c7-18e74e1b53c5",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "9ab892ec-7a7e-4a6a-97cc-52f6f186c82c",
+      "createdAt": "2026-09-23T08:31:47.887Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "d3ac065f-863c-457b-80df-c0324a3032b3",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "8e89e67d-c9b4-4e5b-84e0-ae89cc8732b6",
+      "createdAt": "2026-09-23T08:31:48.609Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "0de9250c-db5d-46c2-86a1-647c0a4f9109",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "8e89e67d-c9b4-4e5b-84e0-ae89cc8732b6",
+      "createdAt": "2026-09-23T08:31:48.821Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "b8bbc908-3a17-466a-bbfa-f93ac5818512",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "8e89e67d-c9b4-4e5b-84e0-ae89cc8732b6",
+      "createdAt": "2026-09-23T08:31:49.059Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "ca7d8744-29d6-480b-95e0-23f0b615c7ce",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "8e89e67d-c9b4-4e5b-84e0-ae89cc8732b6",
+      "createdAt": "2026-09-23T08:31:49.253Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "2e85679d-3852-4bda-9501-6b89b586e286",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "8e89e67d-c9b4-4e5b-84e0-ae89cc8732b6",
+      "createdAt": "2026-09-23T08:31:49.451Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "40e45bd7-de27-445c-8cff-c9c704a86268",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "8e89e67d-c9b4-4e5b-84e0-ae89cc8732b6",
+      "createdAt": "2026-09-23T08:31:50.155Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "c3a163be-d757-472d-9604-2e26978ccd8c",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "334d6c73-fe2a-4305-8477-5a193db2c9a3",
+      "createdAt": "2026-09-23T08:31:50.752Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "7bdbdc6a-366b-4eaa-8e94-066056e3df57",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "334d6c73-fe2a-4305-8477-5a193db2c9a3",
+      "createdAt": "2026-09-23T08:31:50.947Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "8c82460c-b2af-4fcd-a858-b1ac961ea33b",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "334d6c73-fe2a-4305-8477-5a193db2c9a3",
+      "createdAt": "2026-09-23T08:31:51.158Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "5cc08bbd-a5a9-411a-be24-f08dc2bd7f22",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "334d6c73-fe2a-4305-8477-5a193db2c9a3",
+      "createdAt": "2026-09-23T08:31:51.361Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "50011cbd-ec4a-4d4e-9f10-ca32e5bf96c3",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "334d6c73-fe2a-4305-8477-5a193db2c9a3",
+      "createdAt": "2026-09-23T08:31:51.621Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "3fed6fb0-aa3b-43db-bcd3-4aef72f97051",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "334d6c73-fe2a-4305-8477-5a193db2c9a3",
+      "createdAt": "2026-09-23T08:31:51.867Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "5d4b988d-85e1-43f3-83bf-079709912d61",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "f84539f5-13fc-4b10-afa7-b2290df4da89",
+      "createdAt": "2026-09-23T08:31:53.267Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "5d229736-63a0-4397-a97a-a7263c646070",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "f84539f5-13fc-4b10-afa7-b2290df4da89",
+      "createdAt": "2026-09-23T08:31:53.466Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "6bad64eb-07cd-4f00-bba1-67993686ad52",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "f84539f5-13fc-4b10-afa7-b2290df4da89",
+      "createdAt": "2026-09-23T08:31:53.660Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "590d5c0e-75ee-4257-9fdb-0c629b0cfa5b",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "f84539f5-13fc-4b10-afa7-b2290df4da89",
+      "createdAt": "2026-09-23T08:31:53.874Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "14d0cbe5-9d41-4144-8c6d-1fa10344626c",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "f84539f5-13fc-4b10-afa7-b2290df4da89",
+      "createdAt": "2026-09-23T08:31:54.075Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "21733395-47ff-40e3-a87f-f8b651269a8a",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "f84539f5-13fc-4b10-afa7-b2290df4da89",
+      "createdAt": "2026-09-23T08:31:54.276Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "eabdd9c6-eeaf-4c78-b44f-bec7bc873226",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "cb35f710-efb3-4af2-93e3-8b8725b760a7",
+      "createdAt": "2026-09-23T08:31:54.894Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "322844d4-4f83-49a0-91cf-9620ccdbaafa",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "cb35f710-efb3-4af2-93e3-8b8725b760a7",
+      "createdAt": "2026-09-23T08:31:55.481Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "1ac79165-a7e9-4f99-bde1-6a79b026bfee",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "cb35f710-efb3-4af2-93e3-8b8725b760a7",
+      "createdAt": "2026-09-23T08:31:55.703Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "e743b157-60e3-43b0-8c36-62c618a294f1",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "cb35f710-efb3-4af2-93e3-8b8725b760a7",
+      "createdAt": "2026-09-23T08:31:55.908Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "9f0962fa-6d78-46c4-add1-539256401c8d",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "cb35f710-efb3-4af2-93e3-8b8725b760a7",
+      "createdAt": "2026-09-23T08:31:56.104Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "3ed2c237-371d-47dd-bcd0-277eec4c7b5e",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "cb35f710-efb3-4af2-93e3-8b8725b760a7",
+      "createdAt": "2026-09-23T08:31:56.299Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "ccbb6f54-a7d5-4717-bac4-552868a1f894",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "1976387e-a713-4657-8dfe-52a81ee2d37b",
+      "createdAt": "2026-09-23T08:31:57.002Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "ad82a9ca-8472-4f7d-8c4f-ea078fbfda66",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "1976387e-a713-4657-8dfe-52a81ee2d37b",
+      "createdAt": "2026-09-23T08:31:57.198Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "f512ebea-1adf-4f7e-81b3-e202bd5d6dcf",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "1976387e-a713-4657-8dfe-52a81ee2d37b",
+      "createdAt": "2026-09-23T08:31:57.417Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "27c086cc-7241-4bdd-954a-2115e094d845",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "1976387e-a713-4657-8dfe-52a81ee2d37b",
+      "createdAt": "2026-09-23T08:31:58.144Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "0b244799-a575-4c86-a47b-feb123815651",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "1976387e-a713-4657-8dfe-52a81ee2d37b",
+      "createdAt": "2026-09-23T08:31:58.360Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "e4c17cb0-cd0d-40a0-9764-804ffc0aa66e",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "1976387e-a713-4657-8dfe-52a81ee2d37b",
+      "createdAt": "2026-09-23T08:31:58.558Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "231b3878-0fc7-4e09-9731-9b255a63808e",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "1afa3639-3355-4a70-9927-0aa4f3b250be",
+      "createdAt": "2026-09-23T08:31:59.458Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "12558755-8c8a-4e08-b3d6-c3af7cc01b64",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "1afa3639-3355-4a70-9927-0aa4f3b250be",
+      "createdAt": "2026-09-23T08:31:59.652Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "c47aa01e-31ed-4281-8485-505a248d5ed9",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "1afa3639-3355-4a70-9927-0aa4f3b250be",
+      "createdAt": "2026-09-23T08:31:59.932Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "cb56ecff-f5f6-463a-b4a8-cf38b6200785",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "1afa3639-3355-4a70-9927-0aa4f3b250be",
+      "createdAt": "2026-09-23T08:32:00.195Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "8a0acd5d-8f29-4fa6-9af7-90607a8861a3",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "1afa3639-3355-4a70-9927-0aa4f3b250be",
+      "createdAt": "2026-09-23T08:32:00.803Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "d72fb223-a53a-43c4-9228-90d858f3a524",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "1afa3639-3355-4a70-9927-0aa4f3b250be",
+      "createdAt": "2026-09-23T08:32:01.012Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "f5155052-d5f3-45ca-8607-d3e5e30bd183",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "25a90fd4-a59b-4f58-8853-1c12aafcc4e8",
+      "createdAt": "2026-09-23T08:32:02.028Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "783601c4-1969-4557-afda-2bf1c462f231",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "25a90fd4-a59b-4f58-8853-1c12aafcc4e8",
+      "createdAt": "2026-09-23T08:32:02.253Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "49535291-b4d4-4a22-80db-8c80e28bb10a",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "25a90fd4-a59b-4f58-8853-1c12aafcc4e8",
+      "createdAt": "2026-09-23T08:32:02.477Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "be0670de-64fa-4361-a0ab-f132b8c01f37",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "25a90fd4-a59b-4f58-8853-1c12aafcc4e8",
+      "createdAt": "2026-09-23T08:32:02.756Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "6e95ba25-5127-4862-9f10-770716051d9e",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "25a90fd4-a59b-4f58-8853-1c12aafcc4e8",
+      "createdAt": "2026-09-23T08:32:03.469Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "2ed79323-f164-4b90-a626-99aecad27c41",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "25a90fd4-a59b-4f58-8853-1c12aafcc4e8",
+      "createdAt": "2026-09-23T08:32:03.698Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "f17810b1-1a71-4ede-be53-7640d09bde45",
+      "name": "TODO",
+      "color": "slate",
+      "allowedRoles": [],
+      "listId": "12f09689-66a9-4cae-ba24-b5663e084f23",
+      "createdAt": "2026-09-23T08:32:04.313Z",
+      "groupName": "Workflow & Progress",
+      "order": 0
+    },
+    {
+      "id": "53118fe6-c3df-49d5-bdbb-50795cb3ae5c",
+      "name": "IN PROGRESS",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "12f09689-66a9-4cae-ba24-b5663e084f23",
+      "createdAt": "2026-09-23T08:32:04.532Z",
+      "groupName": "Workflow & Progress",
+      "order": 1
+    },
+    {
+      "id": "beed009e-98de-4753-aca1-99110f957f81",
+      "name": "REVIEW",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "12f09689-66a9-4cae-ba24-b5663e084f23",
+      "createdAt": "2026-09-23T08:32:04.731Z",
+      "groupName": "Workflow & Progress",
+      "order": 2
+    },
+    {
+      "id": "2d203be3-fc5a-49f2-9861-916ef6fa1bdb",
+      "name": "COMPLETED",
+      "color": "green",
+      "allowedRoles": [],
+      "listId": "12f09689-66a9-4cae-ba24-b5663e084f23",
+      "createdAt": "2026-09-23T08:32:04.931Z",
+      "groupName": "Workflow & Progress",
+      "order": 3
+    },
+    {
+      "id": "470f94fd-ee4b-47c3-8cc7-a6e4a9d403b4",
+      "name": "Client Details",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "12f09689-66a9-4cae-ba24-b5663e084f23",
+      "createdAt": "2026-09-23T08:32:05.131Z",
+      "groupName": "Client Details",
+      "order": 4
+    },
+    {
+      "id": "8b88074d-0bd6-4225-8e91-dbeaf1463a42",
+      "name": "Recurring",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "12f09689-66a9-4cae-ba24-b5663e084f23",
+      "createdAt": "2026-09-23T08:32:05.344Z",
+      "groupName": "Recurring",
+      "order": 5
+    },
+    {
+      "id": "d23ed638-a87c-44a6-8d0d-7e2d122c343d",
+      "name": "Test",
+      "color": "cyan",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Client Details",
+      "order": 0
+    },
+    {
+      "id": "d1af31dc-6869-486e-b165-6278f6922f33",
+      "name": "Pin Board",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Client Details",
+      "order": 1
+    },
+    {
+      "id": "cbfa8951-ff1e-4c21-929f-2a76a4e3838b",
+      "name": "Daily",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Recurring",
+      "order": 2
+    },
+    {
+      "id": "38cd13d2-a18d-43a4-a7b8-992547ae797d",
+      "name": "Weekly",
+      "color": "indigo",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Recurring",
+      "order": 3
+    },
+    {
+      "id": "a2bf8a80-11a7-4231-a819-9fa13ca62816",
+      "name": "Monthly",
+      "color": "violet",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Recurring",
+      "order": 4
+    },
+    {
+      "id": "65d280a5-cd0c-413a-9562-822c6fd7ab6c",
+      "name": "Pending",
+      "color": "amber",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 5
+    },
+    {
+      "id": "08c70e29-a7f0-409a-a74b-84a8bbadfbd6",
+      "name": "In Progress",
+      "color": "blue",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 6
+    },
+    {
+      "id": "1d98968f-54ca-4529-a3d7-fef68135aa23",
+      "name": "Revision",
+      "color": "rose",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 7
+    },
+    {
+      "id": "450cd2ca-60f8-46b1-9256-c50d1583d6a1",
+      "name": "Waiting",
+      "color": "orange",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 8
+    },
+    {
+      "id": "b101106b-d266-4cdd-884a-2cd380bf9d9d",
+      "name": "In Review",
+      "color": "purple",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 9
+    },
+    {
+      "id": "c48c6f15-a0ab-4e59-ad86-8c57c8f30d93",
+      "name": "Checking",
+      "color": "teal",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 10
+    },
+    {
+      "id": "20ff6465-766e-4570-9249-843b522556c7",
+      "name": "On-Hold",
+      "color": "zinc",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 11
+    },
+    {
+      "id": "9fa61a7e-7d66-4037-955b-03621902c5d9",
+      "name": "Closed",
+      "color": "emerald",
+      "allowedRoles": [],
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "createdAt": "2026-09-23T08:33:42.939Z",
+      "groupName": "Workflow & Progress",
+      "order": 12
+    }
+  ],
+  "doc": [
+    {
+      "id": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "title": "Test",
+      "docDate": "2026-09-23T08:42:44.123Z",
+      "spaceId": "d8c46cef-a455-4e7c-9207-6f52334723e1",
+      "folderId": "b71091bd-1828-4d60-80a8-2a62e5b92b88",
+      "createdAt": "2026-09-23T08:42:44.126Z",
+      "updatedAt": "2026-09-23T08:42:44.126Z",
+      "isDailyRollover": false,
+      "rolloverTimezone": "Asia/Singapore",
+      "order": 0,
+      "teamId": null,
+      "assigneeRoleRestrictions": []
+    },
+    {
+      "id": "90b4f029-339b-4762-98ce-e43845a5b1d9",
+      "title": "Prioritization Journal",
+      "docDate": "2026-09-23T08:49:45.426Z",
+      "spaceId": null,
+      "folderId": null,
+      "createdAt": "2026-09-23T08:49:45.426Z",
+      "updatedAt": "2026-09-23T08:49:45.426Z",
+      "isDailyRollover": true,
+      "rolloverTimezone": "Asia/Singapore",
+      "order": 0,
+      "teamId": null,
+      "assigneeRoleRestrictions": []
+    }
+  ],
+  "page": [
+    {
+      "id": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153027174\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": null,
+      "createdAt": "2026-09-23T08:43:47.769Z",
+      "updatedAt": "2026-09-23T08:43:47.769Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "98f0ad9c-52f9-4104-8867-bc1e2317cf3d",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153035422\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:43:56.471Z",
+      "updatedAt": "2026-09-23T08:43:56.471Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "75b275c4-2464-440e-a23d-14f093a07d8b",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153038181\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:43:58.835Z",
+      "updatedAt": "2026-09-23T08:43:58.835Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "425aa248-e564-4781-9f91-b188f9609573",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153039614\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:00.339Z",
+      "updatedAt": "2026-09-23T08:44:00.339Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "272263b8-628e-4190-bf80-b0a3b30c4fb4",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153041726\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:02.460Z",
+      "updatedAt": "2026-09-23T08:44:02.460Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "8db73f62-e25b-4091-b875-71bf40d184f0",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153043294\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:03.657Z",
+      "updatedAt": "2026-09-23T08:44:03.657Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "59203a35-1412-4c9e-8e6d-48639f1882fd",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153044286\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:04.900Z",
+      "updatedAt": "2026-09-23T08:44:04.900Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "accabbee-1ad2-4c3a-b9da-94a945cc4ca6",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153045174\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.656Z",
+      "updatedAt": "2026-09-23T08:44:06.656Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "7769fcf3-659d-41b5-a7c8-88abb16fe9e3",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153046150\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.704Z",
+      "updatedAt": "2026-09-23T08:44:06.704Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "14a9b32a-a3c7-4fb6-a129-c3e218b9dd0c",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153045838\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.714Z",
+      "updatedAt": "2026-09-23T08:44:06.714Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "b8df4f19-9f13-4b7a-966d-2af2aa5c5257",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153045670\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.711Z",
+      "updatedAt": "2026-09-23T08:44:06.711Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "aaee3f11-38ce-4664-881e-8c3ecb762e86",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153045510\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.722Z",
+      "updatedAt": "2026-09-23T08:44:06.722Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "332b940c-f72f-499d-98ca-9c84c72cb2cf",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153045990\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.720Z",
+      "updatedAt": "2026-09-23T08:44:06.720Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "1b646f13-2121-4037-92a2-45dbcae8a100",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153046310\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.739Z",
+      "updatedAt": "2026-09-23T08:44:06.739Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "c1632fd8-5be3-4b1d-a580-900b1cfb1416",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153046470\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.852Z",
+      "updatedAt": "2026-09-23T08:44:06.852Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "fd3a8e97-31c8-45b1-a5e1-aa10505b6678",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153045350\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:06.853Z",
+      "updatedAt": "2026-09-23T08:44:06.853Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "7aba55d4-9fdc-48b6-9503-2a77b6445f0a",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153046630\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:07.429Z",
+      "updatedAt": "2026-09-23T08:44:07.429Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "ad6f8d93-5e14-48a0-a529-75b3d50985d9",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153046950\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:07.439Z",
+      "updatedAt": "2026-09-23T08:44:07.439Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "e63a633c-561d-4b9d-8f28-4040701d5b22",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153046781\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:07.438Z",
+      "updatedAt": "2026-09-23T08:44:07.438Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "fda4d3db-7eeb-48a2-a2ab-f5c4976b6d6d",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153047094\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:07.672Z",
+      "updatedAt": "2026-09-23T08:44:07.672Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "49b4fba4-9168-4b2e-89d8-944e44a88d58",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153047398\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:07.754Z",
+      "updatedAt": "2026-09-23T08:44:07.754Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "9cd5efe3-a213-4680-a604-10fd5b98a929",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153047254\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:44:07.807Z",
+      "updatedAt": "2026-09-23T08:44:07.807Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "7d188db3-a099-4832-84e4-1019b426895b",
+      "title": "Untitled Page",
+      "content": "[{\"id\":\"blk-1790153030214\",\"type\":\"text\",\"content\":\"<p></p><div data-type=\\\"toggle\\\" data-open=\\\"true\\\" class=\\\"mb-2\\\"><div data-type=\\\"toggle-summary\\\" class=\\\"font-bold py-0.5\\\">asdasdas</div><div data-type=\\\"toggle-content\\\" class=\\\"mt-1 mb-2\\\"><p>asdasdasd</p><p></p><div data-type=\\\"toggle\\\" data-open=\\\"true\\\" class=\\\"mb-2\\\"><div data-type=\\\"toggle-summary\\\" class=\\\"font-bold py-0.5\\\">asdasd</div><div data-type=\\\"toggle-content\\\" class=\\\"mt-1 mb-2\\\"><p>asdasda</p></div></div></div></div>\"},{\"id\":\"blk-1790153059364-umen\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "14d00281-3132-456f-91d2-968e365b9dd0",
+      "parentPageId": "b5d82a61-6b3f-413c-8a87-6b634a9b14f9",
+      "createdAt": "2026-09-23T08:43:50.577Z",
+      "updatedAt": "2026-09-23T08:44:40.276Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "d1a0423c-edac-4204-bea9-4b3a02285d10",
+      "title": "September 2026",
+      "content": "[{\"id\":\"blk-m-1790153397511\",\"type\":\"text\",\"content\":\"\"}]",
+      "docId": "90b4f029-339b-4762-98ce-e43845a5b1d9",
+      "parentPageId": null,
+      "createdAt": "2026-09-23T08:49:57.513Z",
+      "updatedAt": "2026-09-23T08:49:57.513Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "6af34655-82f3-43a1-91f4-cf9654108caa",
+      "title": "September 23, 2026",
+      "content": "[{\"id\":\"blk-1790153394711-prio-head\",\"type\":\"text\",\"content\":\"<h2>🚨 Priorities for Today</h2>\"},{\"id\":\"blk-1790153394711-noprio\",\"type\":\"text\",\"content\":\"<p>No priorities</p>\"},{\"id\":\"blk-1790153394711-client-head\",\"type\":\"text\",\"content\":\"<h2>👀 ACTIVE CLIENT</h2>\"},{\"id\":\"blk-h-1790153394711-123FinancialGroup-JenRichardson\",\"type\":\"text\",\"content\":\"<h3>123 Financial Group - Jen Richardson</h3>\"},{\"id\":\"blk-t-1790153394711-9650a33c-8482-4d1e-9182-83c2876b0a49\",\"type\":\"text\",\"content\":\"<p><span data-type=\\\"mention\\\" data-id=\\\"9650a33c-8482-4d1e-9182-83c2876b0a49\\\" data-label=\\\"Example Task for Mentions\\\" data-mention-type=\\\"task\\\">@Example Task for Mentions</span></p>\"},{\"id\":\"blk-h-1790153394711-Test\",\"type\":\"text\",\"content\":\"<h3>Test</h3>\"},{\"id\":\"blk-t-1790153394711-01977486-52ab-4677-ac00-6a9858c72c98\",\"type\":\"text\",\"content\":\"<p><span data-type=\\\"mention\\\" data-id=\\\"01977486-52ab-4677-ac00-6a9858c72c98\\\" data-label=\\\"Test\\\" data-mention-type=\\\"task\\\">@Test</span></p>\"},{\"id\":\"blk-1790153394711-new-tasks\",\"type\":\"text\",\"content\":\"<h3>New Tasks</h3>\"}]",
+      "docId": "90b4f029-339b-4762-98ce-e43845a5b1d9",
+      "parentPageId": "d1a0423c-edac-4204-bea9-4b3a02285d10",
+      "createdAt": "2026-09-23T08:50:01.377Z",
+      "updatedAt": "2026-09-23T08:50:01.377Z",
+      "isClosed": false,
+      "reportDate": null
+    },
+    {
+      "id": "fdffe954-5984-49f8-8532-e330f07abbac",
+      "title": "September 8, 2026",
+      "content": "[{\"id\":\"blk-1790153394711-prio-head\",\"type\":\"text\",\"content\":\"<h2>🚨 Priorities for Today</h2>\"},{\"id\":\"blk-1790153394711-noprio\",\"type\":\"text\",\"content\":\"<p>No priorities</p>\"},{\"id\":\"blk-1790153394711-client-head\",\"type\":\"text\",\"content\":\"<h2>👀 ACTIVE CLIENT</h2>\"},{\"id\":\"blk-h-1790153394711-123FinancialGroup-JenRichardson\",\"type\":\"text\",\"content\":\"<h3>123 Financial Group - Jen Richardson</h3>\"},{\"id\":\"blk-t-1790153394711-9650a33c-8482-4d1e-9182-83c2876b0a49\",\"type\":\"text\",\"content\":\"<p><span data-type=\\\"mention\\\" data-id=\\\"9650a33c-8482-4d1e-9182-83c2876b0a49\\\" data-label=\\\"Example Task for Mentions\\\" data-mention-type=\\\"task\\\">@Example Task for Mentions</span></p>\"},{\"id\":\"blk-h-1790153394711-Test\",\"type\":\"text\",\"content\":\"<h3>Test</h3>\"},{\"id\":\"blk-t-1790153394711-01977486-52ab-4677-ac00-6a9858c72c98\",\"type\":\"text\",\"content\":\"<p><span data-type=\\\"mention\\\" data-id=\\\"01977486-52ab-4677-ac00-6a9858c72c98\\\" data-label=\\\"Test\\\" data-mention-type=\\\"task\\\">@Test</span></p>\"},{\"id\":\"blk-1790153394711-new-tasks\",\"type\":\"text\",\"content\":\"<h3>New Tasks</h3>\"}]",
+      "docId": "90b4f029-339b-4762-98ce-e43845a5b1d9",
+      "parentPageId": "d1a0423c-edac-4204-bea9-4b3a02285d10",
+      "createdAt": "2026-09-23T08:50:03.878Z",
+      "updatedAt": "2026-09-23T08:50:03.878Z",
+      "isClosed": false,
+      "reportDate": null
+    }
+  ],
+  "task": [
+    {
+      "id": "9650a33c-8482-4d1e-9182-83c2876b0a49",
+      "title": "Example Task for Mentions",
+      "description": null,
+      "priority": "MEDIUM",
+      "listId": "14746bfd-d2c6-4a1c-bcaf-3ba412080b34",
+      "creatorId": "a2f9d6e7-2045-460f-af7e-939e2948d406",
+      "createdAt": "2026-09-23T08:32:19.830Z",
+      "updatedAt": "2026-09-23T08:40:09.063Z",
+      "assigneeId": null,
+      "dueDate": null,
+      "startDate": null,
+      "status": "TODO",
+      "teamId": null,
+      "externalId": null,
+      "assigneeRoleRestrictions": [],
+      "teamAssignAccessRole": null
+    },
+    {
+      "id": "01977486-52ab-4677-ac00-6a9858c72c98",
+      "title": "Test",
+      "description": "",
+      "priority": "LOW",
+      "listId": "750a8257-b741-4c73-abc7-297ad33dfd64",
+      "creatorId": "bc74d7a0-e1e0-4a18-bf59-4e733fa25c92",
+      "createdAt": "2026-09-23T08:40:27.282Z",
+      "updatedAt": "2026-09-23T08:45:01.319Z",
+      "assigneeId": "bc74d7a0-e1e0-4a18-bf59-4e733fa25c92",
+      "dueDate": null,
+      "startDate": null,
+      "status": "Test",
+      "teamId": null,
+      "externalId": null,
+      "assigneeRoleRestrictions": [],
+      "teamAssignAccessRole": null
+    }
+  ],
+  "subtask": [],
+  "checklist": [],
+  "checklistItem": [],
+  "taskComment": [],
+  "favorite": [],
+  "channel": [],
+  "channelMember": [],
+  "message": []
+}

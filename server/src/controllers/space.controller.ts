@@ -87,6 +87,7 @@ const folderIncludeConfig: any = {
   include: {
     lists: listsIncludeWithCount,
     docs: {
+      where: { isDailyRollover: false },
       orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         pages: {
@@ -106,6 +107,7 @@ const folderIncludeConfig: any = {
       include: {
         lists: listsIncludeWithCount,
         docs: {
+          where: { isDailyRollover: false },
           orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
           include: {
             pages: {
@@ -142,7 +144,7 @@ export async function listSpaces(req: Request, res: Response) {
         folders: folderIncludeConfig,
         lists: { where: { folderId: null }, ...listsIncludeWithCount },
         docs: {
-          where: { folderId: null },
+          where: { folderId: null, isDailyRollover: false },
           orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
           include: {
             pages: {
@@ -172,7 +174,7 @@ export async function listSpaces(req: Request, res: Response) {
       include: { _count: { select: { tasks: true } } },
     });
     const rootDocs = await prisma.doc.findMany({
-      where: { spaceId: null, folderId: null },
+      where: { spaceId: null, folderId: null, isDailyRollover: false },
       orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         pages: {
@@ -232,7 +234,7 @@ export async function getDashboardData(req: Request, res: Response) {
         folders: folderIncludeConfig,
         lists: { where: { folderId: null }, ...listsIncludeWithCount },
         docs: {
-          where: { folderId: null },
+          where: { folderId: null, isDailyRollover: false },
           orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
           include: {
             pages: {
@@ -257,7 +259,7 @@ export async function getDashboardData(req: Request, res: Response) {
       include: { _count: { select: { tasks: true } } },
     });
     const rootDocs = await prisma.doc.findMany({
-      where: { spaceId: null, folderId: null },
+      where: { spaceId: null, folderId: null, isDailyRollover: false },
       orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
       include: {
         pages: {
@@ -634,7 +636,7 @@ export async function listDocTaskSubtab(req: Request, res: Response) {
 export async function reorderSpaces(req: Request, res: Response) {
   try {
     const { items } = req.body; // Array of { id, order }
-    await Promise.all(items.map((item: any) => 
+    await Promise.all(items.map((item: any) =>
       prisma.space.update({
         where: { id: item.id },
         data: { order: item.order } as any
@@ -655,7 +657,7 @@ export async function reorderFolders(req: Request, res: Response) {
       const updateData: any = { order: item.order };
       if (item.spaceId !== undefined) updateData.spaceId = item.spaceId;
       if (item.parentFolderId !== undefined) updateData.parentFolderId = item.parentFolderId;
-      
+
       return prisma.folder.update({
         where: { id: item.id },
         data: updateData
@@ -676,7 +678,7 @@ export async function reorderLists(req: Request, res: Response) {
       const updateData: any = { order: item.order };
       if (item.spaceId !== undefined) updateData.spaceId = item.spaceId;
       if (item.folderId !== undefined) updateData.folderId = item.folderId;
-      
+
       return prisma.list.update({
         where: { id: item.id },
         data: updateData
@@ -697,7 +699,7 @@ export async function reorderDocs(req: Request, res: Response) {
       const updateData: any = { order: item.order };
       if (item.spaceId !== undefined) updateData.spaceId = item.spaceId;
       if (item.folderId !== undefined) updateData.folderId = item.folderId;
-      
+
       return prisma.doc.update({
         where: { id: item.id },
         data: updateData

@@ -69,28 +69,19 @@ function generateTokens(user: {
   id: string;
   email: string;
   systemRole: SystemRole;
-  primaryRole: string | null;
-  secondaryRole: string | null;
-  tertiaryRole: string | null;
-  minorRole: string | null;
+  roles: string[];
 }) {
-  const roles: string[] = [];
-  if (user.primaryRole) roles.push(user.primaryRole);
-  if (user.secondaryRole) roles.push(user.secondaryRole);
-  if (user.tertiaryRole) roles.push(user.tertiaryRole);
-  if (user.minorRole) roles.push(user.minorRole);
-
   const payload = {
     id: user.id,
     email: user.email,
     systemRole: user.systemRole,
-    roles,
+    roles: user.roles,
   };
 
   const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '1d' });
   const refreshToken = jwt.sign({ id: user.id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
 
-  return { accessToken, refreshToken, roles };
+  return { accessToken, refreshToken, roles: user.roles };
 }
 
 export async function signup(req: Request, res: Response) {
@@ -111,10 +102,7 @@ export async function signup(req: Request, res: Response) {
         password: hashedPassword,
         name: data.name,
         systemRole: data.systemRole || 'MEMBER',
-        primaryRole: data.primaryRole,
-        secondaryRole: data.secondaryRole,
-        tertiaryRole: data.tertiaryRole,
-        minorRole: data.minorRole,
+        roles: data.roles || [],
         employmentType: data.employmentType || 'FULL_TIME',
         dailySheetUrl: data.dailySheetUrl,
         starRating: data.starRating || 1,
@@ -135,10 +123,6 @@ export async function signup(req: Request, res: Response) {
         email: user.email,
         name: user.name,
         systemRole: user.systemRole,
-        primaryRole: user.primaryRole,
-        secondaryRole: user.secondaryRole,
-        tertiaryRole: user.tertiaryRole,
-        minorRole: user.minorRole,
         roles,
         starRating: user.starRating,
         employmentType: user.employmentType,
@@ -187,10 +171,6 @@ export async function login(req: Request, res: Response) {
         name: user.name,
         avatarUrl: user.avatarUrl,
         systemRole: user.systemRole,
-        primaryRole: user.primaryRole,
-        secondaryRole: user.secondaryRole,
-        tertiaryRole: user.tertiaryRole,
-        minorRole: user.minorRole,
         roles,
         starRating: user.starRating,
         employmentType: user.employmentType,
@@ -363,10 +343,7 @@ export async function getMe(req: AuthRequest, res: Response) {
         employmentType: true,
         isActive: true,
         systemRole: true,
-        primaryRole: true,
-        secondaryRole: true,
-        tertiaryRole: true,
-        minorRole: true,
+        roles: true,
         lastLoginAt: true,
         createdAt: true,
         team: true,
@@ -501,5 +478,77 @@ export async function resetPassword(req: Request, res: Response) {
     return res.json({ message: 'Password reset successfully. You may now sign in.' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Reset password failed' });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// SSO AUTH FLOW
+// -----------------------------------------------------------------------------
+
+export async function ssoAuth(req: Request, res: Response) {
+  const token = req.query.token as string;
+  if (!token) {
+    return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
+  }
+
+  try {
+    const ssoSecretStr = process.env.SSO_SHARED_SECRET?.trim();
+    if (!ssoSecretStr) {
+      log.error('Missing SSO_SHARED_SECRET');
+      return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
+    }
+
+    // Standard HS256 JWT: signed by tools with the `jose` library, verified
+    // here with `jsonwebtoken` (already a dependency for our own tokens).
+    // `jose` v6 is ESM-only and this server compiles to CommonJS, so pulling
+    // it in here just to verify a plain JWT isn't worth the require() crash.
+    const payload = jwt.verify(token, ssoSecretStr, {
+      issuer: 'tools.vipscaleph.com',
+      audience: 'nexus',
+    }) as { email?: string; name?: string };
+
+    const email = payload.email as string;
+    const name = payload.name as string;
+
+    if (!email) {
+      return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
+    }
+
+    // 1. Find or create the user in the database
+    let user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      const randomPassword = await bcrypt.hash(Math.random().toString(36), 10);
+      user = await prisma.user.create({
+        data: {
+          email,
+          name: name || email.split('@')[0],
+          password: randomPassword,
+          systemRole: 'MEMBER',
+          employmentType: 'FULL_TIME',
+          starRating: 1,
+        },
+      });
+    } else {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      });
+    }
+
+    // 2. Generate the JWT tokens
+    const { accessToken, refreshToken } = generateTokens(user);
+
+    // 3. Store the refresh token in the DB/Redis
+    await storeRefreshToken(user.id, refreshToken);
+
+    // 4. Set HttpOnly Cookies on the response object
+    setAuthCookies(res, accessToken, refreshToken, true);
+
+    // 5. Send them into the app
+    return res.redirect(FRONTEND_URL);
+  } catch (err: any) {
+    log.error({ err }, `SSO Auth handoff failed: ${errMsg(err)}`);
+    return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
   }
 }

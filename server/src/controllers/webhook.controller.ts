@@ -7,7 +7,20 @@ const prisma = new PrismaClient();
 
 const requireApiKey = (req: Request, res: Response) => {
   const apiKey = req.headers['x-api-key'];
-  if (!apiKey || apiKey !== process.env.VIPSCALE_API_KEY) {
+  const expected = process.env.VIPSCALE_API_KEY;
+  if (!apiKey || apiKey !== expected) {
+    // Never log the actual key values — just enough shape to tell apart
+    // "not set", "wrong value", and "right value with stray whitespace"
+    // without a live diff between the two deployments' dashboards.
+    const receivedStr = Array.isArray(apiKey) ? apiKey[0] : apiKey;
+    console.warn('[requireApiKey] rejected request', {
+      path: req.originalUrl,
+      hasExpected: !!expected,
+      expectedLength: expected?.length ?? 0,
+      hasReceived: !!receivedStr,
+      receivedLength: receivedStr?.length ?? 0,
+      trimmedMatch: !!expected && !!receivedStr && expected.trim() === receivedStr.trim(),
+    });
     res.status(401).json({ error: 'Unauthorized' });
     return false;
   }

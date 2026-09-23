@@ -6,10 +6,7 @@ export const updateUserSchema = z
   .object({
     dailySheetUrl: httpUrl.nullable().optional(),
     starRating: z.number().int().min(1).max(3).optional(),
-    primaryRole: z.string().nullable().optional(),
-    secondaryRole: z.string().nullable().optional(),
-    tertiaryRole: z.string().nullable().optional(),
-    minorRole: z.string().nullable().optional(),
+    roles: z.array(z.string()).optional(),
     systemRole: z.enum(SYSTEM_ROLES).optional(),
     employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
     isActive: z.boolean().optional(),

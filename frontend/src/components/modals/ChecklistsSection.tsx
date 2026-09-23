@@ -243,8 +243,8 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
               <div className="p-2 flex flex-col">
                 {(checklist.items || []).map(item => {
                   const isAuditChecklist = checklist.name.toLowerCase().includes('audit');
-                  const isAuditor = currentUser && [currentUser.primaryRole, currentUser.secondaryRole, currentUser.tertiaryRole, currentUser.minorRole]
-                    .some(r => r?.toLowerCase().includes('auditor')) || currentUser?.systemRole === 'ADMIN';
+                  const isAuditor = (currentUser && (currentUser.roles || [])
+                    .some(r => r?.toLowerCase().includes('auditor'))) || currentUser?.systemRole === 'ADMIN';
                   const canCheck = !isAuditChecklist || isAuditor;
 
                   return (

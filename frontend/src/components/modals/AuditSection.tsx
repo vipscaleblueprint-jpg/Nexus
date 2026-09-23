@@ -196,8 +196,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                 const isCompleted = !!item?.completed;
                 const assigneeId = item?.assigneeId;
 
-                const roles = [currentUser?.primaryRole, currentUser?.secondaryRole, currentUser?.tertiaryRole, currentUser?.minorRole]
-                  .map(r => r?.toLowerCase() || '');
+                const roles = (currentUser?.roles || []).map(r => r?.toLowerCase() || '');
                 const isAdmin = currentUser?.systemRole === 'ADMIN';
 
                 let canCheck = isAdmin;

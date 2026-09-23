@@ -23,6 +23,7 @@ export function DatePickerMenu({
   return (
     <div className="relative flex items-center justify-center">
       <div
+        className="cursor-pointer"
         onClick={(e) => {
           e.stopPropagation();
           setOpen(!open);

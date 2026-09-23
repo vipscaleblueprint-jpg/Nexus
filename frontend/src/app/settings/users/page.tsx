@@ -233,6 +233,36 @@ export default function UsersSettingsPage() {
   const [revokingInvite, setRevokingInvite] = useState<Invitation | null>(null);
 
   const [showAllInvites, setShowAllInvites] = useState(false);
+  const [syncingUsers, setSyncingUsers] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  const handleClearCache = async () => {
+    setClearingCache(true);
+    try {
+      const result = await usersApi.clearCache();
+      await loadData();
+      alert(`Cleared ${result.clearedKeys} cache key(s).`);
+    } catch (err) {
+      console.error('Failed to clear cache:', err);
+      alert('Failed to clear cache. Check the console for details.');
+    } finally {
+      setClearingCache(false);
+    }
+  };
+
+  const handleSyncUsers = async () => {
+    setSyncingUsers(true);
+    try {
+      const result = await usersApi.syncUsers();
+      await loadData();
+      alert(`Synced ${result.syncedCount} assistant(s): ${result.newUsersCreated.length} created, ${result.updatedUsers.length} updated.`);
+    } catch (err) {
+      console.error('Failed to sync users:', err);
+      alert('Failed to sync users. Check the console for details.');
+    } finally {
+      setSyncingUsers(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -373,13 +403,37 @@ export default function UsersSettingsPage() {
           </h1>
           <p className="text-zinc-500 text-sm mt-0.5">Manage workspace members, invitations, and custom roles.</p>
         </div>
-        <button
-          onClick={() => setIsRoleModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50"
-        >
-          <Shield className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Role Management</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {process.env.NODE_ENV === 'development' && (
+            <>
+              <button
+                onClick={handleClearCache}
+                disabled={clearingCache}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Dev only: wipes every cache:* entry in Redis"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${clearingCache ? 'animate-spin' : ''}`} />
+                <span>{clearingCache ? 'Clearing...' : 'Clear Cache (Dev)'}</span>
+              </button>
+              <button
+                onClick={handleSyncUsers}
+                disabled={syncingUsers}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Dev only: pulls assistants from VIPScale and upserts them into Nexus"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${syncingUsers ? 'animate-spin' : ''}`} />
+                <span>{syncingUsers ? 'Syncing...' : 'Sync Users (Dev)'}</span>
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setIsRoleModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50"
+          >
+            <Shield className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Role Management</span>
+          </button>
+        </div>
       </div>
 
       <div className="space-y-8">

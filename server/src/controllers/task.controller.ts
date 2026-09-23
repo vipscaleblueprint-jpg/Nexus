@@ -5,26 +5,38 @@ import { getCache, setCache, invalidateCache } from '../services/redisService';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { io } from '../server';
 
-export const getRequiredAudits = (taskTitle: string) => {
+export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
   const t = taskTitle.toLowerCase();
-  
+  const audits = new Set<string>();
+
+  // Whatever auditor role was actually assigned determines the required audit item directly,
+  // regardless of what the task title says.
+  (auditorRoles || []).forEach((role) => {
+    const r = role.toLowerCase();
+    if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
+    if (r.includes('design')) audits.add('Design Audit');
+    if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
+  });
+
   // 1. Graphics, Reels, Video, Samples -> ONLY Design
   if (t.match(/graphic|reel|video|sample/)) {
-    return ['Design Audit'];
+    audits.add('Design Audit');
   }
-  
+
   // 2. Newsletters, Emails, Social Media Packages -> Design + Funnel
   if (t.match(/email|newsletter|social media/)) {
-    return ['Design Audit', 'Funnel Audit'];
+    audits.add('Design Audit');
+    audits.add('Funnel Audit');
   }
-  
+
   // 3. Websites, Links, Landing Pages -> ALL THREE
   if (t.match(/website|page|funnel|link/)) {
-    return ['UI UX Audit', 'Design Audit', 'Funnel Audit'];
+    audits.add('UI UX Audit');
+    audits.add('Design Audit');
+    audits.add('Funnel Audit');
   }
-  
-  // Default fallback if we don't recognize the type
-  return [];
+
+  return Array.from(audits);
 };
 
 const taskInclude = {
@@ -365,6 +377,7 @@ export async function updateTask(req: Request, res: Response) {
         listId: true,
         creatorId: true,
         assignees: { select: { id: true, name: true } },
+        assigneeRoleRestrictions: true,
         checklists: { include: { items: true } },
         subtasks: { include: { checklists: { include: { items: true } } } },
       },
@@ -376,17 +389,17 @@ export async function updateTask(req: Request, res: Response) {
 
     if (status !== undefined && status.toLowerCase() === 'checking') {
       // Check task audit checklists
-      const requiredTaskAudits = getRequiredAudits(currentTask.title);
+      const requiredTaskAudits = getRequiredAudits(currentTask.title, (currentTask as any).assigneeRoleRestrictions);
       const auditChecklists = currentTask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
       for (const c of auditChecklists) {
         if (c.items.some((i: any) => requiredTaskAudits.includes(i.text) && !i.completed)) {
           return res.status(400).json({ error: `Cannot move to ${status}: Required audits for task are not fully completed.` });
         }
       }
-      
+
       // Check subtasks audit checklists
       for (const subtask of currentTask.subtasks) {
-        const requiredSubtaskAudits = getRequiredAudits(subtask.title);
+        const requiredSubtaskAudits = getRequiredAudits(subtask.title, (subtask as any).assigneeRoleRestrictions);
         const subtaskAuditChecklists = subtask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
         for (const c of subtaskAuditChecklists) {
           if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {
@@ -1273,7 +1286,7 @@ export async function updateSubtask(req: Request, res: Response) {
         include: { checklists: { include: { items: true } } }
       });
       if (currentSubtask) {
-        const requiredSubtaskAudits = getRequiredAudits(currentSubtask.title);
+        const requiredSubtaskAudits = getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions);
         const auditChecklists = currentSubtask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
         for (const c of auditChecklists) {
           if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {

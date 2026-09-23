@@ -33,7 +33,7 @@ function DropdownField({ label, placeholder, value, options, onSelect, optional,
         </label>
         {rightAction}
       </div>
-      <div className="relative w-full text-left" onClick={() => setOpen(!open)}>
+      <div className="relative w-full text-left cursor-pointer" onClick={() => setOpen(!open)}>
         <input 
           type="text"
           readOnly
@@ -146,7 +146,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
   const dummyComplexityOptions = [{ value: '1', label: '1 - Easy' }, { value: '2', label: '2 - Medium' }, { value: '3', label: '3 - Hard' }];
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto cursor-pointer" onClick={onClose}>
       <div 
         className="relative w-full max-w-2xl my-auto"
         onClick={e => e.stopPropagation()}

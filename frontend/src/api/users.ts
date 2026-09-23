@@ -14,6 +14,20 @@ export const usersApi = {
     });
   },
 
+  /** Dev-only: pulls VIPScale assistants and upserts them into Nexus users. */
+  async syncUsers(): Promise<{ success: boolean; syncedCount: number; newUsersCreated: string[]; updatedUsers: string[] }> {
+    return apiClient('/api/users/sync-users', {
+      method: 'POST',
+    });
+  },
+
+  /** Dev-only: wipes every cache:* entry in Redis (leaves refresh tokens/OTPs alone). */
+  async clearCache(): Promise<{ success: boolean; clearedKeys: number }> {
+    return apiClient('/api/users/clear-cache', {
+      method: 'POST',
+    });
+  },
+
   async updateUser(id: string, data: Partial<User>): Promise<{ user: User }> {
     return apiClient<{ user: User }>(`/api/users/${id}`, {
       method: 'PATCH',

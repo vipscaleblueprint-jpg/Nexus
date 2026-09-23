@@ -164,7 +164,7 @@ function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: s
   }
 
   return (
-    <span className="mt-2 mb-2 inline-block relative group" onClick={(e) => {
+    <span className="mt-2 mb-2 inline-block relative group cursor-pointer" onClick={(e) => {
       e.preventDefault();
       e.stopPropagation();
       onPreview(src);

@@ -1,7 +1,18 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../config/prisma';
-import { getCache, setCache, invalidateCache } from '../services/redisService';
+import { getCache, setCache, invalidateCache, clearAllCache } from '../services/redisService';
+import { syncUsers } from './webhook.controller';
+
+export async function triggerSyncUsers(req: Request, res: Response) {
+  req.headers['x-api-key'] = process.env.VIPSCALE_API_KEY;
+  return syncUsers(req, res);
+}
+
+export async function triggerClearCache(req: Request, res: Response) {
+  const cleared = await clearAllCache();
+  return res.json({ success: true, clearedKeys: cleared });
+}
 
 // Typed shorthand to avoid IDE stale-cache false positives on new Prisma models
 const db = prisma as any;
@@ -19,9 +30,16 @@ const rosterSelect = {
   isActive: true,
   systemRole: true,
   roles: true,
+  credits: true,
   createdAt: true,
   team: true,
 };
+
+// credits is a BigInt column — JSON.stringify (used by res.json and setCache) can't
+// serialize those, so it has to be converted before it leaves this function.
+function serializeCredits<T extends { credits?: bigint | null }>(user: T) {
+  return { ...user, credits: user.credits != null ? Number(user.credits) : null };
+}
 
 // GET /api/users - Redis Cache-Aside
 export async function listUsers(req: Request, res: Response) {
@@ -35,10 +53,11 @@ export async function listUsers(req: Request, res: Response) {
       select: rosterSelect,
       orderBy: { name: 'asc' },
     });
+    const serialized = users.map(serializeCredits);
 
-    await setCache('users:all', users, 300);
+    await setCache('users:all', serialized, 300);
 
-    return res.json({ users, cached: false });
+    return res.json({ users: serialized, cached: false });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -97,7 +116,7 @@ export async function updateUser(req: Request, res: Response) {
 
     await invalidateCache('users:all', 'teams:all', 'dashboard:all');
 
-    return res.json({ user });
+    return res.json({ user: serializeCredits(user) });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'User not found' });
     return res.status(500).json({ error: err.message });

@@ -21,7 +21,7 @@ import {
 } from '../services/redisService';
 import { sendOTPEmail, sendPasswordChangeEmail } from '../services/emailService';
 import { AuthRequest } from '../middleware/auth.middleware';
-import { requireEnv } from '../config/env';
+import { requireEnv, optionalEnv } from '../config/env';
 import { prisma } from '../config/prisma';
 import { createLogger, errMsg } from '../config/logger';
 
@@ -33,7 +33,11 @@ const JWT_REFRESH_SECRET = requireEnv('JWT_REFRESH_SECRET');
 const GOOGLE_CLIENT_ID = requireEnv('GOOGLE_CLIENT_ID');
 const GOOGLE_CLIENT_SECRET = requireEnv('GOOGLE_CLIENT_SECRET');
 const GOOGLE_CALLBACK_URL = requireEnv('GOOGLE_CALLBACK_URL');
-const FRONTEND_URL = requireEnv('CORS_ORIGIN');
+// Separate from CORS_ORIGIN on purpose: CORS is bypassed entirely in development
+// (see security.middleware.ts), so CORS_ORIGIN staying set to the deployed URL never
+// breaks local API calls — but reusing it here would send a local Google login's
+// post-auth redirect to the deployed frontend instead of back to localhost.
+const FRONTEND_URL = optionalEnv('FRONTEND_URL') || requireEnv('CORS_ORIGIN');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -379,7 +383,8 @@ export async function updateProfile(req: AuthRequest, res: Response) {
       include: { team: true },
     });
 
-    return res.json({ user: updatedUser });
+    // credits is a BigInt column — JSON.stringify (via res.json) can't serialize it directly.
+    return res.json({ user: { ...updatedUser, credits: updatedUser.credits != null ? Number(updatedUser.credits) : null } });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

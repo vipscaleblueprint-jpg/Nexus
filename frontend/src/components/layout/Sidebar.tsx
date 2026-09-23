@@ -879,7 +879,7 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
   return (
     <div className="space-y-px text-xs">
       <div className="group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-[hsl(240,3.7%,15.9%)] cursor-pointer transition-colors">
-        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 truncate flex-1">
+        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 truncate flex-1 cursor-pointer">
           <div className="relative size-4 flex items-center justify-center shrink-0">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               {isOpen ? <ChevronDown className="size-3.5 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3.5 text-[hsl(0,0%,63.9%)]" />}
@@ -965,7 +965,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
     <div className="space-y-px">
       <div className="group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-[hsl(240,3.7%,15.9%)] cursor-pointer transition-colors">
         <div className="flex items-center gap-2 truncate flex-1">
-          <div onClick={() => setIsOpen(!isOpen)} className="relative size-3.5 flex items-center justify-center shrink-0">
+          <div onClick={() => setIsOpen(!isOpen)} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               {isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}
             </div>
@@ -985,7 +985,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <div className="flex items-center group/edit flex-1 min-w-0" onClick={() => setIsOpen(!isOpen)}>
+            <div className="flex items-center group/edit flex-1 min-w-0 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
               <span className="truncate text-xs text-[hsl(240,4.8%,95.9%)] block">{folder.name}</span>
             </div>
           )}
@@ -1061,7 +1061,7 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
           : 'text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)]'
       }`}>
         <div className="flex items-center gap-2 truncate flex-1">
-          <div onClick={(e) => { if (hasPages) { e.preventDefault(); setIsOpen(!isOpen); } }} className="relative size-3.5 flex items-center justify-center shrink-0">
+          <div onClick={(e) => { if (hasPages) { e.preventDefault(); setIsOpen(!isOpen); } }} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
             {hasPages && <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">{isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}</div>}
             <div className={`absolute inset-0 flex items-center justify-center ${hasPages ? 'group-hover:opacity-0' : ''} transition-opacity`}><FileText className="size-3.5 text-zinc-400" /></div>
           </div>

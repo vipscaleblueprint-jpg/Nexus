@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { InviteModal } from '@/components/modals/InviteModal';
@@ -10,7 +11,6 @@ import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
 import { CreateListModal } from '@/components/modals/CreateListModal';
 import { CreateDocModal } from '@/components/modals/CreateDocModal';
 import { CreatePageModal } from '@/components/modals/CreatePageModal';
-import { ApiSettingsModal } from '@/components/modals/ApiSettingsModal';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
@@ -305,13 +305,25 @@ function VipRow({ icon: Icon, iconClass, label, labelClass, children, collapsed 
       >
         <Icon className={`size-4 shrink-0 ${iconClass}`} />
         {!collapsed && <span className={`flex-1 truncate ${labelClass ?? ''}`}>{label}</span>}
-        {!collapsed && <ChevronRight className={`ml-auto size-4 shrink-0 text-[hsl(240,5.3%,26.1%)] transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />}
+        {!collapsed && (
+          <motion.div animate={{ rotate: open ? 90 : 0 }} transition={{ duration: 0.2 }} className="ml-auto flex shrink-0">
+            <ChevronRight className="size-4 text-[hsl(240,5.3%,26.1%)]" />
+          </motion.div>
+        )}
       </button>
-      {open && !collapsed && (
-        <ul className="ml-4 border-l border-[hsl(240,3.7%,15.9%)] pl-2 mt-0.5 space-y-px">
-          {children}
-        </ul>
-      )}
+      <AnimatePresence initial={false}>
+        {open && !collapsed && (
+          <motion.ul
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="ml-4 border-l border-[hsl(240,3.7%,15.9%)] pl-2 mt-0.5 space-y-px overflow-hidden"
+          >
+            {children}
+          </motion.ul>
+        )}
+      </AnimatePresence>
     </li>
   );
 }
@@ -542,7 +554,6 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const [isCreateListOpen, setIsCreateListOpen] = useState(false);
   const [isCreateDocOpen, setIsCreateDocOpen] = useState(false);
   const [isCreatePageOpen, setIsCreatePageOpen] = useState(false);
-  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeSpaceId, setActiveSpaceId] = useState<string | undefined>();
   const [activeFolderId, setActiveFolderId] = useState<string | undefined>();
@@ -595,9 +606,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   return (
     <div className="flex h-screen shrink-0 z-20">
       {/* ── PRIMARY VIPScale Sidebar ───────────────────────────── */}
-      <div
-        className="relative h-full flex-col flex transition-all duration-300 ease-in-out"
-        style={{ width: collapsed ? '3rem' : '16rem' }}
+      <motion.div
+        animate={{ width: collapsed ? '3rem' : '16rem' }}
+        transition={{ duration: 0.2, ease: "easeInOut" }}
+        className="relative h-full flex-col flex overflow-hidden bg-black"
       >
         {/* Sidebar inner — mimics shadcn sidebar-container */}
         <div className="h-full w-full bg-[hsl(240,5.9%,10%)] border-r border-[hsl(240,3.7%,15.9%)] flex flex-col text-[hsl(240,4.8%,95.9%)]">
@@ -715,7 +727,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
             </button>
           </div>
         </div>
-      </div>
+      </motion.div>
 
 
       {/* ── SECONDARY Nexus Sub-Sidebar ───────────────────────── */}
@@ -850,7 +862,6 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       <CreateListModal isOpen={isCreateListOpen} onClose={() => setIsCreateListOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
       <CreateDocModal isOpen={isCreateDocOpen} onClose={() => setIsCreateDocOpen(false)} onSuccess={loadSpaces} spaces={spaces} defaultSpaceId={activeSpaceId} defaultFolderId={activeFolderId} />
       <CreatePageModal isOpen={isCreatePageOpen} onClose={() => setIsCreatePageOpen(false)} onSuccess={loadSpaces} allDocs={flatDocs} defaultDocId={activeDocId} />
-      <ApiSettingsModal isOpen={isApiSettingsOpen} onClose={() => setIsApiSettingsOpen(false)} />
       <RenameModal isOpen={isRenameOpen} onClose={() => setIsRenameOpen(false)} onConfirm={handleConfirmRename} title={`Rename ${actionEntity?.type}`} initialName={actionEntity?.name || ''} />
       <ConfirmDeleteModal isOpen={isDeleteOpen} onClose={() => setIsDeleteOpen(false)} onConfirm={handleConfirmDelete} title={`Delete ${actionEntity?.type}`} itemName={actionEntity?.name || ''} />
     </div>
@@ -882,7 +893,9 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
         <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 truncate flex-1 cursor-pointer">
           <div className="relative size-4 flex items-center justify-center shrink-0">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-              {isOpen ? <ChevronDown className="size-3.5 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3.5 text-[hsl(0,0%,63.9%)]" />}
+              <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }} className="flex">
+                <ChevronRight className="size-3.5 text-[hsl(0,0%,63.9%)]" />
+              </motion.div>
             </div>
             <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
               <span className="size-2 rounded-full" style={{ backgroundColor: space.color || '#3B82F6' }} />
@@ -905,25 +918,33 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
           </ActionMenu>
         </div>
       </div>
-      {isOpen && (
-        <div className="pl-4 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px">
-          <SortableContext items={combinedItems.map(i => `space-${space.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
-            {combinedItems.map((item) => {
-              const sortableId = `space-${space.id}-${item.itemType}-${item.id}`;
-              if (item.itemType === 'folder') {
-                return <SortableWrapper key={sortableId} id={sortableId}><FolderTreeItem folder={item as Folder} spaceId={space.id} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} /></SortableWrapper>
-              }
-              if (item.itemType === 'list') {
-                return <SortableWrapper key={sortableId} id={sortableId}><ListTreeItem list={item as List} onAction={onAction} /></SortableWrapper>
-              }
-              if (item.itemType === 'doc') {
-                return <SortableWrapper key={sortableId} id={sortableId}><DocTreeItem doc={item as Doc} onAddPage={onAddPage} onAction={onAction} /></SortableWrapper>
-              }
-              return null;
-            })}
-          </SortableContext>
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="pl-4 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px overflow-hidden"
+          >
+            <SortableContext items={combinedItems.map(i => `space-${space.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
+              {combinedItems.map((item) => {
+                const sortableId = `space-${space.id}-${item.itemType}-${item.id}`;
+                if (item.itemType === 'folder') {
+                  return <SortableWrapper key={sortableId} id={sortableId}><FolderTreeItem folder={item as Folder} spaceId={space.id} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} /></SortableWrapper>
+                }
+                if (item.itemType === 'list') {
+                  return <SortableWrapper key={sortableId} id={sortableId}><ListTreeItem list={item as List} onAction={onAction} /></SortableWrapper>
+                }
+                if (item.itemType === 'doc') {
+                  return <SortableWrapper key={sortableId} id={sortableId}><DocTreeItem doc={item as Doc} onAddPage={onAddPage} onAction={onAction} /></SortableWrapper>
+                }
+                return null;
+              })}
+            </SortableContext>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -967,7 +988,9 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={() => setIsOpen(!isOpen)} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-              {isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}
+              <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }} className="flex">
+                <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />
+              </motion.div>
             </div>
             <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
               <FolderIcon className="size-3.5 text-amber-400" />
@@ -1002,25 +1025,33 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
           </ActionMenu>
         </div>
       </div>
-      {isOpen && (
-        <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px">
-          <SortableContext items={combinedItems.map(i => `folder-${folder.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
-            {combinedItems.map((item) => {
-              const sortableId = `folder-${folder.id}-${item.itemType}-${item.id}`;
-              if (item.itemType === 'folder') {
-                return <SortableWrapper key={sortableId} id={sortableId}><FolderTreeItem folder={item as Folder} spaceId={spaceId} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} /></SortableWrapper>
-              }
-              if (item.itemType === 'list') {
-                return <SortableWrapper key={sortableId} id={sortableId}><ListTreeItem list={item as List} onAction={onAction} /></SortableWrapper>
-              }
-              if (item.itemType === 'doc') {
-                return <SortableWrapper key={sortableId} id={sortableId}><DocTreeItem doc={item as Doc} onAddPage={onAddPage} onAction={onAction} /></SortableWrapper>
-              }
-              return null;
-            })}
-          </SortableContext>
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px overflow-hidden"
+          >
+            <SortableContext items={combinedItems.map(i => `folder-${folder.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
+              {combinedItems.map((item) => {
+                const sortableId = `folder-${folder.id}-${item.itemType}-${item.id}`;
+                if (item.itemType === 'folder') {
+                  return <SortableWrapper key={sortableId} id={sortableId}><FolderTreeItem folder={item as Folder} spaceId={spaceId} onAddFolder={onAddFolder} onAddDoc={onAddDoc} onAddPage={onAddPage} onAddList={onAddList} onAction={onAction} /></SortableWrapper>
+                }
+                if (item.itemType === 'list') {
+                  return <SortableWrapper key={sortableId} id={sortableId}><ListTreeItem list={item as List} onAction={onAction} /></SortableWrapper>
+                }
+                if (item.itemType === 'doc') {
+                  return <SortableWrapper key={sortableId} id={sortableId}><DocTreeItem doc={item as Doc} onAddPage={onAddPage} onAction={onAction} /></SortableWrapper>
+                }
+                return null;
+              })}
+            </SortableContext>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1062,7 +1093,13 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
       }`}>
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={(e) => { if (hasPages) { e.preventDefault(); setIsOpen(!isOpen); } }} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
-            {hasPages && <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">{isOpen ? <ChevronDown className="size-3 text-[hsl(0,0%,63.9%)]" /> : <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />}</div>}
+            {hasPages && (
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }} className="flex">
+                  <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />
+                </motion.div>
+              </div>
+            )}
             <div className={`absolute inset-0 flex items-center justify-center ${hasPages ? 'group-hover:opacity-0' : ''} transition-opacity`}><FileText className="size-3.5 text-zinc-400" /></div>
           </div>
           {isEditing ? (
@@ -1089,11 +1126,19 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
           </ActionMenu>
         </div>
       </div>
-      {isOpen && hasPages && (
-        <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px mt-0.5">
-          {doc.pages?.map((page) => <PageTreeItem key={page.id} page={page} onAction={onAction} />)}
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {isOpen && hasPages && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px mt-0.5 overflow-hidden"
+          >
+            {doc.pages?.map((page) => <PageTreeItem key={page.id} page={page} onAction={onAction} />)}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

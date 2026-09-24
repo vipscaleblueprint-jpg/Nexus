@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import {
   Users,
@@ -217,6 +218,7 @@ export default function UsersSettingsPage() {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
 
@@ -225,6 +227,9 @@ export default function UsersSettingsPage() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [roleFilter, setRoleFilter] = useState<string>('ALL');
   const [employmentFilter, setEmploymentFilter] = useState<string>('ALL');
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   // Modals state
   const [isAddInviteOpen, setIsAddInviteOpen] = useState(false);
@@ -282,6 +287,10 @@ export default function UsersSettingsPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, roleFilter, employmentFilter, sortColumn, sortDirection]);
 
   const handleCopyEmail = (email: string) => {
     navigator.clipboard.writeText(email);
@@ -375,6 +384,9 @@ export default function UsersSettingsPage() {
     return sortDirection === 'asc' ? comparison : -comparison;
   });
 
+  const totalPages = Math.ceil(sortedUsers.length / itemsPerPage) || 1;
+  const paginatedUsers = sortedUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -437,80 +449,147 @@ export default function UsersSettingsPage() {
       </div>
 
       <div className="space-y-8">
-          <div className="flex flex-col sm:flex-row justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <div className="relative group">
                 <select
                   value={roleFilter}
                   onChange={(e) => setRoleFilter(e.target.value)}
-                  className="pl-8 pr-8 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 appearance-none cursor-pointer"
+                  className="pl-4 pr-9 py-2 bg-[#18181c] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1e1e24] rounded-xl text-[11px] text-zinc-300 focus:outline-none focus:border-purple-600/50 appearance-none cursor-pointer transition-colors font-medium shadow-sm w-full sm:w-auto"
                 >
                   <option value="ALL">All Roles</option>
                   {Object.keys(ROLE_COLORS).map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
               </div>
-              <div className="relative">
-                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+
+              <div className="relative group">
                 <select
                   value={employmentFilter}
                   onChange={(e) => setEmploymentFilter(e.target.value)}
-                  className="pl-8 pr-8 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 appearance-none cursor-pointer"
+                  className="pl-4 pr-9 py-2 bg-[#18181c] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1e1e24] rounded-xl text-[11px] text-zinc-300 focus:outline-none focus:border-purple-600/50 appearance-none cursor-pointer transition-colors font-medium shadow-sm w-full sm:w-auto"
                 >
                   <option value="ALL">All Employment Types</option>
                   {Object.keys(EMPLOYMENT_LABEL).map(e => <option key={e} value={e}>{EMPLOYMENT_LABEL[e]}</option>)}
                 </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
               </div>
             </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+
+            <div className="relative group z-20 flex-1 w-full">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600 pointer-events-none" />
               <input
                 type="text"
-                placeholder="Search members..."
+                placeholder="Search members by name..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 pr-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 w-64"
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+                className={`pl-10 pr-4 py-2 bg-[#18181c] border hover:bg-[#1e1e24] focus:bg-[#18181c] text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none w-full transition-colors shadow-sm ${
+                  isSearchFocused && search.length > 0 
+                    ? 'rounded-t-xl rounded-b-none border-purple-600/50 border-b-zinc-800/50' 
+                    : 'rounded-xl border-zinc-800 hover:border-zinc-700 focus:border-purple-600/50'
+                }`}
               />
+              
+              {/* Autocomplete Dropdown */}
+              {isSearchFocused && search.length > 0 && (
+                <div className="absolute top-full left-0 sm:right-0 sm:w-auto w-full bg-[#18181c] border border-t-0 border-purple-600/50 rounded-b-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto">
+                  {filteredUsers.length === 0 ? (
+                    <div className="p-4 text-xs text-zinc-600 text-center">No members found.</div>
+                  ) : (
+                    filteredUsers.map(u => {
+                      const initials = u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+                      return (
+                        <div
+                          key={u.id} // Primary key
+                          onClick={() => {
+                            setSearch(u.name); // Select by name
+                            setIsSearchFocused(false);
+                          }}
+                          className="flex items-center justify-between p-3 hover:bg-purple-900/20 cursor-pointer transition-colors border-b border-zinc-800/30 last:border-0"
+                        >
+                          <div className="flex items-center gap-4">
+                            {u.avatarUrl ? (
+                              <img src={u.avatarUrl} alt={u.name} className="w-7 h-7 rounded-full object-cover shrink-0" />
+                            ) : (
+                              <div className="w-7 h-7 rounded-full bg-purple-900/30 border border-purple-800/50 flex items-center justify-center text-[10px] font-bold text-purple-300 shrink-0">
+                                {initials}
+                              </div>
+                            )}
+                            <span className="text-sm font-medium text-zinc-200 truncate group-hover:text-purple-200">{u.name}</span>
+                          </div>
+                          {u.roles && u.roles.length > 0 && (
+                            <span className="text-xs text-zinc-600 shrink-0">{u.roles.length} roles</span>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Members Table */}
-          <div className="bg-[#18181c] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-zinc-800/80 text-zinc-400 font-semibold text-[11px] bg-zinc-900/20">
-                    <th className="px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('name')}>
+          <motion.div 
+            layout 
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="bg-[#18181c] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+          >
+            <div className="overflow-auto max-h-[60vh]">
+              <table className="w-full text-left text-xs border-collapse relative table-fixed">
+                <motion.thead 
+                  layout 
+                  transition={{ duration: 0.2, ease: "easeInOut" }}
+                  className="sticky top-0 z-10 bg-[#18181c] shadow-[0_1px_0_rgba(39,39,42,0.8)]"
+                >
+                  <tr className="text-zinc-400 font-semibold text-[11px] bg-zinc-900/90 backdrop-blur-md">
+                    <th className="w-[30%] px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('name')}>
                       <div className="flex items-center gap-1.5">User {renderSortIcon('name')}</div>
                     </th>
-                    <th className="px-6 py-3.5 font-medium">System Role</th>
-                    <th className="px-6 py-3.5 font-medium">Job Roles</th>
-                    <th className="px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('employment')}>
+                    <th className="w-[10%] px-6 py-3.5 font-medium">System Role</th>
+                    <th className="w-[20%] px-6 py-3.5 font-medium">Job Roles</th>
+                    <th className="w-[15%] px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('employment')}>
                       <div className="flex items-center gap-1.5">Employment {renderSortIcon('employment')}</div>
                     </th>
-                    <th className="px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('rating')}>
+                    <th className="w-[10%] px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('rating')}>
                       <div className="flex items-center gap-1.5">Rating {renderSortIcon('rating')}</div>
                     </th>
-                    <th className="px-6 py-3.5 font-medium">Daily Sheet</th>
-                    <th className="px-6 py-3.5 font-medium text-right">Actions</th>
+                    <th className="w-[10%] px-6 py-3.5 font-medium">Daily Sheet</th>
+                    <th className="w-[10%] px-6 py-3.5 font-medium text-right">Actions</th>
                   </tr>
-                </thead>
+                </motion.thead>
                 <tbody className="divide-y divide-zinc-800/60">
-                  {sortedUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="px-6 py-10 text-center text-zinc-500 italic">
-                        No members found.
-                      </td>
-                    </tr>
-                  ) : (
-                    sortedUsers.map((user) => {
+                  <AnimatePresence mode="popLayout">
+                    {paginatedUsers.length === 0 ? (
+                      <motion.tr
+                        layout
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.2, ease: "easeInOut" }}
+                      >
+                        <td colSpan={7} className="px-6 py-10 text-center text-zinc-500 italic">
+                          No members found.
+                        </td>
+                      </motion.tr>
+                    ) : (
+                      paginatedUsers.map((user) => {
                       const initials = user.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
                       const roles = user.roles || [];
                       const isCurrent = currentUser?.id === user.id;
 
                       return (
-                        <tr key={user.id} className="hover:bg-zinc-800/30 transition-colors group">
-                          <td className="px-6 py-4">
+                        <motion.tr 
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2, ease: "easeInOut" }}
+                          key={user.id} 
+                          className="hover:bg-zinc-800/30 transition-colors group"
+                        >
+                          <td className="px-6 py-4 overflow-hidden">
                             <div className="flex items-center gap-3">
                               {user.avatarUrl ? (
                                 <img src={user.avatarUrl} alt={user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
@@ -519,9 +598,9 @@ export default function UsersSettingsPage() {
                                   {initials}
                                 </div>
                               )}
-                              <div>
-                                <div className="font-bold text-white text-xs">{user.name} {isCurrent && '(You)'}</div>
-                                <div className="text-[10px] text-zinc-500">{user.email}</div>
+                              <div className="min-w-0 flex-1 pr-2">
+                                <div className="font-bold text-white text-xs truncate" title={user.name}>{user.name} {isCurrent && '(You)'}</div>
+                                <div className="text-[10px] text-zinc-500 truncate" title={user.email}>{user.email}</div>
                               </div>
                             </div>
                           </td>
@@ -536,20 +615,21 @@ export default function UsersSettingsPage() {
                               </span>
                             )}
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-6 py-4 overflow-hidden relative">
                             <div 
-                              className="flex items-center flex-wrap gap-1.5 cursor-pointer p-1 -m-1 hover:bg-zinc-800/50 rounded transition-colors"
+                              className="flex items-center flex-nowrap gap-1.5 cursor-pointer p-1 -m-1 hover:bg-zinc-800/50 rounded transition-colors overflow-hidden"
+                              style={{ WebkitMaskImage: 'linear-gradient(to right, black 80%, transparent 100%)', maskImage: 'linear-gradient(to right, black 80%, transparent 100%)' }}
                               onClick={() => setEditingUser(user)}
                               title="Click to assign roles"
                             >
                               {roles.length > 0 ? (
                                 roles.map((role) => (
-                                  <span key={role} className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${ROLE_COLORS[role] ?? 'bg-zinc-700 text-zinc-300 border-zinc-600'}`}>
+                                  <span key={role} className={`shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded border ${ROLE_COLORS[role] ?? 'bg-zinc-700 text-zinc-300 border-zinc-600'}`}>
                                     {role}
                                   </span>
                                 ))
                               ) : (
-                                <span className="text-[10px] text-zinc-500 italic flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
+                                <span className="text-[10px] text-zinc-500 italic flex items-center gap-1 group-hover:text-indigo-400 transition-colors shrink-0">
                                   <Plus className="w-3 h-3" /> Assign
                                 </span>
                               )}
@@ -606,14 +686,64 @@ export default function UsersSettingsPage() {
                               )}
                             </ActionMenu>
                           </td>
-                        </tr>
+                        </motion.tr>
                       );
                     })
                   )}
+                  </AnimatePresence>
                 </tbody>
               </table>
             </div>
-          </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="px-6 py-4 border-t border-zinc-800/80 bg-[#18181c] flex items-center justify-between">
+                <div className="text-[11px] font-medium text-zinc-500">
+                  <span className="text-zinc-300">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, sortedUsers.length)}</span> of <span className="text-zinc-300">{sortedUsers.length}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    className="h-8 px-2.5 flex items-center justify-center rounded-lg text-[11px] font-semibold text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-800 hover:text-zinc-200 transition-colors cursor-pointer border border-transparent"
+                  >
+                    Prev
+                  </button>
+                  
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum = i + 1;
+                      if (totalPages > 5) {
+                        if (currentPage > 3) pageNum = currentPage - 2 + i;
+                        if (currentPage > totalPages - 2) pageNum = totalPages - 4 + i;
+                      }
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`w-8 h-8 flex items-center justify-center rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                            currentPage === pageNum
+                              ? 'bg-zinc-800 text-zinc-100 border border-zinc-700 shadow-sm'
+                              : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200 border border-transparent'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    className="h-8 px-2.5 flex items-center justify-center rounded-lg text-[11px] font-semibold text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-800 hover:text-zinc-200 transition-colors cursor-pointer border border-transparent"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </motion.div>
 
       {/* Bottom Section: Invitations Card */}
       <div className="bg-[#18181c] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl mt-8">

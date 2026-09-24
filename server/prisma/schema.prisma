@@ -8,17 +8,17 @@ datasource db {
 }
 
 model Team {
-  id          String   @id @default(uuid())
-  name        String   @unique
+  id          String     @id @default(uuid())
+  name        String     @unique
   description String?
   color       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  tasks       Task[]
-  subtasks    Subtask[]
-  members     User[]
-  teamRoles   TeamRole[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
   docs        Doc[]
+  subtasks    Subtask[]
+  tasks       Task[]
+  teamRoles   TeamRole[]
+  members     User[]
 
   @@index([name])
 }
@@ -34,8 +34,8 @@ model TeamRole {
   id        String   @id @default(uuid())
   name      String
   teamId    String?
-  team      Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+  team      Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@unique([name, teamId])
   @@index([teamId])
@@ -84,8 +84,8 @@ model User {
   taskNotificationsSent TaskNotification[]    @relation("ActorNotification")
   taskNotifications     TaskNotification[]    @relation("UserNotification")
   team                  Team?                 @relation(fields: [teamId], references: [id])
-  assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
   subtasksAssignedMulti Subtask[]             @relation("SubtaskMultiAssignees")
+  assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
 
   @@index([email])
   @@index([systemRole])
@@ -164,22 +164,22 @@ model ListStatus {
 }
 
 model Doc {
-  id               String   @id @default(uuid())
-  title            String
-  docDate          DateTime @default(now())
-  spaceId          String?
-  folderId         String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  isDailyRollover  Boolean  @default(false)
-  rolloverTimezone String   @default("Asia/Singapore")
-  order            Int      @default(0)
-  folder           Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  space            Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  pages            Page[]
-  teamId           String?
-  team             Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  id                       String   @id @default(uuid())
+  title                    String
+  docDate                  DateTime @default(now())
+  spaceId                  String?
+  folderId                 String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  isDailyRollover          Boolean  @default(false)
+  rolloverTimezone         String   @default("Asia/Singapore")
+  order                    Int      @default(0)
+  teamId                   String?
   assigneeRoleRestrictions String[] @default([])
+  folder                   Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  space                    Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  team                     Team?    @relation(fields: [teamId], references: [id])
+  pages                    Page[]
 
   @@index([spaceId])
   @@index([folderId])
@@ -218,32 +218,32 @@ model Favorite {
 }
 
 model Task {
-  id            String             @id @default(uuid())
-  title         String
-  description   String?
-  priority      Priority           @default(MEDIUM)
-  listId        String
-  creatorId     String
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  assigneeId    String?
-  dueDate       DateTime?
-  startDate     DateTime?
-  status        String             @default("Pending")
-  teamId        String?
-  externalId    String?            @unique
-  attachments   Attachment[]
-  checklists    Checklist[]
-  subtasks      Subtask[]
-  assignee      User?              @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  creator       User               @relation("TaskCreator", fields: [creatorId], references: [id])
-  list          List               @relation(fields: [listId], references: [id], onDelete: Cascade)
-  team          Team?              @relation(fields: [teamId], references: [id])
-  comments      TaskComment[]
-  notifications TaskNotification[]
-  assignees     User[]             @relation("TaskMultiAssignees")
-  assigneeRoleRestrictions String[] @default([])
+  id                       String             @id @default(uuid())
+  title                    String
+  description              String?
+  priority                 Priority           @default(MEDIUM)
+  listId                   String
+  creatorId                String
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  assigneeId               String?
+  dueDate                  DateTime?
+  startDate                DateTime?
+  status                   String             @default("Pending")
+  teamId                   String?
+  externalId               String?            @unique
+  assigneeRoleRestrictions String[]           @default([])
   teamAssignAccessRole     String?
+  attachments              Attachment[]
+  checklists               Checklist[]
+  subtasks                 Subtask[]
+  assignee                 User?              @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator                  User               @relation("TaskCreator", fields: [creatorId], references: [id])
+  list                     List               @relation(fields: [listId], references: [id], onDelete: Cascade)
+  team                     Team?              @relation(fields: [teamId], references: [id])
+  comments                 TaskComment[]
+  notifications            TaskNotification[]
+  assignees                User[]             @relation("TaskMultiAssignees")
 
   @@index([listId])
   @@index([status])
@@ -255,25 +255,25 @@ model Task {
 }
 
 model Subtask {
-  id          String        @id @default(uuid())
-  title       String
-  taskId      String
-  createdAt   DateTime      @default(now())
-  completed   Boolean       @default(false)
-  status      String?       @default("PENDING")
-  description String?
-  dueDate     DateTime?
-  priority    Priority      @default(MEDIUM)
-  assigneeId  String?
-  teamId      String?
-  assignees   User[]        @relation("SubtaskMultiAssignees")
-  team        Team?         @relation(fields: [teamId], references: [id])
-  checklists  Checklist[]
-  User        User?         @relation(fields: [assigneeId], references: [id])
-  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  comments    TaskComment[]
-  assigneeRoleRestrictions String[] @default([])
+  id                       String        @id @default(uuid())
+  title                    String
+  taskId                   String
+  createdAt                DateTime      @default(now())
+  completed                Boolean       @default(false)
+  status                   String?       @default("PENDING")
+  description              String?
+  dueDate                  DateTime?
+  priority                 Priority      @default(MEDIUM)
+  assigneeId               String?
+  teamId                   String?
+  assigneeRoleRestrictions String[]      @default([])
   teamAssignAccessRole     String?
+  checklists               Checklist[]
+  User                     User?         @relation(fields: [assigneeId], references: [id])
+  task                     Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  team                     Team?         @relation(fields: [teamId], references: [id])
+  comments                 TaskComment[]
+  assignees                User[]        @relation("SubtaskMultiAssignees")
 
   @@index([taskId])
   @@index([assigneeId])

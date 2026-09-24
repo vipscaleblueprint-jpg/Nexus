@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { spacesApi } from '@/api';
 import { Space, Folder } from '@/lib/types';
 import { X, FileText } from 'lucide-react';
@@ -53,8 +54,6 @@ export function CreateDocModal({
     setError(null);
   }, [isOpen, defaultSpaceId, defaultFolderId]);
 
-  if (!isOpen) return null;
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) {
@@ -69,7 +68,7 @@ export function CreateDocModal({
         title: title.trim(),
         spaceId: spaceId && spaceId !== 'root-space' ? spaceId : undefined,
         folderId: folderId || undefined,
-        isDailyRollover
+        isDailyRollover,
       });
       setLoading(false);
       setTitle('');
@@ -83,9 +82,22 @@ export function CreateDocModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 font-sans">
-      <div className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200">
-        <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 font-sans"
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
+          >
+            <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-purple-400">
             <FileText className="w-5 h-5" />
             <h3 className="text-base font-bold text-white">Create Document Container</h3>
@@ -160,21 +172,7 @@ export function CreateDocModal({
             </div>
           )}
 
-          <div className="flex items-center gap-3 bg-zinc-900/50 p-3 rounded-xl border border-zinc-700/50">
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isDailyRollover}
-                onChange={(e) => setIsDailyRollover(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-500"></div>
-            </label>
-            <div>
-              <p className="text-xs font-semibold text-zinc-200">Daily Auto Rollover</p>
-              <p className="text-[10px] text-zinc-400">Automatically creates a new daily page (UTC+8) and transfers active content.</p>
-            </div>
-          </div>
+
 
           <div className="pt-2 flex justify-end gap-2">
             <button
@@ -193,7 +191,9 @@ export function CreateDocModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

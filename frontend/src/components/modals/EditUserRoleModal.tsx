@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, X, User as UserIcon, Check, Loader2, Star, ChevronDown } from 'lucide-react';
 import { usersApi } from '@/api/users';
 import { getRoles } from '@/api/roles';
@@ -74,7 +75,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [roleMenuOpen]);
 
-  if (!isOpen || !user) return null;
+
 
   const toggleRole = (name: string) => {
     setRoles((prev) => (prev.includes(name) ? prev.filter((r) => r !== name) : [...prev, name]));
@@ -82,6 +83,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
     setLoading(true);
     setError(null);
 
@@ -139,19 +141,28 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm cursor-pointer"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="edit-role-title"
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 no-scrollbar"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 cursor-pointer"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-role-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 no-scrollbar"
+          >
         {/* Header */}
-        <div className="sticky top-0 z-10 px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/90 backdrop-blur">
+        <div className="sticky top-0 z-10 px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/90">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-zinc-800/80 border border-zinc-700">
               <Shield className="w-4 h-4 text-indigo-400" />
@@ -175,11 +186,11 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
         {/* User preview header */}
         <div className="px-5 py-3 bg-zinc-900/40 border-b border-zinc-800/60 flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xs font-bold text-white">
-            {user.name.slice(0, 2).toUpperCase()}
+            {user?.name?.slice(0, 2).toUpperCase() || 'U'}
           </div>
           <div className="truncate">
-            <div className="text-xs font-bold text-white truncate">{user.name}</div>
-            <div className="text-[11px] text-zinc-400 truncate">{user.email}</div>
+            <div className="text-xs font-bold text-white truncate">{user?.name || 'Unknown User'}</div>
+            <div className="text-[11px] text-zinc-400 truncate">{user?.email || 'No email'}</div>
           </div>
         </div>
 
@@ -405,7 +416,9 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
             </button>
           </div>
         </form>
-      </div>
-    </div>
+        </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

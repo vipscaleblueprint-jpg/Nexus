@@ -6,7 +6,7 @@ import { useAppStore } from "@/lib/store";
 import { User } from "@/lib/types";
 import { authApi } from "@/api";
 import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
-import { ApiSettingsModal } from "@/components/modals/ApiSettingsModal";
+import { motion, AnimatePresence } from "framer-motion";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Nexus Workspace",
@@ -24,7 +24,6 @@ export function Header() {
   const toggleSidebar = useAppStore(state => state.toggleSidebar);
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
 
   const title = PAGE_TITLES[pathname] ?? "Nexus";
 
@@ -99,12 +98,21 @@ export function Header() {
               {activeUser.name.split(" ")[0]}
             </span>
 
-            <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
+            <motion.div animate={{ rotate: isProfileOpen ? -180 : 0 }} transition={{ duration: 0.2 }}>
+              <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
+            </motion.div>
           </button>
 
-          {isProfileOpen && (
-            <div className="absolute right-0 mt-2 w-64 bg-[#18181c] border border-zinc-800/80 rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3">
-              <div className="flex items-center gap-3 pb-3 border-b border-zinc-800/60">
+          <AnimatePresence>
+            {isProfileOpen && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                transition={{ duration: 0.15, ease: "easeOut" }}
+                className="absolute right-0 mt-2 w-64 bg-[#18181c] border border-zinc-800/80 rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3 origin-top-right"
+              >
+                <div className="flex items-center gap-3 pb-3 border-b border-zinc-800/60">
                 <div className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 text-white font-bold flex items-center justify-center text-xs shrink-0">
                   {activeUser.name.slice(0, 2).toUpperCase()}
                 </div>
@@ -166,25 +174,13 @@ export function Header() {
                 <button
                   onClick={() => {
                     setIsProfileOpen(false);
-                    setIsApiSettingsOpen(true);
+                    router.push("/settings#api");
                   }}
                   className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
                 >
                   <span className="truncate text-indigo-400">API Settings</span>
                 </button>
-                {activeUser.systemRole === "ADMIN" && (
-                  <button
-                    onClick={() => {
-                      setIsProfileOpen(false);
-                      router.push("/settings/users");
-                    }}
-                    className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
-                  >
-                    <span className="truncate text-yellow-400">
-                      Admin Settings
-                    </span>
-                  </button>
-                )}
+
                 <button
                   onClick={handleLogout}
                   className="w-full flex items-center justify-center gap-2 p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-900/50 font-semibold transition-colors text-xs cursor-pointer mt-2"
@@ -193,14 +189,12 @@ export function Header() {
                   <span>Sign Out</span>
                 </button>
               </div>
-            </div>
-          )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
-      <ApiSettingsModal
-        isOpen={isApiSettingsOpen}
-        onClose={() => setIsApiSettingsOpen(false)}
-      />
+
     </header>
   );
 }

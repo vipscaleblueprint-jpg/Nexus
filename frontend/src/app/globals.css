@@ -81,7 +81,7 @@ input:disabled,
   outline: none;
 }
 
-.ProseMirror p.is-editor-empty:first-child::before {
+.show-placeholder .ProseMirror p.is-editor-empty:first-child::before {
   color: #71717a;
   content: attr(data-placeholder);
   float: left;

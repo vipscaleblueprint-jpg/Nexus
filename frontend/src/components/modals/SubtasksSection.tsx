@@ -12,6 +12,16 @@ import { toast } from '@/lib/toast';
 import { ALL_STATUSES, STATUS_COLORS } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 
+const getHexColor = (color: string) => {
+  const colors: Record<string, string> = {
+    slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+    red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+    green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+    blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+    pink: '#ec4899', rose: '#f43f5e'
+  };
+  return colors[color] || color;
+};
 interface SubtasksSectionProps {
   task: Task;
   onUpdateTask: (task: Task) => void;
@@ -595,56 +605,86 @@ function SubtaskRow({
               ? <CheckCircle2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
               : <CircleDashed className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
             }
-            <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
-              <Popover.Trigger asChild>
-            {(() => {
-              const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
-              const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
-              const hasCustomColor = !!statusObj?.color;
-              const defaultClasses = STATUS_COLORS[subtask.status || ''] ?? (subtask.completed ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25' : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60');
-              
-              return (
-                <div
-                  title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
-                  onClick={() => { if (canEditTask) setStatusOpen(true); }}
-                  style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
-                  className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium select-none cursor-pointer w-fit ${hasCustomColor ? 'text-white hover:brightness-110' : defaultClasses}`}
-                >
-                  <span className="uppercase">{statusName.replace('_', ' ')}</span>
-                  <ChevronRight className="w-3 h-3 opacity-60 ml-0.5" />
-                </div>
-              );
-            })()}
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                  <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                    {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
-                      <div
-                        key={s}
-                        onClick={() => {
-                          if (!canEditTask) return;
-                          const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
-                          onUpdate(subtask.id, { status: s, completed: isFinal });
-                          setStatusOpen(false);
-                        }}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
-                      >
-                        {(() => {
-                          const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                          if (customObj?.color) {
-                            return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
-                          }
-                          return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
-                        })()}
-                        {s}
-                        {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
-                      </div>
-                    ))}
+            <div className="flex items-center gap-1.5">
+              {(() => {
+                const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
+                const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+                const hasCustomColor = !!statusObj?.color;
+                const defaultClasses = STATUS_COLORS[subtask.status || ''] ?? (subtask.completed ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25' : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60');
+                
+                return (
+                  <div
+                    style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
+                    className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors w-fit ${hasCustomColor ? 'text-white' : defaultClasses} shadow-sm group/status`}
+                  >
+                    <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
+                      <Popover.Trigger asChild>
+                        <div
+                          title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
+                          onClick={() => { if (canEditTask) setStatusOpen(true); }}
+                          className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
+                        >
+                          {statusName.replace('_', ' ')}
+                        </div>
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                          <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                            {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                              <div
+                                key={s}
+                                onClick={() => {
+                                  if (!canEditTask) return;
+                                  const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
+                                  onUpdate(subtask.id, { status: s, completed: isFinal });
+                                  setStatusOpen(false);
+                                }}
+                                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                              >
+                                {(() => {
+                                  const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                                  if (customObj?.color) {
+                                    return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
+                                  }
+                                  return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                })()}
+                                {s}
+                                {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                              </div>
+                            ))}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+
+                    <div className="h-4 w-[1px] bg-white/20" />
+                    
+                    {(() => {
+                      const statuses = (listStatuses && listStatuses.length > 0)
+                        ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+                        : ALL_STATUSES;
+                      const currentIndex = statuses.indexOf(statusName);
+                      const nextIndex = currentIndex !== -1 ? (currentIndex + 1) % statuses.length : 0;
+                      const nextStatus = statuses[nextIndex];
+                      
+                      return (
+                        <div 
+                          title={`Move to "${nextStatus}"`}
+                          className="flex items-center justify-center h-full px-1.5 cursor-pointer hover:brightness-110 rounded-r-md"
+                          onClick={() => {
+                            if (!canEditTask) return;
+                            const isFinal = nextStatus.toLowerCase() === 'closed' || nextStatus.toLowerCase() === 'done' || nextStatus.toLowerCase() === 'completed';
+                            onUpdate(subtask.id, { status: nextStatus, completed: isFinal });
+                          }}
+                        >
+                          <ChevronRight className="w-3.5 h-3.5 opacity-90" />
+                        </div>
+                      );
+                    })()}
                   </div>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
+                );
+              })()}
+            </div>
           </div>
 
           {/* Assignees row */}
@@ -950,21 +990,21 @@ function SubtaskRow({
           <div className="flex items-center gap-4 border-b border-zinc-800/60 mb-4 shrink-0">
             <button
               onClick={() => setActiveTab('audit')}
-              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'audit' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
+              className={`pb-2 text-[11px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'audit' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
               <span className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Audit</span>
               {activeTab === 'audit' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t-full" />}
             </button>
             <button
               onClick={() => setActiveTab('checklist')}
-              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'checklist' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
+              className={`pb-2 text-[11px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'checklist' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
               <span className="flex items-center gap-1.5"><CheckSquare className="w-3.5 h-3.5" /> Checklist</span>
               {activeTab === 'checklist' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t-full" />}
             </button>
             <button
               onClick={() => setActiveTab('comments')}
-              className={`pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'comments' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
+              className={`pb-2 text-[11px] font-bold uppercase tracking-wider transition-colors relative cursor-pointer ${activeTab === 'comments' ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
               <span className="flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Comments</span>
               {activeTab === 'comments' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t-full" />}
@@ -981,7 +1021,7 @@ function SubtaskRow({
 
                       return (
                         <div key={checklist.id} className="flex flex-col gap-1.5">
-                          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">{checklist.name}</div>
+                          <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">{checklist.name}</div>
                           {checklist.items?.map((item: any) => (
                             <div 
                               key={item.id} 
@@ -991,10 +1031,10 @@ function SubtaskRow({
                               }}
                               title={!canCheck ? "Only Auditors can tick Audit Checklists" : undefined}
                             >
-                              <div className={`mt-0.5 w-3 h-3 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${item.completed ? 'bg-blue-600 border-blue-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
-                                {item.completed && <Check className="w-2.5 h-2.5 text-white" />}
+                              <div className={`mt-0.5 w-3.5 h-3.5 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${item.completed ? 'bg-blue-600 border-blue-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
+                                {item.completed && <Check className="w-3 h-3 text-white" />}
                               </div>
-                              <span className={`text-[11px] leading-snug break-words ${item.completed ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
+                              <span className={`text-[12px] leading-snug break-words ${item.completed ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
                                 {item.text}
                               </span>
                             </div>
@@ -1024,7 +1064,7 @@ function SubtaskRow({
               <div className="flex-1 flex flex-col relative h-full">
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
                   <div className="flex flex-col gap-1.5">
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Audit Items</div>
+                    <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Audit Items</div>
                     {getRequiredAudits(subtask.title, subtask.assigneeRoleRestrictions).map((text, idx) => {
                       const auditChecklist = subtask.checklists?.find((c: any) => c.name.toLowerCase() === 'audit');
                       const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());
@@ -1085,10 +1125,10 @@ function SubtaskRow({
                           onClick={handleToggleAuditItem}
                           title={!canCheck ? `Only ${requiredRole || 'Admins'} can check this item` : undefined}
                         >
-                          <div className={`mt-0.5 w-3 h-3 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${isCompleted ? 'bg-emerald-600 border-emerald-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
-                            {isCompleted && <Check className="w-2.5 h-2.5 text-white" />}
+                          <div className={`mt-0.5 w-3.5 h-3.5 rounded-[3px] border flex items-center justify-center shrink-0 transition-colors ${isCompleted ? 'bg-emerald-600 border-emerald-600' : 'border-zinc-600 group-hover/item:border-zinc-400'}`}>
+                            {isCompleted && <Check className="w-3 h-3 text-white" />}
                           </div>
-                          <span className={`text-[11px] leading-snug break-words ${isCompleted ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
+                          <span className={`text-[12px] leading-snug break-words ${isCompleted ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}>
                             {text}
                           </span>
                         </div>
@@ -1103,24 +1143,29 @@ function SubtaskRow({
               <div className="flex-1 flex flex-col relative h-full">
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-3 min-h-[120px]">
                   {subtask.comments && subtask.comments.length > 0 ? (
-                    subtask.comments.map((comment: any) => (
-                      <div key={comment.id} className="flex gap-2">
-                        {comment.user?.avatarUrl ? (
-                          <img src={comment.user.avatarUrl} alt="" className="w-5 h-5 rounded-full shrink-0" />
-                        ) : (
-                          <div className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[10px] font-bold shrink-0">
-                            {comment.user?.name?.charAt(0).toUpperCase() || 'U'}
+                    subtask.comments.map((comment: any) => {
+                      const dt = comment.createdAt ? new Date(comment.createdAt) : new Date();
+                      const dateStr = isNaN(dt.getTime()) ? '' : dt.toLocaleDateString();
+                      
+                      return (
+                        <div key={comment.id} className="flex gap-2">
+                          {comment.user?.avatarUrl ? (
+                            <img src={comment.user.avatarUrl} alt="" className="w-6 h-6 rounded-full shrink-0" />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[11px] font-bold shrink-0">
+                              {comment.user?.name?.charAt(0).toUpperCase() || 'S'}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span className="text-[12px] font-medium text-zinc-300 truncate">{comment.user?.name || 'System'}</span>
+                              <span className="text-[10px] text-zinc-500 shrink-0">{dateStr}</span>
+                            </div>
+                            <p className="text-[12px] text-zinc-400 leading-relaxed break-words">{comment.content}</p>
                           </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 mb-0.5">
-                            <span className="text-[11px] font-medium text-zinc-300 truncate">{comment.user?.name || 'Unknown'}</span>
-                            <span className="text-[9px] text-zinc-500 shrink-0">{new Date(comment.createdAt).toLocaleDateString()}</span>
-                          </div>
-                          <p className="text-[11px] text-zinc-400 leading-relaxed break-words">{comment.content}</p>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-center">
                       <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center mb-2">
@@ -1143,14 +1188,14 @@ function SubtaskRow({
                       disabled={subtask.completed}
                       onChange={(e) => setCommentText(e.target.value)}
                       placeholder={subtask.completed ? "Locked" : "Write a comment..."}
-                      className="w-full bg-[#18181b] border border-zinc-800 focus:border-zinc-700 rounded-lg pl-3 pr-[70px] py-2 text-[11px] text-zinc-200 placeholder:text-zinc-500 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full bg-[#18181b] border border-zinc-800 focus:border-zinc-700 rounded-lg pl-3 pr-[70px] py-2 text-[12px] text-zinc-200 placeholder:text-zinc-500 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                     <button
                       type="submit"
                       disabled={!commentText.trim() || isSubmittingComment || subtask.completed}
-                      className="absolute right-1 flex items-center justify-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:bg-transparent disabled:text-zinc-600 text-zinc-300 text-[10px] font-medium rounded transition-colors cursor-pointer"
+                      className="absolute right-1 flex items-center justify-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:bg-transparent disabled:text-zinc-600 text-zinc-300 text-[11px] font-medium rounded transition-colors cursor-pointer"
                     >
-                      <Send className="w-3 h-3" />
+                      <Send className="w-3.5 h-3.5" />
                       {isSubmittingComment ? '...' : 'Send'}
                     </button>
                   </form>

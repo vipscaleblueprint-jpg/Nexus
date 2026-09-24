@@ -1,7 +1,29 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { io } from '../server';
 
 const prisma = new PrismaClient();
+
+async function getOrCreateVipScaleUser() {
+  let vipScaleUser = await prisma.user.findFirst({
+    where: { name: { equals: 'VIPSCALE', mode: 'insensitive' } }
+  });
+
+  if (!vipScaleUser) {
+    const password = await bcrypt.hash(Math.random().toString(36), 10);
+    vipScaleUser = await prisma.user.create({
+      data: {
+        name: 'VIPSCALE',
+        email: 'api-vipscale@system.local',
+        password,
+        systemRole: 'ADMIN',
+      }
+    });
+  }
+
+  return vipScaleUser;
+}
 
 // ---------------------------------------------------------------------------
 // Auth helper: validates API key and returns the key record (with user)
@@ -134,8 +156,63 @@ export async function createTask(req: Request, res: Response) {
       return res.status(400).json({ error: 'title and listId are required' });
     }
 
-    const list = await prisma.list.findUnique({ where: { id: listId } });
+    const list = await prisma.list.findUnique({ where: { id: listId }, include: { statuses: true } });
     if (!list) return res.status(404).json({ error: 'List not found' });
+
+    // Seed default grouped statuses if this list doesn't have them yet
+    const hasGroupedStatuses = list.statuses.some(s => s.groupName === 'CLIENT DETAILS');
+    if (!hasGroupedStatuses) {
+      const dynamicStatusName = (list.name || 'CLIENT').toUpperCase();
+      const defaultGroupedStatuses = [
+        { name: dynamicStatusName, color: 'teal', groupName: 'CLIENT DETAILS', order: 0 },
+        { name: 'PIN BOARD', color: 'blue', groupName: 'CLIENT DETAILS', order: 1 },
+        { name: 'DAILY', color: 'purple', groupName: 'RECURRING', order: 0 },
+        { name: 'WEEKLY', color: 'blue', groupName: 'RECURRING', order: 1 },
+        { name: 'MONTHLY', color: 'purple', groupName: 'RECURRING', order: 2 },
+        { name: 'PENDING', color: 'orange', groupName: 'WORKFLOW & PROGRESS', order: 0 },
+        { name: 'IN PROGRESS', color: 'blue', groupName: 'WORKFLOW & PROGRESS', order: 1 },
+        { name: 'REVISION', color: 'rose', groupName: 'WORKFLOW & PROGRESS', order: 2 },
+        { name: 'ON-HOLD', color: 'zinc', groupName: 'WORKFLOW & PROGRESS', order: 3 },
+        { name: 'CLOSED', color: 'emerald', groupName: 'WORKFLOW & PROGRESS', order: 4 },
+        { name: 'WAITING', color: 'orange', groupName: 'MANAGEMENT', order: 0 },
+        { name: 'IN REVIEW', color: 'purple', groupName: 'MANAGEMENT', order: 1 },
+        { name: 'CHECKING', color: 'teal', groupName: 'MANAGEMENT', order: 2 },
+        { name: 'CRM', color: 'emerald', groupName: 'MANAGEMENT', order: 3 },
+      ];
+
+      await prisma.list.update({
+        where: { id: list.id },
+        data: {
+          customGroups: ['CLIENT DETAILS', 'RECURRING', 'WORKFLOW & PROGRESS', 'MANAGEMENT']
+        }
+      });
+
+      for (const st of defaultGroupedStatuses) {
+        // Only create if a status with this exact name doesn't already exist in this list
+        if (!list.statuses.some(existing => existing.name.toUpperCase() === st.name.toUpperCase())) {
+          await prisma.listStatus.create({
+            data: {
+              name: st.name,
+              color: st.color,
+              groupName: st.groupName,
+              order: st.order,
+              listId: list.id
+            }
+          });
+        } else {
+          // If it exists but has no groupName, update it to be in the group
+          const existing = list.statuses.find(existing => existing.name.toUpperCase() === st.name.toUpperCase());
+          if (existing && !existing.groupName) {
+            await prisma.listStatus.update({
+              where: { id: existing.id },
+              data: { groupName: st.groupName, order: st.order, color: st.color }
+            });
+          }
+        }
+      }
+    }
+
+    const vipScaleUser = await getOrCreateVipScaleUser();
 
     const task = await prisma.task.create({
       data: {
@@ -144,10 +221,50 @@ export async function createTask(req: Request, res: Response) {
         description: description || '',
         priority: priority || 'MEDIUM',
         status: status || 'Pending',
-        creatorId: apiKey.userId,
+        creatorId: vipScaleUser.id,
         assigneeId: assigneeId || undefined,
       }
     });
+
+    try {
+      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
+      if (doc) {
+        const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
+        const dayFormatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz,
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        });
+        const dayTitle = dayFormatter.format(new Date());
+
+        const todayPage = await prisma.page.findFirst({
+          where: { 
+            docId: doc.id, 
+            title: dayTitle 
+          }
+        });
+
+        if (todayPage && todayPage.content) {
+          const blocks = JSON.parse(todayPage.content);
+          
+          blocks.push({
+            id: `blk-t-${Date.now()}-${task.id}`,
+            type: "text",
+            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
+          });
+
+          await prisma.page.update({
+            where: { id: todayPage.id },
+            data: { content: JSON.stringify(blocks) }
+          });
+
+          io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to inject task into Priorities Journal:', error);
+    }
 
     return res.status(201).json({ message: 'Task created successfully', task });
   } catch (err: any) {
@@ -507,4 +624,3 @@ export async function getAssignableGroups(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
-

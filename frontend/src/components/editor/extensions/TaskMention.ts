@@ -74,6 +74,14 @@ export const TaskMention = Mention.extend({
           return { 'data-task-has-description': 'true' };
         },
       },
+      taskListName: {
+        default: '',
+        parseHTML: element => element.getAttribute('data-task-list-name') || '',
+        renderHTML: attributes => {
+          if (!attributes.taskListName) return {};
+          return { 'data-task-list-name': attributes.taskListName };
+        },
+      },
       frozenTaskData: {
         default: null,
         parseHTML: element => {
@@ -116,6 +124,7 @@ export const TaskMention = Mention.extend({
           'data-task-due-date': node.attrs.taskDueDate || '',
           'data-task-team': node.attrs.taskTeam || '',
           'data-task-has-description': node.attrs.taskHasDescription ? 'true' : '',
+          'data-task-list-name': node.attrs.taskListName || '',
           'data-task-data': node.attrs.frozenTaskData ? (typeof node.attrs.frozenTaskData === 'object' ? JSON.stringify(node.attrs.frozenTaskData) : node.attrs.frozenTaskData) : ''
         }
       ),

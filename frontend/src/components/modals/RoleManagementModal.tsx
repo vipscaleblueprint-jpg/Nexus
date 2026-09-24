@@ -1,4 +1,5 @@
 import { X, Shield } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { RolesTab } from '@/components/settings/RolesTab';
 
 interface RoleManagementModalProps {
@@ -7,19 +8,28 @@ interface RoleManagementModalProps {
 }
 
 export function RoleManagementModal({ isOpen, onClose }: RoleManagementModalProps) {
-  if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 cursor-pointer"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 flex flex-col no-scrollbar"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0, y: 10 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0, y: 15 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 flex flex-col no-scrollbar cursor-default"
+          >
         <div className="sticky top-0 z-10 px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/90 backdrop-blur">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-zinc-800/80 border border-zinc-700">
@@ -43,7 +53,9 @@ export function RoleManagementModal({ isOpen, onClose }: RoleManagementModalProp
         <div className="p-5">
           <RolesTab />
         </div>
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

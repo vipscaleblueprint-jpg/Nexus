@@ -134,8 +134,37 @@ const STATUS_STYLES: Record<
   },
 };
 
-function getStatusConfig(statusName: string) {
+const getHexColor = (color: string) => {
+  const colors: Record<string, string> = {
+    slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+    red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+    green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+    blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+    pink: '#ec4899', rose: '#f43f5e'
+  };
+  return colors[color] || color;
+};
+
+function getStatusConfig(statusName: string, allLists?: any[]) {
   const normalized = (statusName || "TODO").trim().toUpperCase();
+  
+  if (allLists) {
+    for (const listData of allLists) {
+      if (listData.list && listData.list.statuses) {
+        const customStatus = listData.list.statuses.find((s: any) => (s.name || s.status || s.title)?.trim().toUpperCase() === normalized);
+        if (customStatus && customStatus.color) {
+          return {
+            label: customStatus.name || statusName,
+            customColor: getHexColor(customStatus.color),
+            pill: "text-white",
+            dot: "",
+            border: ""
+          };
+        }
+      }
+    }
+  }
+
   if (STATUS_STYLES[normalized]) {
     return STATUS_STYLES[normalized];
   }
@@ -509,7 +538,7 @@ function WorkspaceDashboardContent({
     });
     return allGroupKeys.map((statusKey) => ({
       status: statusKey,
-      config: getStatusConfig(statusKey),
+      config: getStatusConfig(statusKey, allLists),
       tasks: groups[statusKey],
     }));
   }, [filteredAllTasks]);
@@ -571,7 +600,7 @@ function WorkspaceDashboardContent({
 
       const subGroups = statusKeys.map((statusKey) => ({
         status: statusKey,
-        config: getStatusConfig(statusKey),
+        config: getStatusConfig(statusKey, allLists),
         tasks: statusGroups[statusKey],
       }));
 
@@ -626,7 +655,7 @@ function WorkspaceDashboardContent({
 
       const subGroups = statusKeys.map((statusKey) => ({
         status: statusKey,
-        config: getStatusConfig(statusKey),
+        config: getStatusConfig(statusKey, allLists),
         tasks: statusGroups[statusKey],
       }));
 
@@ -685,7 +714,7 @@ function WorkspaceDashboardContent({
 
     return allGroupKeys.map((statusKey) => ({
       status: statusKey,
-      config: getStatusConfig(statusKey),
+      config: getStatusConfig(statusKey, allLists),
       tasks: groups[statusKey],
     }));
   }, [filteredMyTasks]);
@@ -734,6 +763,7 @@ function WorkspaceDashboardContent({
         key: g.status,
         label: g.config.label,
         pillClass: g.config.pill,
+        customColor: (g.config as any).customColor,
         tasks: g.tasks,
       }));
     }
@@ -742,6 +772,7 @@ function WorkspaceDashboardContent({
         key: g.priority,
         label: g.config.label,
         pillClass: `bg-zinc-800/80 ${g.config.color}`,
+        customColor: undefined,
         tasks: g.tasks,
         subGroups: g.subGroups,
         totalTasks: g.totalTasks
@@ -1044,7 +1075,7 @@ function WorkspaceDashboardContent({
               <div className="space-y-6">
                 {activeGroups.map(
                   (groupData) => {
-                    const { key, label, pillClass, tasks: groupTasks, subGroups, totalTasks } = groupData as any;
+                    const { key, label, pillClass, customColor, tasks: groupTasks, subGroups, totalTasks } = groupData as any;
                     const isCollapsed = collapsedGroups.has(key);
                     const count = totalTasks ?? groupTasks.length;
                     
@@ -1056,7 +1087,7 @@ function WorkspaceDashboardContent({
                         </div>
                         <div className="flex flex-col w-full">
                           {tasksToRender.map((task) => {
-                            const statusConfig = getStatusConfig(task.status);
+                            const statusConfig = getStatusConfig(task.status, allLists);
                             const priorityConfig =
                               task.priority && PRIORITY_FLAGS[task.priority]
                                 ? PRIORITY_FLAGS[task.priority]
@@ -1076,7 +1107,7 @@ function WorkspaceDashboardContent({
                               >
                                 <div className="flex items-center gap-3 min-w-0 flex-1 pl-4 pr-4">
                                   <div className="w-3.5 h-3.5 rounded-[4px] border border-zinc-700 shrink-0 flex items-center justify-center transition-colors shadow-sm group-hover:border-zinc-500" />
-                                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusConfig.dot}`} />
+                                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusConfig.dot}`} style={(statusConfig as any).customColor ? { backgroundColor: (statusConfig as any).customColor } : {}} />
                                   <span className="text-[13px] font-medium text-zinc-200 truncate group-hover:text-blue-400 transition-colors">
                                     {task.title}
                                   </span>
@@ -1128,6 +1159,7 @@ function WorkspaceDashboardContent({
                         <div className="flex items-center gap-2">
                           <span
                             className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${pillClass} shadow-sm flex items-center gap-1 transition-transform`}
+                            style={(customColor as any) ? { backgroundColor: customColor as any } : {}}
                           >
                             {label}
                             <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
@@ -1153,6 +1185,7 @@ function WorkspaceDashboardContent({
                                     <div className="flex items-center gap-2">
                                       <span
                                         className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${sg.config.pill} shadow-sm flex items-center gap-1 transition-transform`}
+                                        style={(sg.config as any).customColor ? { backgroundColor: (sg.config as any).customColor } : {}}
                                       >
                                         {sg.config.label}
                                         <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isSgCollapsed ? "-rotate-90" : ""}`} />
@@ -1230,6 +1263,7 @@ function WorkspaceDashboardContent({
                         {/* Status Pill Badge */}
                         <span
                           className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1 transition-transform`}
+                          style={(config as any).customColor ? { backgroundColor: (config as any).customColor } : {}}
                         >
                           {config.label}
                           <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
@@ -1291,6 +1325,7 @@ function WorkspaceDashboardContent({
                                   {/* Status circle indicator */}
                                   <div
                                     className={`w-2.5 h-2.5 rounded-full ${config.dot} shrink-0`}
+                                    style={(config as any).customColor ? { backgroundColor: (config as any).customColor } : {}}
                                     title={`Status: ${task.status}`}
                                   />
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, X } from 'lucide-react';
 
 interface ConfirmDeleteModalProps {
@@ -20,7 +21,7 @@ export function ConfirmDeleteModal({
 }: ConfirmDeleteModalProps) {
   const [isDeleting, setIsDeleting] = useState(false);
 
-  if (!isOpen) return null;
+
 
   const handleConfirm = async () => {
     try {
@@ -35,9 +36,24 @@ export function ConfirmDeleteModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-[#18181b] rounded-xl shadow-2xl border border-red-900/50 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-red-900/30 bg-red-950/20">
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 cursor-pointer"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            className="w-full max-w-md bg-[#18181b] rounded-xl shadow-2xl border border-red-900/50 flex flex-col overflow-hidden cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-red-900/30 bg-red-950/20">
           <h2 className="text-sm font-bold text-red-400 flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" />
             {title}
@@ -75,7 +91,9 @@ export function ConfirmDeleteModal({
             {isDeleting ? 'Deleting...' : 'Delete Permanently'}
           </button>
         </div>
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, X, Shield, Briefcase, Calendar, Check, Loader2 } from 'lucide-react';
 import { invitationsApi } from '@/api/invitations';
 import { SystemRole, EmploymentType } from '@/lib/types';
@@ -29,7 +30,7 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isOpen]);
 
-  if (!isOpen) return null;
+
 
   const handleClose = () => {
     setEmail('');
@@ -72,17 +73,27 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm cursor-pointer"
-      onClick={handleClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="add-invite-title"
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 overflow-hidden"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75"
+          onClick={handleClose}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0, y: 10 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0, y: 15 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-invite-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 overflow-hidden cursor-default"
+          >
         {/* Modal Header */}
         <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/40">
           <div className="flex items-center gap-2.5">
@@ -242,7 +253,9 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
             </button>
           </div>
         </form>
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

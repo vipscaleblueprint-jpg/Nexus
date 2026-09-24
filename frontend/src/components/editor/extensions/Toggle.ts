@@ -51,10 +51,27 @@ export const ToggleSummary = Node.create({
           return true; // prevent default behavior (which would add a newline)
         });
       },
+
+      // Shift+Enter inside toggleSummary: insert a soft line break (hardBreak)
+      'Shift-Enter': () => {
+        return this.editor.commands.command(({ state }) => {
+          const { $from } = state.selection;
+          if ($from.parent.type.name !== 'toggleSummary') {
+            return false;
+          }
+          return this.editor.chain()
+            .focus()
+            .insertContent({ type: 'hardBreak' })
+            .run();
+        });
+      },
+
       Backspace: () => {
         return this.editor.commands.command(({ state, dispatch, commands, tr }) => {
           const { $from, empty } = state.selection;
-          // Only apply if cursor is empty and inside toggleSummary
+          // CRITICAL: Only intercept when cursor is COLLAPSED (empty selection).
+          // When there IS a selection, let Tiptap/ProseMirror handle it natively
+          // so that selecting text inside a toggle and pressing Delete works correctly.
           if (!empty || $from.parent.type.name !== 'toggleSummary') {
             return false;
           }
@@ -67,15 +84,12 @@ export const ToggleSummary = Node.create({
                 // Delete if completely empty
                 return commands.deleteNode('toggle');
               } else {
-                // If there is text, unwrap the toggle and turn the summary into a normal paragraph
-                // We will just extract the summary text and replace the entire toggle node with a paragraph.
-                // Note: This will delete the content inside the toggle body.
+                // Unwrap the toggle: extract summary text, replace toggle with a paragraph
                 const summaryText = $from.parent.textContent;
                 if (dispatch) {
                   const togglePos = $from.before($from.depth - 1);
                   const paragraphContent = summaryText ? state.schema.text(summaryText) : null;
                   tr.replaceWith(togglePos, togglePos + toggleNode.nodeSize, state.schema.nodes.paragraph.create(null, paragraphContent));
-                  // Set cursor at the start
                   tr.setSelection(Selection.near(tr.doc.resolve(togglePos + 1)));
                 }
                 return true;

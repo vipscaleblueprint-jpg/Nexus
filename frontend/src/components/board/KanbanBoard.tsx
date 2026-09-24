@@ -170,6 +170,12 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
     id: status,
     data: sortableData,
     disabled: isCollapsed,
+    animateLayoutChanges: (args) => {
+      // Disable layout animations when the column is just re-rendering with a new ID (e.g. on rename)
+      // Otherwise dnd-kit tries to animate the old column out, creating a "ghost" effect
+      if (args.isSorting || args.wasDragging) return true;
+      return false;
+    }
   });
 
   const isGhost = sortable.isDragging || activeColumn === status;
@@ -959,8 +965,8 @@ export function KanbanBoard({ tasks, onTaskMove,
                             onMouseLeave={!category.id.startsWith('group_') ? handleHeaderMouseLeave : undefined}
                             onMouseUp={!category.id.startsWith('group_') ? handleHeaderMouseUp : undefined}
                             onMouseMove={!category.id.startsWith('group_') ? handleHeaderMouseMove : undefined}
-                            {...(category.id.startsWith('group_') ? sortable.listeners : {})}
-                            {...(category.id.startsWith('group_') ? sortable.attributes : {})}
+                            {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.listeners : {})}
+                            {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.attributes : {})}
                           >
                             <div className="flex items-center gap-1.5">
                               {editingGroup === category.title ? (

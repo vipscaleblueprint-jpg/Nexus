@@ -280,8 +280,8 @@ export const KanbanColumn = memo(function KanbanColumn({
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div 
           className={`flex flex-col px-3 pt-3 pb-2 shrink-0 group/colheader ${isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'}`}
-          {...dragListeners}
-          {...dragAttributes}
+          {...(!isEditing ? dragListeners : {})}
+          {...(!isEditing ? dragAttributes : {})}
         >
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5 flex-wrap min-w-0 pr-1">
@@ -292,16 +292,21 @@ export const KanbanColumn = memo(function KanbanColumn({
                   value={localName}
                   onChange={(e) => setLocalName(e.target.value)}
                   onBlur={handleRenameSubmit}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleRenameSubmit(); if (e.key === 'Escape') { setIsEditing(false); setLocalName(label); } }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') handleRenameSubmit();
+                    if (e.key === 'Escape') { setIsEditing(false); setLocalName(label); }
+                  }}
                   className={`bg-zinc-800 text-xs text-white px-2 py-0.5 rounded outline-none w-32 border ${colors.badge}`}
                   onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                 />
               ) : (
                 <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 ${colors.badge}`}>
                   <div className="w-2 h-2 rounded-full bg-black/70" />
                   {label}
                   {onUpdateColumn && (
-                    <Pencil onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsEditing(true); }} className="w-3 h-3 ml-1 opacity-0 group-hover/colheader:opacity-100 hover:text-white transition-opacity shrink-0 cursor-pointer" />
+                    <Pencil onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsEditing(true); }} className="w-3 h-3 ml-1 opacity-0 group-hover/colheader:opacity-100 hover:text-white transition-opacity shrink-0 cursor-pointer" />
                   )}
                 </span>
               )}
@@ -325,12 +330,14 @@ export const KanbanColumn = memo(function KanbanColumn({
               <button 
                 className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
                 onClick={onToggleCollapse}
+                onPointerDown={(e) => e.stopPropagation()}
                 title="Collapse column"
               >
                 <span className="text-lg leading-none select-none -mt-1 block">‹</span>
               </button>
               <button 
                 onClick={() => setIsEditModalOpen(true)}
+                onPointerDown={(e) => e.stopPropagation()}
                 className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
                 title="Edit column settings"
               >
@@ -338,6 +345,7 @@ export const KanbanColumn = memo(function KanbanColumn({
               </button>
               <button 
                 onClick={() => onAddTaskClick?.(status)}
+                onPointerDown={(e) => e.stopPropagation()}
                 className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
                 title="Add task"
               >

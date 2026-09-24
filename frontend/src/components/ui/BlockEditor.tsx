@@ -7,6 +7,7 @@ import { Color } from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
+import Placeholder from '@tiptap/extension-placeholder';
 import { TaskMention } from '../editor/extensions/TaskMention';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
 import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
@@ -19,18 +20,22 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
+
 interface BlockEditorProps {
   content: string;
   onChange: (content: string) => void;
   onBlur: () => void;
+  onFocus?: () => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
+  onSplit?: (contents: string[]) => void;
   autoFocus?: boolean;
   editable?: boolean;
   onEditorReady?: (editor: any) => void;
 }
 
-export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, editable = true, onEditorReady }: BlockEditorProps) {
+export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onSplit, autoFocus, editable = true, onEditorReady }: BlockEditorProps) {
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
 
   let initialContent: any = content || '';
   if (typeof initialContent === 'string' && initialContent.startsWith('{"type":"doc"')) {
@@ -44,12 +49,19 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
   const editor = useEditor({
     editable,
     immediatelyRender: false,
+    parseOptions: {
+      preserveWhitespace: 'full',
+    },
     extensions: [
       StarterKit,
       Underline,
       TextStyle,
       Color,
       Highlight.configure({ multicolor: true }),
+      Placeholder.configure({
+        placeholder: "Write, press 'space' for AI, '/' for commands",
+        emptyEditorClass: 'is-editor-empty',
+      }),
       TaskList,
       TaskItem.configure({
         nested: true,
@@ -67,7 +79,21 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
     ],
     content: initialContent,
     onUpdate: ({ editor }) => {
-      onChange(editor.getHTML());
+      const html = editor.getHTML();
+      
+      // Check if we need to split the block (multiple root elements)
+      if (onSplit) {
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        // Tiptap often wraps everything in <p>. If there are multiple root elements, it was split.
+        if (div.children.length > 1) {
+          const contents = Array.from(div.children).map(child => child.outerHTML);
+          onSplit(contents);
+          return;
+        }
+      }
+      
+      onChange(html);
     },
     onBlur: ({ event }) => {
       if (blurTimeoutRef.current) {
@@ -81,10 +107,30 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
       if (blurTimeoutRef.current) {
         clearTimeout(blurTimeoutRef.current);
       }
+      if (onFocus) onFocus();
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0',
+        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap',
+      },
+      // Task 2: Preserve all data-* attributes on mention spans during paste.
+      transformPastedHTML(html: string) {
+        return html;
+      },
+      handleKeyDown: (view, event) => {
+        // We no longer manually intercept Enter because Tiptap natively creates a new paragraph,
+        // which our onUpdate handler detects and splits into a new block via onSplit!
+        // We only intercept Backspace to delete the block if it's empty.
+        if (event.key === 'Backspace') {
+          const doc = view.state.doc;
+          if (doc.textContent.length === 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (onKeyDown) onKeyDown(event as any);
+            return true;
+          }
+        }
+        return false;
       },
     },
     onCreate: ({ editor }) => {
@@ -95,14 +141,7 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
   });
 
   const handleKeyDownCapture = (e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace') {
-      const html = editor?.getHTML();
-      if (html === '<p></p>' || html === '<p><br></p>') {
-        e.preventDefault();
-        e.stopPropagation();
-        if (onKeyDown) onKeyDown(e);
-      }
-    }
+    // Intercepting handled natively in editorProps.handleKeyDown now.
   };
 
   useEffect(() => {
@@ -112,6 +151,15 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
       }, 10);
     }
   }, [editor, autoFocus]);
+
+  // Reactively sync the editable prop to the live Tiptap instance.
+  // useEditor's `editable` only applies at initialization, so we must
+  // call setEditable() when the prop changes (e.g. remote lock/unlock).
+  useEffect(() => {
+    if (editor && editor.isEditable !== editable) {
+      editor.setEditable(editable);
+    }
+  }, [editor, editable]);
 
   useEffect(() => {
     return () => {
@@ -247,7 +295,7 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
   ];
 
   return (
-    <div className="w-full">
+    <div className="w-full relative" ref={editorContainerRef}>
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
           <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999 }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-[99999]">
@@ -426,6 +474,11 @@ export function BlockEditor({ content, onChange, onBlur, onKeyDown, autoFocus, e
         }}
         onKeyDownCapture={handleKeyDownCapture}
       >
+        <style>{`
+          .tiptap p, .tiptap li, .tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5 {
+            white-space: pre-wrap;
+          }
+        `}</style>
         <EditorContent editor={editor} />
       </div>
     </div>

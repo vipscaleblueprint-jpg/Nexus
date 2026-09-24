@@ -13,7 +13,15 @@ export const ToggleNode = ({ node, updateAttributes }: NodeViewProps) => {
   };
 
   return (
-    <NodeViewWrapper className={`mb-2 toggle-node ${isOpen ? 'is-open' : 'is-closed'}`}>
+    <NodeViewWrapper
+      className={`mb-2 toggle-node ${isOpen ? 'is-open' : 'is-closed'}`}
+      // TASK 5 FIX (Bug B): Do NOT set contentEditable={false} on the wrapper.
+      // NodeViewWrapper defaults to contenteditable=false for block nodes,
+      // which breaks cross-block text selection. By passing undefined, we let
+      // ProseMirror decide, which allows selections to span across toggles.
+      // The NodeViewContent inside is still properly contenteditable.
+      // The chevron button itself sets contentEditable={false} to stay non-editable.
+    >
       <style>{`
         /* 
           Use reliable CSS-based display toggling. 

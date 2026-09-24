@@ -156,8 +156,61 @@ export async function createTask(req: Request, res: Response) {
       return res.status(400).json({ error: 'title and listId are required' });
     }
 
-    const list = await prisma.list.findUnique({ where: { id: listId } });
+    const list = await prisma.list.findUnique({ where: { id: listId }, include: { statuses: true } });
     if (!list) return res.status(404).json({ error: 'List not found' });
+
+    // Seed default grouped statuses if this list doesn't have them yet
+    const hasGroupedStatuses = list.statuses.some(s => s.groupName === 'CLIENT DETAILS');
+    if (!hasGroupedStatuses) {
+      const dynamicStatusName = (list.name || 'CLIENT').toUpperCase();
+      const defaultGroupedStatuses = [
+        { name: dynamicStatusName, color: 'teal', groupName: 'CLIENT DETAILS', order: 0 },
+        { name: 'PIN BOARD', color: 'blue', groupName: 'CLIENT DETAILS', order: 1 },
+        { name: 'DAILY', color: 'purple', groupName: 'RECURRING', order: 0 },
+        { name: 'WEEKLY', color: 'blue', groupName: 'RECURRING', order: 1 },
+        { name: 'MONTHLY', color: 'purple', groupName: 'RECURRING', order: 2 },
+        { name: 'PENDING', color: 'orange', groupName: 'WORKFLOW & PROGRESS', order: 0 },
+        { name: 'IN PROGRESS', color: 'blue', groupName: 'WORKFLOW & PROGRESS', order: 1 },
+        { name: 'REVISION', color: 'rose', groupName: 'WORKFLOW & PROGRESS', order: 2 },
+        { name: 'ON-HOLD', color: 'zinc', groupName: 'WORKFLOW & PROGRESS', order: 3 },
+        { name: 'CLOSED', color: 'emerald', groupName: 'WORKFLOW & PROGRESS', order: 4 },
+        { name: 'WAITING', color: 'orange', groupName: 'MANAGEMENT', order: 0 },
+        { name: 'IN REVIEW', color: 'purple', groupName: 'MANAGEMENT', order: 1 },
+        { name: 'CHECKING', color: 'teal', groupName: 'MANAGEMENT', order: 2 },
+        { name: 'CRM', color: 'emerald', groupName: 'MANAGEMENT', order: 3 },
+      ];
+
+      await prisma.list.update({
+        where: { id: list.id },
+        data: {
+          customGroups: ['CLIENT DETAILS', 'RECURRING', 'WORKFLOW & PROGRESS', 'MANAGEMENT']
+        }
+      });
+
+      for (const st of defaultGroupedStatuses) {
+        // Only create if a status with this exact name doesn't already exist in this list
+        if (!list.statuses.some(existing => existing.name.toUpperCase() === st.name.toUpperCase())) {
+          await prisma.listStatus.create({
+            data: {
+              name: st.name,
+              color: st.color,
+              groupName: st.groupName,
+              order: st.order,
+              listId: list.id
+            }
+          });
+        } else {
+          // If it exists but has no groupName, update it to be in the group
+          const existing = list.statuses.find(existing => existing.name.toUpperCase() === st.name.toUpperCase());
+          if (existing && !existing.groupName) {
+            await prisma.listStatus.update({
+              where: { id: existing.id },
+              data: { groupName: st.groupName, order: st.order, color: st.color }
+            });
+          }
+        }
+      }
+    }
 
     const vipScaleUser = await getOrCreateVipScaleUser();
 
@@ -571,4 +624,3 @@ export async function getAssignableGroups(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
-

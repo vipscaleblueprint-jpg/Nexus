@@ -1,143 +1,278 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
-import { Circle } from 'lucide-react';
+import React, { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react';
+import { CornerDownLeft, Layout } from 'lucide-react';
 
+type FilterType = 'all' | 'task' | 'board';
+
+interface TaskItem {
+  id: string;
+  type: 'task';
+  name: string;
+  title?: string;
+  status?: string;
+  statusColor?: string;
+  frequencyLabel?: string | null;
+  listName?: string;
+  assignees?: Array<{ id: string; name: string; avatarUrl?: string }>;
+  priority?: string;
+}
+
+interface BoardItem {
+  id: string;
+  type: 'board';
+  name: string;
+  color?: string;
+  icon?: string | null;
+}
+
+/**
+ * TaskListDropdown — redesigned @mention dropdown.
+ *
+ * Layout:
+ *  ┌─────────────────────────────────────────┐
+ *  │ [Filter pills: All | Task | Boards]      │
+ *  ├─────────────────────────────────────────┤
+ *  │ TASKS                                   │
+ *  │  ● Task title            DAILY  [avatar]│
+ *  │  ● Task title                   [avatar]│
+ *  ├─────────────────────────────────────────┤
+ *  │ BOARDS                                  │
+ *  │  ■ Board name                           │
+ *  ├─────────────────────────────────────────┤
+ *  │  @search query typed here               │
+ *  └─────────────────────────────────────────┘
+ */
 export const TaskListDropdown = forwardRef((props: any, ref) => {
+  // props.items is now { tasks: TaskItem[], boards: BoardItem[] }
+  const rawItems = props.items || {};
+  const tasks: TaskItem[] = rawItems.tasks || [];
+  const boards: BoardItem[] = rawItems.boards || [];
+
+  const [filter, setFilter] = useState<FilterType>('all');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const selectItem = (index: number) => {
-    const item = props.items[index];
-    if (item) {
-      if (item.type === 'liveblock') {
-        let assigneeName = '';
-        try {
-          const { editor } = props;
-          const $from = editor.state.selection.$from;
-          for (let i = $from.depth; i > 0; i--) {
-            const node = $from.node(i);
-            if (node.type.name === 'heading') {
-              assigneeName = node.textContent;
-              break;
-            }
-          }
-          if (!assigneeName) {
-            let pos = $from.before();
-            while (pos > 0) {
-              const node = editor.state.doc.nodeAt(pos);
-              if (node && node.type.name === 'heading') {
-                assigneeName = node.textContent;
-                break;
-              }
-              pos--;
-            }
-          }
-        } catch(e) {}
+  // Build the flat navigation list based on current filter
+  const visibleTasks = filter === 'board' ? [] : tasks;
+  const visibleBoards = filter === 'task' ? [] : boards;
+  const flatItems: Array<TaskItem | BoardItem> = [...visibleTasks, ...visibleBoards];
 
-        props.editor.chain().focus().deleteRange(props.range).insertContent({
-          type: 'liveKanbanBlock',
-          attrs: {
-            blockType: item.blockType,
-            assigneeName: assigneeName || '',
-          }
-        }).run();
-      } else {
-        props.command({
-          id: item.id,
-          label: item.name || item.title || 'Untitled',
-          mentionType: item.type, // 'task' or 'status'
-          taskStatus: item.type === 'status' ? JSON.stringify(item.status) : (item.status || ''),
-          tasks: item.type === 'status' ? JSON.stringify(item.tasks || []) : '',
-          taskAssignees: item.type === 'task' ? JSON.stringify(item.assignees || []) : '',
-          taskPriority: item.type === 'task' ? (item.priority || '') : '',
-          taskDueDate: item.type === 'task' ? (item.dueDate || '') : '',
-        });
-      }
+  // Reset selection when items or filter changes
+  useEffect(() => setSelectedIndex(0), [props.items, filter]);
+
+  const selectItem = useCallback((item: TaskItem | BoardItem) => {
+    if (!item) return;
+
+    if (item.type === 'board') {
+      // Insert a board mention
+      props.command({
+        id: item.id,
+        label: item.name,
+        mentionType: 'board',
+        taskStatus: '',
+        tasks: '',
+        taskAssignees: '',
+        taskPriority: '',
+        taskDueDate: '',
+      });
+      return;
     }
-  };
 
-  const upHandler = () => {
-    setSelectedIndex((selectedIndex + props.items.length - 1) % props.items.length);
-  };
+    // Task mention
+    const task = item as TaskItem;
+    props.command({
+      id: task.id,
+      label: task.name || task.title || 'Untitled',
+      mentionType: 'task',
+      taskStatus: task.status || '',
+      tasks: '',
+      taskAssignees: task.assignees ? JSON.stringify(task.assignees) : '',
+      taskPriority: task.priority || '',
+      taskDueDate: (task as any).dueDate || '',
+      // Extra fields for chip display
+      taskListName: task.listName || '',
+    });
+  }, [props]);
 
-  const downHandler = () => {
-    setSelectedIndex((selectedIndex + 1) % props.items.length);
-  };
+  const upHandler = useCallback(() => {
+    setSelectedIndex(i => (i + flatItems.length - 1) % Math.max(flatItems.length, 1));
+  }, [flatItems.length]);
 
-  const enterHandler = () => {
-    selectItem(selectedIndex);
-  };
+  const downHandler = useCallback(() => {
+    setSelectedIndex(i => (i + 1) % Math.max(flatItems.length, 1));
+  }, [flatItems.length]);
 
-  useEffect(() => setSelectedIndex(0), [props.items]);
+  const enterHandler = useCallback(() => {
+    const item = flatItems[selectedIndex];
+    if (item) selectItem(item);
+  }, [flatItems, selectedIndex, selectItem]);
 
   useImperativeHandle(ref, () => ({
     onKeyDown: ({ event }: any) => {
-      if (event.key === 'ArrowUp') {
-        upHandler();
-        return true;
-      }
-      if (event.key === 'ArrowDown') {
-        downHandler();
-        return true;
-      }
-      if (event.key === 'Enter') {
-        enterHandler();
-        return true;
-      }
+      if (event.key === 'ArrowUp') { upHandler(); return true; }
+      if (event.key === 'ArrowDown') { downHandler(); return true; }
+      if (event.key === 'Enter') { enterHandler(); return true; }
       return false;
     },
   }));
 
-  if (!props.items || props.items.length === 0) {
-    return (
-      <div className="bg-white dark:bg-[#1a1a1a] border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl overflow-hidden p-2 text-sm text-zinc-500">
-        No suggestions found
-      </div>
-    );
-  }
+  // Index offset for boards in the flat list
+  const boardStartIndex = visibleTasks.length;
+
+  const hasNoResults = flatItems.length === 0;
 
   return (
-    <div className="bg-white dark:bg-[#1a1a1a] border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl overflow-hidden w-[320px] max-h-[300px] overflow-y-auto z-[99999] flex flex-col custom-scrollbar">
-      <div className="p-1">
-        {props.items.map((item: any, index: number) => (
+    <div className="bg-[#18181c] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden w-[360px] z-[99999] flex flex-col">
+      
+      {/* ── Filter pills ──────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-1.5 border-b border-zinc-800/60">
+        {(['all', 'task', 'board'] as FilterType[]).map(f => (
           <button
-            className={`w-full text-left flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors ${
-              index === selectedIndex
-                ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
-                : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+            key={f}
+            onMouseDown={e => { e.preventDefault(); setFilter(f); }}
+            className={`px-2 py-0.5 rounded-md text-[11px] font-semibold capitalize transition-colors ${
+              filter === f
+                ? 'bg-zinc-700 text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
             }`}
-            key={index}
-            onClick={() => selectItem(index)}
           >
-            {item.type === 'status' ? (
-              <>
-                <span 
-                  className="px-1.5 py-[1px] rounded text-[9px] font-bold uppercase tracking-wide shrink-0"
-                  style={{ backgroundColor: item.status?.color || '#3b82f6', color: '#fff' }}
-                >
-                  {item.name}
-                </span>
-                <span className="truncate flex-1 text-zinc-500 italic text-xs">Kanban Column</span>
-                <span className="text-xs text-zinc-500">{item.tasks?.length || 0} tasks</span>
-              </>
-            ) : item.type === 'liveblock' ? (
-              <>
-                <span className="text-base shrink-0">{item.blockType === 'newtasks' ? '🆕' : '📊'}</span>
-                <span className="truncate flex-1 font-bold text-blue-500">{item.name}</span>
-                <span className="text-xs text-zinc-500 italic shrink-0 bg-blue-500/10 px-1.5 py-0.5 rounded text-blue-400">Live Sync</span>
-              </>
-            ) : (
-              <>
-                <Circle className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                <span className="truncate flex-1">{item.name || item.title || 'Untitled'}</span>
-                {item.status && (
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 shrink-0">
-                    {item.status}
-                  </span>
-                )}
-              </>
-            )}
+            {f === 'all' ? 'All' : f === 'task' ? 'Tasks' : 'Boards'}
           </button>
         ))}
+      </div>
+
+      {/* ── Results list ─────────────────────────────────────────────────── */}
+      <div className="max-h-[280px] overflow-y-auto custom-scrollbar">
+        {hasNoResults ? (
+          <div className="px-3 py-4 text-xs text-zinc-500 text-center italic">
+            No results found
+          </div>
+        ) : (
+          <>
+            {/* Tasks section */}
+            {visibleTasks.length > 0 && (
+              <div>
+                <div className="px-3 pt-2 pb-0.5 text-[10px] font-bold tracking-wider text-zinc-500 uppercase">
+                  Tasks
+                </div>
+                {visibleTasks.map((task, idx) => {
+                  const isSelected = idx === selectedIndex;
+                  return (
+                    <button
+                      key={task.id}
+                      className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm transition-colors group ${
+                        isSelected
+                          ? 'bg-zinc-800 text-zinc-100'
+                          : 'text-zinc-300 hover:bg-zinc-800/60'
+                      }`}
+                      onMouseEnter={() => setSelectedIndex(idx)}
+                      onMouseDown={e => { e.preventDefault(); selectItem(task); }}
+                    >
+                      {/* Status dot */}
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: task.statusColor || '#3b82f6' }}
+                      />
+
+                      {/* Task title */}
+                      <span className="flex-1 truncate font-medium text-[13px]">
+                        {task.name || task.title || 'Untitled'}
+                      </span>
+
+                      {/* Frequency badge */}
+                      {task.frequencyLabel && (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-purple-500/20 text-purple-300">
+                          {task.frequencyLabel}
+                        </span>
+                      )}
+
+                      {/* Assignee avatars */}
+                      {task.assignees && task.assignees.length > 0 && (
+                        <span className="flex items-center -space-x-1 shrink-0">
+                          {task.assignees.slice(0, 2).map((a, i) => (
+                            <span
+                              key={a.id}
+                              className="w-5 h-5 rounded-full border-2 border-[#18181c] overflow-hidden bg-zinc-700 flex items-center justify-center shrink-0"
+                              style={{ zIndex: 10 - i }}
+                            >
+                              {a.avatarUrl ? (
+                                <img src={a.avatarUrl} alt={a.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="text-[9px] font-medium text-zinc-300">
+                                  {a.name?.charAt(0).toUpperCase()}
+                                </span>
+                              )}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+
+                      {/* ↵ Enter icon on selection */}
+                      {isSelected && (
+                        <CornerDownLeft className="w-3 h-3 text-zinc-500 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Boards section */}
+            {visibleBoards.length > 0 && (
+              <div>
+                <div className="px-3 pt-2 pb-0.5 text-[10px] font-bold tracking-wider text-zinc-500 uppercase">
+                  Boards
+                </div>
+                {visibleBoards.map((board, idx) => {
+                  const flatIdx = boardStartIndex + idx;
+                  const isSelected = flatIdx === selectedIndex;
+                  return (
+                    <button
+                      key={board.id}
+                      className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm transition-colors group ${
+                        isSelected
+                          ? 'bg-zinc-800 text-zinc-100'
+                          : 'text-zinc-300 hover:bg-zinc-800/60'
+                      }`}
+                      onMouseEnter={() => setSelectedIndex(flatIdx)}
+                      onMouseDown={e => { e.preventDefault(); selectItem(board); }}
+                    >
+                      {/* Board color swatch / icon */}
+                      <span
+                        className="w-4 h-4 rounded shrink-0 flex items-center justify-center text-white text-[10px] font-bold"
+                        style={{ backgroundColor: board.color || '#3b82f6' }}
+                      >
+                        {board.icon ? board.icon : <Layout className="w-2.5 h-2.5" />}
+                      </span>
+
+                      {/* Board name */}
+                      <span className="flex-1 truncate font-medium text-[13px]">
+                        {board.name}
+                      </span>
+
+                      {/* ↵ icon on selection */}
+                      {isSelected && (
+                        <CornerDownLeft className="w-3 h-3 text-zinc-500 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Query input display (read-only, shows what's typed after @) ─────── */}
+      <div className="px-3 py-2 border-t border-zinc-800/60 flex items-center gap-2">
+        <span className="text-[11px] text-zinc-600">@</span>
+        <span className="text-[11px] text-zinc-400 flex-1 truncate">
+          {props.query || <span className="italic text-zinc-600">Search tasks and boards…</span>}
+        </span>
+        <span className="text-[10px] text-zinc-600">
+          {flatItems.length} result{flatItems.length !== 1 ? 's' : ''}
+        </span>
       </div>
     </div>
   );
 });
+
+TaskListDropdown.displayName = 'TaskListDropdown';

@@ -41,6 +41,7 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) =>
 
 const taskInclude = {
   subtasks: {
+    orderBy: { createdAt: 'asc' } as any,
     include: {
       User: { select: { id: true, name: true, email: true, avatarUrl: true } },
       assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
@@ -1068,6 +1069,18 @@ export async function getTaskActivities(req: Request, res: Response) {
           author: log.user?.name || 'Someone',
           oldPriority: details.oldPriority,
           newPriority: details.newPriority,
+          subtaskTitle: details.subtaskTitle,
+          date: log.createdAt,
+          user: log.user,
+        };
+      }
+      if (log.action === 'TEAM_ROLE_CHANGE') {
+        return {
+          id: log.id,
+          type: 'team_role_change',
+          author: log.user?.name || 'Someone',
+          roles: details.roles,
+          subtaskTitle: details.subtaskTitle,
           date: log.createdAt,
           user: log.user,
         };
@@ -1373,6 +1386,28 @@ export async function updateSubtask(req: Request, res: Response) {
           }
         });
       }
+      if (priority !== undefined) {
+        await prisma.auditLog.create({
+          data: {
+            action: 'PRIORITY_CHANGE',
+            entity: 'TASK',
+            entityId: taskId,
+            userId: actingUserId,
+            details: { newPriority: priority, subtaskTitle: subtask.title }
+          }
+        });
+      }
+      if (assigneeRoleRestrictions !== undefined) {
+        await prisma.auditLog.create({
+          data: {
+            action: 'TEAM_ROLE_CHANGE',
+            entity: 'TASK',
+            entityId: taskId,
+            userId: actingUserId,
+            details: { roles: assigneeRoleRestrictions, subtaskTitle: subtask.title }
+          }
+        });
+      }
     }
 
     await invalidateCache(`task:${taskId}`);
@@ -1386,18 +1421,20 @@ export async function updateSubtask(req: Request, res: Response) {
       
       // Emit socket events for the newly created audit logs so the frontend updates in real-time
       if (actingUserId) {
-        if (assigneeIds !== undefined && Array.isArray(assigneeIds)) {
-          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: {
+        if (computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)) {
+          const act = {
             id: Date.now().toString(),
             type: 'assignment',
             author: (req as any).user?.name || 'Someone',
             assigneeName: (subtask as any).assignees?.length ? (subtask as any).assignees.map((u: any) => u.name).join(', ') : ((subtask as any).User ? (subtask as any).User.name : 'Unassigned'),
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
-          }});
+          };
+          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
+          io.to(`list:${task.listId}`).emit('task_activity', { taskId: subtask.id, activity: act });
         }
         if (status !== undefined) {
-          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: {
+          const act = {
             id: (Date.now() + 1).toString(),
             type: 'status_change',
             author: (req as any).user?.name || 'Someone',
@@ -1405,7 +1442,9 @@ export async function updateSubtask(req: Request, res: Response) {
             newStatus: status,
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
-          }});
+          };
+          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
+          io.to(`list:${task.listId}`).emit('task_activity', { taskId: subtask.id, activity: act });
         }
       }
     }

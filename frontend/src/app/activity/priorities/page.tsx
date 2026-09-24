@@ -6,14 +6,24 @@ import { Loader2 } from 'lucide-react';
 import DocPage from '@/app/docs/[id]/page';
 
 export default function PrioritiesPage() {
-  const { allDocs, loadSpaces } = useAppStore();
+  const { allDocs, loadSpaces, loadingSpaces, hasLoadedSpaces, hydrateFromCache } = useAppStore();
   const priorityDoc = allDocs.find((d: any) => d.doc.isDailyRollover === true);
 
   useEffect(() => {
+    hydrateFromCache();
     loadSpaces();
-  }, [loadSpaces]);
+  }, [hydrateFromCache, loadSpaces]);
 
   if (!priorityDoc) {
+    if (!hasLoadedSpaces || loadingSpaces) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-[#0E0E10] text-zinc-400">
+          <Loader2 className="w-6 h-6 animate-spin mb-4 text-indigo-500" />
+          <p className="text-sm">Loading your journal...</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-[#0E0E10] text-zinc-400">
         <Loader2 className="w-6 h-6 animate-spin mb-4" />

@@ -34,7 +34,7 @@ const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
 
 export const TaskMentionNode = (props: NodeViewProps) => {
   const { node, updateAttributes } = props;
-  const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData } = node.attrs;
+  const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData, taskListName } = node.attrs;
 
   const currentUser = useAppStore(s => s.currentUser);
   const globalTask = useAppStore(s => s.tasksIndex[id]);
@@ -135,6 +135,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
             taskDueDate: task.dueDate || '',
             taskTeam: task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null,
             taskHasDescription: !!task.description,
+            taskListName: task.list?.name || '',
             frozenTaskData: task
           }); 
         } catch (e) {}
@@ -293,6 +294,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     }
   };
 
+  // Resolve board/list name: prefer live taskData, fallback to stored taskListName attr
+  const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
+
   return (
     <NodeViewWrapper as="span" className="inline-block align-middle mx-1 group" data-drag-handle>
       <motion.span layout className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 dark:hover:bg-[#1f1f1f] transition-colors duration-200 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800">
@@ -301,7 +305,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           className="font-medium text-sm text-zinc-700 dark:text-zinc-200 max-w-[200px] truncate cursor-pointer hover:opacity-70 transition-opacity"
           onClick={(e) => {
             e.stopPropagation();
-            console.log(`[DEBUG] Fetching mention for task ID: ${id}`);
             window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id } }));
           }}
           title="Open Task Detail"

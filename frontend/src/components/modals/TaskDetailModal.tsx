@@ -108,7 +108,7 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
 
   if (!loaded) {
     return (
-      <span 
+      <span
         className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
         onClick={(e) => {
           e.preventDefault();
@@ -147,7 +147,7 @@ function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: s
 
   if (!loaded) {
     return (
-      <span 
+      <span
         className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
         onClick={(e) => {
           e.preventDefault();
@@ -176,6 +176,17 @@ function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: s
     </span>
   );
 }
+
+const getHexColor = (color: string) => {
+  const colors: Record<string, string> = {
+    slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+    red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+    green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+    blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+    pink: '#ec4899', rose: '#f43f5e'
+  };
+  return colors[color] || color;
+};
 
 export function TaskDetailModalContent({
   isOpen,
@@ -238,7 +249,7 @@ export function TaskDetailModalContent({
     const existing = task?.attachments || [];
     const desc = task?.description || '';
     const oldAttachments: any[] = [];
-    
+
     const divRegex = /<div[^>]*data-type="attachment-block"[^>]*>/g;
     let match;
     let count = 0;
@@ -258,7 +269,7 @@ export function TaskDetailModalContent({
         });
       }
     }
-    
+
     const imgRegex = /<img[^>]*src="([^"]+)"[^>]*>/g;
     while ((match = imgRegex.exec(desc)) !== null) {
       const tag = match[0];
@@ -363,9 +374,10 @@ export function TaskDetailModalContent({
 
   // Task edits are open to all
   const canEditTask = true;
-  
+
   // Assignment is restricted by the column's role restrictions
   const canAssignTask = React.useMemo(() => {
+    if ((task as any)?.parentTaskId) return true;
     return canUserMoveTask(task, listStatuses, currentUser, workspaceRoles).allowed;
   }, [task, currentUser, listStatuses, workspaceRoles]);
 
@@ -381,8 +393,8 @@ export function TaskDetailModalContent({
       });
     });
 
-      return workspaceUsers.filter((u) => {
-        const userRoles = (u.roles || []) as string[];
+    return workspaceUsers.filter((u) => {
+      const userRoles = (u.roles || []) as string[];
       return task.assigneeRoleRestrictions!.some((role) => {
         // Check generic role match (TECH, PM, AUDITOR...)
         if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
@@ -400,12 +412,22 @@ export function TaskDetailModalContent({
     if (!task?.id || !currentUser) return;
     try {
       setLoadingActivities(true);
+      const isSubtask = !!(task as any).parentTaskId;
+      const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+      const subtaskId = isSubtask ? task.id : undefined;
+
       const [actRes, commentRes] = await Promise.all([
-        tasksApi.getActivities(task.id),
-        tasksApi.getComments(task.id),
+        tasksApi.getActivities(targetId),
+        tasksApi.getComments(targetId, subtaskId),
       ]);
       if (!isMountedRef.current) return;
-      if (actRes?.activities) setActivities(actRes.activities);
+      if (actRes?.activities) {
+        if (isSubtask) {
+          setActivities(actRes.activities.filter((a: any) => a.subtaskTitle === task.title));
+        } else {
+          setActivities(actRes.activities.filter((a: any) => !a.subtaskTitle));
+        }
+      }
       if (commentRes?.comments) setRichComments(commentRes.comments);
     } catch (err) {
       console.warn('Failed to load task data:', err);
@@ -417,7 +439,8 @@ export function TaskDetailModalContent({
   const handleToggleReaction = async (commentId: string, emoji: string) => {
     if (!task?.id || !currentUser?.id) return;
     try {
-      const res = await tasksApi.toggleCommentReaction(task.id, commentId, emoji, currentUser.id);
+      const targetId = (task as any).parentTaskId || task.id;
+      const res = await tasksApi.toggleCommentReaction(targetId, commentId, emoji, currentUser.id);
       setRichComments(prev => prev.map(c => {
         if (c.id === commentId) return { ...c, reactions: res.reactions };
         // also check replies
@@ -431,11 +454,14 @@ export function TaskDetailModalContent({
     if (!replyText.trim() || !task?.id || !currentUser?.id || isSubmittingReply) return;
     setIsSubmittingReply(true);
     try {
-      await tasksApi.addComment(task.id, replyText.trim(), currentUser.id, undefined, [], parentCommentId);
+      const isSubtask = !!(task as any).parentTaskId;
+      const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+      const subtaskId = isSubtask ? task.id : undefined;
+      await tasksApi.addComment(targetId, replyText.trim(), currentUser.id, undefined, [], parentCommentId, subtaskId);
       setReplyText('');
       setReplyingToId(null);
       // Refresh comments
-      const res = await tasksApi.getComments(task.id);
+      const res = await tasksApi.getComments(targetId, subtaskId);
       if (res?.comments) setRichComments(res.comments);
     } catch (err) {
       console.warn('Reply failed:', err);
@@ -448,10 +474,13 @@ export function TaskDetailModalContent({
     if (!editCommentText.trim() || !task?.id || isSubmittingEdit) return;
     setIsSubmittingEdit(true);
     try {
-      await tasksApi.updateComment(task.id, commentId, editCommentText.trim());
+      const isSubtask = !!(task as any).parentTaskId;
+      const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+      const subtaskId = isSubtask ? task.id : undefined;
+      await tasksApi.updateComment(targetId, commentId, editCommentText.trim());
       setEditingCommentId(null);
       setEditCommentText('');
-      const res = await tasksApi.getComments(task.id);
+      const res = await tasksApi.getComments(targetId, subtaskId);
       if (res?.comments) setRichComments(res.comments);
     } catch (err) {
       console.warn('Edit failed:', err);
@@ -470,11 +499,11 @@ export function TaskDetailModalContent({
   useEffect(() => {
     if (task) {
       setLocalDescription(task.description || '');
-      
+
       const existing = task.attachments || [];
       const desc = task.description || '';
       const oldAttachments: any[] = [];
-      
+
       const divRegex = /<div[^>]*data-type="attachment-block"[^>]*>/g;
       let match;
       let count = 0;
@@ -494,7 +523,7 @@ export function TaskDetailModalContent({
           });
         }
       }
-      
+
       const imgRegex = /<img[^>]*src="([^"]+)"[^>]*>/g;
       while ((match = imgRegex.exec(desc)) !== null) {
         const tag = match[0];
@@ -511,7 +540,7 @@ export function TaskDetailModalContent({
           });
         }
       }
-      
+
       setAttachments([...existing, ...oldAttachments]);
       setEditingUser(null);
     }
@@ -544,11 +573,14 @@ export function TaskDetailModalContent({
     const trimmed = localTitle.trim();
     if (!trimmed) { setLocalTitle(task?.title || ''); return; }
     if (trimmed !== task?.title && task) {
-      tasksApi.updateTask(task.id, {
-        title: trimmed,
-        currentListId: task.listId,
-        userId: currentUser?.id,
-      }).catch(err => console.warn('Failed to save title:', err));
+      const updatePromise = (task as any).parentTaskId 
+        ? tasksApi.updateSubtask((task as any).parentTaskId, task.id, { title: trimmed })
+        : tasksApi.updateTask(task.id, {
+            title: trimmed,
+            currentListId: task.listId,
+            userId: currentUser?.id,
+          });
+      updatePromise.catch(err => console.warn('Failed to save title:', err));
       if (onUpdateTask) onUpdateTask({ ...task, title: trimmed });
     }
   };
@@ -571,13 +603,16 @@ export function TaskDetailModalContent({
 
   const handleDescBlur = () => {
     const sanitizedDesc = (localDescription === '<p></p>' || localDescription === '<p><br></p>') ? '' : localDescription;
-    
+
     if (sanitizedDesc !== task?.description && task) {
-      tasksApi.updateTask(task.id, {
-        description: sanitizedDesc,
-        currentListId: task.listId,
-        userId: currentUser?.id,
-      }).catch(err => console.warn('Failed to save description:', err));
+      const updatePromise = (task as any).parentTaskId
+        ? tasksApi.updateSubtask((task as any).parentTaskId, task.id, { description: sanitizedDesc })
+        : tasksApi.updateTask(task.id, {
+            description: sanitizedDesc,
+            currentListId: task.listId,
+            userId: currentUser?.id,
+          });
+      updatePromise.catch(err => console.warn('Failed to save description:', err));
 
       if (onUpdateTask) {
         onUpdateTask({ ...task, description: sanitizedDesc });
@@ -623,6 +658,12 @@ export function TaskDetailModalContent({
 
     const handleActivity = (data: any) => {
       if (data.taskId === task.id) {
+        // If viewing main task, ignore activities that belong to a subtask
+        const isSubtask = !!(task as any).parentTaskId;
+        if (!isSubtask && data.activity.subtaskTitle) return;
+        // If viewing a subtask, ignore activities that don't belong to this subtask
+        if (isSubtask && data.activity.subtaskTitle !== task.title) return;
+
         setActivities(prev => {
           // If real ID already exists, skip
           if (prev.some(a => a.id === data.activity.id)) return prev;
@@ -630,8 +671,8 @@ export function TaskDetailModalContent({
           // (this happens on the acting client who already has an optimistic placeholder)
           const typePrefix = data.activity.type === 'status_change' ? 'optimistic-status'
             : data.activity.type === 'assignment' ? 'optimistic-assign'
-            : data.activity.type === 'priority_change' ? 'optimistic-priority'
-            : null;
+              : data.activity.type === 'priority_change' ? 'optimistic-priority'
+                : null;
           if (typePrefix) {
             const optimisticIdx = prev.findIndex(
               a => typeof a.id === 'string' && a.id.startsWith(typePrefix)
@@ -682,6 +723,18 @@ export function TaskDetailModalContent({
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [internalListStatuses, setInternalListStatuses] = useState<any[]>(listStatuses || []);
+  
+  const orderedListStatuses = React.useMemo(() => {
+    const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const list = allLists.find(l => l.id === task?.listId);
+    
+    // Filter out legacy statuses that are just group headers
+    return sortedInternals.filter(s => {
+      if (!list?.customGroups) return true;
+      const sName = (s.name || s.status || s.title || '').toUpperCase();
+      return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
+    });
+  }, [allLists, task?.listId, internalListStatuses]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showApiSettings, setShowApiSettings] = useState(false);
   const editorRef = useRef<any>(null);
@@ -753,7 +806,12 @@ export function TaskDetailModalContent({
     setActivities(prev => [...prev, optimisticActivity]);
 
     try {
-      const res = await tasksApi.moveTask(task.id, newStatus, task.listId, currentUser?.id);
+      let res: any;
+      if ((task as any).parentTaskId) {
+        res = await tasksApi.updateSubtask((task as any).parentTaskId, task.id, { status: newStatus });
+      } else {
+        res = await tasksApi.moveTask(task.id, newStatus, task.listId, currentUser?.id);
+      }
       if (res?.activity) {
         // Replace optimistic entry with real one from server
         setActivities(prev => prev.map(a => a.id === optimisticId ? res.activity : a));
@@ -799,12 +857,19 @@ export function TaskDetailModalContent({
       setActivities(prev => [...prev, optimisticActivity]);
 
       try {
-        await tasksApi.updateTask(taskToUpdate.id, {
-          assigneeIds: updatedIds,
-          assigneeId: primaryAssignee?.id || null,
-          currentListId: taskToUpdate.listId,
-          userId: currentUser?.id,
-        });
+        if ((taskToUpdate as any).parentTaskId) {
+          await tasksApi.updateSubtask((taskToUpdate as any).parentTaskId, taskToUpdate.id, {
+            assigneeIds: updatedIds,
+            assigneeId: primaryAssignee?.id || null,
+          });
+        } else {
+          await tasksApi.updateTask(taskToUpdate.id, {
+            assigneeIds: updatedIds,
+            assigneeId: primaryAssignee?.id || null,
+            currentListId: taskToUpdate.listId,
+            userId: currentUser?.id,
+          });
+        }
         // Server will emit task_activity via socket for the other account
         // Don't reload activities here — optimistic update is sufficient for local user
       } catch (err: any) {
@@ -818,10 +883,10 @@ export function TaskDetailModalContent({
 
   const handleToggleAssignee = (user: UserModel) => {
     if (!task) return;
-    
+
     // Always read from the mutated task object to survive rapid clicks within the same render cycle
     const latestAssignees = task.assignees || (task.assignee ? [task.assignee] : []);
-    
+
     const isAssigned = latestAssignees.some(u => u.id === user.id);
     const updatedAssignees = isAssigned
       ? latestAssignees.filter((u) => u.id !== user.id)
@@ -911,11 +976,15 @@ export function TaskDetailModalContent({
     setActivities(prev => [...prev, optimisticActivity]);
 
     try {
-      await tasksApi.updateTask(task.id, {
-        priority: p,
-        currentListId: task.listId,
-        userId: currentUser?.id,
-      });
+      if ((task as any).parentTaskId) {
+        await tasksApi.updateSubtask((task as any).parentTaskId, task.id, { priority: p });
+      } else {
+        await tasksApi.updateTask(task.id, {
+          priority: p,
+          currentListId: task.listId,
+          userId: currentUser?.id,
+        });
+      }
       toast.success(`Priority set to ${p}`);
     } catch (err: any) {
       // Rollback on error
@@ -953,12 +1022,17 @@ export function TaskDetailModalContent({
         return;
       }
 
+      const isSubtask = !!(task as any).parentTaskId;
+      const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+      const subtaskId = isSubtask ? task.id : undefined;
       const res = await tasksApi.addComment(
-        task.id,
+        targetId,
         finalComment,
         currentUser?.id || '',
         task.listId,
-        mentionedUsers.map(u => u.id)
+        mentionedUsers.map(u => u.id),
+        undefined,
+        subtaskId
       );
 
       setComment('');
@@ -995,7 +1069,7 @@ export function TaskDetailModalContent({
             fileSize: file.size,
             mimeType: file.type,
           };
-          
+
           const tempId = 'temp-' + Date.now();
           const newAtt = { id: tempId, ...payload };
           setAttachments((prev) => [...prev, newAtt]);
@@ -1004,7 +1078,7 @@ export function TaskDetailModalContent({
             const { attachment } = await tasksApi.createTaskAttachment(task.id, payload);
             setAttachments((prev) => prev.map(a => a.id === tempId ? attachment : a));
             if (onUpdateTask) onUpdateTask({ ...task, attachments: [...attachments, attachment] });
-          } catch(err) {
+          } catch (err) {
             console.error('Failed to save to DB, keeping optimistic:', err);
             // It will stay in UI at least, so we don't lose it if DB is down
           }
@@ -1074,7 +1148,7 @@ export function TaskDetailModalContent({
               <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
                 {task.list.space && (
                   <>
-                    <button 
+                    <button
                       onClick={() => { onClose(); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
@@ -1089,7 +1163,7 @@ export function TaskDetailModalContent({
 
                 {task.list.folder && (
                   <>
-                    <button 
+                    <button
                       onClick={() => { onClose(); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
@@ -1100,7 +1174,7 @@ export function TaskDetailModalContent({
                   </>
                 )}
 
-                <button 
+                <button
                   onClick={() => { onClose(); router.push(`/lists/${task.list?.id}`); }}
                   className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                 >
@@ -1201,6 +1275,10 @@ export function TaskDetailModalContent({
                   </div>
                   <div className="flex items-center gap-1.5">
                     {(() => {
+                      const orderedStatuses = orderedListStatuses.length > 0 
+                        ? orderedListStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+                        : ALL_STATUSES;
+                      
                       const statusName = task.status || 'No Status';
                       const statusObj = internalListStatuses?.find(s => (s.name || s.title || s.status) === statusName);
                       const hasCustomColor = !!statusObj?.color;
@@ -1208,25 +1286,22 @@ export function TaskDetailModalContent({
 
                       return (
                         <div
-                          style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
-                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} cursor-pointer hover:brightness-110`}
+                          style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
+                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} shadow-sm group/status`}
                         >
-                          <span className="px-2.5 uppercase">{statusName}</span>
-                          <div className="h-4 w-[1px] bg-white/20" />
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
                             <Popover.Trigger asChild>
-                              <div 
-                                title="Change Status"
+                              <div
                                 onClick={() => setIsStatusOpen(true)}
-                                className="flex items-center gap-1.5 px-2.5 h-full hover:brightness-110 cursor-pointer"
+                                className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
                               >
-                                <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+                                {statusName}
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
                               <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                                  {((internalListStatuses && internalListStatuses.length > 0) ? internalListStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map(s => (
+                                  {orderedStatuses.map(s => (
                                     <div
                                       key={s}
                                       onClick={() => {
@@ -1238,7 +1313,7 @@ export function TaskDetailModalContent({
                                       {(() => {
                                         const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
                                         if (customObj?.color) {
-                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
+                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
                                         }
                                         return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
                                       })()}
@@ -1251,13 +1326,24 @@ export function TaskDetailModalContent({
                             </Popover.Portal>
                           </Popover.Root>
 
-                          <div 
-                            title="Move to next status"
-                            className="flex items-center justify-center h-full px-1.5 border-l border-white/20 hover:brightness-110 cursor-pointer"
-                            onClick={handleStatusClick}
-                          >
-                            <ChevronRight className="w-3.5 h-3.5 transition-opacity opacity-80 hover:opacity-100" />
-                          </div>
+                          <div className="h-4 w-[1px] bg-white/20" />
+
+                          {(() => {
+                            const statuses = orderedStatuses;
+                            const currentIndex = statuses.indexOf(statusName);
+                            const nextIndex = currentIndex !== -1 ? (currentIndex + 1) % statuses.length : 0;
+                            const nextStatus = statuses[nextIndex];
+                            
+                            return (
+                              <div
+                                title={`Move to "${nextStatus}"`}
+                                className="flex items-center justify-center h-full px-1.5 cursor-pointer hover:brightness-110 rounded-r-md"
+                                onClick={handleStatusClick}
+                              >
+                                <ChevronRight className="w-3.5 h-3.5 opacity-90" />
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })()}
@@ -1288,24 +1374,24 @@ export function TaskDetailModalContent({
                         {(task.assigneeRoleRestrictions && task.assigneeRoleRestrictions.length > 0) ? (
                           <motion.div layout className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
                             <AnimatePresence>
-                            {task.assigneeRoleRestrictions.map((role, i) => {
-                              const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
-                              const bgColor = colors[i % colors.length];
-                              return (
-                                <motion.div 
-                                  key={role} 
-                                  initial={{ opacity: 0, scale: 0.5 }}
-                                  animate={{ opacity: 1, scale: 1 }}
-                                  exit={{ opacity: 0, scale: 0.5 }}
-                                  transition={{ duration: 0.2 }}
-                                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative ${bgColor}`}
-                                  style={{ zIndex: 10 - i }}
-                                  title={role}
-                                >
-                                  {role.substring(0, 2).toUpperCase()}
-                                </motion.div>
-                              );
-                            })}
+                              {task.assigneeRoleRestrictions.map((role, i) => {
+                                const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                                const bgColor = colors[i % colors.length];
+                                return (
+                                  <motion.div
+                                    key={role}
+                                    initial={{ opacity: 0, scale: 0.5 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.5 }}
+                                    transition={{ duration: 0.2 }}
+                                    className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative ${bgColor}`}
+                                    style={{ zIndex: 10 - i }}
+                                    title={role}
+                                  >
+                                    {role.substring(0, 2).toUpperCase()}
+                                  </motion.div>
+                                );
+                              })}
                             </AnimatePresence>
                           </motion.div>
                         ) : (
@@ -1323,40 +1409,44 @@ export function TaskDetailModalContent({
                             {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
                             {workspaceTeams.map(team => (
                               <div key={team.id} className="mb-2">
-                                  {(() => {
-                                    const teamRoles = team.teamRoles || [];
-                                    const current = task.assigneeRoleRestrictions || [];
-                                    const hasRoles = teamRoles.length > 0;
-                                    const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-                                    const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
-                                    
-                                    return (
-                                      <div 
-                                        onClick={() => {
-                                          if (!hasRoles) return;
-                                          let next = [...current];
-                                          if (allSelected) {
-                                            next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
-                                          } else {
-                                            const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
-                                            next = [...next, ...toAdd];
-                                          }
-                                          const updatedTask = { ...task, assigneeRoleRestrictions: next };
-                                          if (onUpdateTask) onUpdateTask(updatedTask);
+                                {(() => {
+                                  const teamRoles = team.teamRoles || [];
+                                  const current = task.assigneeRoleRestrictions || [];
+                                  const hasRoles = teamRoles.length > 0;
+                                  const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                                  const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+
+                                  return (
+                                    <div
+                                      onClick={() => {
+                                        if (!hasRoles) return;
+                                        let next = [...current];
+                                        if (allSelected) {
+                                          next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                        } else {
+                                          const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                          next = [...next, ...toAdd];
+                                        }
+                                        const updatedTask = { ...task, assigneeRoleRestrictions: next };
+                                        if (onUpdateTask) onUpdateTask(updatedTask);
+                                        if ((task as any).parentTaskId) {
+                                          tasksApi.updateSubtask((task as any).parentTaskId, task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                        } else {
                                           tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
-                                        }}
-                                        className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
-                                      >
-                                        {hasRoles && (
-                                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
-                                            {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                                            {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
-                                          </div>
-                                        )}
-                                        <span>{team.name}</span>
-                                      </div>
-                                    );
-                                  })()}
+                                        }
+                                      }}
+                                      className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                                    >
+                                      {hasRoles && (
+                                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                          {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                                          {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                                        </div>
+                                      )}
+                                      <span>{team.name}</span>
+                                    </div>
+                                  );
+                                })()}
                                 {(!team.teamRoles || team.teamRoles.length === 0) && (
                                   <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
                                 )}
@@ -1376,7 +1466,11 @@ export function TaskDetailModalContent({
                                             const updatedTask = { ...task, assigneeRoleRestrictions: next };
                                             if (onUpdateTask) onUpdateTask(updatedTask);
                                             // Fire API in background
-                                            tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                            if ((task as any).parentTaskId) {
+                                              tasksApi.updateSubtask((task as any).parentTaskId, task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                            } else {
+                                              tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                            }
                                           }}
                                           className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
                                         >
@@ -1399,50 +1493,49 @@ export function TaskDetailModalContent({
                       <Popover.Trigger asChild>
                         <motion.div layout
                           title={currentAssignees.map((u) => u.name).join(', ')}
-                          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${
-                            canAssignTask 
-                              ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200' 
+                          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignTask
+                              ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
                               : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
-                          }`}
+                            }`}
                         >
                           {currentAssignees.length > 0 ? (
                             <>
                               <div className="flex items-center -space-x-1.5">
                                 <AnimatePresence>
-                                {currentAssignees.slice(0, 2).map((u, i) => (
-                                  <motion.div 
-                                    key={u.id} 
-                                    initial={{ opacity: 0, scale: 0.5 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    exit={{ opacity: 0, scale: 0.5 }}
-                                    transition={{ duration: 0.2 }}
-                                    style={{ zIndex: 10 - i }}
-                                    className="relative ring-2 ring-[#121212] rounded-full shrink-0" 
-                                    title={u.name}
-                                  >
-                                    {u.avatarUrl ? (
-                                      <img src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
-                                    ) : (
-                                      <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
-                                        {(u.name || 'U').substring(0, 2).toUpperCase()}
-                                      </div>
-                                    )}
-                                  </motion.div>
-                                ))}
+                                  {currentAssignees.slice(0, 2).map((u, i) => (
+                                    <motion.div
+                                      key={u.id}
+                                      initial={{ opacity: 0, scale: 0.5 }}
+                                      animate={{ opacity: 1, scale: 1 }}
+                                      exit={{ opacity: 0, scale: 0.5 }}
+                                      transition={{ duration: 0.2 }}
+                                      style={{ zIndex: 10 - i }}
+                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                      title={u.name}
+                                    >
+                                      {u.avatarUrl ? (
+                                        <img src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
+                                      ) : (
+                                        <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
+                                          {(u.name || 'U').substring(0, 2).toUpperCase()}
+                                        </div>
+                                      )}
+                                    </motion.div>
+                                  ))}
                                 </AnimatePresence>
                                 <AnimatePresence>
-                                {currentAssignees.length > 2 && (
-                                  <motion.div 
-                                    key="overflow"
-                                    initial={{ opacity: 0, scale: 0.5 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    exit={{ opacity: 0, scale: 0.5 }}
-                                    transition={{ duration: 0.2 }}
-                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0"
-                                  >
-                                    +{currentAssignees.length - 2}
-                                  </motion.div>
-                                )}
+                                  {currentAssignees.length > 2 && (
+                                    <motion.div
+                                      key="overflow"
+                                      initial={{ opacity: 0, scale: 0.5 }}
+                                      animate={{ opacity: 1, scale: 1 }}
+                                      exit={{ opacity: 0, scale: 0.5 }}
+                                      transition={{ duration: 0.2 }}
+                                      className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0"
+                                    >
+                                      +{currentAssignees.length - 2}
+                                    </motion.div>
+                                  )}
                                 </AnimatePresence>
                               </div>
                               {currentAssignees.length === 1 && (
@@ -1629,7 +1722,7 @@ export function TaskDetailModalContent({
                 socket={socket}
                 currentUser={currentUser}
                 onOpenSubtask={(subtask) => setActiveSubtask(subtask)}
-                listStatuses={internalListStatuses}
+                listStatuses={orderedListStatuses}
                 teams={workspaceTeams}
               />
 
@@ -1738,10 +1831,10 @@ export function TaskDetailModalContent({
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                                   <div className="flex-1 leading-snug">
                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
-                                    {act.subtaskTitle ? (
+                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                       <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
                                     ) : (
-                                      <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus}</span></>
+                                      <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
                                     )}
                                     {' '}to <span className="text-blue-400 font-medium bg-blue-500/10 px-1 rounded">{act.newStatus}</span>
                                   </div>
@@ -1757,7 +1850,7 @@ export function TaskDetailModalContent({
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
                                   <div className="flex-1 leading-snug">
                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> assigned{' '}
-                                    {act.subtaskTitle ? (
+                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                       <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
                                     ) : (
                                       <>to{' '}</>
@@ -1775,8 +1868,31 @@ export function TaskDetailModalContent({
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                                   <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> changed priority to{' '}
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                      <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
+                                    ) : (
+                                      <>changed priority to{' '}</>
+                                    )}
                                     <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            if (act.type === 'team_role_change') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
+                                  <div className="flex-1 leading-snug">
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                      <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
+                                    ) : (
+                                      <>updated team roles</>
+                                    )}
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -1789,7 +1905,12 @@ export function TaskDetailModalContent({
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
                                   <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> attached a file:{' '}
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                      <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                    ) : (
+                                      <>attached a file:{' '}</>
+                                    )}
                                     <span className="text-indigo-400 ml-1">{act.fileName}</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -1857,7 +1978,7 @@ export function TaskDetailModalContent({
                                   )}
                                 </div>
                               </div>
-                              
+
                               {editingCommentId === comment.id ? (
                                 <div className="pl-11 flex gap-2 w-full">
                                   <input
@@ -2166,8 +2287,11 @@ function SubtaskDetailView({
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const [localTitle, setLocalTitle] = useState(subtask.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [activities, setActivities] = useState<any[]>([]);
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
+  const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
@@ -2176,7 +2300,8 @@ function SubtaskDetailView({
   const editorRef = useRef<any>(null);
   // Task edits are open to all
   const canEditTask = true;
-  const canAssignTask = permission?.allowed ?? true;
+  // Subtasks bypass column role restrictions for assignment
+  const canAssignTask = true;
 
   const handleDescriptionFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2288,16 +2413,69 @@ function SubtaskDetailView({
       }
     };
 
+    const handleActivity = (data: any) => {
+      if (data.taskId === parentTask.id && data.activity?.subtaskTitle === subtask.title) {
+        setActivities(prev => {
+          if (prev.some(a => a.id === data.activity.id)) return prev;
+          return [...prev, data.activity];
+        });
+      }
+    };
+
     socket.on('task_editing_start', handleEditingStart);
     socket.on('task_editing_stop', handleEditingStop);
     socket.on('task_editing_content', handleEditingContent);
+    socket.on('task_activity', handleActivity);
 
     return () => {
       socket.off('task_editing_start', handleEditingStart);
       socket.off('task_editing_stop', handleEditingStop);
       socket.off('task_editing_content', handleEditingContent);
+      socket.off('task_activity', handleActivity);
     };
-  }, [socket, subtask?.id, currentUser?.name]);
+  }, [socket, subtask?.id, currentUser?.name, parentTask.id, subtask?.title]);
+
+  const currentAssignees = subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
+  const isUserAssigned = (userId: string) => currentAssignees.some((u: any) => u.id === userId);
+
+  const handleToggleAssignee = (u: any) => {
+    const isAssigned = isUserAssigned(u.id);
+    const updatedAssignees = isAssigned
+      ? currentAssignees.filter((a: any) => a.id !== u.id)
+      : [...currentAssignees, u];
+
+    const updatedIds = updatedAssignees.map((a: any) => a.id);
+    const updatedSubtask = { ...subtask, assignees: updatedAssignees, assigneeIds: updatedIds };
+    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+    if (onUpdateTask) {
+      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+    }
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: updatedIds, assignees: updatedAssignees } as any).catch(console.error);
+  };
+
+  const handleClearAllAssignees = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const updatedSubtask = { ...subtask, assignees: [], assigneeIds: [] };
+    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+    if (onUpdateTask) {
+      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+    }
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: [], assignees: [] } as any).catch(console.error);
+    setIsAssigneeOpen(false);
+  };
+
+  const handleUpdatePriority = (newPriority: string | null) => {
+    const updatedSubtask = { ...subtask, priority: newPriority };
+    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+    if (onUpdateTask) {
+      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+    }
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { priority: newPriority } as any).catch(console.error);
+    setIsPriorityOpen(false);
+  };
 
   const handleStartEditing = () => {
     if (socket && subtask) {
@@ -2327,16 +2505,22 @@ function SubtaskDetailView({
     const load = async () => {
       try {
         setLoadingActivities(true);
-        const commentRes = await tasksApi.getComments(parentTask.id, subtask.id);
+        const [actRes, commentRes] = await Promise.all([
+          tasksApi.getActivities(parentTask.id),
+          tasksApi.getComments(parentTask.id, subtask.id)
+        ]);
+        if (actRes?.activities) {
+          setActivities(actRes.activities.filter((a: any) => a.subtaskTitle === subtask.title));
+        }
         if (commentRes?.comments) setRichComments(commentRes.comments);
       } catch (err) {
-        console.error('Failed to load comments:', err);
+        console.error('Failed to load comments/activities:', err);
       } finally {
         setLoadingActivities(false);
       }
     };
     load();
-  }, [parentTask.id, subtask.id]);
+  }, [parentTask.id, subtask.id, subtask.title]);
 
   const handleCommentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2443,7 +2627,7 @@ function SubtaskDetailView({
             <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
               {parentTask.list.space && (
                 <>
-                  <button 
+                  <button
                     onClick={() => { onClose(); router.push('/tasks'); }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
@@ -2457,7 +2641,7 @@ function SubtaskDetailView({
               )}
               {parentTask.list.folder && (
                 <>
-                  <button 
+                  <button
                     onClick={() => { onClose(); router.push('/tasks'); }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
@@ -2467,7 +2651,7 @@ function SubtaskDetailView({
                   <span className="text-zinc-700">/</span>
                 </>
               )}
-              <button 
+              <button
                 onClick={() => { onClose(); router.push(`/lists/${parentTask.list?.id}`); }}
                 className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
               >
@@ -2553,7 +2737,7 @@ function SubtaskDetailView({
                   className="text-2xl font-bold bg-[#18181b] border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
                 />
               ) : (
-                <h1 
+                <h1
                   onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
                   className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit ${(subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.completed) ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                 >
@@ -2562,7 +2746,7 @@ function SubtaskDetailView({
                 </h1>
               )}
             </div>
-            
+
             {/* Properties Stack — row layout */}
             <div className="flex flex-col gap-2 mb-8 mt-1">
 
@@ -2575,77 +2759,77 @@ function SubtaskDetailView({
                   })()}
                   <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
-                  {(() => {
-                    const statusName = subtask.status || 'No Status';
-                    const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
-                    const hasCustomColor = !!statusObj?.color;
-                    const defaultClasses = STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400';
+                {(() => {
+                  const statusName = subtask.status || 'No Status';
+                  const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+                  const hasCustomColor = !!statusObj?.color;
+                  const defaultClasses = STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400';
 
-                    return (
-                      <div
-                        style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
-                        className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} cursor-pointer hover:brightness-110`}
-                      >
-                        <span className="px-2.5 uppercase">{statusName}</span>
-                        <div className="h-4 w-[1px] bg-white/20" />
-                        <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
-                          <Popover.Trigger asChild>
-                            <div 
-                              title="Change Status"
-                              onClick={() => setIsStatusOpen(true)}
-                              className="flex items-center gap-1.5 px-2.5 h-full hover:brightness-110 cursor-pointer"
-                            >
-                              <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+                  return (
+                    <div
+                      style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
+                      className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} cursor-pointer hover:brightness-110`}
+                    >
+                      <span className="px-2.5 uppercase">{statusName}</span>
+                      <div className="h-4 w-[1px] bg-white/20" />
+                      <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                        <Popover.Trigger asChild>
+                          <div
+                            title="Change Status"
+                            onClick={() => setIsStatusOpen(true)}
+                            className="flex items-center gap-1.5 px-2.5 h-full hover:brightness-110 cursor-pointer"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+                          </div>
+                        </Popover.Trigger>
+                        <Popover.Portal>
+                          <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                            <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                              {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                                <div
+                                  key={s}
+                                  onClick={() => {
+                                    tasksApi.updateSubtask(parentTask.id, subtask.id, {
+                                      status: s,
+                                      completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed'
+                                    }).catch(err => console.error(err));
+                                    if (setActiveSubtask) {
+                                      setActiveSubtask({ ...subtask, status: s, completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed' });
+                                    }
+                                    setIsStatusOpen(false);
+                                  }}
+                                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                                >
+                                  {(() => {
+                                    const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                                    if (customObj?.color) {
+                                      return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
+                                    }
+                                    return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                  })()}
+                                  {s}
+                                  {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                </div>
+                              ))}
                             </div>
-                          </Popover.Trigger>
-                          <Popover.Portal>
-                            <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                              <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                                {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
-                                  <div
-                                    key={s}
-                                    onClick={() => {
-                                      tasksApi.updateSubtask(parentTask.id, subtask.id, { 
-                                        status: s,
-                                        completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed'
-                                      }).catch(err => console.error(err));
-                                      if (setActiveSubtask) {
-                                        setActiveSubtask({ ...subtask, status: s, completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed' });
-                                      }
-                                      setIsStatusOpen(false);
-                                    }}
-                                    className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
-                                  >
-                                    {(() => {
-                                      const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                                      if (customObj?.color) {
-                                        return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
-                                      }
-                                      return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
-                                    })()}
-                                    {s}
-                                    {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
-                                  </div>
-                                ))}
-                              </div>
-                            </Popover.Content>
-                          </Popover.Portal>
-                        </Popover.Root>
-                      </div>
-                    );
-                  })()}
+                          </Popover.Content>
+                        </Popover.Portal>
+                      </Popover.Root>
+                    </div>
+                  );
+                })()}
 
-                  <button
-                    onClick={() => {
-                      tasksApi.updateSubtask(parentTask.id, subtask.id, { status: 'Closed', completed: true }).catch(err => console.error(err));
-                      if (setActiveSubtask) setActiveSubtask({ ...subtask, status: 'Closed', completed: true });
-                    }}
-                    title="Mark as Closed"
-                    className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                <button
+                  onClick={() => {
+                    tasksApi.updateSubtask(parentTask.id, subtask.id, { status: 'Closed', completed: true }).catch(err => console.error(err));
+                    if (setActiveSubtask) setActiveSubtask({ ...subtask, status: 'Closed', completed: true });
+                  }}
+                  title="Mark as Closed"
+                  className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
 
 
@@ -2664,9 +2848,9 @@ function SubtaskDetailView({
                             const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                             const bgColor = colors[i % colors.length];
                             return (
-                              <div 
-                                key={role} 
-                                className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
+                              <div
+                                key={role}
+                                className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10 - i}] ${bgColor} transition-transform`}
                                 title={role}
                               >
                                 {role.substring(0, 2).toUpperCase()}
@@ -2683,31 +2867,71 @@ function SubtaskDetailView({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
-                          <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
-                            <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
-                            {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
-                            {workspaceTeams.map((team: any) => (
-                              <div key={team.id} className="mb-2">
-                                  {(() => {
-                                    const teamRoles = team.teamRoles || [];
-                                    const current = subtask.assigneeRoleRestrictions || [];
-                                    const hasRoles = teamRoles.length > 0;
-                                    const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-                                    const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
-                                    
+                        <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+                          <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
+                          {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                          {workspaceTeams.map((team: any) => (
+                            <div key={team.id} className="mb-2">
+                              {(() => {
+                                const teamRoles = team.teamRoles || [];
+                                const current = subtask.assigneeRoleRestrictions || [];
+                                const hasRoles = teamRoles.length > 0;
+                                const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                                const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+
+                                return (
+                                  <div
+                                    onClick={() => {
+                                      if (!hasRoles) return;
+                                      let next = [...current];
+                                      if (allSelected) {
+                                        next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                      } else {
+                                        const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                        next = [...next, ...toAdd];
+                                      }
+                                      const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
+                                      if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+                                      if (onUpdateTask) {
+                                        const updatedTask = {
+                                          ...parentTask,
+                                          subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
+                                        };
+                                        onUpdateTask(updatedTask);
+                                      }
+                                      tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                    }}
+                                    className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                                  >
+                                    {hasRoles && (
+                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                        {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                                        {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                                      </div>
+                                    )}
+                                    <span>{team.name}</span>
+                                  </div>
+                                );
+                              })()}
+                              {(!team.teamRoles || team.teamRoles.length === 0) && (
+                                <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+                              )}
+                              {team.teamRoles && team.teamRoles.length > 0 && (
+                                <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                                  {team.teamRoles.map((role: any) => {
+                                    const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
                                     return (
-                                      <div 
+                                      <div
+                                        key={role.id}
                                         onClick={() => {
-                                          if (!hasRoles) return;
-                                          let next = [...current];
-                                          if (allSelected) {
-                                            next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
-                                          } else {
-                                            const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
-                                            next = [...next, ...toAdd];
-                                          }
-                                          
+                                          const current = subtask.assigneeRoleRestrictions || [];
+                                          const next = selected
+                                            ? current.filter((r: string) => r !== role.name)
+                                            : [...current, role.name];
+
+                                          // Optimistically update immediately before API call
                                           const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
+                                          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
                                           if (onUpdateTask) {
                                             const updatedTask = {
                                               ...parentTask,
@@ -2715,86 +2939,166 @@ function SubtaskDetailView({
                                             };
                                             onUpdateTask(updatedTask);
                                           }
-                                          tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+
+                                          // Fire API in background
+                                          tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any)
+                                            .catch((err: any) => {
+                                              console.error("Failed to update subtask role restriction", err);
+                                            });
                                         }}
-                                        className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                                        className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
                                       >
-                                        {hasRoles && (
-                                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
-                                            {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                                            {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
-                                          </div>
-                                        )}
-                                        <span>{team.name}</span>
+                                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                          {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                        </div>
+                                        {role.name}
                                       </div>
                                     );
-                                  })()}
-                                {(!team.teamRoles || team.teamRoles.length === 0) && (
-                                  <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
-                                )}
-                                {team.teamRoles && team.teamRoles.length > 0 && (
-                                  <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
-                                    {team.teamRoles.map((role: any) => {
-                                      const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
-                                      return (
-                                        <div
-                                          key={role.id}
-                                          onClick={() => {
-                                            const current = subtask.assigneeRoleRestrictions || [];
-                                            const next = selected
-                                              ? current.filter((r: string) => r !== role.name)
-                                              : [...current, role.name];
-                                            
-                                            // Optimistically update immediately before API call
-                                            const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
-                                            if (onUpdateTask) {
-                                              const updatedTask = {
-                                                ...parentTask,
-                                                subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
-                                              };
-                                              onUpdateTask(updatedTask);
-                                            }
-
-                                            // Fire API in background
-                                            tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any)
-                                              .catch((err: any) => {
-                                                console.error("Failed to update subtask role restriction", err);
-                                              });
-                                          }}
-                                          className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
-                                        >
-                                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                            {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                          </div>
-                                          {role.name}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </Popover.Content>
                     </Popover.Portal>
                   </Popover.Root>
 
-                  <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] text-zinc-400 hover:text-zinc-200 select-none w-fit">
-                    {assignee ? (
-                      <>
-                        {assignee.avatarUrl ? (
-                          <img src={assignee.avatarUrl} alt={assignee.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                  <Popover.Root open={isAssigneeOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsAssigneeOpen(open)}>
+                    <Popover.Trigger asChild>
+                      <motion.div layout
+                        title={currentAssignees.map((u: any) => u.name).join(', ')}
+                        className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignTask
+                            ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
+                            : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
+                          }`}
+                      >
+                        {currentAssignees.length > 0 ? (
+                          <>
+                            <div className="flex items-center -space-x-1.5">
+                              <AnimatePresence>
+                                {currentAssignees.slice(0, 2).map((u: any, i: number) => (
+                                  <motion.div
+                                    key={u.id}
+                                    initial={{ opacity: 0, scale: 0.5 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.5 }}
+                                    transition={{ duration: 0.2 }}
+                                    style={{ zIndex: 10 - i }}
+                                    className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                    title={u.name}
+                                  >
+                                    {u.avatarUrl ? (
+                                      <img src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
+                                    ) : (
+                                      <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
+                                        {(u.name || 'U').substring(0, 2).toUpperCase()}
+                                      </div>
+                                    )}
+                                  </motion.div>
+                                ))}
+                              </AnimatePresence>
+                              <AnimatePresence>
+                                {currentAssignees.length > 2 && (
+                                  <motion.div
+                                    key="overflow"
+                                    initial={{ opacity: 0, scale: 0.5 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.5 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0"
+                                  >
+                                    +{currentAssignees.length - 2}
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                            {currentAssignees.length === 1 && (
+                              <motion.span layout className="truncate max-w-[100px]">{currentAssignees[0].name}</motion.span>
+                            )}
+                          </>
                         ) : (
-                          <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
-                            {(assignee.name || 'U').substring(0, 2).toUpperCase()}
-                          </div>
+                          <>
+                            <Plus className="w-3.5 h-3.5 shrink-0" />
+                            <span>Assign</span>
+                            {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                          </>
                         )}
-                        <span className="truncate max-w-[100px]">{assignee.name}</span>
-                      </>
-                    ) : (
-                      <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
-                    )}
-                  </div>
+                      </motion.div>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        className="z-[200] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                        align="start"
+                        sideOffset={4}
+                      >
+                        <Command className="flex flex-col bg-transparent">
+                          <Command.Input
+                            placeholder="Search assignee..."
+                            className="flex h-10 w-full bg-transparent px-3 py-2 text-sm outline-none placeholder:text-zinc-500 border-b border-zinc-800/60 text-zinc-200"
+                          />
+                          <Command.List className="max-h-[260px] overflow-y-auto p-1.5 custom-scrollbar">
+                            <Command.Empty className="py-4 text-center text-sm text-zinc-500">
+                              No user found.
+                            </Command.Empty>
+
+                            {currentAssignees.length > 0 && (
+                              <Command.Item
+                                value="clear all unassigned none"
+                                onSelect={() => handleClearAllAssignees()}
+                                className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 mb-1 border-b border-zinc-800/40"
+                              >
+                                <div className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 mr-2 shrink-0">
+                                  ✕
+                                </div>
+                                <span>Clear all assignees</span>
+                              </Command.Item>
+                            )}
+
+                            {(workspaceUsers || []).map((u) => {
+                              const assigned = isUserAssigned(u.id);
+                              return (
+                                <Command.Item
+                                  key={u.id}
+                                  value={`${u.name} ${u.email}`}
+                                  onSelect={() => handleToggleAssignee(u)}
+                                  className="relative flex cursor-pointer select-none items-center justify-between rounded-sm px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300"
+                                >
+                                  <div className="flex items-center gap-2 truncate min-w-0">
+                                    {u.avatarUrl ? (
+                                      <img src={u.avatarUrl} alt={u.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
+                                    ) : (
+                                      <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold shrink-0">
+                                        {(u.name || 'U').substring(0, 2).toUpperCase()}
+                                      </div>
+                                    )}
+                                    <div className="flex flex-col truncate">
+                                      <span className="truncate text-xs font-medium text-zinc-200">{u.name}</span>
+                                      <span className="truncate text-[10px] text-zinc-500">{u.roles?.[0] || u.email}</span>
+                                    </div>
+                                  </div>
+                                  {assigned && (
+                                    <div className="w-5 h-5 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0 ml-2">
+                                      <Check className="w-3.5 h-3.5" />
+                                    </div>
+                                  )}
+                                </Command.Item>
+                              );
+                            })}
+                          </Command.List>
+                        </Command>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
+                  {currentAssignees.length > 0 && canEditTask && (
+                    <button
+                      onClick={handleClearAllAssignees}
+                      title="Clear all assignees"
+                      className="p-1 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2804,146 +3108,173 @@ function SubtaskDetailView({
                   <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Priority</span>
                 </div>
-                <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
-                  {(() => {
-                    const priorityColor = subtask.priority ? (PRIORITY_COLORS[subtask.priority]?.split(' ')[0] ?? 'text-zinc-400') : 'text-zinc-500';
-                    return (
-                      <span className={`capitalize ${priorityColor}`}>
-                        {subtask.priority?.toLowerCase() || 'Empty'}
-                      </span>
-                    );
-                  })()}
-                </div>
+                <Popover.Root open={isPriorityOpen && canEditTask} onOpenChange={setIsPriorityOpen}>
+                  <Popover.Trigger asChild>
+                    <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
+                      {(() => {
+                        const priorityColor = subtask.priority ? (PRIORITY_COLORS[subtask.priority]?.split(' ')[0] ?? 'text-zinc-400') : 'text-zinc-500';
+                        return (
+                          <span className={`capitalize ${priorityColor}`}>
+                            {subtask.priority?.toLowerCase() || 'Empty'}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content className="z-[200] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
+                      <div className="flex flex-col gap-0.5">
+                        <div
+                          onClick={() => handleUpdatePriority(null)}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors ${!subtask.priority ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-zinc-600" />
+                          Empty
+                        </div>
+                        {['LOW', 'MEDIUM', 'HIGH', 'URGENT'].map((p) => (
+                          <div
+                            key={p}
+                            onClick={() => handleUpdatePriority(p)}
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors ${subtask.priority === p ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}`}
+                          >
+                            <span className={`w-2 h-2 rounded-full ${PRIORITY_COLORS[p]?.split(' ')[1]}`} />
+                            <span className="capitalize">{p.toLowerCase()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
               </div>
             </div>
 
-            {/* Description */ }
-  <div className="mb-12">
-    <div className="flex items-center justify-between mb-4 shrink-0">
-      <span className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-        <AlignLeft className="w-5 h-5" />
-        Description
-      </span>
-      {editingUser && (
-        <span className="text-xs text-amber-400/80 flex items-center gap-1.5 animate-pulse">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-          {editingUser} is editing...
-        </span>
-      )}
-    </div>
+            {/* Description */}
+            <div className="mb-12">
+              <div className="flex items-center justify-between mb-4 shrink-0">
+                <span className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+                  <AlignLeft className="w-5 h-5" />
+                  Description
+                </span>
+                {editingUser && (
+                  <span className="text-xs text-amber-400/80 flex items-center gap-1.5 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                    {editingUser} is editing...
+                  </span>
+                )}
+              </div>
 
-    <div
-      className="flex-1 relative group hover:bg-zinc-800/20 rounded-lg p-2 -mx-2 transition-colors cursor-text"
-      onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
-      onClick={() => handleStartEditing()}
-    >
-      <BlockEditor
-        content={localDesc}
-        onChange={(html) => {
-          setLocalDesc(html);
-          if (socket && subtask) {
-            if (debounceRef.current) clearTimeout(debounceRef.current);
-            debounceRef.current = setTimeout(() => {
-              socket.emit('task_editing_content', {
-                listId: parentTask.listId,
-                taskId: subtask.id,
-                content: html,
-              });
-            }, 150);
-          }
-        }}
-        onBlur={() => {
-          if (onUpdateTask) {
-            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
-            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-          }
-          if (socket && subtask) {
-            socket.emit('task_editing_end', {
-              listId: parentTask.listId,
-              taskId: subtask.id,
-              userName: currentUser?.name || 'Someone',
-            });
-          }
-          setEditingUser(null);
-        }}
-        editable={!editingUser}
-        onEditorReady={(editor) => { editorRef.current = editor; }}
-      />
+              <div
+                className="flex-1 relative group hover:bg-zinc-800/20 rounded-lg p-2 -mx-2 transition-colors cursor-text"
+                onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
+                onClick={() => handleStartEditing()}
+              >
+                <BlockEditor
+                  content={localDesc}
+                  onChange={(html) => {
+                    setLocalDesc(html);
+                    if (socket && subtask) {
+                      if (debounceRef.current) clearTimeout(debounceRef.current);
+                      debounceRef.current = setTimeout(() => {
+                        socket.emit('task_editing_content', {
+                          listId: parentTask.listId,
+                          taskId: subtask.id,
+                          content: html,
+                        });
+                      }, 150);
+                    }
+                  }}
+                  onBlur={() => {
+                    if (onUpdateTask) {
+                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
+                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+                    }
+                    if (socket && subtask) {
+                      socket.emit('task_editing_end', {
+                        listId: parentTask.listId,
+                        taskId: subtask.id,
+                        userName: currentUser?.name || 'Someone',
+                      });
+                    }
+                    setEditingUser(null);
+                  }}
+                  editable={!editingUser}
+                  onEditorReady={(editor) => { editorRef.current = editor; }}
+                />
 
-      {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
-        <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-          Add description...
-        </div>
-      )}
-    </div>
+                {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
+                  <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+                    Add description...
+                  </div>
+                )}
+              </div>
 
-    {/* Action Buttons (Notes, Attachments, etc) */}
-    <div className="mt-8 flex flex-col gap-2 w-full">
-      <AuditSection
-        task={parentTask}
-        title={subtask.title}
-        subtaskId={subtask.id}
-        users={workspaceUsers || []}
-        checklists={subtask.checklists || []}
-        currentUser={currentUser}
-        onUpdateChecklists={(checklists) => {
-          const updatedSubtask = { ...subtask, checklists };
-          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-          if (onUpdateTask) {
-            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-          }
-        }}
-      />
-      <ChecklistsSection
-        task={parentTask}
-        subtaskId={subtask.id}
-        users={workspaceUsers || []}
-        checklists={subtask.checklists || []}
-        currentUser={currentUser}
-        onUpdateChecklists={(checklists) => {
-          const updatedSubtask = { ...subtask, checklists };
-          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-          if (onUpdateTask) {
-            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-          }
-        }}
-      />
+              {/* Action Buttons (Notes, Attachments, etc) */}
+              <div className="mt-8 flex flex-col gap-2 w-full">
+                <AuditSection
+                  task={parentTask}
+                  title={subtask.title}
+                  subtaskId={subtask.id}
+                  users={workspaceUsers || []}
+                  checklists={subtask.checklists || []}
+                  currentUser={currentUser}
+                  onUpdateChecklists={(checklists) => {
+                    const updatedSubtask = { ...subtask, checklists };
+                    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+                    if (onUpdateTask) {
+                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+                    }
+                  }}
+                />
+                <ChecklistsSection
+                  task={parentTask}
+                  subtaskId={subtask.id}
+                  users={workspaceUsers || []}
+                  checklists={subtask.checklists || []}
+                  currentUser={currentUser}
+                  onUpdateChecklists={(checklists) => {
+                    const updatedSubtask = { ...subtask, checklists };
+                    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+                    if (onUpdateTask) {
+                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+                    }
+                  }}
+                />
 
-      <input type="file" ref={fileInputRef} className="hidden" onChange={handleDescriptionFileChange} />
-      <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer disabled:opacity-50">
-        <Paperclip className="w-4 h-4 shrink-0" /> {isUploading ? 'Uploading...' : 'Attach file or image'}
-      </button>
-      <AttachmentsGrid
-        attachments={subtask.attachments || []}
-        onDelete={async (id) => {
-          await tasksApi.deleteTaskAttachment(subtask.id, id);
-          const updatedSubtask = { ...subtask, attachments: (subtask.attachments || []).filter((a: any) => a.id !== id) };
-          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-          if (onUpdateTask) {
-            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-          }
-        }}
-      />
-    </div>
-  </div>
+                <input type="file" ref={fileInputRef} className="hidden" onChange={handleDescriptionFileChange} />
+                <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer disabled:opacity-50">
+                  <Paperclip className="w-4 h-4 shrink-0" /> {isUploading ? 'Uploading...' : 'Attach file or image'}
+                </button>
+                <AttachmentsGrid
+                  attachments={subtask.attachments || []}
+                  onDelete={async (id) => {
+                    await tasksApi.deleteTaskAttachment(subtask.id, id);
+                    const updatedSubtask = { ...subtask, attachments: (subtask.attachments || []).filter((a: any) => a.id !== id) };
+                    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+                    if (onUpdateTask) {
+                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+                    }
+                  }}
+                />
+              </div>
+            </div>
           </div >
         </div >
 
-    {/* Right Panel: Activity Log */ }
-    < div className = "w-[380px] bg-[#18181b] flex flex-col border-l border-zinc-800/60 shrink-0 z-10" >
+        {/* Right Panel: Activity Log */}
+        < div className="w-[380px] bg-[#18181b] flex flex-col border-l border-zinc-800/60 shrink-0 z-10" >
           <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
             <div className="flex gap-3">
               <span className="text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
             </div>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
             <div className="space-y-5">
-              
+
               {/* Initial Creation item */}
               <div className="flex gap-4 text-sm text-zinc-400 items-start">
                 <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
@@ -2954,12 +3285,138 @@ function SubtaskDetailView({
                   {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}
                 </span>
               </div>
-              
+
+              {/* Sort activities oldest to newest */}
+              {loadingActivities ? <CommentSkeleton /> : (() => {
+                const sorted = [...activities].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+                // Separate comments from non-comments
+                const comments = sorted.filter(a => a.type === 'comment');
+                const otherActivities = sorted.filter(a => a.type !== 'comment');
+
+                return (
+                  <>
+                    {/* Render other activities with Show More logic */}
+                    {otherActivities.length > 0 && (
+                      <>
+                        {otherActivities.length > 3 && (
+                          <button
+                            onClick={() => setIsActivityExpanded(!isActivityExpanded)}
+                            className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2"
+                          >
+                            {isActivityExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                            {isActivityExpanded ? 'Show less' : `Show more (${otherActivities.length - 3} older updates)`}
+                          </button>
+                        )}
+                        {(isActivityExpanded ? otherActivities : otherActivities.slice(-3)).map(act => {
+                          const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                          if (act.type === 'status_change') {
+                            return (
+                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                                <div className="flex-1 leading-snug">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                    <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
+                                  ) : (
+                                    <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
+                                  )}
+                                  {' '}to <span className="text-blue-400 font-medium bg-blue-500/10 px-1 rounded">{act.newStatus}</span>
+                                </div>
+                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                  {timeStr}
+                                </span>
+                              </div>
+                            );
+                          }
+                          if (act.type === 'assignment') {
+                            return (
+                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
+                                <div className="flex-1 leading-snug">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> assigned{' '}
+                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                    <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                  ) : (
+                                    <>to{' '}</>
+                                  )}
+                                  <span className="text-purple-400 font-medium">{act.assigneeName}</span>
+                                </div>
+                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                  {timeStr}
+                                </span>
+                              </div>
+                            );
+                          }
+                          if (act.type === 'priority_change') {
+                            return (
+                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                                <div className="flex-1 leading-snug">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                    <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
+                                  ) : (
+                                    <>changed priority to{' '}</>
+                                  )}
+                                  <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                                </div>
+                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                  {timeStr}
+                                </span>
+                              </div>
+                            );
+                          }
+                          if (act.type === 'team_role_change') {
+                            return (
+                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
+                                <div className="flex-1 leading-snug">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                    <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
+                                  ) : (
+                                    <>updated team roles</>
+                                  )}
+                                </div>
+                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                  {timeStr}
+                                </span>
+                              </div>
+                            );
+                          }
+                          if (act.type === 'attachment') {
+                            return (
+                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                                <div className="flex-1 leading-snug">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                    <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                  ) : (
+                                    <>attached a file:{' '}</>
+                                  )}
+                                  <span className="text-zinc-300 font-medium">{act.fileName}</span>
+                                </div>
+                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                  {timeStr}
+                                </span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+
               {/* Rich comments with reactions + replies */}
-                {false ? <CommentSkeleton /> : richComments.map(c => {
+              {false ? <CommentSkeleton /> : richComments.map(c => {
                 const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const dateStr = new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-                
+
                 const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
                 (c.reactions || []).forEach((r: any) => {
                   if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
@@ -2967,7 +3424,7 @@ function SubtaskDetailView({
                   cGroups[r.emoji].users.push(r.user?.name || '?');
                   if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
                 });
-                
+
                 return (
                   <div key={c.id} className="flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm">
                     <div className="flex items-center gap-3 w-full">
@@ -3001,7 +3458,7 @@ function SubtaskDetailView({
                         )}
                       </div>
                     </div>
-                    
+
                     {editingCommentId === c.id ? (
                       <div className="pl-11 flex gap-2 w-full">
                         <input
@@ -3026,7 +3483,7 @@ function SubtaskDetailView({
                         </ReactMarkdown>
                       </div>
                     )}
-                    
+
                     {/* Reaction pills */}
                     {Object.keys(cGroups).length > 0 && (
                       <div className="flex flex-wrap gap-1 pl-11">
@@ -3041,7 +3498,7 @@ function SubtaskDetailView({
                         ))}
                       </div>
                     )}
-                    
+
                     {/* Action row */}
                     <div className="flex items-center gap-1 mt-1 pl-11 relative">
                       <button
@@ -3105,7 +3562,7 @@ function SubtaskDetailView({
               >
                 <Paperclip className="w-4 h-4" />
               </button>
-              <button 
+              <button
                 onClick={handleAddComment}
                 disabled={(!comment.trim() && stagedFiles.length === 0) || isUploading}
                 className="absolute right-3 bottom-3 p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors cursor-pointer"

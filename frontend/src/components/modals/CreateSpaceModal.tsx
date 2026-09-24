@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { spacesApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { X, Layers } from 'lucide-react';
@@ -19,7 +20,7 @@ export function CreateSpaceModal({ isOpen, onClose, onSuccess }: CreateSpaceModa
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -48,9 +49,22 @@ export function CreateSpaceModal({ isOpen, onClose, onSuccess }: CreateSpaceModa
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 font-sans">
-      <div className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200">
-        <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 font-sans"
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
+          >
+            <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-indigo-400">
             <Layers className="w-5 h-5" />
             <h3 className="text-base font-bold text-white">Create Space</h3>
@@ -115,7 +129,9 @@ export function CreateSpaceModal({ isOpen, onClose, onSuccess }: CreateSpaceModa
             </button>
           </div>
         </form>
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

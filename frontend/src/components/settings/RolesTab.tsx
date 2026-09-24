@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, Shield, Loader2, Pencil, Check, X, Users, ChevronDown, ChevronRight } from 'lucide-react';
 import { getTeams, createTeam, deleteTeam, updateTeam, createTeamRole, updateTeamRole, deleteTeamRole } from '@/api/teams';
 import { Team, TeamRole } from '@/lib/types';
@@ -193,7 +194,12 @@ export function RolesTab() {
                         onClick={() => toggleTeamExpand(team.id)}
                         className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
                       >
-                        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                        <motion.div
+                          animate={{ rotate: isExpanded ? 90 : 0 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </motion.div>
                       </button>
                       
                       {editingTeamId === team.id ? (
@@ -254,10 +260,18 @@ export function RolesTab() {
                   </div>
 
                   {/* Team Roles Dropdown Section */}
-                  {isExpanded && (
-                    <div className="pl-12 pr-4 pb-4 bg-black/20 space-y-1">
-                      {team.teamRoles?.length === 0 && addingRoleToTeamId !== team.id && (
-                        <div className="py-2 text-xs text-zinc-600 italic">No roles defined for this team.</div>
+                  <AnimatePresence initial={false}>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: "easeInOut" }}
+                        className="overflow-hidden bg-black/20"
+                      >
+                        <div className="pl-12 pr-4 pb-4 pt-1 space-y-1">
+                          {team.teamRoles?.length === 0 && addingRoleToTeamId !== team.id && (
+                            <div className="py-2 text-xs text-zinc-600 italic">No roles defined for this team.</div>
                       )}
                       
                       {team.teamRoles?.map(role => (
@@ -335,8 +349,10 @@ export function RolesTab() {
                           Add Role
                         </button>
                       )}
-                    </div>
-                  )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               );
             })

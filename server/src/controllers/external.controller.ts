@@ -1,7 +1,29 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { io } from '../server';
 
 const prisma = new PrismaClient();
+
+async function getOrCreateVipScaleUser() {
+  let vipScaleUser = await prisma.user.findFirst({
+    where: { name: { equals: 'VIPSCALE', mode: 'insensitive' } }
+  });
+
+  if (!vipScaleUser) {
+    const password = await bcrypt.hash(Math.random().toString(36), 10);
+    vipScaleUser = await prisma.user.create({
+      data: {
+        name: 'VIPSCALE',
+        email: 'api-vipscale@system.local',
+        password,
+        systemRole: 'ADMIN',
+      }
+    });
+  }
+
+  return vipScaleUser;
+}
 
 // ---------------------------------------------------------------------------
 // Auth helper: validates API key and returns the key record (with user)
@@ -137,6 +159,8 @@ export async function createTask(req: Request, res: Response) {
     const list = await prisma.list.findUnique({ where: { id: listId } });
     if (!list) return res.status(404).json({ error: 'List not found' });
 
+    const vipScaleUser = await getOrCreateVipScaleUser();
+
     const task = await prisma.task.create({
       data: {
         title,
@@ -144,10 +168,50 @@ export async function createTask(req: Request, res: Response) {
         description: description || '',
         priority: priority || 'MEDIUM',
         status: status || 'Pending',
-        creatorId: apiKey.userId,
+        creatorId: vipScaleUser.id,
         assigneeId: assigneeId || undefined,
       }
     });
+
+    try {
+      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
+      if (doc) {
+        const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
+        const dayFormatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz,
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        });
+        const dayTitle = dayFormatter.format(new Date());
+
+        const todayPage = await prisma.page.findFirst({
+          where: { 
+            docId: doc.id, 
+            title: dayTitle 
+          }
+        });
+
+        if (todayPage && todayPage.content) {
+          const blocks = JSON.parse(todayPage.content);
+          
+          blocks.push({
+            id: `blk-t-${Date.now()}-${task.id}`,
+            type: "text",
+            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
+          });
+
+          await prisma.page.update({
+            where: { id: todayPage.id },
+            data: { content: JSON.stringify(blocks) }
+          });
+
+          io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to inject task into Priorities Journal:', error);
+    }
 
     return res.status(201).json({ message: 'Task created successfully', task });
   } catch (err: any) {

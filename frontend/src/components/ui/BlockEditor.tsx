@@ -58,7 +58,9 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       preserveWhitespace: 'full',
     },
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        history: false,
+      }),
       Underline,
       TextStyle,
       Color,
@@ -133,16 +135,35 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
         return html;
       },
       handleKeyDown: (view, event) => {
-        // We no longer manually intercept Enter because Tiptap natively creates a new paragraph,
-        // which our onUpdate handler detects and splits into a new block via onSplit!
-        // We only intercept Backspace to delete the block if it's empty.
+        // Intercept Backspace and Delete at boundaries to merge blocks
         if (event.key === 'Backspace') {
-          const doc = view.state.doc;
-          if (doc.textContent.length === 0) {
-            event.preventDefault();
-            event.stopPropagation();
-            if (propsRef.current.onKeyDown) propsRef.current.onKeyDown(event as any);
-            return true;
+          const { selection, doc } = view.state;
+          if (selection.empty) {
+            const { $from } = selection;
+            const isAtStart = $from.parentOffset === 0 && $from.pos === $from.start() && $from.index(0) === 0 && $from.depth === 1;
+            if (isAtStart) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (propsRef.current.onKeyDown) propsRef.current.onKeyDown(event as any);
+              return true;
+            }
+          }
+        } else if (event.key === 'Delete') {
+          const { selection, doc } = view.state;
+          if (selection.empty) {
+             const { $from } = selection;
+             const isAtEnd = $from.parentOffset === $from.parent.content.size && $from.pos === $from.end() && $from.index(0) === doc.childCount - 1 && $from.depth === 1;
+             if (isAtEnd) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (propsRef.current.onKeyDown) propsRef.current.onKeyDown(event as any);
+                return true;
+             }
+          }
+        } else if (event.key === 'Escape' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          if (propsRef.current.onKeyDown) {
+            propsRef.current.onKeyDown(event as any);
+            if (event.defaultPrevented) return true;
           }
         }
         return false;
@@ -154,10 +175,6 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       }
     }
   });
-
-  const handleKeyDownCapture = (e: React.KeyboardEvent) => {
-    // Intercepting handled natively in editorProps.handleKeyDown now.
-  };
 
   useEffect(() => {
     if (editor && autoFocus && !editor.isFocused) {
@@ -487,7 +504,6 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
             editor.commands.focus();
           }
         }}
-        onKeyDownCapture={handleKeyDownCapture}
       >
         <style>{`
           .tiptap p, .tiptap li, .tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5 {

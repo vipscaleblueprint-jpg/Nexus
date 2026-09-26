@@ -2614,7 +2614,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                           if(confirm('Restore this version? This will overwrite the current page content.')) {
                             const newBlocks = markdownToBlocks(version.content);
                             blocksRef.current = newBlocks;
-                            setCurrentBlocksKey(prev => prev + 1);
+                            setBlocks(newBlocks);
                             handleSavePage(newBlocks);
                             setShowVersionHistory(false);
                           }

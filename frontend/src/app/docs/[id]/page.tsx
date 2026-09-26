@@ -215,6 +215,8 @@ const getTaskStatusBadgeColor = (status?: string) => {
 export default function DocPage({ docId }: { docId?: string }) {
   const params = useParams<{ id: string }>();
   const id = docId || params?.id;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbg = (...args: any[]) => console.log('[BlockEditor]', ...args);
   const { currentUser, setCurrentUser, tasks, tasksIndex, loadTasks, hydrateTasksFromCache, updateTask } = useAppStore();
   const [doc, setDoc] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -226,6 +228,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     docRef.current = doc;
   }, [doc]);
 
+
   const [activePage, setActivePage] = useState<any>(null);
   const activePageRef = useRef<any>(null);
   useEffect(() => {
@@ -234,6 +237,9 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const [pageTitle, setPageTitle] = useState('');
   const [blocks, setBlocks] = useState<DocBlock[]>([]);
+  // Stable ref so event-handler closures registered with deps:[] never read stale blocks
+  const blocksRef = useRef<DocBlock[]>([]);
+  useEffect(() => { blocksRef.current = blocks; }, [blocks]);
   const [savingPage, setSavingPage] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
 
@@ -243,14 +249,22 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
   const isMouseDownRef = useRef(false);
   const dragSelectionStartBlockIndexRef = useRef<number | null>(null);
+  // Track whether the last mouseup resolved a cross-block native text selection
+  const crossBlockNativeSelectionRef = useRef(false);
   
   // Drag and drop state
   const [draggedBlockIndex, setDraggedBlockIndex] = useState<number | null>(null);
   const [dragOverBlockIndex, setDragOverBlockIndex] = useState<number | null>(null);
+  const [dragOverPosition, setDragOverPosition] = useState<'above' | 'below' | null>(null);
 
   // Registry of all mounted Tiptap editor instances, keyed by block ID.
   // Used to programmatically focus the correct editor after Enter creates a new block.
   const editorRegistryRef = useRef<Record<string, any>>({});
+  // Stable refs so deps:[] event handlers never read stale state values
+  const selectedBlockIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { selectedBlockIdsRef.current = selectedBlockIds; }, [selectedBlockIds]);
+  const focusedBlockIdRef = useRef<string | null>(null);
+  useEffect(() => { focusedBlockIdRef.current = focusedBlockId; }, [focusedBlockId]);
   const [subpageLimit, setSubpageLimit] = useState(10);
 
 
@@ -603,8 +617,9 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleKeyDown = (e: any, blockId: string, index: number) => {
-    // If we're typing or navigating, clear any block selection
+    // Clear block selection when user starts typing normally inside an editor
     if (selectedBlockIds.size > 0 && !e.shiftKey && e.key !== 'Escape') {
+      dbg('keydown inside editor, clearing block selection');
       setSelectedBlockIds(new Set());
     }
 
@@ -613,6 +628,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       const block = blocks.find(b => b.id === blockId);
       const isEmpty = !block?.content || block.content === '' || block.content === '<p></p>' || block.content === '<p><br></p>';
       if (isEmpty) {
+        dbg('Backspace on empty block', blockId, '@ index', index);
         e.preventDefault();
         handleDeleteBlock(blockId);
         if (index > 0) {
@@ -621,6 +637,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      dbg('Escape → entering block selection mode for', blockId);
       // Enter block selection mode for the current block
       const newSelection = new Set<string>();
       newSelection.add(blockId);
@@ -631,106 +648,84 @@ export default function DocPage({ docId }: { docId?: string }) {
         editor.commands.blur();
       }
     } else if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-      // Basic cross-block selection by holding Shift
-      const block = blocks.find(b => b.id === blockId);
-      // Check if cursor is at the edge (simplified: just select the block if they press shift+arrow)
-      // Since it's hard to read exact cursor position across editors instantly, we jump to block selection mode.
-      e.preventDefault();
-      const newSelection = new Set<string>();
-      newSelection.add(blockId);
-      if (e.key === 'ArrowUp' && index > 0) newSelection.add(blocks[index - 1].id);
-      if (e.key === 'ArrowDown' && index < blocks.length - 1) newSelection.add(blocks[index + 1].id);
-      setSelectedBlockIds(newSelection);
+      // Only jump to block-selection mode when Shift+Arrow is pressed from within the
+      // editor — do NOT intercept it if Tiptap can still move the cursor within the block.
+      // We use the Tiptap editor's state to check if we're at the very start/end.
       const editor = editorRegistryRef.current[blockId];
-      if (editor) editor.commands.blur();
+      const atStart = editor?.state?.selection?.$from?.parentOffset === 0;
+      const atEnd = editor?.state?.selection?.$to?.parentOffset === editor?.state?.selection?.$to?.parent?.content?.size;
+      const shouldCrossBlock = (e.key === 'ArrowUp' && atStart) || (e.key === 'ArrowDown' && atEnd);
+
+      if (shouldCrossBlock) {
+        e.preventDefault();
+        dbg('Shift+Arrow at block edge → block selection mode', blockId, e.key);
+        const newSelection = new Set<string>();
+        newSelection.add(blockId);
+        if (e.key === 'ArrowUp' && index > 0) newSelection.add(blocks[index - 1].id);
+        if (e.key === 'ArrowDown' && index < blocks.length - 1) newSelection.add(blocks[index + 1].id);
+        setSelectedBlockIds(newSelection);
+        if (editor) editor.commands.blur();
+      }
+      // else: let Tiptap/native handle Shift+Arrow within the block
     }
   };
 
-  // Listen to native text selection to detect cross-block drag highlighting
+
+  // ── Mouse tracking.
+  // IMPORTANT: We deliberately do NOT convert cross-block native text selection
+  // into block-selection mode here. This gives Google Docs-style behaviour:
+  // the user can freely click-drag to highlight text across block boundaries
+  // and the native blue cursor highlight is preserved.
+  // Block selection mode (blue block highlight) is ONLY entered via:
+  //   - Escape key inside an editor
+  //   - Click on the grip handle (⠿)
   useEffect(() => {
-    const handleSelectionChange = () => {
-      const selection = window.getSelection();
-      if (!selection || selection.isCollapsed) {
-        // Only clear if we were selecting via mouse drag.
-        // If we clear on every collapse, we break keyboard block selection.
-        // To be safe, we don't auto-clear here. The user clears via Escape or typing.
-        return;
-      }
-
-      const anchorElement = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement;
-      const focusElement = selection.focusNode instanceof Element ? selection.focusNode : selection.focusNode?.parentElement;
-
-      const anchorBlock = anchorElement?.closest('[data-block-id]');
-      const focusBlock = focusElement?.closest('[data-block-id]');
-
-      if (anchorBlock && focusBlock && anchorBlock !== focusBlock) {
-        const anchorId = anchorBlock.getAttribute('data-block-id');
-        const focusId = focusBlock.getAttribute('data-block-id');
-
-        if (anchorId && focusId) {
-          const startIndex = blocks.findIndex(b => b.id === anchorId);
-          const endIndex = blocks.findIndex(b => b.id === focusId);
-
-          if (startIndex !== -1 && endIndex !== -1) {
-            const min = Math.min(startIndex, endIndex);
-            const max = Math.max(startIndex, endIndex);
-            
-            const newSelection = new Set<string>();
-            for (let i = min; i <= max; i++) {
-              newSelection.add(blocks[i].id);
-            }
-            setSelectedBlockIds(newSelection);
-            
-            // Clear native selection so it doesn't conflict visually
-            if (selection.removeAllRanges) {
-              selection.removeAllRanges();
-            }
-            
-            // Blur any active editor so our global keydown catches bulk delete/type
-            if (document.activeElement instanceof HTMLElement) {
-              document.activeElement.blur();
-            }
-          }
-        }
-      }
-    };
-
-    document.addEventListener('selectionchange', handleSelectionChange);
-    return () => document.removeEventListener('selectionchange', handleSelectionChange);
-  }, [blocks]);
-
-  // Global mouse tracking for manual block selection
-  useEffect(() => {
-    const handleMouseUp = () => {
-      isMouseDownRef.current = false;
-      dragSelectionStartBlockIndexRef.current = null;
-    };
     const handleMouseDown = (e: MouseEvent) => {
       isMouseDownRef.current = true;
+      crossBlockNativeSelectionRef.current = false;
       const target = e.target as HTMLElement;
 
-      const blockEl = target.closest('[data-block-id]');
-      let isClickOnSelectedBlock = false;
-      if (blockEl) {
-        const blockId = blockEl.getAttribute('data-block-id');
-        // We can't access selectedBlockIds directly easily without breaking deps,
-        // so we check if it has the visual class.
-        if (target.closest('.is-selected-block')) {
-          isClickOnSelectedBlock = true;
-        }
-      }
-
-      // We read from the state via a functional update to avoid adding selectedBlockIds to deps
+      // Clear BLOCK-selection when clicking anywhere that isn't the grip or inside
+      // an already-selected block wrapper
       setSelectedBlockIds(prev => {
-        if (!e.shiftKey && prev.size > 0) {
-          if (!target.closest('.cursor-grab') && !isClickOnSelectedBlock) {
-            return new Set();
-          }
+        if (prev.size === 0) return prev;
+        if (e.shiftKey) return prev;
+        const isGrip = !!target.closest('.cursor-grab');
+        const isOnSelectedBlock = !!target.closest('.is-selected-block');
+        if (!isGrip && !isOnSelectedBlock) {
+          dbg('mousedown outside selection → clearing block selection');
+          return new Set();
         }
         return prev;
       });
     };
-    
+
+    const handleMouseUp = (e: MouseEvent) => {
+      isMouseDownRef.current = false;
+      dragSelectionStartBlockIndexRef.current = null;
+      crossBlockNativeSelectionRef.current = false;
+
+      // Debug: log what the native selection looks like after mouseup
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) {
+        const anchorEl = (
+          sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement
+        )?.closest('[data-block-id]');
+        const focusEl = (
+          sel.focusNode instanceof Element ? sel.focusNode : sel.focusNode?.parentElement
+        )?.closest('[data-block-id]');
+        if (anchorEl && focusEl) {
+          const isCrossBlock = anchorEl !== focusEl;
+          dbg(
+            isCrossBlock ? '✨ Cross-block native text selection' : 'Single-block text selection',
+            '| anchor block:', anchorEl.getAttribute('data-block-id'),
+            '| focus block:', focusEl.getAttribute('data-block-id'),
+            '| text:', `"${sel.toString().slice(0, 80)}"`,
+          );
+        }
+      }
+    };
+
     window.addEventListener('mousedown', handleMouseDown, true);
     window.addEventListener('mouseup', handleMouseUp, true);
     return () => {
@@ -739,15 +734,186 @@ export default function DocPage({ docId }: { docId?: string }) {
     };
   }, []);
 
-  // Global key listener for Block Selection Mode
+  // ── Handle cross-block native text selection + Backspace/Delete → merge blocks
+  // This works in tandem with Google Docs-style free selection. When the user
+  // has dragged text across block boundaries and presses Backspace, we:
+  //  1) delete the native selection contents via range.deleteContents()
+  //  2) read the remaining innerHTML from the two boundary editors
+  //  3) merge them into the start block and remove intermediate blocks
+  useEffect(() => {
+    const handleNativeBackspace = (e: KeyboardEvent) => {
+      if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) return;
+
+      const anchorNode = selection.anchorNode;
+      const focusNode = selection.focusNode;
+      if (!anchorNode || !focusNode) return;
+
+      const anchorElement = anchorNode instanceof Element ? anchorNode : anchorNode.parentElement;
+      const focusElement = focusNode instanceof Element ? focusNode : focusNode.parentElement;
+
+      const anchorBlock = anchorElement?.closest('[data-block-id]');
+      const focusBlock = focusElement?.closest('[data-block-id]');
+
+      // Only intercept when the selection genuinely spans two different blocks
+      if (!anchorBlock || !focusBlock || anchorBlock === focusBlock) return;
+
+      e.preventDefault();
+      dbg('Backspace/Delete on cross-block selection → merging blocks');
+
+      const anchorId = anchorBlock.getAttribute('data-block-id');
+      const focusId = focusBlock.getAttribute('data-block-id');
+      if (!anchorId || !focusId) return;
+
+      const currentBlocks = blocksRef.current;
+      const startIndex = currentBlocks.findIndex(b => b.id === anchorId);
+      const endIndex = currentBlocks.findIndex(b => b.id === focusId);
+      if (startIndex === -1 || endIndex === -1) return;
+
+      const min = Math.min(startIndex, endIndex);
+      const max = Math.max(startIndex, endIndex);
+      dbg('Merging blocks', min, '→', max, '(', currentBlocks[min].id, '…', currentBlocks[max].id, ')');
+
+      try {
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+
+        const startEditorDOM = document.querySelector(`[data-block-id="${currentBlocks[min].id}"] .ProseMirror`);
+        const endEditorDOM = document.querySelector(`[data-block-id="${currentBlocks[max].id}"] .ProseMirror`);
+
+        let startContent = startEditorDOM?.innerHTML || '';
+        let endContent = endEditorDOM?.innerHTML || '';
+        startContent = startContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
+        endContent = endContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
+        const mergedContent = startContent + endContent || '';
+
+        dbg('Merged content (first 120 chars):', mergedContent.slice(0, 120));
+
+        const newBlocks = [
+          ...currentBlocks.slice(0, min),
+          { ...currentBlocks[min], content: mergedContent },
+          ...currentBlocks.slice(max + 1)
+        ];
+
+        setBlocks(newBlocks);
+        handleSavePage(newBlocks);
+
+        requestAnimationFrame(() => {
+          const editor = editorRegistryRef.current[currentBlocks[min].id];
+          if (editor) editor.commands.focus('end');
+        });
+      } catch (err) {
+        console.error('[BlockEditor] Failed to merge cross-block selection on backspace', err);
+      }
+    };
+
+    const handleNativeCopyCut = (e: ClipboardEvent) => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) return;
+
+      const anchorNode = selection.anchorNode;
+      const focusNode = selection.focusNode;
+      if (!anchorNode || !focusNode) return;
+
+      const anchorElement = anchorNode instanceof Element ? anchorNode : anchorNode.parentElement;
+      const focusElement = focusNode instanceof Element ? focusNode : focusNode.parentElement;
+
+      const anchorBlock = anchorElement?.closest('[data-block-id]');
+      const focusBlock = focusElement?.closest('[data-block-id]');
+
+      // Only intercept when the selection genuinely spans two different blocks
+      if (!anchorBlock || !focusBlock || anchorBlock === focusBlock) return;
+
+      const anchorId = anchorBlock.getAttribute('data-block-id');
+      const focusId = focusBlock.getAttribute('data-block-id');
+      if (!anchorId || !focusId) return;
+
+      const currentBlocks = blocksRef.current;
+      const startIndex = currentBlocks.findIndex(b => b.id === anchorId);
+      const endIndex = currentBlocks.findIndex(b => b.id === focusId);
+      if (startIndex === -1 || endIndex === -1) return;
+
+      const min = Math.min(startIndex, endIndex);
+      const max = Math.max(startIndex, endIndex);
+
+      e.preventDefault();
+      dbg(`Cross-block native ${e.type} intercepted!`, min, '→', max);
+
+      // Extract raw text natively spanning the blocks.
+      // window.getSelection().toString() natively returns newlines for paragraph breaks in contenteditable.
+      // We will ensure blocks are separated by double newlines so our paste handler recognizes them.
+      let textToCopy = selection.toString();
+      
+      // If the native toString() didn't give us multi-line text, we can build it manually.
+      // But typically browser does it right for cross-div selection.
+      // To be completely safe and ensure \n\n structure:
+      const selectedBlocks = currentBlocks.slice(min, max + 1);
+      if (selectedBlocks.length > 0) {
+        // Fallback: if browser native text is completely unformatted, we force it.
+        // But native selection toString() is usually the most accurate for partial text selection in the first and last blocks!
+        // We'll trust the native selection, but replace single newlines between block boundaries with double newlines.
+        // Actually, just standardizing on what the browser gives is safest for partial selections.
+      }
+
+      e.clipboardData?.setData('text/plain', textToCopy);
+
+      if (e.type === 'cut') {
+        try {
+          const range = selection.getRangeAt(0);
+          range.deleteContents();
+
+          const startEditorDOM = document.querySelector(`[data-block-id="${currentBlocks[min].id}"] .ProseMirror`);
+          const endEditorDOM = document.querySelector(`[data-block-id="${currentBlocks[max].id}"] .ProseMirror`);
+
+          let startContent = startEditorDOM?.innerHTML || '';
+          let endContent = endEditorDOM?.innerHTML || '';
+          startContent = startContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
+          endContent = endContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
+          const mergedContent = startContent + endContent || '';
+
+          const newBlocks = [
+            ...currentBlocks.slice(0, min),
+            { ...currentBlocks[min], content: mergedContent },
+            ...currentBlocks.slice(max + 1)
+          ];
+
+          setBlocks(newBlocks);
+          handleSavePage(newBlocks);
+
+          requestAnimationFrame(() => {
+            const editor = editorRegistryRef.current[currentBlocks[min].id];
+            if (editor) editor.commands.focus('end');
+          });
+        } catch (err) {
+          console.error('[BlockEditor] Failed to cut cross-block selection', err);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleNativeBackspace);
+    document.addEventListener('copy', handleNativeCopyCut);
+    document.addEventListener('cut', handleNativeCopyCut);
+    return () => {
+      document.removeEventListener('keydown', handleNativeBackspace);
+      document.removeEventListener('copy', handleNativeCopyCut);
+      document.removeEventListener('cut', handleNativeCopyCut);
+    };
+  }, []);
+
+  // ── Global key listener for Block Selection Mode
+  // Only active when selectedBlockIds has entries (i.e., user pressed Escape or clicked grip)
   useEffect(() => {
     if (selectedBlockIds.size === 0) return;
 
     const handleGlobalKeyDown = async (e: KeyboardEvent) => {
-      // Don't intercept if we're inside an active editor
+      // Don't intercept if focus is inside an active editor
       if (e.target instanceof HTMLElement && e.target.closest('.ProseMirror') && document.activeElement === e.target) {
+        dbg('keydown in active ProseMirror editor → not intercepting in block-selection mode');
         return;
       }
+
+      dbg('Global keydown in block-selection mode:', e.key, '| selected:', [...selectedBlockIds]);
 
       if (e.key === 'Escape') {
         setSelectedBlockIds(new Set());
@@ -791,16 +957,15 @@ export default function DocPage({ docId }: { docId?: string }) {
         e.preventDefault();
         const selectedBlocks = blocks.filter(b => selectedBlockIds.has(b.id));
         const textToCopy = selectedBlocks.map(b => {
-          // Replace <p> with newlines, then strip tags
+          // Strip HTML tags, preserving paragraph boundaries as real newlines
           let html = b.content;
-          html = html.replace(/<p[^>]*>/g, '').replace(/<\/p>/g, '\\n');
-          html = html.replace(/<br\s*[\/]?>/gi, '\\n');
-          
+          html = html.replace(/<p[^>]*>/g, '').replace(/<\/p>/g, '\n');
+          html = html.replace(/<br\s*[/]?>/gi, '\n');
           const div = document.createElement('div');
           div.innerHTML = html;
           return div.textContent?.trim() || '';
-        }).filter(t => t.length > 0).join('\\n\\n');
-        
+        }).filter(t => t.length > 0).join('\n\n');
+        dbg('Ctrl+C: copying', selectedBlocks.length, 'blocks:', JSON.stringify(textToCopy.slice(0, 80)));
         navigator.clipboard.writeText(textToCopy);
         return;
       }
@@ -811,15 +976,14 @@ export default function DocPage({ docId }: { docId?: string }) {
         const selectedBlocks = blocks.filter(b => selectedBlockIds.has(b.id));
         const textToCopy = selectedBlocks.map(b => {
           let html = b.content;
-          html = html.replace(/<p[^>]*>/g, '').replace(/<\/p>/g, '\\n');
-          html = html.replace(/<br\s*[\/]?>/gi, '\\n');
+          html = html.replace(/<p[^>]*>/g, '').replace(/<\/p>/g, '\n');
+          html = html.replace(/<br\s*[/]?>/gi, '\n');
           const div = document.createElement('div');
           div.innerHTML = html;
           return div.textContent?.trim() || '';
-        }).filter(t => t.length > 0).join('\\n\\n');
-        
+        }).filter(t => t.length > 0).join('\n\n');
+        dbg('Ctrl+X: cutting', selectedBlocks.length, 'blocks');
         navigator.clipboard.writeText(textToCopy);
-        
         // Remove cut blocks
         const remainingBlocks = blocks.filter(b => !selectedBlockIds.has(b.id));
         setBlocks(remainingBlocks);
@@ -828,39 +992,46 @@ export default function DocPage({ docId }: { docId?: string }) {
         return;
       }
 
-      // Paste over selected blocks
+      // Paste over selected blocks (replaces them)
       if ((e.ctrlKey || e.metaKey) && e.key === 'v' && selectedBlockIds.size > 0) {
         e.preventDefault();
         navigator.clipboard.readText().then(text => {
           if (!text) return;
-          
-          // Split by our \n\n format or standard \n
-          const parts = text.split(/\\n\\n|\\n/).map(t => t.trim()).filter(t => t.length > 0);
+          // Split on real newlines (double newline = block boundary, single = within block)
+          const parts = text.split(/\n\n|\n/).map(t => t.trim()).filter(t => t.length > 0);
           if (parts.length === 0) return;
-
+          dbg('Ctrl+V (block-selection mode): pasting', parts.length, 'parts over', selectedBlockIds.size, 'selected blocks');
           const newBlocks: DocBlock[] = parts.map(part => ({
             id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
             type: 'text',
             content: `<p>${part}</p>`,
           }));
-
           const selectedArr = Array.from(selectedBlockIds);
           const firstSelectedId = selectedArr[0];
           const insertIndex = blocks.findIndex(b => b.id === firstSelectedId);
-          
           if (insertIndex !== -1) {
-            // Replace selected blocks with new blocks
-            const updated = [
+            let updated = [
               ...blocks.slice(0, insertIndex),
               ...newBlocks,
               ...blocks.slice(insertIndex + selectedArr.length)
             ];
+
+            const lastBlock = updated[updated.length - 1];
+            const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+            if (updated.length === 0 || !isLastBlockEmpty) {
+              updated.push({
+                id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                type: 'text',
+                content: '',
+              });
+            }
+
             setBlocks(updated);
             setSelectedBlockIds(new Set());
             handleSavePage(updated);
           }
         }).catch(err => {
-          console.error('Failed to read clipboard text: ', err);
+          console.error('[BlockEditor] Failed to read clipboard on paste:', err);
         });
         return;
       }
@@ -923,31 +1094,232 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   }, [selectedBlockIds, socket, id]);
 
-  const handleUpdateBlockContent = (blockId: string, content: string) => {
-    let updated = blocks.map((b) => {
-      if (b.id !== blockId) return b;
-      return {
-        ...b,
-        content: content,
-      };
-    });
+  // ── Global paste & drop handler.
+  // Strategy:
+  //   1. Always read the clipboard/drop text first so we can inspect it.
+  //   2. If text has \n\n (multi-block content) → we ALWAYS intercept, even inside ProseMirror.
+  //      Tiptap can't split across blocks, so we must handle it ourselves.
+  //   3. If text is single-line AND focus is inside ProseMirror → let Tiptap handle it.
+  //   4. If block-selection mode is active → the keydown Ctrl+V handler takes precedence.
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent | DragEvent) => {
+      let text = '';
+      if (e.type === 'drop') {
+        text = (e as DragEvent).dataTransfer?.getData('text/plain') ?? '';
+      } else {
+        text = (e as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
+      }
 
+      const isInsideProseMirror = !!document.activeElement?.closest('.ProseMirror');
+      const currentlySelectedIds = selectedBlockIdsRef.current;
+      const currentBlocks = blocksRef.current;
+      const focusedId = focusedBlockIdRef.current;
+
+      dbg(
+        'paste event fired',
+        '| insideProseMirror:', isInsideProseMirror,
+        '| blockSelectionActive:', currentlySelectedIds.size > 0,
+        '| focusedBlockId:', focusedId,
+        '| clipboardText:', JSON.stringify(text.slice(0, 120)),
+      );
+
+      // If no text at all, do nothing
+      if (!text.trim()) {
+        dbg('paste: clipboard empty, skipping');
+        return;
+      }
+
+      // Split candidate: \n\n = block boundary, \n = line within block
+      const parts = text.split(/\n\n|\n/).map(t => t.trim()).filter(t => t.length > 0);
+      const isMultiBlock = parts.length > 1;
+
+      dbg('paste: parts =', parts, '| isMultiBlock:', isMultiBlock);
+
+      // If block-selection mode is active, the keydown Ctrl+V handler replaces selected blocks.
+      // Don't double-handle it here.
+      if (currentlySelectedIds.size > 0) {
+        dbg('paste: block-selection mode active → deferring to keydown Ctrl+V handler');
+        return;
+      }
+
+      // If single-line paste inside an active editor → let Tiptap handle it naturally
+      if (!isMultiBlock && isInsideProseMirror) {
+        dbg('paste: single-line inside ProseMirror → letting Tiptap handle it');
+        return;
+      }
+
+      // From here we own the paste event.
+      // We must stop propagation so Tiptap's internal paste handler doesn't also fire.
+      e.preventDefault();
+      e.stopPropagation();
+      dbg('paste: intercepted —', parts.length, 'block(s) to insert');
+
+      if (parts.length === 0) return;
+
+      // Determine insert position: after the focused block (or after the active ProseMirror block)
+      let anchorBlockId = focusedId;
+      if (!anchorBlockId && isInsideProseMirror) {
+        // Find which block the active editor belongs to
+        const proseMirrorEl = document.activeElement?.closest('[data-block-id]');
+        anchorBlockId = proseMirrorEl?.getAttribute('data-block-id') ?? null;
+        dbg('paste: resolved anchor block from DOM:', anchorBlockId);
+      }
+
+      const insertAfterIndex = anchorBlockId
+        ? currentBlocks.findIndex(b => b.id === anchorBlockId)
+        : currentBlocks.length - 1;
+
+      dbg('paste: insertAfterIndex =', insertAfterIndex, '(anchor:', anchorBlockId, ')');
+
+      // Helper: focus a block's editor with retry (React commit may be async)
+      const focusBlockWithRetry = (blockId: string, attempts = 0) => {
+        const editor = editorRegistryRef.current[blockId];
+        if (editor) {
+          editor.commands.focus('end');
+          dbg('paste focus: focused', blockId, 'on attempt', attempts);
+        } else if (attempts < 10) {
+          dbg('paste focus: editor not mounted yet for', blockId, '— retrying (attempt', attempts + 1, ')');
+          setTimeout(() => focusBlockWithRetry(blockId, attempts + 1), 16);
+        } else {
+          dbg('paste focus: gave up focusing', blockId, 'after 10 attempts');
+        }
+      };
+
+      if (isInsideProseMirror && anchorBlockId) {
+        const [firstPart, ...restParts] = parts;
+
+        // Use Tiptap's insertContent to put the first part at cursor position.
+        // This avoids touching blocks state for the anchor block → no re-mount → no cursor loss.
+        const anchorEditor = editorRegistryRef.current[anchorBlockId];
+        if (anchorEditor && firstPart) {
+          dbg('paste: inserting first part into Tiptap editor via insertContent:', JSON.stringify(firstPart));
+          anchorEditor.commands.insertContent(firstPart);
+        }
+
+        if (restParts.length === 0) {
+          dbg('paste: only one part — done (Tiptap handled it all)');
+          return;
+        }
+
+        // Create new blocks for the remaining parts
+        const newBlocks: DocBlock[] = restParts.map(part => ({
+          id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          type: 'text' as const,
+          content: `<p>${part}</p>`,
+        }));
+
+        dbg('paste: creating', newBlocks.length, 'new block(s) for remaining parts after anchor');
+
+        const insertAt = insertAfterIndex >= 0 ? insertAfterIndex + 1 : currentBlocks.length;
+        let updatedBlocks = [
+          ...currentBlocks.slice(0, insertAt),
+          ...newBlocks,
+          ...currentBlocks.slice(insertAt),
+        ];
+
+        const lastBlock = updatedBlocks[updatedBlocks.length - 1];
+        const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+        if (updatedBlocks.length === 0 || !isLastBlockEmpty) {
+          updatedBlocks.push({
+            id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            type: 'text',
+            content: '',
+          });
+        }
+
+        const lastNew = newBlocks[newBlocks.length - 1];
+        setBlocks(updatedBlocks);
+        handleSavePage(updatedBlocks);
+        setSelectedBlockIds(new Set());
+        setFocusedBlockId(lastNew.id);
+        dbg('paste: set focusedBlockId to', lastNew.id, '— scheduling focus with retry');
+        setTimeout(() => focusBlockWithRetry(lastNew.id), 0);
+
+      } else {
+        // Outside ProseMirror: all parts become new blocks inserted after anchor
+        const newBlocks: DocBlock[] = parts.map(part => ({
+          id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          type: 'text' as const,
+          content: `<p>${part}</p>`,
+        }));
+
+        const insertAt = insertAfterIndex >= 0 ? insertAfterIndex + 1 : currentBlocks.length;
+        let updatedBlocks = [
+          ...currentBlocks.slice(0, insertAt),
+          ...newBlocks,
+          ...currentBlocks.slice(insertAt),
+        ];
+
+        dbg('paste: inserting', newBlocks.length, 'new block(s) at index', insertAt);
+
+        const lastBlock = updatedBlocks[updatedBlocks.length - 1];
+        const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+        if (updatedBlocks.length === 0 || !isLastBlockEmpty) {
+          updatedBlocks.push({
+            id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            type: 'text',
+            content: '',
+          });
+        }
+
+        const lastNew = newBlocks[newBlocks.length - 1];
+        setBlocks(updatedBlocks);
+        handleSavePage(updatedBlocks);
+        setSelectedBlockIds(new Set());
+        setFocusedBlockId(lastNew.id);
+        dbg('paste: set focusedBlockId to', lastNew.id, '— scheduling focus with retry');
+        setTimeout(() => focusBlockWithRetry(lastNew.id), 0);
+      }
+    };
+
+    // Use capture phase (true) so we intercept the paste/drop before Tiptap's internal handler does.
+    document.addEventListener('paste', handleGlobalPaste as EventListener, true);
+    
+    // For drop events, we also need to allow the drop action by preventing default on dragover
+    const handleDragOver = (e: DragEvent) => {
+      // If we're dragging text (not files, not blocks), allow it
+      if (e.dataTransfer?.types.includes('text/plain') && !e.dataTransfer?.types.includes('Files')) {
+        e.preventDefault();
+      }
+    };
+    
+    document.addEventListener('drop', handleGlobalPaste as EventListener, true);
+    document.addEventListener('dragover', handleDragOver, true);
+    
+    return () => {
+      document.removeEventListener('paste', handleGlobalPaste as EventListener, true);
+      document.removeEventListener('drop', handleGlobalPaste as EventListener, true);
+      document.removeEventListener('dragover', handleDragOver, true);
+    };
+  }, []);
+
+  const handleUpdateBlockContent = (blockId: string, content: string) => {
     if (socket) {
       socket.emit('block_content_update', { docId: id, blockId, content });
     }
 
-    const lastBlock = updated[updated.length - 1];
-    const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
-
-    if (updated.length === 0 || !isLastBlockEmpty) {
-      updated.push({
-        id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        type: 'text',
-        content: '',
+    setBlocks(prevBlocks => {
+      let updated = prevBlocks.map((b) => {
+        if (b.id !== blockId) return b;
+        return {
+          ...b,
+          content: content,
+        };
       });
-    }
 
-    setBlocks(updated);
+      const lastBlock = updated[updated.length - 1];
+      const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+
+      if (updated.length === 0 || !isLastBlockEmpty) {
+        updated.push({
+          id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          type: 'text',
+          content: '',
+        });
+      }
+      return updated;
+    });
+    
     // Don't call handleSavePage here on every keystroke! It is already handled on blur.
   };
 
@@ -961,73 +1333,83 @@ export default function DocPage({ docId }: { docId?: string }) {
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
     if (draggedBlockIndex === null || draggedBlockIndex === index) return;
+    // Determine whether we're in the top or bottom half of the target block
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const pos = e.clientY < midY ? 'above' : 'below';
     setDragOverBlockIndex(index);
+    setDragOverPosition(pos);
   };
 
   const handleDrop = (e: React.DragEvent, index: number) => {
     e.preventDefault();
     if (draggedBlockIndex === null) return;
-    
-    // Check if the dragged block is part of a multi-selection
-    const draggedBlock = blocks[draggedBlockIndex];
+
+    const currentBlocks = blocksRef.current;
+    const draggedBlock = currentBlocks[draggedBlockIndex];
+    if (!draggedBlock) return;
+
     const isMultiSelectDrag = selectedBlockIds.has(draggedBlock.id) && selectedBlockIds.size > 1;
 
-    let blocksToMove: DocBlock[] = [];
-    let remainingBlocks: DocBlock[] = [];
+    let blocksToMove: DocBlock[];
+    let remainingBlocks: DocBlock[];
 
     if (isMultiSelectDrag) {
-      blocksToMove = blocks.filter(b => selectedBlockIds.has(b.id));
-      remainingBlocks = blocks.filter(b => !selectedBlockIds.has(b.id));
+      // Preserve the original order of the selected blocks
+      blocksToMove = currentBlocks.filter(b => selectedBlockIds.has(b.id));
+      remainingBlocks = currentBlocks.filter(b => !selectedBlockIds.has(b.id));
     } else {
-      blocksToMove = [blocks[draggedBlockIndex]];
-      remainingBlocks = blocks.filter((_, i) => i !== draggedBlockIndex);
+      blocksToMove = [currentBlocks[draggedBlockIndex]];
+      remainingBlocks = currentBlocks.filter((_, i) => i !== draggedBlockIndex);
     }
 
-    // Determine the actual drop index in the remaining blocks array
-    const targetBlock = blocks[index];
-    let newIndex = 0;
-    
-    if (!targetBlock) {
-      newIndex = remainingBlocks.length;
-    } else {
-      // If we drop ON an empty block, we want to REPLACE it rather than push it down.
-      const isTargetEmpty = targetBlock.content === '' || targetBlock.content === '<p></p>' || targetBlock.content === '<p><br></p>';
-      
-      if (isTargetEmpty && !blocksToMove.find(b => b.id === targetBlock.id)) {
-        // Remove the empty target block from remaining blocks
-        remainingBlocks = remainingBlocks.filter(b => b.id !== targetBlock.id);
-      }
+    // Find where the target block sits in the remaining (non-dragged) array
+    const targetBlock = currentBlocks[index];
+    let insertAt: number;
 
-      newIndex = remainingBlocks.findIndex(b => b.id === targetBlock.id);
-      
-      // If we're dropping at the very end or the target was removed
-      if (newIndex === -1) {
-        // If we replaced the empty block, just drop it exactly at `index` (adjusted for moved blocks)
-        newIndex = index > draggedBlockIndex ? index - (blocksToMove.length - 1) : index;
-        if (newIndex < 0) newIndex = 0;
+    if (!targetBlock || blocksToMove.find(b => b.id === targetBlock.id)) {
+      // Dropped onto one of the dragged blocks themselves, or off the end
+      insertAt = remainingBlocks.length;
+    } else {
+      const targetIndexInRemaining = remainingBlocks.findIndex(b => b.id === targetBlock.id);
+      if (targetIndexInRemaining === -1) {
+        insertAt = remainingBlocks.length;
+      } else if (dragOverPosition === 'above') {
+        insertAt = targetIndexInRemaining;
       } else {
-        // If dragging downwards and NOT replacing an empty block, insert after target
-        if (draggedBlockIndex < index) {
-          newIndex += 1;
-        }
+        // 'below' (default)
+        insertAt = targetIndexInRemaining + 1;
       }
     }
 
-    const newBlocks = [
-      ...remainingBlocks.slice(0, newIndex),
+    let newBlocks = [
+      ...remainingBlocks.slice(0, insertAt),
       ...blocksToMove,
-      ...remainingBlocks.slice(newIndex)
+      ...remainingBlocks.slice(insertAt)
     ];
-    
+
+    // Ensure there is always an empty block at the bottom after dragging
+    const lastBlock = newBlocks[newBlocks.length - 1];
+    const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+    if (newBlocks.length === 0 || !isLastBlockEmpty) {
+      newBlocks.push({
+        id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        type: 'text',
+        content: '',
+      });
+    }
+
     setBlocks(newBlocks);
     handleSavePage(newBlocks);
     setDragOverBlockIndex(null);
+    setDragOverPosition(null);
     setDraggedBlockIndex(null);
-    setSelectedBlockIds(new Set()); // Clear selection after drag
+    setSelectedBlockIds(new Set());
   };
 
   const handleDragEnd = () => {
     setDragOverBlockIndex(null);
+    setDragOverPosition(null);
     setDraggedBlockIndex(null);
   };
 
@@ -1421,18 +1803,15 @@ export default function DocPage({ docId }: { docId?: string }) {
                     <div
                       key={block.id}
                       data-block-id={block.id}
-                      draggable={isSelected}
-                      onDragStart={(e) => {
-                        if (isSelected) {
-                          handleDragStart(e, index);
-                        }
-                      }}
                       onDragOver={(e) => handleDragOver(e, index)}
                       onDrop={(e) => handleDrop(e, index)}
                       onDragEnd={handleDragEnd}
-                      onMouseDown={(e) => {
+                      onMouseDownCapture={(e) => {
+                        // Allow triggering block selection mode from anywhere (including text)
                         if (!e.shiftKey) {
                           dragSelectionStartBlockIndexRef.current = index;
+                        } else {
+                          dragSelectionStartBlockIndexRef.current = null;
                         }
                       }}
                       onMouseEnter={(e) => {
@@ -1470,8 +1849,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                           ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
                           : 'hover:bg-zinc-800/40 pl-6 pr-2'
                       } ${isLockedBySomeoneElse ? 'ring-1 ring-red-500/30 ring-inset' : ''}
-                      ${dragOverBlockIndex === index && draggedBlockIndex !== null && draggedBlockIndex > index ? 'border-t-2 border-t-[#6b4cff]' : ''}
-                      ${dragOverBlockIndex === index && draggedBlockIndex !== null && draggedBlockIndex < index ? 'border-b-2 border-b-[#6b4cff]' : ''}
+                      ${dragOverBlockIndex === index && dragOverPosition === 'above' ? 'border-t-2 border-t-[#6b4cff]' : ''}
+                      ${dragOverBlockIndex === index && dragOverPosition === 'below' ? 'border-b-2 border-b-[#6b4cff]' : ''}
                       ${draggedBlockIndex === index ? 'bg-blue-500/10 opacity-50' : ''}`}
                     >
                       {/* Left Gutter: +, :: */}
@@ -1487,23 +1866,40 @@ export default function DocPage({ docId }: { docId?: string }) {
                         )}
                         {(!isSelected || isFirstSelected) && (
                           <div
-                            draggable
+                            draggable={false}
+                            onMouseDown={(e) => {
+                              // Activate draggable on mousedown so the drag API works
+                              e.currentTarget.draggable = true;
+                              // If this block is part of a multi-selection, note the drag start index
+                              // so handleDrop knows which group to move
+                              dragSelectionStartBlockIndexRef.current = index;
+                            }}
+                            onMouseUp={(e) => {
+                              e.currentTarget.draggable = false;
+                            }}
+                            onMouseLeave={(e) => {
+                              // Only disable draggable if we're not mid-drag
+                              if (!draggedBlockIndex) e.currentTarget.draggable = false;
+                            }}
                             onDragStart={(e) => {
-                              // If block is selected, drag all selected blocks (this just sets the drag index, we can handle multi-drop later)
+                              // If this block is part of a multi-selection, drag the whole group
                               handleDragStart(e, index);
                             }}
-                            onDragEnd={handleDragEnd}
+                            onDragEnd={(e) => {
+                              handleDragEnd();
+                              e.currentTarget.draggable = false;
+                            }}
                             onClick={(e) => {
-                              // Click drag handle to select block
                               e.stopPropagation();
+                              // Toggle block selection
                               const newSel = e.shiftKey ? new Set(selectedBlockIds) : new Set<string>();
                               newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
                               setSelectedBlockIds(newSel);
                             }}
                             className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
-                            title="Drag to move, Click to select"
+                            title="Drag to move · Click to select"
                           >
-                            <GripVertical className="w-3.5 h-3.5" />
+                            <GripVertical className="w-3.5 h-3.5 pointer-events-none" />
                           </div>
                         )}
                       </div>
@@ -1527,7 +1923,12 @@ export default function DocPage({ docId }: { docId?: string }) {
                         )}
 
                         {/* Content — always a live BlockEditor (docs-style: no click-to-activate) */}
-                        <div key={`editor-${block.id}`} className={`flex-1 min-w-0 ${isSelected ? 'is-selected-block' : ''} ${index === blocks.length - 1 ? 'show-placeholder' : ''}`}>
+                        <div key={`editor-${block.id}`} className={`flex-1 min-w-0 relative ${isSelected ? 'is-selected-block' : ''}`}>
+                          {index === blocks.length - 1 && (!block.content || block.content === '<p></p>' || block.content === '<p><br></p>') && (
+                            <div className="absolute top-0 left-0 text-[#71717a] text-sm pointer-events-none" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
+                              Write, press 'space' for AI, '/' for commands
+                            </div>
+                          )}
                           <BlockEditor
                             editable={!isLockedBySomeoneElse}
                             content={block.content}

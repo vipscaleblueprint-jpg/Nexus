@@ -7,7 +7,6 @@ import { Color } from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
-import Placeholder from '@tiptap/extension-placeholder';
 import { TaskMention } from '../editor/extensions/TaskMention';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
 import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
@@ -58,10 +57,6 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
       TextStyle,
       Color,
       Highlight.configure({ multicolor: true }),
-      Placeholder.configure({
-        placeholder: "Write, press 'space' for AI, '/' for commands",
-        emptyEditorClass: 'is-editor-empty',
-      }),
       TaskList,
       TaskItem.configure({
         nested: true,

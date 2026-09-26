@@ -608,6 +608,9 @@ export async function createPage(req: Request, res: Response) {
 export async function updatePage(req: Request, res: Response) {
   try {
     const { title, content } = req.body;
+    const authReq = req as any;
+    const userId = authReq.user?.id;
+
     const page = await prisma.page.update({
       where: { id: req.params.id },
       data: {
@@ -615,10 +618,42 @@ export async function updatePage(req: Request, res: Response) {
         ...(content !== undefined && { content }),
       },
     });
+
+    if (content !== undefined && userId) {
+      await prisma.pageVersion.create({
+        data: {
+          pageId: page.id,
+          userId: userId,
+          content: content,
+        }
+      });
+    }
+
     await invalidateCache('spaces:all', 'dashboard:all');
     return res.json({ page });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Page not found' });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/spaces/pages/:id/versions
+export async function getPageVersions(req: Request, res: Response) {
+  try {
+    const authReq = req as any;
+    const userId = authReq.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const versions = await prisma.pageVersion.findMany({
+      where: { pageId: req.params.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: {
+        user: { select: { id: true, name: true, avatarUrl: true, email: true } }
+      }
+    });
+    return res.json({ versions });
+  } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 }

@@ -87,6 +87,19 @@ input:disabled,
   float: left;
   height: 0;
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.show-placeholder .ProseMirror p.is-editor-empty {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.show-placeholder *::selection,
+.show-placeholder::selection {
+  background: transparent !important;
+  color: inherit !important;
 }
 
 /* TipTap Collaboration Cursor Styles */

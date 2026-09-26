@@ -106,6 +106,10 @@ export const spacesApi = {
     });
   },
 
+  async getPageVersions(id: string): Promise<{ versions: any[] }> {
+    return apiClient<{ versions: any[] }>(`/api/spaces/pages/${id}/versions`);
+  },
+
   async deletePage(id: string): Promise<{ message: string }> {
     return apiClient<{ message: string }>(`/api/spaces/pages/${id}`, {
       method: 'DELETE',

@@ -86,6 +86,7 @@ model User {
   team                  Team?                 @relation(fields: [teamId], references: [id])
   subtasksAssignedMulti Subtask[]             @relation("SubtaskMultiAssignees")
   assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
+  pageVersions          PageVersion[]
 
   @@index([email])
   @@index([systemRole])
@@ -198,10 +199,24 @@ model Page {
   doc          Doc       @relation(fields: [docId], references: [id], onDelete: Cascade)
   parentPage   Page?     @relation("PageHierarchy", fields: [parentPageId], references: [id], onDelete: Cascade)
   subpages     Page[]    @relation("PageHierarchy")
+  versions     PageVersion[]
 
   @@index([docId])
   @@index([parentPageId])
   @@index([reportDate])
+}
+
+model PageVersion {
+  id        String   @id @default(uuid())
+  pageId    String
+  userId    String
+  content   String   // The full page state at that time
+  createdAt DateTime @default(now())
+  page      Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@index([userId])
 }
 
 model Favorite {

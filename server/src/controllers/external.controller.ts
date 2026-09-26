@@ -248,11 +248,42 @@ export async function createTask(req: Request, res: Response) {
         if (todayPage && todayPage.content) {
           const blocks = JSON.parse(todayPage.content);
           
-          blocks.push({
+          const clientName = list.name || 'Unknown Client';
+          const headerContent = `<h3>${clientName}</h3>`;
+          
+          const newTaskBlock = {
             id: `blk-t-${Date.now()}-${task.id}`,
             type: "text",
             content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
-          });
+          };
+
+          const headerIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContent);
+
+          if (headerIndex !== -1) {
+            let insertIndex = headerIndex + 1;
+            while (insertIndex < blocks.length) {
+              const nextBlock = blocks[insertIndex];
+              if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+                break;
+              }
+              insertIndex++;
+            }
+            blocks.splice(insertIndex, 0, newTaskBlock);
+          } else {
+            const newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === '<h3>New Tasks</h3>');
+            
+            const clientHeaderBlock = {
+              id: `blk-h-${Date.now()}-${clientName.replace(/\\s+/g, '')}`,
+              type: 'text',
+              content: headerContent
+            };
+
+            if (newTasksHeaderIndex !== -1) {
+              blocks.splice(newTasksHeaderIndex, 0, clientHeaderBlock, newTaskBlock);
+            } else {
+              blocks.push(clientHeaderBlock, newTaskBlock);
+            }
+          }
 
           await prisma.page.update({
             where: { id: todayPage.id },
@@ -284,7 +315,10 @@ export async function updateTask(req: Request, res: Response) {
     const { taskId } = req.params;
     const { title, description, status, priority, assigneeId } = req.body;
 
-    const existingTask = await prisma.task.findUnique({ where: { id: taskId } });
+    const existingTask = await prisma.task.findUnique({ 
+      where: { id: taskId },
+      include: { list: true }
+    });
     if (!existingTask) return res.status(404).json({ error: 'Task not found' });
 
     const task = await prisma.task.update({
@@ -297,6 +331,84 @@ export async function updateTask(req: Request, res: Response) {
         ...(assigneeId !== undefined && { assigneeId }),
       }
     });
+
+    if (status && status !== existingTask.status && status.toLowerCase() !== 'closed') {
+      try {
+        const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
+        if (doc) {
+          const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
+          const dayFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric'
+          });
+          const dayTitle = dayFormatter.format(new Date());
+
+          const todayPage = await prisma.page.findFirst({
+            where: { 
+              docId: doc.id, 
+              title: dayTitle 
+            }
+          });
+
+          if (todayPage && todayPage.content) {
+            const blocks = JSON.parse(todayPage.content);
+            
+            const taskMention = `data-id="${task.id}"`;
+            const isAlreadyInJournal = blocks.some((b: any) => b.type === 'text' && b.content.includes(taskMention));
+
+            if (!isAlreadyInJournal) {
+              const clientName = existingTask.list?.name || 'Unknown Client';
+              const headerContent = `<h3>${clientName}</h3>`;
+              
+              const newTaskBlock = {
+                id: `blk-t-${Date.now()}-${task.id}`,
+                type: "text",
+                content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
+              };
+
+              const headerIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContent);
+
+              if (headerIndex !== -1) {
+                let insertIndex = headerIndex + 1;
+                while (insertIndex < blocks.length) {
+                  const nextBlock = blocks[insertIndex];
+                  if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+                    break;
+                  }
+                  insertIndex++;
+                }
+                blocks.splice(insertIndex, 0, newTaskBlock);
+              } else {
+                const newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === '<h3>New Tasks</h3>');
+                
+                const clientHeaderBlock = {
+                  id: `blk-h-${Date.now()}-${clientName.replace(/\\s+/g, '')}`,
+                  type: 'text',
+                  content: headerContent
+                };
+
+                if (newTasksHeaderIndex !== -1) {
+                  blocks.splice(newTasksHeaderIndex, 0, clientHeaderBlock, newTaskBlock);
+                } else {
+                  blocks.push(clientHeaderBlock, newTaskBlock);
+                }
+              }
+
+              await prisma.page.update({
+                where: { id: todayPage.id },
+                data: { content: JSON.stringify(blocks) }
+              });
+
+              io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to inject re-opened task into Priorities Journal:', error);
+      }
+    }
 
     return res.json({ message: 'Task updated successfully', task });
   } catch (err: any) {
@@ -502,6 +614,63 @@ export async function createSubtask(req: Request, res: Response) {
       }
     });
 
+    try {
+      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
+      if (doc) {
+        const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
+        const dayFormatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz,
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        });
+        const dayTitle = dayFormatter.format(new Date());
+
+        const todayPage = await prisma.page.findFirst({
+          where: { 
+            docId: doc.id, 
+            title: dayTitle 
+          }
+        });
+
+        if (todayPage && todayPage.content) {
+          const blocks = JSON.parse(todayPage.content);
+          
+          const parentTaskMention = `data-id="${task.id}"`;
+          const parentTaskIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content.includes(parentTaskMention));
+
+          if (parentTaskIndex !== -1) {
+            const newSubtaskBlock = {
+              id: `blk-st-${Date.now()}-${subtask.id}`,
+              type: "text",
+              content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
+            };
+
+            let insertIndex = parentTaskIndex + 1;
+            while (insertIndex < blocks.length) {
+              const nextBlock = blocks[insertIndex];
+              if (nextBlock.type === 'text' && nextBlock.content.includes('└─')) {
+                insertIndex++;
+              } else {
+                break;
+              }
+            }
+            
+            blocks.splice(insertIndex, 0, newSubtaskBlock);
+
+            await prisma.page.update({
+              where: { id: todayPage.id },
+              data: { content: JSON.stringify(blocks) }
+            });
+
+            io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to inject subtask into Priorities Journal:', error);
+    }
+
     return res.status(201).json({ message: 'Subtask created successfully', subtask });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -621,6 +790,358 @@ export async function getAssignableGroups(req: Request, res: Response) {
     return res.json({ success: true, options });
   } catch (err: any) {
     console.error("Error in getAssignableGroups:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/external/roles
+// Returns all workspace roles
+// ---------------------------------------------------------------------------
+export async function getRoles(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const [workspaceRoles, teamRoles] = await Promise.all([
+      prisma.workspaceRole.findMany({ orderBy: { createdAt: 'asc' } }),
+      (prisma as any).teamRole.findMany({
+        orderBy: { createdAt: 'asc' },
+        include: { team: { select: { id: true, name: true } } },
+      }),
+    ]);
+
+    // Merge: workspace roles first, then team-specific roles
+    const merged = [
+      ...workspaceRoles.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        color: r.color || null,
+        type: 'workspace',
+      })),
+      ...teamRoles.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        color: null,
+        type: 'teamrole',
+        teamId: r.teamId,
+        teamName: r.team?.name || null,
+      })),
+    ];
+
+    res.json(merged);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/external/roles
+// Creates a new workspace role
+// ---------------------------------------------------------------------------
+export async function createRole(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { name, color } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: 'Role name is required' });
+    }
+
+    const role = await prisma.workspaceRole.create({
+      data: {
+        name: name.toUpperCase(),
+        color,
+      },
+    });
+
+    res.status(201).json(role);
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ error: 'Role already exists' });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/external/roles/:id
+// Updates a workspace role
+// ---------------------------------------------------------------------------
+export async function updateRole(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    const { name, color } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Role name is required' });
+    }
+
+    const updatedRole = await prisma.workspaceRole.update({
+      where: { id },
+      data: {
+        name: name.toUpperCase(),
+        color,
+      },
+    });
+
+    res.json(updatedRole);
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ error: 'Role name already exists' });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/external/roles/:id
+// Deletes a workspace role
+// ---------------------------------------------------------------------------
+export async function deleteRole(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    
+    await prisma.workspaceRole.delete({
+      where: { id },
+    });
+
+    res.status(204).send();
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// External Users Management
+// ---------------------------------------------------------------------------
+export async function getExternalUsers(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatarUrl: true,
+        dailySheetUrl: true,
+        starRating: true,
+        employmentType: true,
+        isActive: true,
+        systemRole: true,
+        roles: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return res.json({ users });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function deleteExternalUser(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    
+    // Prevent deletion of VIPSCALE API user or own user
+    if (apiKey.userId === id) {
+      return res.status(400).json({ error: 'Cannot delete your own account via API' });
+    }
+
+    await prisma.user.delete({ where: { id } });
+    return res.json({ message: 'User deleted successfully' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function updateExternalUserRoles(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    const { roles, systemRole, employmentType, starRating, isActive } = req.body;
+
+    const dataToUpdate: any = {};
+    if (roles && Array.isArray(roles)) dataToUpdate.roles = roles;
+    if (systemRole) dataToUpdate.systemRole = systemRole;
+    if (employmentType) dataToUpdate.employmentType = employmentType;
+    if (starRating !== undefined) dataToUpdate.starRating = starRating;
+    if (isActive !== undefined) dataToUpdate.isActive = isActive;
+
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: dataToUpdate,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        roles: true,
+        systemRole: true,
+        employmentType: true,
+        starRating: true,
+        isActive: true,
+      }
+    });
+
+    return res.json({ user: updatedUser });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// External Invitations Management
+// ---------------------------------------------------------------------------
+export async function getExternalInvitations(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const invitations = await prisma.invitation.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return res.json({ invitations });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function createExternalInvitation(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { email, role, employmentType, expiresInDays } = req.body;
+    if (!email) return res.status(400).json({ error: 'email is required' });
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + (expiresInDays || 7));
+
+    const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+    const invite = await prisma.invitation.create({
+      data: {
+        email: email.trim().toLowerCase(),
+        token,
+        role: role || 'MEMBER',
+        employmentType: employmentType || 'FULL_TIME',
+        status: 'PENDING',
+        expiresAt,
+        invitedById: apiKey.userId
+      }
+    });
+
+    return res.status(201).json({ invitation: invite });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function revokeExternalInvitation(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    await prisma.invitation.delete({ where: { id } });
+    return res.json({ message: 'Invitation revoked' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function resendExternalInvitation(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    const invite = await prisma.invitation.findUnique({ where: { id } });
+    if (!invite) return res.status(404).json({ error: 'Not found' });
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    const updated = await prisma.invitation.update({
+      where: { id },
+      data: { status: 'PENDING', expiresAt }
+    });
+
+    return res.json({ message: 'Invitation resent', invitation: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// External Teams & Roles Management
+// ---------------------------------------------------------------------------
+export async function getExternalTeams(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const teams = await prisma.team.findMany({
+      include: { teamRoles: true },
+      orderBy: { name: 'asc' },
+    });
+
+    return res.json({ teams });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function createExternalTeam(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Team name is required' });
+
+    const team = await prisma.team.create({
+      data: { name },
+      include: { teamRoles: true },
+    });
+
+    return res.status(201).json({ team });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function createExternalTeamRole(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { teamId } = req.params;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Role name is required' });
+
+    const role = await (prisma as any).teamRole.create({
+      data: { name, teamId },
+    });
+
+    return res.status(201).json({ role });
+  } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 }

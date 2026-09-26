@@ -17,7 +17,7 @@ import {
   List, ListOrdered, Palette, X, CheckSquare,
   ListTree, ChevronRight, Heading1, Heading2, Heading3, Highlighter
 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, memo } from 'react';
 
 
 interface BlockEditorProps {
@@ -32,7 +32,13 @@ interface BlockEditorProps {
   onEditorReady?: (editor: any) => void;
 }
 
-export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onSplit, autoFocus, editable = true, onEditorReady }: BlockEditorProps) {
+export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorProps) {
+  const { content, autoFocus, editable = true, onEditorReady } = props;
+  const propsRef = useRef(props);
+  useEffect(() => {
+    propsRef.current = props;
+  });
+
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
@@ -77,36 +83,50 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
       const html = editor.getHTML();
       
       // Check if we need to split the block (multiple root elements)
-      if (onSplit) {
+      if (propsRef.current.onSplit) {
         const div = document.createElement('div');
         div.innerHTML = html;
         // Tiptap often wraps everything in <p>. If there are multiple root elements, it was split.
         if (div.children.length > 1) {
           const contents = Array.from(div.children).map(child => child.outerHTML);
-          onSplit(contents);
+          
+          // Blur the current editor immediately so user keystrokes don't go into it while we wait for the new block to mount
+          // This also allows the useEffect to overwrite its content back to contents[0] safely
+          editor.commands.blur();
+
+          // Forcefully revert the content visually in the current editor. We must use setTimeout 
+          // because Tiptap ignores setContent if called synchronously inside onUpdate.
+          // React's useEffect won't catch this if the text before Enter was the same!
+          setTimeout(() => {
+            if (!editor.isDestroyed) {
+              editor.commands.setContent(contents[0], false);
+            }
+          }, 0);
+          
+          propsRef.current.onSplit(contents);
           return;
         }
       }
       
-      onChange(html);
+      propsRef.current.onChange(html);
     },
     onBlur: ({ event }) => {
       if (blurTimeoutRef.current) {
         clearTimeout(blurTimeoutRef.current);
       }
       blurTimeoutRef.current = setTimeout(() => {
-        onBlur();
+        propsRef.current.onBlur();
       }, 150);
     },
     onFocus: () => {
       if (blurTimeoutRef.current) {
         clearTimeout(blurTimeoutRef.current);
       }
-      if (onFocus) onFocus();
+      if (propsRef.current.onFocus) propsRef.current.onFocus();
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap',
+        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap',
       },
       // Task 2: Preserve all data-* attributes on mention spans during paste.
       transformPastedHTML(html: string) {
@@ -121,7 +141,7 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
           if (doc.textContent.length === 0) {
             event.preventDefault();
             event.stopPropagation();
-            if (onKeyDown) onKeyDown(event as any);
+            if (propsRef.current.onKeyDown) propsRef.current.onKeyDown(event as any);
             return true;
           }
         }
@@ -275,7 +295,7 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
   }, [editor]);
 
   if (!editor) {
-    return <div className="flex-1 min-w-0 min-h-[24px]" />;
+    return <div className="flex-1 min-w-0 min-h-6" />;
   }
 
   const colors = [
@@ -293,7 +313,7 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
     <div className="w-full relative" ref={editorContainerRef}>
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
-          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999 }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-[99999]">
+          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999 }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
             
             {/* Headings */}
             <button
@@ -414,8 +434,8 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
                 <Palette className="w-3.5 h-3.5" />
               </button>
 
-              <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:block z-[99999]" onMouseDown={e => e.preventDefault()}>
-                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-[160px] flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
+              <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:block z-99999" onMouseDown={e => e.preventDefault()}>
+                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
                   {colors.map((color) => (
                     <button
                       key={`text-${color}`}
@@ -438,8 +458,8 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
                 <Highlighter className="w-3.5 h-3.5" />
               </button>
 
-              <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/highlight:block z-[99999]" onMouseDown={e => e.preventDefault()}>
-                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-[160px] flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
+              <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/highlight:block z-99999" onMouseDown={e => e.preventDefault()}>
+                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
                   {colors.map((color) => (
                     <button
                       key={`bg-${color}`}
@@ -461,7 +481,7 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
       </div>
 
       <div
-        className="flex-1 min-w-0"
+        className="flex-1 min-w-0 cursor-text"
         onMouseDown={(e) => {
           if (!editor.isFocused) {
             editor.commands.focus();
@@ -478,4 +498,6 @@ export function BlockEditor({ content, onChange, onBlur, onFocus, onKeyDown, onS
       </div>
     </div>
   );
-}
+}, (prev, next) => {
+  return prev.content === next.content && prev.editable === next.editable;
+});

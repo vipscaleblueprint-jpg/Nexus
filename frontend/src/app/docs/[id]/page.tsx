@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { authApi, spacesApi } from '@/api';
@@ -45,6 +45,7 @@ import {
   Circle,
   Flag,
   Check,
+  History
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 
@@ -272,22 +273,12 @@ const DocBlockRow = memo(({
         )}
         {(!isSelected || isFirstSelected) && (
           <div
-            draggable={false}
-            onMouseDown={(e) => {
-              e.currentTarget.draggable = true;
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.draggable = false;
-            }}
-            onMouseLeave={(e) => {
-              if (!draggedBlockIndex) e.currentTarget.draggable = false;
-            }}
+            draggable={true}
             onDragStart={(e) => {
               handleDragStart(e, index);
             }}
             onDragEnd={(e) => {
               handleDragEnd();
-              e.currentTarget.draggable = false;
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -295,10 +286,10 @@ const DocBlockRow = memo(({
               newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
               setSelectedBlockIds(newSel);
             }}
-            className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
+            className="flex items-center justify-center w-6 h-6 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
             title="Drag to move · Click to select"
           >
-            <GripVertical className="w-3.5 h-3.5 pointer-events-none" />
+            <GripVertical className="w-4 h-4 pointer-events-none" />
           </div>
         )}
       </div>
@@ -447,6 +438,28 @@ export default function DocPage({ docId }: { docId?: string }) {
   const focusedBlockIdRef = useRef<string | null>(null);
   useEffect(() => { focusedBlockIdRef.current = focusedBlockId; }, [focusedBlockId]);
   const [subpageLimit, setSubpageLimit] = useState(10);
+
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+  const [pageVersions, setPageVersions] = useState<any[]>([]);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+
+  useEffect(() => {
+    if (activePage?.id && currentUser?.id) {
+      spacesApi.getPageVersions(activePage.id).then(res => {
+        if (res.versions) {
+          setPageVersions(res.versions);
+          if (res.versions.length > 0) {
+            const history = res.versions
+              .filter((v: any) => v.userId === currentUser.id)
+              .map((v: any) => v.content).reverse();
+            setUndoStack(history);
+            setRedoStack([]);
+          }
+        }
+      }).catch(err => console.error("Failed to load versions:", err));
+    }
+  }, [activePage?.id, currentUser?.id]);
 
 
 
@@ -698,13 +711,25 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   };
 
-  const handleSavePage = async (updatedBlocks = blocksRef.current) => {
+  const handleSavePage = async (updatedBlocks = blocksRef.current, skipHistory = false) => {
     if (!activePageRef.current) return;
     setSavingPage(true);
     try {
+      const content = blocksToMarkdown(updatedBlocks);
+      
+      if (!skipHistory) {
+        setUndoStack(prev => {
+          if (prev.length === 0 || prev[prev.length - 1] !== content) {
+            return [...prev, content].slice(-50); // keep last 50
+          }
+          return prev;
+        });
+        setRedoStack([]);
+      }
+
       await spacesApi.updatePage(activePageRef.current.id, {
         title: pageTitleRef.current,
-        content: blocksToMarkdown(updatedBlocks),
+        content: content,
       });
       if (socket) {
         socket.emit('page_updated', { docId: id, pageId: activePageRef.current.id });
@@ -824,13 +849,74 @@ export default function DocPage({ docId }: { docId?: string }) {
         e.preventDefault();
         handleDeleteBlock(blockId);
         if (index > 0) {
-          const prevId = currentBlocks[index - 1].id;
-          handleFocusBlock(prevId);
+          const prevBlock = currentBlocks[index - 1];
+          if (prevBlock) {
+            const prevId = prevBlock.id;
+            handleFocusBlock(prevId);
+            setTimeout(() => {
+              const prevEditor = editorRegistryRef.current[prevId];
+              if (prevEditor) {
+                prevEditor.commands.focus('end');
+              }
+            }, 10);
+          }
+        }
+      } else if (index > 0) {
+        // Block is not empty, but Backspace was pressed at the very beginning
+        e.preventDefault();
+        const prevBlock = currentBlocks[index - 1];
+        const prevId = prevBlock.id;
+        
+        const currentEditor = editorRegistryRef.current[blockId];
+        const prevEditor = editorRegistryRef.current[prevId];
+        
+        if (currentEditor && prevEditor) {
+          const currentContent = currentEditor.getHTML();
+          let cHtml = currentContent;
+          if (cHtml.startsWith('<p>')) cHtml = cHtml.substring(3);
+          if (cHtml.endsWith('</p>')) cHtml = cHtml.substring(0, cHtml.length - 4);
+          
+          let pHtml = prevEditor.getHTML();
+          let newPHtml = pHtml.replace(/<\/p>$/, cHtml + '</p>');
+          
+          const oldSize = prevEditor.state.doc.content.size;
+          prevEditor.commands.setContent(newPHtml, false);
+          
+          handleDeleteBlock(blockId);
+          
           setTimeout(() => {
-            const prevEditor = editorRegistryRef.current[prevId];
-            if (prevEditor) {
-              prevEditor.commands.focus('end');
-            }
+            // focus at the merge point
+            prevEditor.commands.focus(Math.max(1, oldSize - 1));
+          }, 10);
+        }
+      }
+    } else if (e.key === 'Delete') {
+      const currentBlocks = blocksRef.current;
+      if (index < currentBlocks.length - 1) {
+        e.preventDefault();
+        const nextBlock = currentBlocks[index + 1];
+        const nextId = nextBlock.id;
+        
+        const currentEditor = editorRegistryRef.current[blockId];
+        const nextEditor = editorRegistryRef.current[nextId];
+        
+        if (currentEditor && nextEditor) {
+          const currentContent = currentEditor.getHTML();
+          const nextContent = nextEditor.getHTML();
+          
+          let nHtml = nextContent;
+          if (nHtml.startsWith('<p>')) nHtml = nHtml.substring(3);
+          if (nHtml.endsWith('</p>')) nHtml = nHtml.substring(0, nHtml.length - 4);
+          
+          let newCHtml = currentContent.replace(/<\/p>$/, nHtml + '</p>');
+          
+          const oldSize = currentEditor.state.doc.content.size;
+          currentEditor.commands.setContent(newCHtml, false);
+          
+          handleDeleteBlock(nextId);
+          
+          setTimeout(() => {
+            currentEditor.commands.focus(Math.max(1, oldSize - 1));
           }, 10);
         }
       }
@@ -867,6 +953,29 @@ export default function DocPage({ docId }: { docId?: string }) {
         if (editor) editor.commands.blur();
       }
       // else: let Tiptap/native handle Shift+Arrow within the block
+    } else if (!e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      const editor = editorRegistryRef.current[blockId];
+      const docSize = editor?.state?.doc?.content?.size || 0;
+      const atStart = editor?.state?.selection?.$from?.pos === 1;
+      const atEnd = editor?.state?.selection?.$to?.pos === Math.max(1, docSize - 1);
+      
+      if (e.key === 'ArrowUp' && atStart && index > 0) {
+        e.preventDefault();
+        const prevId = blocksRef.current[index - 1].id;
+        handleFocusBlock(prevId);
+        setTimeout(() => {
+          const prevEditor = editorRegistryRef.current[prevId];
+          if (prevEditor) prevEditor.commands.focus('end');
+        }, 10);
+      } else if (e.key === 'ArrowDown' && atEnd && index < blocksRef.current.length - 1) {
+        e.preventDefault();
+        const nextId = blocksRef.current[index + 1].id;
+        handleFocusBlock(nextId);
+        setTimeout(() => {
+          const nextEditor = editorRegistryRef.current[nextId];
+          if (nextEditor) nextEditor.commands.focus('start');
+        }, 10);
+      }
     }
   };
 
@@ -986,6 +1095,12 @@ export default function DocPage({ docId }: { docId?: string }) {
         let endContent = endEditorDOM?.innerHTML || '';
         startContent = startContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
         endContent = endContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
+        
+        if (startContent.endsWith('</p>') && endContent.startsWith('<p>')) {
+          startContent = startContent.substring(0, startContent.length - 4);
+          endContent = endContent.substring(3);
+        }
+        
         const mergedContent = startContent + endContent || '';
 
         dbg('Merged content (first 120 chars):', mergedContent.slice(0, 120));
@@ -1070,6 +1185,12 @@ export default function DocPage({ docId }: { docId?: string }) {
           let endContent = endEditorDOM?.innerHTML || '';
           startContent = startContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
           endContent = endContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
+          
+          if (startContent.endsWith('</p>') && endContent.startsWith('<p>')) {
+            startContent = startContent.substring(0, startContent.length - 4);
+            endContent = endContent.substring(3);
+          }
+          
           const mergedContent = startContent + endContent || '';
 
           const newBlocks = [
@@ -1316,6 +1437,60 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   }, [selectedBlockIds, socket, id]);
 
+  const handleUndo = useCallback(() => {
+    setUndoStack(prevUndo => {
+      if (prevUndo.length <= 1) return prevUndo; // Need at least current + previous
+      
+      const currentState = prevUndo[prevUndo.length - 1];
+      const previousState = prevUndo[prevUndo.length - 2];
+      
+      setRedoStack(prevRedo => [...prevRedo, currentState]);
+      const newUndo = prevUndo.slice(0, -1);
+      
+      const restoredBlocks = markdownToBlocks(previousState);
+      setBlocks(restoredBlocks);
+      handleSavePage(restoredBlocks, true);
+      
+      return newUndo;
+    });
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    setRedoStack(prevRedo => {
+      if (prevRedo.length === 0) return prevRedo;
+      
+      const nextState = prevRedo[prevRedo.length - 1];
+      const newRedo = prevRedo.slice(0, -1);
+      
+      setUndoStack(prevUndo => [...prevUndo, nextState]);
+      
+      const restoredBlocks = markdownToBlocks(nextState);
+      setBlocks(restoredBlocks);
+      handleSavePage(restoredBlocks, true);
+      
+      return newRedo;
+    });
+  }, []);
+
+  // Global Undo/Redo keydown
+  useEffect(() => {
+    const handleUndoRedoKeys = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    document.addEventListener('keydown', handleUndoRedoKeys);
+    return () => document.removeEventListener('keydown', handleUndoRedoKeys);
+  }, [handleUndo, handleRedo]);
+
   // ── Global paste & drop handler.
   // Strategy:
   //   1. Always read the clipboard/drop text first so we can inspect it.
@@ -1536,26 +1711,53 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
+    console.log(`[DRAG_DEBUG] handleDragStart initiated on index: ${index}, blockId: ${blocksRef.current[index]?.id}`);
     e.dataTransfer.effectAllowed = 'move';
     setDraggedBlockIndex(index);
-    // Setting drag image to an empty element to allow the whole row to drag visually
-    // or just let the default browser drag image happen.
+    
+    // Set the drag image to the whole block row for better visual feedback
+    const rowEl = document.querySelector(`[data-block-id="${blocksRef.current[index]?.id}"]`);
+    if (rowEl) {
+      console.log(`[DRAG_DEBUG] handleDragStart: Set drag image to full block row.`);
+      e.dataTransfer.setDragImage(rowEl as Element, 0, 0);
+    } else {
+      console.warn(`[DRAG_DEBUG] handleDragStart: Could not find block row element for drag image.`);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
     if (draggedBlockIndex === null) return;
     e.preventDefault();
-    if (draggedBlockIndex === index) return;
+    if (draggedBlockIndex === index) {
+      // Don't spam the console too much for self-hover
+      return;
+    }
+    
+    // Hide drop indicator if dragging a selection over itself
+    const targetId = blocksRef.current[index]?.id;
+    const draggedId = blocksRef.current[draggedBlockIndex]?.id;
+    if (targetId && draggedId && selectedBlockIdsRef.current.has(targetId) && selectedBlockIdsRef.current.has(draggedId)) {
+      return;
+    }
+    
     // Determine whether we're in the top or bottom half of the target block
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
     const pos = e.clientY < midY ? 'above' : 'below';
-    setDragOverBlockIndex(index);
-    setDragOverPosition(pos);
+    
+    if (dragOverBlockIndex !== index || dragOverPosition !== pos) {
+      console.log(`[DRAG_DEBUG] handleDragOver: set drop indicator to ${pos} block ${index} (${targetId})`);
+      setDragOverBlockIndex(index);
+      setDragOverPosition(pos);
+    }
   };
 
   const handleDrop = (e: React.DragEvent, index: number) => {
-    if (draggedBlockIndex === null) return;
+    console.log(`[DRAG_DEBUG] handleDrop triggered on index: ${index}`);
+    if (draggedBlockIndex === null) {
+      console.log(`[DRAG_DEBUG] handleDrop aborted: draggedBlockIndex is null`);
+      return;
+    }
     e.preventDefault();
 
     const currentBlocks = blocksRef.current;
@@ -1564,12 +1766,12 @@ export default function DocPage({ docId }: { docId?: string }) {
     if (!draggedBlock) return;
 
     const isMultiSelectDrag = currentSelectedBlockIds.has(draggedBlock.id) && currentSelectedBlockIds.size > 1;
+    console.log(`[DRAG_DEBUG] handleDrop: isMultiSelectDrag=${isMultiSelectDrag}`);
 
     let blocksToMove: DocBlock[];
     let remainingBlocks: DocBlock[];
 
     if (isMultiSelectDrag) {
-      // Preserve the original order of the selected blocks
       blocksToMove = currentBlocks.filter(b => currentSelectedBlockIds.has(b.id));
       remainingBlocks = currentBlocks.filter(b => !currentSelectedBlockIds.has(b.id));
     } else {
@@ -1577,22 +1779,30 @@ export default function DocPage({ docId }: { docId?: string }) {
       remainingBlocks = currentBlocks.filter((_, i) => i !== draggedBlockIndex);
     }
 
-    // Find where the target block sits in the remaining (non-dragged) array
     const targetBlock = currentBlocks[index];
-    let insertAt: number;
+    console.log(`[DRAG_DEBUG] handleDrop: targetBlock=${targetBlock?.id}`);
+    
+    if (targetBlock && blocksToMove.find(b => b.id === targetBlock.id)) {
+      console.log(`[DRAG_DEBUG] handleDrop aborted: Dropped onto self or selection`);
+      handleDragEnd();
+      return;
+    }
 
-    if (!targetBlock || blocksToMove.find(b => b.id === targetBlock.id)) {
-      // Dropped onto one of the dragged blocks themselves, or off the end
+    let insertAt: number;
+    if (!targetBlock) {
       insertAt = remainingBlocks.length;
+      console.log(`[DRAG_DEBUG] handleDrop: Dropped off end, insertAt=${insertAt}`);
     } else {
       const targetIndexInRemaining = remainingBlocks.findIndex(b => b.id === targetBlock.id);
       if (targetIndexInRemaining === -1) {
         insertAt = remainingBlocks.length;
+        console.log(`[DRAG_DEBUG] handleDrop: target not found in remaining, insertAt=${insertAt}`);
       } else if (dragOverPosition === 'above') {
         insertAt = targetIndexInRemaining;
+        console.log(`[DRAG_DEBUG] handleDrop: above target, insertAt=${insertAt}`);
       } else {
-        // 'below' (default)
         insertAt = targetIndexInRemaining + 1;
+        console.log(`[DRAG_DEBUG] handleDrop: below target, insertAt=${insertAt}`);
       }
     }
 
@@ -1602,6 +1812,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       ...remainingBlocks.slice(insertAt)
     ];
 
+    console.log(`[DRAG_DEBUG] handleDrop: reordered blocks successfully`);
     const lastBlock = newBlocks[newBlocks.length - 1];
     const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
     if (newBlocks.length === 0 || !isLastBlockEmpty) {
@@ -1621,6 +1832,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleDragEnd = () => {
+    console.log(`[DRAG_DEBUG] handleDragEnd triggered`);
     setDragOverBlockIndex(null);
     setDragOverPosition(null);
     setDraggedBlockIndex(null);
@@ -1817,6 +2029,12 @@ export default function DocPage({ docId }: { docId?: string }) {
                 <span className="font-semibold text-zinc-300">{currentUser?.name || 'Hannah'}</span>
                 <span className="text-zinc-600">•</span>
                 <span className="text-zinc-400">Last updated today</span>
+                <button 
+                  onClick={() => setShowVersionHistory(true)}
+                  className="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors ml-1"
+                >
+                  Version History
+                </button>
                 {!doc?.isDailyRollover && (
                   <>
                     <span className="text-zinc-600">•</span>
@@ -2114,10 +2332,20 @@ export default function DocPage({ docId }: { docId?: string }) {
                 if (draggedBlockIndex !== null) handleDrop(e, blocks.length);
               }}
               onClick={() => {
-                if (blocks.length === 0 || blocks[blocks.length - 1].content !== '') {
+                if (blocks.length === 0) {
                   handleAddBlock('text');
                 } else {
-                  handleFocusBlock(blocks[blocks.length - 1].id);
+                  const lastBlock = blocks[blocks.length - 1];
+                  const isEmpty = !lastBlock.content || lastBlock.content === '' || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+                  if (!isEmpty) {
+                    handleAddBlock('text');
+                  } else {
+                    handleFocusBlock(lastBlock.id);
+                    setTimeout(() => {
+                      const editor = editorRegistryRef.current[lastBlock.id];
+                      if (editor) editor.commands.focus('end');
+                    }, 10);
+                  }
                 }
               }}
             />
@@ -2344,6 +2572,74 @@ export default function DocPage({ docId }: { docId?: string }) {
                     </div>
                   </div>
                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Version History Sidebar */}
+      {showVersionHistory && (
+        <div className="fixed inset-0 z-[100] flex justify-end bg-black/20 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowVersionHistory(false)}>
+          <div 
+            className="w-80 h-full bg-[#111111] border-l border-zinc-800 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+              <div className="flex items-center gap-2 text-zinc-200">
+                <History className="w-4 h-4" />
+                <h3 className="font-semibold">Version History</h3>
+              </div>
+              <button onClick={() => setShowVersionHistory(false)} className="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+              {pageVersions.length === 0 ? (
+                <div className="text-zinc-500 text-sm text-center py-10">No version history available</div>
+              ) : (
+                pageVersions.map((version, i) => (
+                  <div key={version.id || i} className="flex flex-col gap-2 p-3 rounded-md bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-zinc-300">
+                        {new Date(version.createdAt).toLocaleString(undefined, { 
+                          month: 'short', day: 'numeric', 
+                          hour: 'numeric', minute: '2-digit'
+                        })}
+                      </span>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if(confirm('Restore this version? This will overwrite the current page content.')) {
+                            const newBlocks = markdownToBlocks(version.content);
+                            blocksRef.current = newBlocks;
+                            setCurrentBlocksKey(prev => prev + 1);
+                            handleSavePage(newBlocks);
+                            setShowVersionHistory(false);
+                          }
+                        }}
+                        className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded transition-colors"
+                      >
+                        Restore
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-full overflow-hidden shrink-0 bg-zinc-800 border border-zinc-700 flex items-center justify-center">
+                        {version.user?.avatarUrl ? (
+                          <img src={version.user.avatarUrl} alt={version.user.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-[10px] font-bold text-zinc-400">
+                            {version.user?.name?.charAt(0) || '?'}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm text-zinc-400">
+                        Edited by <strong className="text-zinc-200 font-medium">{version.user?.name || 'Unknown'}</strong>
+                      </span>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>

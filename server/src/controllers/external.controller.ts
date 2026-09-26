@@ -624,3 +624,128 @@ export async function getAssignableGroups(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/external/roles
+// Returns all workspace roles
+// ---------------------------------------------------------------------------
+export async function getRoles(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const [workspaceRoles, teamRoles] = await Promise.all([
+      prisma.workspaceRole.findMany({ orderBy: { createdAt: 'asc' } }),
+      (prisma as any).teamRole.findMany({
+        orderBy: { createdAt: 'asc' },
+        include: { team: { select: { id: true, name: true } } },
+      }),
+    ]);
+
+    // Merge: workspace roles first, then team-specific roles
+    const merged = [
+      ...workspaceRoles.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        color: r.color || null,
+        type: 'workspace',
+      })),
+      ...teamRoles.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        color: null,
+        type: 'teamrole',
+        teamId: r.teamId,
+        teamName: r.team?.name || null,
+      })),
+    ];
+
+    res.json(merged);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/external/roles
+// Creates a new workspace role
+// ---------------------------------------------------------------------------
+export async function createRole(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { name, color } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: 'Role name is required' });
+    }
+
+    const role = await prisma.workspaceRole.create({
+      data: {
+        name: name.toUpperCase(),
+        color,
+      },
+    });
+
+    res.status(201).json(role);
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ error: 'Role already exists' });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/external/roles/:id
+// Updates a workspace role
+// ---------------------------------------------------------------------------
+export async function updateRole(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    const { name, color } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Role name is required' });
+    }
+
+    const updatedRole = await prisma.workspaceRole.update({
+      where: { id },
+      data: {
+        name: name.toUpperCase(),
+        color,
+      },
+    });
+
+    res.json(updatedRole);
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ error: 'Role name already exists' });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/external/roles/:id
+// Deletes a workspace role
+// ---------------------------------------------------------------------------
+export async function deleteRole(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { id } = req.params;
+    
+    await prisma.workspaceRole.delete({
+      where: { id },
+    });
+
+    res.status(204).send();
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}

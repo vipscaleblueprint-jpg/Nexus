@@ -94,7 +94,7 @@ export function Header() {
               <span className="w-2 h-2 bg-emerald-500 rounded-full absolute bottom-0 right-0 border border-zinc-950" />
             </div>
 
-            <span className="font-semibold text-zinc-200 text-xs truncate max-w-[100px] hidden sm:inline">
+            <span className="font-semibold text-zinc-200 text-xs truncate max-w-25 hidden sm:inline">
               {activeUser.name.split(" ")[0]}
             </span>
 
@@ -180,6 +180,20 @@ export function Header() {
                 >
                   <span className="truncate text-indigo-400">API Settings</span>
                 </button>
+
+                {activeUser.systemRole === "ADMIN" && (
+                  <button
+                    onClick={() => {
+                      setIsProfileOpen(false);
+                      router.push("/settings/users");
+                    }}
+                    className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                  >
+                    <span className="truncate text-yellow-400">
+                      Admin Settings
+                    </span>
+                  </button>
+                )}
 
                 <button
                   onClick={handleLogout}

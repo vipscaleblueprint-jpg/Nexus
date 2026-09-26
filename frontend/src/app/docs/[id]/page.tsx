@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { useParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { authApi, spacesApi } from '@/api';
@@ -212,6 +212,185 @@ const getTaskStatusBadgeColor = (status?: string) => {
   }
 };
 
+const DocBlockRow = memo(({
+  block,
+  index,
+  isLast,
+  isLockedBySomeoneElse,
+  isSelected,
+  isFirstSelected,
+  dragOverBlockIndex,
+  dragOverPosition,
+  draggedBlockIndex,
+  focusedBlockId,
+  handleAddBlock,
+  handleDragStart,
+  handleDragEnd,
+  setSelectedBlockIds,
+  selectedBlockIds,
+  handleUpdateBlockContent,
+  handleBlurBlock,
+  handleKeyDown,
+  handleSplitBlock,
+  handleFocusBlock,
+  editorRegistryRef,
+  handleDeleteBlock,
+  onDragOverWrapper,
+  onDropWrapper,
+  onMouseDownCaptureWrapper,
+  onMouseEnterWrapper,
+  onClickWrapper,
+}: any) => {
+  return (
+    <div
+      data-block-id={block.id}
+      onDragOver={onDragOverWrapper}
+      onDrop={onDropWrapper}
+      onDragEnd={handleDragEnd}
+      onMouseDownCapture={onMouseDownCaptureWrapper}
+      onMouseEnter={onMouseEnterWrapper}
+      onClick={onClickWrapper}
+      className={`flex items-center justify-between py-1 rounded-md group transition-all relative ${
+        block.type === 'callout'
+          ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
+          : 'hover:bg-zinc-800/40 pl-6 pr-2'
+      } ${isLockedBySomeoneElse ? 'ring-1 ring-red-500/30 ring-inset' : ''}
+      ${dragOverBlockIndex === index && dragOverPosition === 'above' ? 'border-t-2 border-t-[#6b4cff]' : ''}
+      ${dragOverBlockIndex === index && dragOverPosition === 'below' ? 'border-b-2 border-b-[#6b4cff]' : ''}
+      ${draggedBlockIndex === index ? 'bg-blue-500/10 opacity-50' : ''}`}
+    >
+      {/* Left Gutter: +, :: */}
+      <div className={`absolute left-0 top-1.5 transition-opacity flex items-center gap-0.5 z-50 select-none -translate-x-full pr-1 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+        {(!isSelected || isFirstSelected) && (
+          <button
+            className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-pointer"
+            onClick={() => handleAddBlock('text', block.id)}
+            title="Add block below"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {(!isSelected || isFirstSelected) && (
+          <div
+            draggable={false}
+            onMouseDown={(e) => {
+              e.currentTarget.draggable = true;
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.draggable = false;
+            }}
+            onMouseLeave={(e) => {
+              if (!draggedBlockIndex) e.currentTarget.draggable = false;
+            }}
+            onDragStart={(e) => {
+              handleDragStart(e, index);
+            }}
+            onDragEnd={(e) => {
+              handleDragEnd();
+              e.currentTarget.draggable = false;
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              const newSel = e.shiftKey ? new Set(selectedBlockIds) : new Set<string>();
+              newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
+              setSelectedBlockIds(newSel);
+            }}
+            className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
+            title="Drag to move · Click to select"
+          >
+            <GripVertical className="w-3.5 h-3.5 pointer-events-none" />
+          </div>
+        )}
+      </div>
+
+      {/* Persistent lock indicator */}
+      {isLockedBySomeoneElse && (
+        <div className="absolute top-0 right-0 flex items-center gap-1 px-1.5 py-0.5 bg-red-950/60 border-l border-b border-red-500/30 rounded-bl-md z-10 pointer-events-none">
+          <Lock className="w-2.5 h-2.5 text-red-400" />
+          <span className="text-[9px] font-bold tracking-wide text-red-400 uppercase">
+            {block.lockedByName || 'User'}
+          </span>
+        </div>
+      )}
+      <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-20 relative">
+        {block.type === 'callout' && (
+          <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+        )}
+        {block.type === 'tags' && (
+          <Tags className="w-4 h-4 text-zinc-500 shrink-0" />
+        )}
+
+        <div key={`editor-${block.id}`} className={`flex-1 min-w-0 relative ${isSelected ? 'is-selected-block' : ''}`}>
+          {isLast && (!block.content || block.content === '<p></p>' || block.content === '<p><br></p>') && (
+            <div className="absolute top-0 left-0 text-[#71717a] text-sm pointer-events-none" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
+              Write, press 'space' for AI, '/' for commands
+            </div>
+          )}
+          <BlockEditor
+            editable={!isLockedBySomeoneElse}
+            content={block.content}
+            onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
+            onBlur={() => handleBlurBlock(block.id)}
+            onKeyDown={(e) => handleKeyDown(e, block.id, index)}
+            onSplit={(contents) => handleSplitBlock(block.id, index, contents)}
+            onFocus={() => handleFocusBlock(block.id)}
+            onEditorReady={(editor) => { editorRegistryRef.current[block.id] = editor; }}
+          />
+        </div>
+      </div>
+
+      {block.assignees && block.assignees.length > 0 && (
+        <div className="flex items-center gap-1 shrink-0 ml-1">
+          {block.assignees.map((ass: any, idx: number) => (
+            <span
+              key={idx}
+              className="h-4 min-w-4 px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center bg-zinc-700 text-zinc-200 border border-zinc-700/60"
+            >
+              {ass.value}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-[#0d0d0d] px-1 py-1 rounded-md shadow-sm border border-zinc-800 ${focusedBlockId === block.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+        {isLockedBySomeoneElse && (
+          <div className="px-1.5 py-1 text-red-500 flex items-center gap-1 bg-red-950/40 rounded shadow-sm border border-red-900/50" title={`Locked by ${block.lockedByName || 'another user'}`}>
+            <Lock className="w-3 h-3" />
+            <span className="text-[10px] font-bold tracking-wide">
+              LOCKED BY {block.lockedByName ? block.lockedByName.toUpperCase() : 'USER'}
+            </span>
+          </div>
+        )}
+        {!isLockedBySomeoneElse && (
+          <button
+            onClick={() => handleDeleteBlock(block.id)}
+            className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+            title="Delete block"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}, (prev, next) => {
+  return (
+    prev.block.id === next.block.id &&
+    prev.block.content === next.block.content &&
+    prev.block.type === next.block.type &&
+    prev.block.lockedByName === next.block.lockedByName &&
+    prev.index === next.index &&
+    prev.isLast === next.isLast &&
+    prev.isLockedBySomeoneElse === next.isLockedBySomeoneElse &&
+    prev.isSelected === next.isSelected &&
+    prev.isFirstSelected === next.isFirstSelected &&
+    prev.dragOverBlockIndex === next.dragOverBlockIndex &&
+    prev.dragOverPosition === next.dragOverPosition &&
+    prev.draggedBlockIndex === next.draggedBlockIndex &&
+    prev.focusedBlockId === next.focusedBlockId
+  );
+});
+
 export default function DocPage({ docId }: { docId?: string }) {
   const params = useParams<{ id: string }>();
   const id = docId || params?.id;
@@ -236,6 +415,8 @@ export default function DocPage({ docId }: { docId?: string }) {
   }, [activePage]);
 
   const [pageTitle, setPageTitle] = useState('');
+  const pageTitleRef = useRef(pageTitle);
+  useEffect(() => { pageTitleRef.current = pageTitle; }, [pageTitle]);
   const [blocks, setBlocks] = useState<DocBlock[]>([]);
   // Stable ref so event-handler closures registered with deps:[] never read stale blocks
   const blocksRef = useRef<DocBlock[]>([]);
@@ -331,7 +512,6 @@ export default function DocPage({ docId }: { docId?: string }) {
       if (!taskId) return;
       e.preventDefault();
       e.stopPropagation();
-      console.log(`[DEBUG] Fetching mention for task ID: ${taskId}`);
       const foundTask = tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
       if (foundTask) {
         setSelectedTaskForModal(foundTask);
@@ -518,16 +698,16 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   };
 
-  const handleSavePage = async (updatedBlocks = blocks) => {
-    if (!activePage) return;
+  const handleSavePage = async (updatedBlocks = blocksRef.current) => {
+    if (!activePageRef.current) return;
     setSavingPage(true);
     try {
-      await spacesApi.updatePage(activePage.id, {
-        title: pageTitle,
+      await spacesApi.updatePage(activePageRef.current.id, {
+        title: pageTitleRef.current,
         content: blocksToMarkdown(updatedBlocks),
       });
       if (socket) {
-        socket.emit('page_updated', { docId: id, pageId: activePage.id });
+        socket.emit('page_updated', { docId: id, pageId: activePageRef.current.id });
       }
     } catch (err) {
       console.error('Failed to save page:', err);
@@ -549,6 +729,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleAddBlock = (type: DocBlock['type'] = 'text', afterId?: string) => {
+    console.log(`[DocsPage] handleAddBlock called. type: ${type}, afterId: ${afterId}`);
     const newBlock: DocBlock = {
       id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       type,
@@ -573,15 +754,16 @@ export default function DocPage({ docId }: { docId?: string }) {
     handleSavePage(updated);
 
     // Focus the new block's editor once React renders it into the registry
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       const newEditor = editorRegistryRef.current[newBlock.id];
       if (newEditor) {
         newEditor.commands.focus('start');
       }
-    });
+    }, 10);
   };
 
   const handleSplitBlock = (blockId: string, index: number, contents: string[]) => {
+    console.log(`[DocsPage] handleSplitBlock called. blockId: ${blockId}, index: ${index}, split into ${contents.length} parts`);
     if (contents.length < 2) return;
     
     const newBlocks: DocBlock[] = contents.slice(1).map(part => ({
@@ -590,49 +772,66 @@ export default function DocPage({ docId }: { docId?: string }) {
       content: part,
     }));
     
-    // Update the current block
-    const updatedBlocks = [...blocks];
-    updatedBlocks[index] = { ...updatedBlocks[index], content: contents[0] };
+    let finalBlocksToSave: DocBlock[] = [];
+    setBlocks(prevBlocks => {
+      const idx = prevBlocks.findIndex(b => b.id === blockId);
+      if (idx === -1) return prevBlocks;
+      
+      const updatedBlocks = [...prevBlocks];
+      updatedBlocks[idx] = { ...updatedBlocks[idx], content: contents[0] };
+      
+      const finalBlocks = [
+        ...updatedBlocks.slice(0, idx + 1),
+        ...newBlocks,
+        ...updatedBlocks.slice(idx + 1)
+      ];
+      finalBlocksToSave = finalBlocks;
+      return finalBlocks;
+    });
     
-    // Insert new blocks
-    const finalBlocks = [
-      ...updatedBlocks.slice(0, index + 1),
-      ...newBlocks,
-      ...updatedBlocks.slice(index + 1)
-    ];
-    
-    setBlocks(finalBlocks);
-    handleSavePage(finalBlocks);
+    // Defer saving until state settles
+    setTimeout(() => {
+      if (finalBlocksToSave.length > 0) handleSavePage(finalBlocksToSave);
+    }, 0);
     
     const focusId = newBlocks[0].id;
     setFocusedBlockId(focusId);
     
     // Focus the first newly created block
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       const newEditor = editorRegistryRef.current[focusId];
       if (newEditor) {
         newEditor.commands.focus('start');
       }
-    });
+    }, 10);
   };
 
   const handleKeyDown = (e: any, blockId: string, index: number) => {
+    console.log(`[DocsPage] handleKeyDown. key: ${e.key}, blockId: ${blockId}, index: ${index}`);
     // Clear block selection when user starts typing normally inside an editor
-    if (selectedBlockIds.size > 0 && !e.shiftKey && e.key !== 'Escape') {
+    if (selectedBlockIdsRef.current.size > 0 && !e.shiftKey && e.key !== 'Escape') {
       dbg('keydown inside editor, clearing block selection');
       setSelectedBlockIds(new Set());
     }
 
     if (e.key === 'Backspace') {
       // Only delete the block itself when it's truly empty — let the editor handle normal deletions
-      const block = blocks.find(b => b.id === blockId);
+      const currentBlocks = blocksRef.current;
+      const block = currentBlocks.find(b => b.id === blockId);
       const isEmpty = !block?.content || block.content === '' || block.content === '<p></p>' || block.content === '<p><br></p>';
       if (isEmpty) {
         dbg('Backspace on empty block', blockId, '@ index', index);
         e.preventDefault();
         handleDeleteBlock(blockId);
         if (index > 0) {
-          handleFocusBlock(blocks[index - 1].id);
+          const prevId = currentBlocks[index - 1].id;
+          handleFocusBlock(prevId);
+          setTimeout(() => {
+            const prevEditor = editorRegistryRef.current[prevId];
+            if (prevEditor) {
+              prevEditor.commands.focus('end');
+            }
+          }, 10);
         }
       }
     } else if (e.key === 'Escape') {
@@ -661,8 +860,9 @@ export default function DocPage({ docId }: { docId?: string }) {
         dbg('Shift+Arrow at block edge → block selection mode', blockId, e.key);
         const newSelection = new Set<string>();
         newSelection.add(blockId);
-        if (e.key === 'ArrowUp' && index > 0) newSelection.add(blocks[index - 1].id);
-        if (e.key === 'ArrowDown' && index < blocks.length - 1) newSelection.add(blocks[index + 1].id);
+        const currentBlocks = blocksRef.current;
+        if (e.key === 'ArrowUp' && index > 0) newSelection.add(currentBlocks[index - 1].id);
+        if (e.key === 'ArrowDown' && index < currentBlocks.length - 1) newSelection.add(currentBlocks[index + 1].id);
         setSelectedBlockIds(newSelection);
         if (editor) editor.commands.blur();
       }
@@ -891,11 +1091,33 @@ export default function DocPage({ docId }: { docId?: string }) {
       }
     };
 
+    const handleSelectAll = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        // If they are focusing something that is NOT our editor (like a title input), don't intercept
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+          if (!target.closest('.ProseMirror')) return;
+        }
+
+        e.preventDefault();
+        const allIds = new Set(blocksRef.current.map(b => b.id));
+        setSelectedBlockIds(allIds);
+        
+        // Blur active element to exit Tiptap edit mode natively
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        window.getSelection()?.removeAllRanges();
+      }
+    };
+
     document.addEventListener('keydown', handleNativeBackspace);
+    document.addEventListener('keydown', handleSelectAll, true);
     document.addEventListener('copy', handleNativeCopyCut);
     document.addEventListener('cut', handleNativeCopyCut);
     return () => {
       document.removeEventListener('keydown', handleNativeBackspace);
+      document.removeEventListener('keydown', handleSelectAll, true);
       document.removeEventListener('copy', handleNativeCopyCut);
       document.removeEventListener('cut', handleNativeCopyCut);
     };
@@ -1294,6 +1516,8 @@ export default function DocPage({ docId }: { docId?: string }) {
   }, []);
 
   const handleUpdateBlockContent = (blockId: string, content: string) => {
+    console.log(`[DocsPage] handleUpdateBlockContent. blockId: ${blockId}, new content length: ${content.length}`);
+    
     if (socket) {
       socket.emit('block_content_update', { docId: id, blockId, content });
     }
@@ -1306,20 +1530,8 @@ export default function DocPage({ docId }: { docId?: string }) {
           content: content,
         };
       });
-
-      const lastBlock = updated[updated.length - 1];
-      const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
-
-      if (updated.length === 0 || !isLastBlockEmpty) {
-        updated.push({
-          id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-          type: 'text',
-          content: '',
-        });
-      }
       return updated;
     });
-    
     // Don't call handleSavePage here on every keystroke! It is already handled on blur.
   };
 
@@ -1331,8 +1543,9 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
+    if (draggedBlockIndex === null) return;
     e.preventDefault();
-    if (draggedBlockIndex === null || draggedBlockIndex === index) return;
+    if (draggedBlockIndex === index) return;
     // Determine whether we're in the top or bottom half of the target block
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
@@ -1342,22 +1555,23 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleDrop = (e: React.DragEvent, index: number) => {
-    e.preventDefault();
     if (draggedBlockIndex === null) return;
+    e.preventDefault();
 
     const currentBlocks = blocksRef.current;
+    const currentSelectedBlockIds = selectedBlockIdsRef.current;
     const draggedBlock = currentBlocks[draggedBlockIndex];
     if (!draggedBlock) return;
 
-    const isMultiSelectDrag = selectedBlockIds.has(draggedBlock.id) && selectedBlockIds.size > 1;
+    const isMultiSelectDrag = currentSelectedBlockIds.has(draggedBlock.id) && currentSelectedBlockIds.size > 1;
 
     let blocksToMove: DocBlock[];
     let remainingBlocks: DocBlock[];
 
     if (isMultiSelectDrag) {
       // Preserve the original order of the selected blocks
-      blocksToMove = currentBlocks.filter(b => selectedBlockIds.has(b.id));
-      remainingBlocks = currentBlocks.filter(b => !selectedBlockIds.has(b.id));
+      blocksToMove = currentBlocks.filter(b => currentSelectedBlockIds.has(b.id));
+      remainingBlocks = currentBlocks.filter(b => !currentSelectedBlockIds.has(b.id));
     } else {
       blocksToMove = [currentBlocks[draggedBlockIndex]];
       remainingBlocks = currentBlocks.filter((_, i) => i !== draggedBlockIndex);
@@ -1388,7 +1602,6 @@ export default function DocPage({ docId }: { docId?: string }) {
       ...remainingBlocks.slice(insertAt)
     ];
 
-    // Ensure there is always an empty block at the bottom after dragging
     const lastBlock = newBlocks[newBlocks.length - 1];
     const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
     if (newBlocks.length === 0 || !isLastBlockEmpty) {
@@ -1414,13 +1627,20 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleDeleteBlock = (id: string) => {
-    const updated = blocks.filter((b) => b.id !== id);
+    let finalBlocksToSave: DocBlock[] = [];
+    setBlocks(prevBlocks => {
+      const updated = prevBlocks.filter((b) => b.id !== id);
+      finalBlocksToSave = updated;
+      return updated;
+    });
     delete editorRegistryRef.current[id];
-    setBlocks(updated);
-    handleSavePage(updated);
+    setTimeout(() => {
+      if (finalBlocksToSave.length > 0) handleSavePage(finalBlocksToSave);
+    }, 0);
   };
 
   const handleFocusBlock = (blockId: string) => {
+    console.log(`[DocsPage] handleFocusBlock. blockId: ${blockId}`);
     // Don't emit block_focus if the block is already locked by someone else.
     // The editor is read-only for them (editable=false), but the focus event
     // can still fire. We must not overwrite their lock with ours.
@@ -1627,11 +1847,11 @@ export default function DocPage({ docId }: { docId?: string }) {
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
-                          className="bg-[#1c1c1e] border border-zinc-800/60 rounded-xl shadow-2xl w-64 p-2 z-[100] animate-in fade-in zoom-in-95 duration-100"
+                          className="bg-[#1c1c1e] border border-zinc-800/60 rounded-xl shadow-2xl w-64 p-2 z-100 animate-in fade-in zoom-in-95 duration-100"
                           sideOffset={4}
                           align="start"
                         >
-                          <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+                          <div className="max-h-75 overflow-y-auto custom-scrollbar">
                             {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
                             <div className="flex flex-col gap-3 mt-1">
                               {dbTeams.map(team => (
@@ -1665,8 +1885,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                                           className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
                                         >
                                           {hasRoles && (
-                                            <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${allSelected || someSelected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
-                                              {allSelected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
+                                            <div className={`w-3.5 h-3.5 rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${allSelected || someSelected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
+                                              {allSelected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-3" />}
                                               {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-zinc-300 rounded-full" />}
                                             </div>
                                           )}
@@ -1678,7 +1898,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                                     <div className="px-2 py-1 text-[10px] text-zinc-600 italic">No roles</div>
                                   )}
                                   {team.teamRoles && team.teamRoles.length > 0 && (
-                                    <div className="flex flex-col ml-[13px] pl-4 py-1 border-l border-zinc-800/60 mt-1 space-y-0.5">
+                                    <div className="flex flex-col ml-3.25 pl-4 py-1 border-l border-zinc-800/60 mt-1 space-y-0.5">
                                       {team.teamRoles.map((role: any) => {
                                         const selected = (doc?.assigneeRoleRestrictions || []).includes(role.name);
                                         return (
@@ -1700,8 +1920,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                                             onPointerDown={(e) => e.preventDefault()}
                                             className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"
                                           >
-                                            <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
-                                              {selected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
+                                            <div className={`w-3.5 h-3.5 rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
+                                              {selected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-3" />}
                                             </div>
                                             {role.name}
                                           </div>
@@ -1800,183 +2020,83 @@ export default function DocPage({ docId }: { docId?: string }) {
                   const isFirstSelected = isSelected && Array.from(selectedBlockIds)[0] === block.id;
 
                   return (
-                    <div
-                      key={block.id}
-                      data-block-id={block.id}
-                      onDragOver={(e) => handleDragOver(e, index)}
-                      onDrop={(e) => handleDrop(e, index)}
-                      onDragEnd={handleDragEnd}
-                      onMouseDownCapture={(e) => {
-                        // Allow triggering block selection mode from anywhere (including text)
-                        if (!e.shiftKey) {
-                          dragSelectionStartBlockIndexRef.current = index;
-                        } else {
-                          dragSelectionStartBlockIndexRef.current = null;
-                        }
-                      }}
-                      onMouseEnter={(e) => {
-                        if (isMouseDownRef.current && e.buttons === 1 && dragSelectionStartBlockIndexRef.current !== null) {
-                          const start = dragSelectionStartBlockIndexRef.current;
-                          const min = Math.min(start, index);
-                          const max = Math.max(start, index);
-                          
-                          if (min !== max) { // Crossed block boundaries
-                            const newSel = new Set<string>();
-                            for (let i = min; i <= max; i++) {
-                              newSel.add(blocks[i].id);
-                            }
-                            setSelectedBlockIds(newSel);
+                      <DocBlockRow
+                        key={block.id}
+                        block={block}
+                        index={index}
+                        isLast={index === blocks.length - 1}
+                        isLockedBySomeoneElse={isLockedBySomeoneElse}
+                        isSelected={isSelected}
+                        isFirstSelected={isFirstSelected}
+                        dragOverBlockIndex={dragOverBlockIndex}
+                        dragOverPosition={dragOverPosition}
+                        draggedBlockIndex={draggedBlockIndex}
+                        focusedBlockId={focusedBlockId}
+                        handleAddBlock={handleAddBlock}
+                        handleDragStart={handleDragStart}
+                        handleDragEnd={handleDragEnd}
+                        setSelectedBlockIds={setSelectedBlockIds}
+                        selectedBlockIds={selectedBlockIds}
+                        handleUpdateBlockContent={handleUpdateBlockContent}
+                        handleBlurBlock={handleBlurBlock}
+                        handleKeyDown={handleKeyDown}
+                        handleSplitBlock={handleSplitBlock}
+                        handleFocusBlock={handleFocusBlock}
+                        editorRegistryRef={editorRegistryRef}
+                        handleDeleteBlock={handleDeleteBlock}
+                        onDragOverWrapper={(e: any) => handleDragOver(e, index)}
+                        onDropWrapper={(e: any) => handleDrop(e, index)}
+                        onMouseDownCaptureWrapper={(e: any) => {
+                          // Allow triggering block selection mode from anywhere (including text)
+                          if (!e.shiftKey) {
+                            dragSelectionStartBlockIndexRef.current = index;
+                          } else {
+                            dragSelectionStartBlockIndexRef.current = null;
+                          }
+                        }}
+                        onMouseEnterWrapper={(e: any) => {
+                          if (isMouseDownRef.current && e.buttons === 1 && dragSelectionStartBlockIndexRef.current !== null) {
+                            const start = dragSelectionStartBlockIndexRef.current;
+                            const min = Math.min(start, index);
+                            const max = Math.max(start, index);
                             
-                            if (document.activeElement instanceof HTMLElement) {
-                              document.activeElement.blur();
+                            if (min !== max) { // Crossed block boundaries
+                              setSelectedBlockIds(prev => {
+                                const newSel = new Set<string>();
+                                const currentBlocks = blocksRef.current;
+                                for (let i = min; i <= max; i++) {
+                                  if (currentBlocks[i]) newSel.add(currentBlocks[i].id);
+                                }
+                                return newSel;
+                              });
+                              
+                              if (document.activeElement instanceof HTMLElement) {
+                                document.activeElement.blur();
+                              }
+                              window.getSelection()?.removeAllRanges();
                             }
-                            window.getSelection()?.removeAllRanges();
                           }
-                        }
-                      }}
-                      onClick={(e) => {
-                        // Click to select/deselect if not clicking the editor itself
-                        if (e.target === e.currentTarget) {
-                          if (e.shiftKey) {
-                            const newSel = new Set(selectedBlockIds);
-                            newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
-                            setSelectedBlockIds(newSel);
+                        }}
+                        onClickWrapper={(e: any) => {
+                          // Click to select/deselect if not clicking the editor itself
+                          if (e.target === e.currentTarget) {
+                            if (e.shiftKey) {
+                              setSelectedBlockIds(prev => {
+                                const newSel = new Set(prev);
+                                newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
+                                return newSel;
+                              });
+                            } else {
+                              setSelectedBlockIds(new Set());
+                              handleFocusBlock(block.id);
+                              setTimeout(() => {
+                                const editor = editorRegistryRef.current[block.id];
+                                if (editor) editor.commands.focus('end');
+                              }, 10);
+                            }
                           }
-                        }
-                      }}
-                      className={`flex items-center justify-between py-1 rounded-md group transition-all relative ${
-                        block.type === 'callout'
-                          ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
-                          : 'hover:bg-zinc-800/40 pl-6 pr-2'
-                      } ${isLockedBySomeoneElse ? 'ring-1 ring-red-500/30 ring-inset' : ''}
-                      ${dragOverBlockIndex === index && dragOverPosition === 'above' ? 'border-t-2 border-t-[#6b4cff]' : ''}
-                      ${dragOverBlockIndex === index && dragOverPosition === 'below' ? 'border-b-2 border-b-[#6b4cff]' : ''}
-                      ${draggedBlockIndex === index ? 'bg-blue-500/10 opacity-50' : ''}`}
-                    >
-                      {/* Left Gutter: +, :: */}
-                      <div className={`absolute left-0 top-1.5 transition-opacity flex items-center gap-0.5 z-[50] select-none -translate-x-full pr-1 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        {(!isSelected || isFirstSelected) && (
-                          <button
-                            className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-pointer"
-                            onClick={() => handleAddBlock('text', block.id)}
-                            title="Add block below"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        {(!isSelected || isFirstSelected) && (
-                          <div
-                            draggable={false}
-                            onMouseDown={(e) => {
-                              // Activate draggable on mousedown so the drag API works
-                              e.currentTarget.draggable = true;
-                              // If this block is part of a multi-selection, note the drag start index
-                              // so handleDrop knows which group to move
-                              dragSelectionStartBlockIndexRef.current = index;
-                            }}
-                            onMouseUp={(e) => {
-                              e.currentTarget.draggable = false;
-                            }}
-                            onMouseLeave={(e) => {
-                              // Only disable draggable if we're not mid-drag
-                              if (!draggedBlockIndex) e.currentTarget.draggable = false;
-                            }}
-                            onDragStart={(e) => {
-                              // If this block is part of a multi-selection, drag the whole group
-                              handleDragStart(e, index);
-                            }}
-                            onDragEnd={(e) => {
-                              handleDragEnd();
-                              e.currentTarget.draggable = false;
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              // Toggle block selection
-                              const newSel = e.shiftKey ? new Set(selectedBlockIds) : new Set<string>();
-                              newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
-                              setSelectedBlockIds(newSel);
-                            }}
-                            className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
-                            title="Drag to move · Click to select"
-                          >
-                            <GripVertical className="w-3.5 h-3.5 pointer-events-none" />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Persistent lock indicator — visible immediately, not just on hover */}
-                      {isLockedBySomeoneElse && (
-                        <div className="absolute top-0 right-0 flex items-center gap-1 px-1.5 py-0.5 bg-red-950/60 border-l border-b border-red-500/30 rounded-bl-md z-10 pointer-events-none">
-                          <Lock className="w-2.5 h-2.5 text-red-400" />
-                          <span className="text-[9px] font-bold tracking-wide text-red-400 uppercase">
-                            {block.lockedByName || 'User'}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-20 relative">
-
-                        {block.type === 'callout' && (
-                          <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
-                        )}
-                        {block.type === 'tags' && (
-                          <Tags className="w-4 h-4 text-zinc-500 shrink-0" />
-                        )}
-
-                        {/* Content — always a live BlockEditor (docs-style: no click-to-activate) */}
-                        <div key={`editor-${block.id}`} className={`flex-1 min-w-0 relative ${isSelected ? 'is-selected-block' : ''}`}>
-                          {index === blocks.length - 1 && (!block.content || block.content === '<p></p>' || block.content === '<p><br></p>') && (
-                            <div className="absolute top-0 left-0 text-[#71717a] text-sm pointer-events-none" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
-                              Write, press 'space' for AI, '/' for commands
-                            </div>
-                          )}
-                          <BlockEditor
-                            editable={!isLockedBySomeoneElse}
-                            content={block.content}
-                            onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
-                            onBlur={() => handleBlurBlock(block.id)}
-                            onKeyDown={(e) => handleKeyDown(e as any, block.id, index)}
-                            onSplit={(contents) => handleSplitBlock(block.id, index, contents)}
-                            onFocus={() => handleFocusBlock(block.id)}
-                            onEditorReady={(editor) => { editorRegistryRef.current[block.id] = editor; }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Assignee badges */}
-                      {block.assignees && block.assignees.length > 0 && (
-                        <div className="flex items-center gap-1 shrink-0 ml-1">
-                          {block.assignees.map((ass, idx) => (
-                            <span
-                              key={idx}
-                              className="h-4 min-w-[16px] px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center bg-zinc-700 text-zinc-200 border border-zinc-700/60"
-                            >
-                              {ass.value}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Block Hover Actions */}
-                      <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-[#0d0d0d] px-1 py-1 rounded-md shadow-sm border border-zinc-800 ${focusedBlockId === block.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        {isLockedBySomeoneElse && (
-                          <div className="px-1.5 py-1 text-red-500 flex items-center gap-1 bg-red-950/40 rounded shadow-sm border border-red-900/50" title={`Locked by ${block.lockedByName || 'another user'}`}>
-                            <Lock className="w-3 h-3" />
-                            <span className="text-[10px] font-bold tracking-wide">
-                              LOCKED BY {block.lockedByName ? block.lockedByName.toUpperCase() : 'USER'}
-                            </span>
-                          </div>
-                        )}
-                        {!isLockedBySomeoneElse && (
-                          <button
-                            onClick={() => handleDeleteBlock(block.id)}
-                            className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
-                            title="Delete block"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                        }}
+                      />
                   );
                 });
               })()}
@@ -2096,7 +2216,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       {hoverCardPos && hoverCardData && (
         <div
           id="global-task-hover-card"
-          className="fixed z-[99999]"
+          className="fixed z-99999"
           style={{ left: Math.min(hoverCardPos.x, window.innerWidth - 330), top: Math.min(hoverCardPos.y, window.innerHeight - 250) }}
         >
           <div className="w-[320px] bg-white dark:bg-[#1a1a1a] border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl overflow-hidden flex flex-col text-sm text-zinc-900 dark:text-zinc-100">
@@ -2108,7 +2228,7 @@ export default function DocPage({ docId }: { docId?: string }) {
               </div>
             </div>
 
-            <div className="flex flex-col p-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+            <div className="flex flex-col p-2 max-h-75 overflow-y-auto custom-scrollbar">
               {hoverCardData.mentionType === 'status' ? (
                 (() => {
                   try {

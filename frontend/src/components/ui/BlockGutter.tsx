@@ -27,17 +27,39 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
   const dragFromPosRef = useRef<number>(-1);
   const dropTargetPosRef = useRef<number>(-1);
 
-  // ── Helper: find the top-level block DOM element containing `el` ────────────
-  const findTopLevelBlock = useCallback((el: Element): Element | null => {
+  // ── Helper: find the nearest block DOM element containing `el` ────────────
+  const findTargetBlock = useCallback((el: Element): Element | null => {
     const editorEl = editorContainerRef.current?.querySelector('.tiptap');
     if (!editorEl) return null;
+    
+    // Function to check if an element is a valid block target for the gutter
+    const isValidBlock = (node: Element) => {
+      if (node === editorEl) return false;
+      
+      const tagName = node.tagName.toLowerCase();
+      // Target specific block-level tags where a drag handle makes sense
+      if (['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'].includes(tagName)) {
+        return true;
+      }
+      
+      // Some extensions might use divs with specific data attributes
+      // e.g., image wrappers, callouts
+      if (node.hasAttribute('data-type') && tagName !== 'toggle' && tagName !== 'togglecontent' && tagName !== 'togglesummary') {
+        return true;
+      }
+      
+      return false;
+    };
+
     let current: Element | null = el;
-    while (current && current.parentElement !== editorEl) {
-      if (current === editorEl) return null;
+    while (current && current !== editorEl) {
+      if (isValidBlock(current)) {
+        return current;
+      }
       current = current.parentElement;
     }
-    if (!current || current === editorEl) return null;
-    return current;
+    
+    return null;
   }, [editorContainerRef]);
 
   // ── Helper: get ProseMirror node position from a DOM block element ──────────
@@ -76,12 +98,12 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
       // Sample a point slightly to the right of the current position to hit text
       const el = document.elementFromPoint(e.clientX + 30, e.clientY) as Element | null;
       if (!el) return;
-      const block = findTopLevelBlock(el);
+      const block = findTargetBlock(el);
       if (!block) {
         // Try directly at cursor
         const el2 = document.elementFromPoint(e.clientX, e.clientY) as Element | null;
         if (!el2) return;
-        const block2 = findTopLevelBlock(el2);
+        const block2 = findTargetBlock(el2);
         if (!block2) return;
         showGutterAt(block2);
         return;
@@ -90,9 +112,9 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
     };
 
     const onMouseLeave = () => {
+      if (menuOpen) return;
       hideTimerRef.current = setTimeout(() => {
         setGutter(g => ({ ...g, visible: false }));
-        setMenuOpen(false);
       }, 400);
     };
 
@@ -102,7 +124,7 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
       container.removeEventListener('mousemove', onMouseMove);
       container.removeEventListener('mouseleave', onMouseLeave);
     };
-  }, [editorContainerRef, findTopLevelBlock, showGutterAt]);
+  }, [editorContainerRef, findTargetBlock, showGutterAt, menuOpen]);
 
   // ── Close menu on outside click ──────────────────────────────────────────────
   useEffect(() => {
@@ -193,7 +215,7 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
       const el = document.elementFromPoint(e.clientX + 20, e.clientY) as Element | null;
       if (!el) return;
-      const block = findTopLevelBlock(el);
+      const block = findTargetBlock(el);
       if (!block) return;
       dropTargetPosRef.current = getNodePos(block);
     };
@@ -234,7 +256,7 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
       container.removeEventListener('dragover', onDragOver);
       container.removeEventListener('drop', onDrop);
     };
-  }, [editor, editorContainerRef, findTopLevelBlock, getNodePos]);
+  }, [editor, editorContainerRef, findTargetBlock, getNodePos]);
 
   if (!gutter.visible) return null;
 
@@ -251,9 +273,9 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
       }}
       onMouseEnter={cancelHide}
       onMouseLeave={() => {
+        if (menuOpen) return;
         hideTimerRef.current = setTimeout(() => {
           setGutter(g => ({ ...g, visible: false }));
-          setMenuOpen(false);
         }, 400);
       }}
     >

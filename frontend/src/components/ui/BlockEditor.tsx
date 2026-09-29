@@ -160,6 +160,11 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
                 return true;
              }
           }
+        } else if (event.key === 'Enter' && event.shiftKey) {
+          event.preventDefault();
+          event.stopPropagation();
+          view.dispatch(view.state.tr.split(view.state.selection.from));
+          return true;
         } else if (event.key === 'Escape' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
           if (propsRef.current.onKeyDown) {
             propsRef.current.onKeyDown(event as any);

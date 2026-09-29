@@ -245,6 +245,7 @@ const DocBlockRow = memo(({
   onClickWrapper,
   handleTurnInto,
   handleToggleCollapse,
+  groupState = 'none',
 }: any) => {
   return (
     <div
@@ -255,12 +256,10 @@ const DocBlockRow = memo(({
       onMouseDownCapture={onMouseDownCaptureWrapper}
       onMouseEnter={onMouseEnterWrapper}
       onClick={onClickWrapper}
-      className={`flex items-center justify-between py-1 rounded-md group transition-all relative ${
+      className={`flex items-center justify-between py-1 group transition-all relative ${
         block.type === 'callout'
-          ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
-          : block.type === 'collapsible' && block.isCollapsed
-          ? 'bg-zinc-800/60 border border-zinc-700/60 pl-6 pr-2'
-          : 'hover:bg-zinc-800/40 pl-6 pr-2'
+          ? 'bg-red-500/20 border border-red-500/30 py-3 px-4 rounded-md'
+          : 'hover:bg-zinc-800/40 pr-2 rounded-md'
       } ${isLockedBySomeoneElse ? 'ring-1 ring-red-500/30 ring-inset' : ''}
       ${dragOverBlockIndex === index && dragOverPosition === 'above' ? 'border-t-2 border-t-[#6b4cff]' : ''}
       ${dragOverBlockIndex === index && dragOverPosition === 'below' ? 'border-b-2 border-b-[#6b4cff]' : ''}
@@ -365,7 +364,7 @@ const DocBlockRow = memo(({
         {block.type === 'collapsible' && (
           <button
             onClick={(e) => { e.stopPropagation(); handleToggleCollapse && handleToggleCollapse(block.id); }}
-            className="flex items-center justify-center w-4 h-4 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer self-start mt-0.5"
+            className="flex items-center justify-center w-[22px] h-[22px] bg-[#27272a]/60 hover:bg-[#27272a] rounded-[4px] text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer self-start mt-0.5"
             title={block.isCollapsed ? 'Expand' : 'Collapse'}
           >
             {block.isCollapsed
@@ -382,7 +381,22 @@ const DocBlockRow = memo(({
               className="text-sm text-zinc-200 py-0.5 cursor-pointer truncate select-none"
               onClick={(e) => { e.stopPropagation(); handleToggleCollapse && handleToggleCollapse(block.id); }}
             >
-              {block.content?.replace(/<[^>]+>/g, '').trim() || <span className="text-zinc-600 italic">Empty toggle</span>}
+              {(() => {
+                let firstLine = block.content;
+                if (!firstLine) return <span className="text-zinc-600 italic">Empty toggle</span>;
+                // Split by common line break tags to get the true first line
+                const parts = firstLine.split(/<br\s*\/?>|<\/?p>|<div[^>]*>|<\/div>/i);
+                // Find the first part that actually has text
+                let textToShow = "";
+                for (const part of parts) {
+                  const stripped = part.replace(/<[^>]+>/g, '').trim();
+                  if (stripped) {
+                    textToShow = stripped;
+                    break;
+                  }
+                }
+                return textToShow || <span className="text-zinc-600 italic">Empty toggle</span>;
+              })()}
             </div>
           ) : (
             <>
@@ -419,7 +433,7 @@ const DocBlockRow = memo(({
         </div>
       )}
 
-      <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-[#0d0d0d] px-1 py-1 rounded-md shadow-sm border border-zinc-800 ${focusedBlockId === block.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+      <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-[#0d0d0d] px-1 py-1 rounded-md shadow-sm border border-zinc-800 opacity-0 hover:opacity-100`}>
         {isLockedBySomeoneElse && (
           <div className="px-1.5 py-1 text-red-500 flex items-center gap-1 bg-red-950/40 rounded shadow-sm border border-red-900/50" title={`Locked by ${block.lockedByName || 'another user'}`}>
             <Lock className="w-3 h-3" />
@@ -864,19 +878,34 @@ export default function DocPage({ docId }: { docId?: string }) {
   const handleSplitBlock = (blockId: string, index: number, contents: string[]) => {
     if (contents.length < 2) return;
     
+    const currentBlock = blocksRef.current[index];
+    if (!currentBlock) return;
+    
+    const currentBlockDepth = currentBlock.depth || 0;
+    
+    // If splitting a collapsible (pressing Enter), automatically indent the new block
+    // so the user doesn't have to manually press Tab.
+    const newBlockDepth = currentBlock.type === 'collapsible' ? currentBlockDepth + 1 : currentBlockDepth;
+    
     const newBlocks: DocBlock[] = contents.slice(1).map(part => ({
       id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       type: 'text',
       content: part,
+      depth: newBlockDepth,
     }));
     
+    // If we are creating children, ensure the parent is expanded
     let finalBlocksToSave: DocBlock[] = [];
     setBlocks(prevBlocks => {
       const idx = prevBlocks.findIndex(b => b.id === blockId);
       if (idx === -1) return prevBlocks;
       
       const updatedBlocks = [...prevBlocks];
-      updatedBlocks[idx] = { ...updatedBlocks[idx], content: contents[0] };
+      updatedBlocks[idx] = { 
+        ...updatedBlocks[idx], 
+        content: contents[0],
+        isCollapsed: currentBlock.type === 'collapsible' ? false : updatedBlocks[idx].isCollapsed 
+      };
       
       const finalBlocks = [
         ...updatedBlocks.slice(0, idx + 1),
@@ -1767,6 +1796,18 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const handleUpdateBlockContent = (blockId: string, content: string) => {
     
+    // Markdown shortcuts for rapid editing
+    if (content === '<p>&gt; </p>') {
+      handleTurnInto(blockId, 'collapsible');
+      content = '<p></p>';
+      setTimeout(() => {
+        const editor = editorRegistryRef.current[blockId];
+        if (editor) {
+          editor.commands.setContent('<p></p>');
+        }
+      }, 0);
+    }
+    
     if (socket) {
       socket.emit('block_content_update', { docId: id, blockId, content });
     }
@@ -1841,8 +1882,21 @@ export default function DocPage({ docId }: { docId?: string }) {
       blocksToMove = currentBlocks.filter(b => currentSelectedBlockIds.has(b.id));
       remainingBlocks = currentBlocks.filter(b => !currentSelectedBlockIds.has(b.id));
     } else {
-      blocksToMove = [currentBlocks[draggedBlockIndex]];
-      remainingBlocks = currentBlocks.filter((_, i) => i !== draggedBlockIndex);
+      // Gather dragged block and its children
+      const draggedDepth = draggedBlock.depth || 0;
+      let numChildren = 0;
+      for (let i = draggedBlockIndex + 1; i < currentBlocks.length; i++) {
+        const childDepth = currentBlocks[i].depth || 0;
+        if (childDepth > draggedDepth) {
+          numChildren++;
+        } else {
+          break;
+        }
+      }
+      blocksToMove = currentBlocks.slice(draggedBlockIndex, draggedBlockIndex + 1 + numChildren);
+      
+      const toMoveIds = new Set(blocksToMove.map(b => b.id));
+      remainingBlocks = currentBlocks.filter(b => !toMoveIds.has(b.id));
     }
 
     const targetBlock = currentBlocks[index];
@@ -1853,22 +1907,52 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
 
     let insertAt: number;
+    let targetDepth = 0;
+    
     if (!targetBlock) {
       insertAt = remainingBlocks.length;
     } else {
       const targetIndexInRemaining = remainingBlocks.findIndex(b => b.id === targetBlock.id);
+      targetDepth = targetBlock.depth || 0;
+      
       if (targetIndexInRemaining === -1) {
         insertAt = remainingBlocks.length;
       } else if (dragOverPosition === 'above') {
         insertAt = targetIndexInRemaining;
       } else {
         insertAt = targetIndexInRemaining + 1;
+        // If dropping below a collapsible, make it a child
+        if (targetBlock.type === 'collapsible') {
+          targetDepth += 1;
+          // Also expand the target collapsible since we are dropping something into it
+          const originalTargetIndex = currentBlocks.findIndex(b => b.id === targetBlock.id);
+          if (originalTargetIndex !== -1 && currentBlocks[originalTargetIndex].isCollapsed) {
+             const b = currentBlocks[originalTargetIndex];
+             // we'll update it below when constructing newBlocks
+             // but we don't have to strictly do it here if it's too complicated, let's just focus on depth
+          }
+        }
       }
+    }
+    
+    // Calculate the difference in depth for the base dragged block vs the target depth
+    const baseDraggedDepth = blocksToMove[0]?.depth || 0;
+    const depthDiff = targetDepth - baseDraggedDepth;
+
+    // Apply depthDiff to all blocksToMove
+    const updatedBlocksToMove = blocksToMove.map(b => ({
+       ...b,
+       depth: Math.max(0, (b.depth || 0) + depthDiff)
+    }));
+    
+    // If we dropped below a collapsed collapsible, we should expand it
+    if (targetBlock && targetBlock.type === 'collapsible' && dragOverPosition === 'below') {
+       remainingBlocks = remainingBlocks.map(b => b.id === targetBlock.id ? { ...b, isCollapsed: false } : b);
     }
 
     let newBlocks = [
       ...remainingBlocks.slice(0, insertAt),
-      ...blocksToMove,
+      ...updatedBlocksToMove,
       ...remainingBlocks.slice(insertAt)
     ];
 
@@ -2093,127 +2177,6 @@ export default function DocPage({ docId }: { docId?: string }) {
                 >
                   Version History
                 </button>
-                {!doc?.isDailyRollover && (
-                  <>
-                    <span className="text-zinc-600">•</span>
-                    <Popover.Root open={isRolePopoverOpen} onOpenChange={setIsRolePopoverOpen}>
-                      <Popover.Trigger asChild>
-                        <button className="flex items-center gap-1.5 rounded-md hover:bg-zinc-800/60 transition-colors cursor-pointer px-1.5 py-1">
-                          {(doc?.assigneeRoleRestrictions && doc.assigneeRoleRestrictions.length > 0) ? (
-                            <span className="flex items-center">
-                              {doc.assigneeRoleRestrictions.map((role: string, i: number) => {
-                                const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
-                                const bgColor = colors[i % colors.length];
-                                return (
-                                  <div 
-                                    key={role} 
-                                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white border-2 border-[#0d0d0d] ${i > 0 ? '-ml-2' : ''} shadow-sm relative transition-transform ${bgColor} animate-in fade-in zoom-in-50 duration-300`}
-                                    style={{ zIndex: 10 - i }}
-                                    title={role}
-                                  >
-                                    {role.substring(0, 2).toUpperCase()}
-                                  </div>
-                                );
-                              })}
-                            </span>
-                          ) : (
-                            <div className="w-4 h-4 rounded-sm border border-dashed border-zinc-600" title="Assign Role" />
-                          )}
-                        </button>
-                      </Popover.Trigger>
-                      <Popover.Portal>
-                        <Popover.Content
-                          className="bg-[#1c1c1e] border border-zinc-800/60 rounded-xl shadow-2xl w-64 p-2 z-100 animate-in fade-in zoom-in-95 duration-100"
-                          sideOffset={4}
-                          align="start"
-                        >
-                          <div className="max-h-75 overflow-y-auto custom-scrollbar">
-                            {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
-                            <div className="flex flex-col gap-3 mt-1">
-                              {dbTeams.map(team => (
-                                <div key={team.id} className="flex flex-col">
-                                    {(() => {
-                                      const teamRoles = team.teamRoles || [];
-                                      const current = doc?.assigneeRoleRestrictions || [];
-                                      const hasRoles = teamRoles.length > 0;
-                                      const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-                                      const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
-                                      
-                                      return (
-                                        <div 
-                                          onClick={async (e) => {
-                                            e.preventDefault();
-                                            if (!hasRoles || !doc) return;
-                                            let next = [...current];
-                                            if (allSelected) {
-                                              next = next.filter((r: string) => !teamRoles.find((tr: any) => tr.name === r));
-                                            } else {
-                                              const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
-                                              next = [...next, ...toAdd];
-                                            }
-                                            const updatedDoc = { ...doc, assigneeRoleRestrictions: next, teamId: team.id };
-                                            setDoc(updatedDoc);
-                                            try {
-                                              await spacesApi.updateDoc(doc.id, { assigneeRoleRestrictions: next, teamId: team.id });
-                                            } catch (err) { console.error('Failed to update roles', err); }
-                                          }}
-                                          onPointerDown={(e) => e.preventDefault()}
-                                          className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-                                        >
-                                          {hasRoles && (
-                                            <div className={`w-3.5 h-3.5 rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${allSelected || someSelected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
-                                              {allSelected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-3" />}
-                                              {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-zinc-300 rounded-full" />}
-                                            </div>
-                                          )}
-                                          <span className="text-[11px] font-bold tracking-wide uppercase text-zinc-400">{team.name}</span>
-                                        </div>
-                                      );
-                                    })()}
-                                  {(!team.teamRoles || team.teamRoles.length === 0) && (
-                                    <div className="px-2 py-1 text-[10px] text-zinc-600 italic">No roles</div>
-                                  )}
-                                  {team.teamRoles && team.teamRoles.length > 0 && (
-                                    <div className="flex flex-col ml-3.25 pl-4 py-1 border-l border-zinc-800/60 mt-1 space-y-0.5">
-                                      {team.teamRoles.map((role: any) => {
-                                        const selected = (doc?.assigneeRoleRestrictions || []).includes(role.name);
-                                        return (
-                                          <div
-                                            key={role.id}
-                                            onClick={async (e) => {
-                                              e.preventDefault();
-                                              if (!doc) return;
-                                              const current = doc.assigneeRoleRestrictions || [];
-                                              const next = selected
-                                                ? current.filter((r: string) => r !== role.name)
-                                                : [...current, role.name];
-                                              const updatedDoc = { ...doc, assigneeRoleRestrictions: next, teamId: team.id };
-                                              setDoc(updatedDoc);
-                                              try {
-                                                await spacesApi.updateDoc(doc.id, { assigneeRoleRestrictions: next, teamId: team.id });
-                                              } catch (e) { console.error('Failed to update role', e); }
-                                            }}
-                                            onPointerDown={(e) => e.preventDefault()}
-                                            className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"
-                                          >
-                                            <div className={`w-3.5 h-3.5 rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
-                                              {selected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-3" />}
-                                            </div>
-                                            {role.name}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </Popover.Content>
-                      </Popover.Portal>
-                    </Popover.Root>
-                  </>
-                )}
 
                 {savingPage && <span className="text-purple-400 text-[10px] italic ml-2">Saving...</span>}
               </div>
@@ -2377,7 +2340,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                         }}
                         onClickWrapper={(e: any) => {
                           // Click to select/deselect if not clicking the editor itself
-                          if (e.target === e.currentTarget) {
+                          const isProseMirror = (e.target as Element).closest('.ProseMirror');
+                          if (!isProseMirror) {
                             if (e.shiftKey) {
                               setSelectedBlockIds(prev => {
                                 const newSel = new Set(prev);

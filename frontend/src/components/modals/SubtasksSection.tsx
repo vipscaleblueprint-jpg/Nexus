@@ -1065,9 +1065,15 @@ function SubtaskRow({
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
                   <div className="flex flex-col gap-1.5">
                     <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Audit Items</div>
-                    {getRequiredAudits(subtask.title, subtask.assigneeRoleRestrictions).map((text, idx) => {
+                    {(() => {
                       const auditChecklist = subtask.checklists?.find((c: any) => c.name.toLowerCase() === 'audit');
-                      const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());
+                      const requiredAudits = Array.from(new Set([
+                        ...getRequiredAudits(subtask.title, subtask.assigneeRoleRestrictions),
+                        ...(auditChecklist?.items?.map((i: any) => i.text) || [])
+                      ]));
+                      
+                      return requiredAudits.map((text, idx) => {
+                        const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());
                       const isCompleted = !!item?.completed;
 
                       const roles: string[] = (currentUser?.roles || []).map((r: string) => r?.toLowerCase() || '');
@@ -1133,7 +1139,8 @@ function SubtaskRow({
                           </span>
                         </div>
                       );
-                    })}
+                    });
+                  })()}
                   </div>
                 </div>
               </div>

@@ -104,46 +104,12 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
 
   if (standardChecklists.length === 0 && !creatingChecklist) {
     return (
-      <Popover.Root>
-        <Popover.Trigger asChild>
-          <button 
-            className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer"
-          >
-            <ListTodo className="w-4 h-4 shrink-0" /> Create checklist
-          </button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content className="z-[100] w-48 rounded-lg bg-zinc-900 border border-zinc-800 p-1.5 shadow-xl outline-none" align="start" sideOffset={5}>
-            <button 
-              className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white rounded flex items-center gap-2 cursor-pointer"
-              onClick={() => { setCreatingChecklist(true); handleCreateChecklist('Checklist'); }}
-            >
-              <ListTodo className="w-4 h-4 text-zinc-400" />
-              Standard Checklist
-            </button>
-            <div className="h-[1px] bg-zinc-800 my-1"></div>
-            <div className="text-[10px] font-semibold text-zinc-500 px-2 py-1 uppercase tracking-wider">Audit Checklists</div>
-            <button 
-              className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-              onClick={() => { setCreatingChecklist(true); handleCreateChecklist('UI UX Audit'); }}
-            >
-              UI UX Audit
-            </button>
-            <button 
-              className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-              onClick={() => { setCreatingChecklist(true); handleCreateChecklist('Design Audit'); }}
-            >
-              Design Audit
-            </button>
-            <button 
-              className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-              onClick={() => { setCreatingChecklist(true); handleCreateChecklist('Funnel Audit'); }}
-            >
-              Funnel Audit
-            </button>
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
+      <button 
+        className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer"
+        onClick={() => { setCreatingChecklist(true); handleCreateChecklist('Checklist'); }}
+      >
+        <ListTodo className="w-4 h-4 shrink-0" /> Create checklist
+      </button>
     );
   }
 
@@ -166,47 +132,16 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
           <div className="w-px h-3 bg-zinc-700 mx-1" />
-          <Popover.Root>
-            <Popover.Trigger asChild>
-              <button 
-                className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 cursor-pointer"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Content className="z-[100] w-48 rounded-lg bg-zinc-900 border border-zinc-800 p-1.5 shadow-xl outline-none" align="end" sideOffset={5}>
-                <button 
-                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white rounded flex items-center gap-2 cursor-pointer"
-                  onClick={() => handleCreateChecklist('Checklist')}
-                >
-                  <ListTodo className="w-4 h-4 text-zinc-400" />
-                  Standard Checklist
-                </button>
-                <div className="h-[1px] bg-zinc-800 my-1"></div>
-                <div className="text-[10px] font-semibold text-zinc-500 px-2 py-1 uppercase tracking-wider">Audit Checklists</div>
-                <button 
-                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-                  onClick={() => handleCreateChecklist('UI UX Audit')}
-                >
-                  UI UX Audit
-                </button>
-                <button 
-                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-                  onClick={() => handleCreateChecklist('Design Audit')}
-                >
-                  Design Audit
-                </button>
-                <button 
-                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 rounded cursor-pointer"
-                  onClick={() => handleCreateChecklist('Funnel Audit')}
-                >
-                  Funnel Audit
-                </button>
-              </Popover.Content>
-            </Popover.Portal>
-          </Popover.Root>
+          <button 
+            className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCreateChecklist('Checklist');
+            }}
+            title="Create checklist"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 

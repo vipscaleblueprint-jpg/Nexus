@@ -28,4 +28,5 @@ updateRole*
 __tests__/
 tests/
 *.test.ts
-*.spec.ts
+*.spec.ts
+tmp/

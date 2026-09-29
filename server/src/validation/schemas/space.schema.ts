@@ -36,7 +36,7 @@ export const updateDocSchema = z
 
 export const createPageSchema = z.object({
   title: shortText('title').default('Untitled'),
-  content: longText(100_000).default(''),
+  content: longText(50_000_000).default(''),
   docId: uuid,
   parentPageId: nullableUuid,
 });
@@ -44,7 +44,7 @@ export const createPageSchema = z.object({
 export const updatePageSchema = z
   .object({
     title: shortText('title').optional(),
-    content: longText(100_000).optional(),
+    content: longText(50_000_000).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

@@ -647,10 +647,82 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
           content: commentContent
         }
       });
-      // io.emit('task_comment_created', comment);
+      io.emit('task_comment_created', comment);
     }
 
-    // io.emit('subtask_created', subtask);
+    try {
+      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
+      if (doc) {
+        const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
+        const dayFormatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz,
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        });
+        const dayTitle = dayFormatter.format(new Date());
+
+        const todayPage = await prisma.page.findFirst({
+          where: { 
+            docId: doc.id, 
+            title: dayTitle 
+          }
+        });
+
+        if (todayPage && todayPage.content) {
+          const blocks = JSON.parse(todayPage.content);
+          
+          const parentTaskMention = `data-id="${parentTask.id}"`;
+          const parentTaskIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content.includes(parentTaskMention));
+
+          if (parentTaskIndex !== -1) {
+            const newSubtaskBlock = {
+              id: `blk-st-${Date.now()}-${subtask.id}`,
+              type: "text",
+              content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
+            };
+
+            let insertIndex = parentTaskIndex + 1;
+            while (insertIndex < blocks.length) {
+              const nextBlock = blocks[insertIndex];
+              if (nextBlock.type === 'text' && nextBlock.content.includes('└─')) {
+                insertIndex++;
+              } else {
+                break;
+              }
+            }
+            
+            blocks.splice(insertIndex, 0, newSubtaskBlock);
+
+            await prisma.page.update({
+              where: { id: todayPage.id },
+              data: { content: JSON.stringify(blocks) }
+            });
+
+            io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to inject subtask into Priorities Journal:', error);
+    }
+
+    io.emit('subtask_created', subtask);
+    
+    const updatedTask = await prisma.task.findUnique({
+      where: { id: parentTask.id },
+      select: { 
+        id: true, listId: true, 
+        subtasks: { 
+          include: { 
+            User: { select: { id: true, name: true, avatarUrl: true } }, 
+            assignees: { select: { id: true, name: true, avatarUrl: true } } 
+          } 
+        } 
+      }
+    });
+    if (updatedTask) io.emit('task:updated', updatedTask);
+    
     return res.status(200).json({ success: true, subtask });
   } catch (error: any) {
     console.error('Failed to handle galaxy subtask:', error);

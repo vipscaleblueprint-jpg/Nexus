@@ -25,7 +25,8 @@ import {
   resendExternalInvitation,
   getExternalTeams,
   createExternalTeam,
-  createExternalTeamRole
+  createExternalTeamRole,
+  createExternalList
 } from '../controllers/external.controller';
 
 const router = Router();
@@ -43,6 +44,9 @@ router.post('/invitations/:id/resend', resendExternalInvitation);
 
 // Assignable Groups (Users, Roles, Teams)
 router.get('/assignable-groups', getAssignableGroups);
+
+// Lists
+router.post('/lists', createExternalList);
 
 // Task Core Operations
 router.get('/tasks', getTasks);

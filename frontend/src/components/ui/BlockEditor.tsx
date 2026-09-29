@@ -59,7 +59,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
     },
     extensions: [
       StarterKit.configure({
-        history: false,
+        // history is enabled by default
       }),
       Underline,
       TextStyle,
@@ -214,16 +214,17 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
           } catch (e) { }
         }
 
-        if (isJson) {
-          // If it's JSON and not focused, we should accept updates (e.g. from real-time events)
-          // Since it's not focused, it's safe to overwrite the content.
-          editor.commands.setContent(parsedContent, false);
-        } else {
-          // It's HTML string
-          if (editor.getHTML() !== content) {
-            editor.commands.setContent(content, false);
+        // Defer out of the React render cycle to avoid flushSync warnings
+        queueMicrotask(() => {
+          if (!editor || editor.isDestroyed) return;
+          if (isJson) {
+            editor.commands.setContent(parsedContent, false);
+          } else {
+            if (editor.getHTML() !== content) {
+              editor.commands.setContent(content, false);
+            }
           }
-        }
+        });
       }
     }
   }, [editor, content]);

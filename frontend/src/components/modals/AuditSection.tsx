@@ -14,8 +14,15 @@ interface AuditSectionProps {
   currentUser?: UserModel | null;
 }
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
-  const t = taskTitle.toLowerCase();
   const audits = new Set<string>();
+
+  // Title-based checks (requested by user)
+  const title = taskTitle.toLowerCase();
+  if (title.includes('design')) audits.add('Design Audit');
+  if (title.includes('ui/ux') || title.includes('ui ux')) audits.add('UI UX Audit');
+  if (taskTitle.startsWith('Do a feasibility') || taskTitle.startsWith('Prepare a report') || title.includes('funnel')) {
+    audits.add('Funnel Audit');
+  }
 
   // Whatever auditor role was actually assigned (e.g. via the Galaxy "--Audit - <Role> -" subtask)
   // determines the required audit item directly, regardless of what the task title says.
@@ -26,29 +33,6 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) =>
     if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
   });
 
-  // 3. Websites, Links, Landing Pages -> ALL THREE
-  if (t.match(/website|page|funnel|link|domain|hosting|web|app/)) {
-    audits.add('UI UX Audit');
-    audits.add('Design Audit');
-    audits.add('Funnel Audit');
-  }
-  
-  // 2. Newsletters, Emails, Social Media Packages -> Design + Funnel
-  if (t.match(/email|newsletter|social media|post|copy|campaign|marketing|seo/)) {
-    audits.add('Design Audit');
-    audits.add('Funnel Audit');
-  }
-
-  // 4. Backend and Logic -> Funnel Audit
-  if (t.match(/backend|logic|api|database|server|function|endpoint|integration|automation|webhook|workflow|system|data/)) {
-    audits.add('Funnel Audit');
-  }
-
-  // 1. Graphics, Reels, Video, Samples, Images, Audio, Content Creation -> ONLY Design
-  if (t.match(/graphic|reel|video|sample|image|picture|photo|visual|motion|voice|audio|sound|caption|wardrobe|animation|vfx|sfx|content|media|edit|render|upscale|thumbnail|typography|podcast/)) {
-    audits.add('Design Audit');
-  }
-  
   return Array.from(audits);
 };
 
@@ -66,7 +50,10 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
         .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
         .flatMap((s: any) => s.assigneeRoleRestrictions || []);
 
-  const requiredAuditItems = getRequiredAudits(title, auditorRoles);
+  const requiredAuditItems = Array.from(new Set([
+    ...getRequiredAudits(title, auditorRoles),
+    ...(auditChecklist?.items?.map(i => i.text) || [])
+  ]));
 
   const getAuditItem = (text: string) => {
     return auditChecklist?.items?.find(i => i.text.toLowerCase() === text.toLowerCase());

@@ -51,21 +51,36 @@ export const taskSuggestion = {
       const search = (query || '').toLowerCase();
 
       // ── Task items ────────────────────────────────────────────────────────────
-      const taskItems = cachedTasks!
-        .filter(task => {
+      const allTasksAndSubtasks: any[] = [];
+      cachedTasks!.forEach(task => {
+        allTasksAndSubtasks.push(task);
+        if (task.subtasks && task.subtasks.length > 0) {
+          task.subtasks.forEach((st: any) => {
+            allTasksAndSubtasks.push({
+              ...st,
+              isSubtask: true,
+              list: task.list,
+              listId: task.listId,
+            });
+          });
+        }
+      });
+
+      const taskItems = allTasksAndSubtasks
+        .filter(t => {
           if (!search) return true;
-          return (task.title || '').toLowerCase().includes(search);
+          return (t.title || '').toLowerCase().includes(search);
         })
         .slice(0, 20)
-        .map(task => ({
-          ...task,
+        .map(t => ({
+          ...t,
           type: 'task',
-          name: task.title,
-          statusColor: getStatusColor(task.status || ''),
-          frequencyLabel: FREQUENCY_LABELS[task.status || ''] || null,
+          name: t.isSubtask ? `└─ ${t.title}` : t.title,
+          statusColor: getStatusColor(t.status || ''),
+          frequencyLabel: FREQUENCY_LABELS[t.status || ''] || null,
           // Board/list info for chip and display
-          listName: task.list?.name || '',
-          listId: task.listId || task.list?.id || '',
+          listName: t.list?.name || '',
+          listId: t.listId || t.list?.id || '',
         }));
 
       // ── Board/list items ──────────────────────────────────────────────────────

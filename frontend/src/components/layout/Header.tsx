@@ -44,7 +44,7 @@ export function Header() {
 
   if (!currentUser) {
     return (
-      <header className="bg-zinc-950/90 border-b border-zinc-800/60 px-6 py-3 backdrop-blur-md relative z-30">
+      <header className="bg-zinc-950/90 border-b border-zinc-800/60 px-6 py-3 backdrop-blur-md relative z-[150]">
         <div className="flex items-center gap-3">
           <button
             onClick={toggleSidebar}
@@ -61,7 +61,7 @@ export function Header() {
   const activeUser: User = currentUser;
 
   return (
-    <header className="bg-zinc-950/90 border-b border-zinc-800/60 text-zinc-100 backdrop-blur-md relative z-30">
+    <header className="bg-zinc-950/90 border-b border-zinc-800/60 text-zinc-100 backdrop-blur-md relative z-[150]">
       <div className="px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button

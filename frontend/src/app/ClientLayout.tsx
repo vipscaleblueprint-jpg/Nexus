@@ -96,7 +96,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       </Suspense>
       <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#131316]">
         <Header />
-        <main className="flex-1 overflow-y-auto bg-[#131316]">
+        <main id="main-scroll-container" className="flex-1 overflow-y-auto bg-[#131316]">
           {children}
         </main>
       </div>

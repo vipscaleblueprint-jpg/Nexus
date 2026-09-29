@@ -819,6 +819,7 @@ function WorkspaceDashboardContent({
         }}
       />
 
+      <div className={selectedTask ? "hidden" : "flex flex-col gap-6"}>
       {/* ClickUp Header & Quick Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -1463,6 +1464,7 @@ function WorkspaceDashboardContent({
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

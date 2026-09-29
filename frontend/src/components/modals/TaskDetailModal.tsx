@@ -1711,6 +1711,13 @@ export function TaskDetailModalContent({
 
               </div>
 
+              <div className="flex items-center justify-between mb-2 mt-6">
+                <span className="font-semibold text-zinc-100 flex items-center gap-2">
+                  <ListTodo className="w-4 h-4 text-zinc-400" />
+                  Subtasks
+                </span>
+              </div>
+
               <SubtasksSection
                 task={task}
                 onUpdateTask={(updatedTask) => {
@@ -3616,13 +3623,17 @@ export function TaskDetailModal(props: Props) {
   }, [props.task]);
 
   useEffect(() => {
+    const main = document.getElementById('main-scroll-container');
     if (props.isOpen) {
       document.body.style.overflow = 'hidden';
+      if (main) main.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
+      if (main) main.style.overflow = '';
     }
     return () => {
       document.body.style.overflow = '';
+      if (main) main.style.overflow = '';
     };
   }, [props.isOpen]);
 

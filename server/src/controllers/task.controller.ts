@@ -139,14 +139,28 @@ export async function getTask(req: Request, res: Response) {
       return res.json({ task: cachedTask, cached: true });
     }
 
-    const task = await prisma.task.findUnique({
+    let task = await prisma.task.findUnique({
       where: { id: taskId },
       include: taskInclude,
     });
 
+    if (!task) {
+      const subtask = await prisma.subtask.findUnique({
+        where: { id: taskId },
+        select: { taskId: true }
+      });
+      if (subtask) {
+        task = await prisma.task.findUnique({
+          where: { id: subtask.taskId },
+          include: taskInclude,
+        });
+      }
+    }
+
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    await setCache(cacheKey, task, 300);
+    // Cache under the actual task ID, not the requested ID (in case it was a subtask ID)
+    await setCache(`task:${task.id}`, task, 300);
 
     return res.json({ task, cached: false });
   } catch (err: any) {

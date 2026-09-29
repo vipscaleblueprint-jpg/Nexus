@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { io } from '../server';
+import { invalidateCache } from '../services/redisService';
 
 const prisma = new PrismaClient();
 
@@ -53,6 +54,105 @@ async function authenticateApiKey(req: Request, res: Response) {
   });
 
   return apiKey;
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/external/lists
+// Creates a new list (board) with specific statuses
+// ---------------------------------------------------------------------------
+export async function createExternalList(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { name, spaceId, folderId, statuses } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    let targetSpaceId = spaceId;
+    let targetFolderId = folderId;
+    
+    // If user didn't specify a folder ID, fallback to 'Client Dashboard' folder automatically
+    if (!targetFolderId) {
+      const dashboardFolder = await prisma.folder.findFirst({ where: { name: 'Client Dashboard' } });
+      if (dashboardFolder) {
+        targetFolderId = dashboardFolder.id;
+        targetSpaceId = targetSpaceId || dashboardFolder.spaceId;
+      }
+    }
+
+    const customGroups = statuses 
+      ? Array.from(new Set(statuses.map((s: any) => s.groupName).filter(Boolean))) as string[]
+      : ['Client Details', 'Recurring', 'Workflow & Progress'];
+
+    const list = await prisma.list.create({
+      data: {
+        name,
+        spaceId: targetSpaceId || null,
+        folderId: targetFolderId || null,
+        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+      }
+    });
+
+    // We will use standard DEFAULT_STATUSES but NEVER rename KYC to list.name
+    // (As requested: "instead of names of the boards it should be kyc")
+    const DEFAULT_STATUSES = [
+      { name: 'KYC', color: 'cyan', groupName: 'Client Details' },
+      { name: 'Pin Board', color: 'blue', groupName: 'Client Details' },
+      { name: 'Daily', color: 'purple', groupName: 'Recurring' },
+      { name: 'Weekly', color: 'indigo', groupName: 'Recurring' },
+      { name: 'Monthly', color: 'violet', groupName: 'Recurring' },
+      { name: 'Pending', color: 'amber', groupName: 'Workflow & Progress' },
+      { name: 'In Progress', color: 'blue', groupName: 'Workflow & Progress' },
+      { name: 'Revision', color: 'rose', groupName: 'Workflow & Progress' },
+      { name: 'On-Hold', color: 'zinc', groupName: 'Workflow & Progress' },
+      { name: 'Closed', color: 'emerald', groupName: 'Workflow & Progress' },
+      { name: 'Waiting', color: 'orange', groupName: 'Management' },
+      { name: 'In Review', color: 'purple', groupName: 'Management' },
+      { name: 'Checking', color: 'teal', groupName: 'Management' },
+      { name: 'CRM', color: 'emerald', groupName: 'Management' },
+    ];
+
+    const statusesToCreate: any[] = [];
+    if (statuses && Array.isArray(statuses) && statuses.length > 0) {
+      // If caller explicitly provides statuses, use them
+      statuses.forEach((s, i) => {
+        statusesToCreate.push({
+          name: s.name,
+          color: s.color || 'blue',
+          groupName: s.groupName || null,
+          order: i,
+          listId: list.id
+        });
+      });
+    } else {
+      // Use DEFAULT_STATUSES (keep KYC as KYC)
+      DEFAULT_STATUSES.forEach((s, i) => {
+        statusesToCreate.push({
+          name: s.name,
+          color: s.color,
+          groupName: s.groupName,
+          order: i,
+          listId: list.id
+        });
+      });
+    }
+
+    if (statusesToCreate.length > 0) {
+      await prisma.listStatus.createMany({
+        data: statusesToCreate,
+        skipDuplicates: true
+      });
+    }
+
+    await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
+
+    return res.status(201).json({ list });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +250,7 @@ export async function createTask(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { title, listId, description, priority, status, assigneeId } = req.body;
+    const { title, listId, description, priority, status, assigneeId, checklists } = req.body;
 
     if (!title || !listId) {
       return res.status(400).json({ error: 'title and listId are required' });
@@ -159,36 +259,33 @@ export async function createTask(req: Request, res: Response) {
     const list = await prisma.list.findUnique({ where: { id: listId }, include: { statuses: true } });
     if (!list) return res.status(404).json({ error: 'List not found' });
 
-    // Seed default grouped statuses if this list doesn't have them yet
-    const hasGroupedStatuses = list.statuses.some(s => s.groupName === 'CLIENT DETAILS');
-    if (!hasGroupedStatuses) {
-      const dynamicStatusName = (list.name || 'CLIENT').toUpperCase();
+    // Skip auto-seeding if statuses already exist to prevent duplicating/messing up createExternalList statuses
+    if (list.statuses.length === 0) {
       const defaultGroupedStatuses = [
-        { name: dynamicStatusName, color: 'teal', groupName: 'CLIENT DETAILS', order: 0 },
-        { name: 'PIN BOARD', color: 'blue', groupName: 'CLIENT DETAILS', order: 1 },
-        { name: 'DAILY', color: 'purple', groupName: 'RECURRING', order: 0 },
-        { name: 'WEEKLY', color: 'blue', groupName: 'RECURRING', order: 1 },
-        { name: 'MONTHLY', color: 'purple', groupName: 'RECURRING', order: 2 },
-        { name: 'PENDING', color: 'orange', groupName: 'WORKFLOW & PROGRESS', order: 0 },
-        { name: 'IN PROGRESS', color: 'blue', groupName: 'WORKFLOW & PROGRESS', order: 1 },
-        { name: 'REVISION', color: 'rose', groupName: 'WORKFLOW & PROGRESS', order: 2 },
-        { name: 'ON-HOLD', color: 'zinc', groupName: 'WORKFLOW & PROGRESS', order: 3 },
-        { name: 'CLOSED', color: 'emerald', groupName: 'WORKFLOW & PROGRESS', order: 4 },
-        { name: 'WAITING', color: 'orange', groupName: 'MANAGEMENT', order: 0 },
-        { name: 'IN REVIEW', color: 'purple', groupName: 'MANAGEMENT', order: 1 },
-        { name: 'CHECKING', color: 'teal', groupName: 'MANAGEMENT', order: 2 },
-        { name: 'CRM', color: 'emerald', groupName: 'MANAGEMENT', order: 3 },
+        { name: 'KYC', color: 'cyan', groupName: 'Client Details', order: 0 },
+        { name: 'Pin Board', color: 'blue', groupName: 'Client Details', order: 1 },
+        { name: 'Daily', color: 'purple', groupName: 'Recurring', order: 0 },
+        { name: 'Weekly', color: 'indigo', groupName: 'Recurring', order: 1 },
+        { name: 'Monthly', color: 'violet', groupName: 'Recurring', order: 2 },
+        { name: 'Pending', color: 'amber', groupName: 'Workflow & Progress', order: 0 },
+        { name: 'In Progress', color: 'blue', groupName: 'Workflow & Progress', order: 1 },
+        { name: 'Revision', color: 'rose', groupName: 'Workflow & Progress', order: 2 },
+        { name: 'On-Hold', color: 'zinc', groupName: 'Workflow & Progress', order: 3 },
+        { name: 'Closed', color: 'emerald', groupName: 'Workflow & Progress', order: 4 },
+        { name: 'Waiting', color: 'orange', groupName: 'Management', order: 0 },
+        { name: 'In Review', color: 'purple', groupName: 'Management', order: 1 },
+        { name: 'Checking', color: 'teal', groupName: 'Management', order: 2 },
+        { name: 'CRM', color: 'emerald', groupName: 'Management', order: 3 },
       ];
 
       await prisma.list.update({
         where: { id: list.id },
         data: {
-          customGroups: ['CLIENT DETAILS', 'RECURRING', 'WORKFLOW & PROGRESS', 'MANAGEMENT']
+          customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
         }
       });
 
       for (const st of defaultGroupedStatuses) {
-        // Only create if a status with this exact name doesn't already exist in this list
         if (!list.statuses.some(existing => existing.name.toUpperCase() === st.name.toUpperCase())) {
           await prisma.listStatus.create({
             data: {
@@ -199,15 +296,6 @@ export async function createTask(req: Request, res: Response) {
               listId: list.id
             }
           });
-        } else {
-          // If it exists but has no groupName, update it to be in the group
-          const existing = list.statuses.find(existing => existing.name.toUpperCase() === st.name.toUpperCase());
-          if (existing && !existing.groupName) {
-            await prisma.listStatus.update({
-              where: { id: existing.id },
-              data: { groupName: st.groupName, order: st.order, color: st.color }
-            });
-          }
         }
       }
     }
@@ -225,6 +313,26 @@ export async function createTask(req: Request, res: Response) {
         assigneeId: assigneeId || undefined,
       }
     });
+
+    if (checklists && Array.isArray(checklists)) {
+      for (const cl of checklists) {
+        const checklist = await prisma.checklist.create({
+          data: {
+            name: cl.name,
+            taskId: task.id
+          }
+        });
+        if (cl.items && Array.isArray(cl.items)) {
+          await prisma.checklistItem.createMany({
+            data: cl.items.map((itemText: string) => ({
+              text: itemText,
+              completed: false,
+              checklistId: checklist.id
+            }))
+          });
+        }
+      }
+    }
 
     try {
       const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });

@@ -350,7 +350,8 @@ export async function createTask(req: Request, res: Response) {
           where: { 
             docId: doc.id, 
             title: dayTitle 
-          }
+          },
+          orderBy: { createdAt: 'desc' }
         });
 
         if (todayPage && todayPage.content) {
@@ -457,7 +458,8 @@ export async function updateTask(req: Request, res: Response) {
             where: { 
               docId: doc.id, 
               title: dayTitle 
-            }
+            },
+            orderBy: { createdAt: 'desc' }
           });
 
           if (todayPage && todayPage.content) {
@@ -738,7 +740,8 @@ export async function createSubtask(req: Request, res: Response) {
           where: { 
             docId: doc.id, 
             title: dayTitle 
-          }
+          },
+          orderBy: { createdAt: 'desc' }
         });
 
         if (todayPage && todayPage.content) {

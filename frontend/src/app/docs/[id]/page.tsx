@@ -56,9 +56,11 @@ export interface Assignee {
 
 export interface DocBlock {
   id: string;
-  type: 'heading' | 'task' | 'text' | 'callout' | 'tags';
+  type: 'heading' | 'task' | 'text' | 'callout' | 'tags' | 'collapsible' | 'subtask';
   content: string;
   status?: 'CLOSED' | 'WAITING' | 'DAILY' | 'IN_PROGRESS';
+  isCollapsed?: boolean;
+  depth?: number;
   stars?: number;
   assignees?: Assignee[];
   lockedBy?: string | null;
@@ -241,6 +243,8 @@ const DocBlockRow = memo(({
   onMouseDownCaptureWrapper,
   onMouseEnterWrapper,
   onClickWrapper,
+  handleTurnInto,
+  handleToggleCollapse,
 }: any) => {
   return (
     <div
@@ -254,11 +258,14 @@ const DocBlockRow = memo(({
       className={`flex items-center justify-between py-1 rounded-md group transition-all relative ${
         block.type === 'callout'
           ? 'bg-red-500/20 border border-red-500/30 py-3 px-4'
+          : block.type === 'collapsible' && block.isCollapsed
+          ? 'bg-zinc-800/60 border border-zinc-700/60 pl-6 pr-2'
           : 'hover:bg-zinc-800/40 pl-6 pr-2'
       } ${isLockedBySomeoneElse ? 'ring-1 ring-red-500/30 ring-inset' : ''}
       ${dragOverBlockIndex === index && dragOverPosition === 'above' ? 'border-t-2 border-t-[#6b4cff]' : ''}
       ${dragOverBlockIndex === index && dragOverPosition === 'below' ? 'border-b-2 border-b-[#6b4cff]' : ''}
       ${draggedBlockIndex === index ? 'bg-blue-500/10 opacity-50' : ''}`}
+      style={{ marginLeft: `${(block.depth || 0) * 1.5}rem` }}
     >
       {/* Left Gutter: +, :: */}
       <div className={`absolute left-0 top-1.5 transition-opacity flex items-center gap-0.5 z-50 select-none -translate-x-full pr-1 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
@@ -272,25 +279,63 @@ const DocBlockRow = memo(({
           </button>
         )}
         {(!isSelected || isFirstSelected) && (
-          <div
-            draggable={true}
-            onDragStart={(e) => {
-              handleDragStart(e, index);
-            }}
-            onDragEnd={(e) => {
-              handleDragEnd();
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              const newSel = e.shiftKey ? new Set(selectedBlockIds) : new Set<string>();
-              newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
-              setSelectedBlockIds(newSel);
-            }}
-            className="flex items-center justify-center w-6 h-6 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
-            title="Drag to move · Click to select"
-          >
-            <GripVertical className="w-4 h-4 pointer-events-none" />
-          </div>
+          <Popover.Root>
+            <Popover.Trigger asChild>
+              <div
+                draggable={true}
+                onDragStart={(e) => {
+                  handleDragStart(e, index);
+                }}
+                onDragEnd={(e) => {
+                  handleDragEnd();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const newSel = e.shiftKey ? new Set(selectedBlockIds) : new Set<string>();
+                  newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
+                  setSelectedBlockIds(newSel);
+                }}
+                className="flex items-center justify-center w-6 h-6 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
+                title="Drag to move · Click to open menu"
+              >
+                <GripVertical className="w-4 h-4 pointer-events-none" />
+              </div>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                align="start"
+                side="bottom"
+                className="w-48 p-1 bg-zinc-800 border border-zinc-700/80 rounded-lg shadow-xl z-[9999]"
+              >
+                <div className="px-2 py-1 text-xs text-zinc-400 font-medium">Options</div>
+                <div className="flex flex-col">
+                  <div className="group/turninto relative">
+                    <button className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center justify-between cursor-default">
+                      <div className="flex items-center gap-2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 12 20 22 4 22 4 2 12 2"></polyline><polyline points="10 2 10 10 2 10"></polyline></svg>
+                        Turn into
+                      </div>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="absolute left-full top-0 ml-1 hidden group-hover/turninto:flex flex-col w-40 p-1 bg-zinc-800 border border-zinc-700/80 rounded-lg shadow-xl z-[9999]">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleTurnInto && handleTurnInto(block.id, 'collapsible'); }}
+                        className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
+                        <ChevronDown className="w-3.5 h-3.5" />
+                        Collapsible
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleTurnInto && handleTurnInto(block.id, 'subtask'); }}
+                        className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
+                        <CheckSquare className="w-3.5 h-3.5" />
+                        Subtask L
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
         )}
       </div>
 
@@ -303,30 +348,61 @@ const DocBlockRow = memo(({
           </span>
         </div>
       )}
-      <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-20 relative">
+      <div className="flex items-center gap-2 min-w-0 flex-1 pr-20 relative">
         {block.type === 'callout' && (
           <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
         )}
         {block.type === 'tags' && (
           <Tags className="w-4 h-4 text-zinc-500 shrink-0" />
         )}
+        {/* Subtask L connector — inside the row as a leading icon */}
+        {block.type === 'subtask' && (
+          <svg width="14" height="18" viewBox="0 0 14 18" fill="none" className="shrink-0 self-start mt-1">
+            <path d="M2 0 L2 11 L12 11" stroke="#52525b" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+        {/* Collapsible toggle — filled triangle like Notion */}
+        {block.type === 'collapsible' && (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleToggleCollapse && handleToggleCollapse(block.id); }}
+            className="flex items-center justify-center w-4 h-4 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer self-start mt-0.5"
+            title={block.isCollapsed ? 'Expand' : 'Collapse'}
+          >
+            {block.isCollapsed
+              ? <svg width="8" height="10" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10" /></svg>
+              : <svg width="10" height="8" viewBox="0 0 10 8" fill="currentColor"><polygon points="0,0 10,0 5,8" /></svg>
+            }
+          </button>
+        )}
 
         <div key={`editor-${block.id}`} className={`flex-1 min-w-0 relative ${isSelected ? 'is-selected-block' : ''}`}>
-          {isLast && (!block.content || block.content === '<p></p>' || block.content === '<p><br></p>') && (
-            <div className="absolute top-0 left-0 text-[#71717a] text-sm pointer-events-none" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
-              Write, press 'space' for AI, '/' for commands
+          {/* Collapsed state: static single-line header text */}
+          {block.type === 'collapsible' && block.isCollapsed ? (
+            <div
+              className="text-sm text-zinc-200 py-0.5 cursor-pointer truncate select-none"
+              onClick={(e) => { e.stopPropagation(); handleToggleCollapse && handleToggleCollapse(block.id); }}
+            >
+              {block.content?.replace(/<[^>]+>/g, '').trim() || <span className="text-zinc-600 italic">Empty toggle</span>}
             </div>
+          ) : (
+            <>
+              {isLast && (!block.content || block.content === '<p></p>' || block.content === '<p><br></p>') && (
+                <div className="absolute top-0 left-0 text-[#71717a] text-sm pointer-events-none" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
+                  Write, press 'space' for AI, '/' for commands
+                </div>
+              )}
+              <BlockEditor
+                editable={!isLockedBySomeoneElse}
+                content={block.content}
+                onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
+                onBlur={() => handleBlurBlock(block.id)}
+                onKeyDown={(e) => handleKeyDown(e, block.id, index)}
+                onSplit={(contents) => handleSplitBlock(block.id, index, contents)}
+                onFocus={() => handleFocusBlock(block.id)}
+                onEditorReady={(editor) => { editorRegistryRef.current[block.id] = editor; }}
+              />
+            </>
           )}
-          <BlockEditor
-            editable={!isLockedBySomeoneElse}
-            content={block.content}
-            onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
-            onBlur={() => handleBlurBlock(block.id)}
-            onKeyDown={(e) => handleKeyDown(e, block.id, index)}
-            onSplit={(contents) => handleSplitBlock(block.id, index, contents)}
-            onFocus={() => handleFocusBlock(block.id)}
-            onEditorReady={(editor) => { editorRegistryRef.current[block.id] = editor; }}
-          />
         </div>
       </div>
 
@@ -369,6 +445,7 @@ const DocBlockRow = memo(({
     prev.block.id === next.block.id &&
     prev.block.content === next.block.content &&
     prev.block.type === next.block.type &&
+    prev.block.isCollapsed === next.block.isCollapsed &&
     prev.block.lockedByName === next.block.lockedByName &&
     prev.index === next.index &&
     prev.isLast === next.isLast &&
@@ -831,6 +908,37 @@ export default function DocPage({ docId }: { docId?: string }) {
     // Clear block selection when user starts typing normally inside an editor
     if (selectedBlockIdsRef.current.size > 0 && !e.shiftKey && e.key !== 'Escape') {
       setSelectedBlockIds(new Set());
+    }
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const currentBlocks = [...blocksRef.current];
+      const blockIndex = currentBlocks.findIndex(b => b.id === blockId);
+      if (blockIndex === -1) return;
+      
+      const block = currentBlocks[blockIndex];
+      const currentDepth = block.depth || 0;
+      
+      if (e.shiftKey) {
+        // Outdent
+        if (currentDepth > 0) {
+          currentBlocks[blockIndex] = { ...block, depth: currentDepth - 1 };
+          setBlocks(currentBlocks);
+          handleSavePage(currentBlocks);
+        }
+      } else {
+        // Indent (max depth is prev block's depth + 1)
+        if (blockIndex > 0) {
+          const prevBlock = currentBlocks[blockIndex - 1];
+          const maxDepth = (prevBlock.depth || 0) + 1;
+          if (currentDepth < maxDepth) {
+            currentBlocks[blockIndex] = { ...block, depth: currentDepth + 1 };
+            setBlocks(currentBlocks);
+            handleSavePage(currentBlocks);
+          }
+        }
+      }
+      return;
     }
 
     if (e.key === 'Backspace') {
@@ -1635,6 +1743,28 @@ export default function DocPage({ docId }: { docId?: string }) {
     };
   }, []);
 
+  const handleTurnInto = (blockId: string, type: DocBlock['type']) => {
+    const statusMap: Record<string, DocBlock['status']> = { task: 'DAILY', subtask: 'DAILY' };
+    const updated = blocksRef.current.map(b => {
+      if (b.id !== blockId) return b;
+      const result: DocBlock = {
+        ...b,
+        type,
+        status: statusMap[type] ?? undefined,
+        isCollapsed: type === 'collapsible' ? false : undefined,
+      };
+      return result;
+    });
+    setBlocks(updated);
+    handleSavePage(updated);
+  };
+
+  const handleToggleCollapse = (blockId: string) => {
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, isCollapsed: !b.isCollapsed } : b
+    ));
+  };
+
   const handleUpdateBlockContent = (blockId: string, content: string) => {
     
     if (socket) {
@@ -2138,11 +2268,8 @@ export default function DocPage({ docId }: { docId?: string }) {
               );
             })()}
 
-            {/* ── Freeform Writable Canvas Blocks ── */}
             <div className="space-y-1.5 pt-2">
               {(() => {
-                const visibleBlocks = blocks;
-
                 if (blocks.length === 0) {
                   return (
                     <div
@@ -2160,7 +2287,30 @@ export default function DocPage({ docId }: { docId?: string }) {
                   );
                 }
 
-                return visibleBlocks.map((block, index) => {
+                // Compute hidden blocks based on depth and isCollapsed
+                const hiddenBlockIds = new Set<string>();
+                let currentCollapsedDepth: number | null = null;
+                for (let i = 0; i < blocks.length; i++) {
+                  const block = blocks[i];
+                  const depth = block.depth || 0;
+                  
+                  if (currentCollapsedDepth !== null) {
+                    if (depth > currentCollapsedDepth) {
+                      hiddenBlockIds.add(block.id);
+                      continue;
+                    } else {
+                      currentCollapsedDepth = null;
+                    }
+                  }
+                  
+                  if (block.type === 'collapsible' && block.isCollapsed) {
+                    currentCollapsedDepth = depth;
+                  }
+                }
+
+                return blocks.map((block, index) => {
+                  if (hiddenBlockIds.has(block.id)) return null;
+                  
                   const isLockedBySomeoneElse = block.lockedBy && block.lockedBy !== currentUser?.id;
                   const isSelected = selectedBlockIds.has(block.id);
                   const isFirstSelected = isSelected && Array.from(selectedBlockIds)[0] === block.id;
@@ -2190,6 +2340,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                         handleFocusBlock={handleFocusBlock}
                         editorRegistryRef={editorRegistryRef}
                         handleDeleteBlock={handleDeleteBlock}
+                        handleTurnInto={handleTurnInto}
+                        handleToggleCollapse={handleToggleCollapse}
                         onDragOverWrapper={(e: any) => handleDragOver(e, index)}
                         onDropWrapper={(e: any) => handleDrop(e, index)}
                         onMouseDownCaptureWrapper={(e: any) => {

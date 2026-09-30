@@ -455,8 +455,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         },
         include: { user: true }
       });
-      // Optionally emit the comment to clients
-      io.emit('task_comment_created', comment);
+      io.emit('task:comment_added', { taskId: newTask.id, comment });
 
       // Create comment for the auto-created subtask as well
       const subtaskComment = await prisma.taskComment.create({
@@ -468,11 +467,76 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         },
         include: { user: true }
       });
-      io.emit('task_comment_created', subtaskComment);
+      io.emit('task:comment_added', { taskId: newTask.id, subtaskId: subtask.id, comment: subtaskComment });
     }
 
-    io.emit('task_created', newTask);
-    io.emit('subtask_created', subtask);
+    const fullyLoadedTask = await prisma.task.findUnique({
+      where: { id: newTask.id },
+      include: {
+        creator: { select: { id: true, name: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, avatarUrl: true } },
+        assignee: { select: { id: true, name: true, avatarUrl: true } },
+        subtasks: {
+          include: {
+            User: { select: { id: true, name: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, avatarUrl: true } }
+          }
+        }
+      }
+    });
+
+    if (fullyLoadedTask) {
+      io.emit('task:created', fullyLoadedTask);
+    }
+
+    try {
+      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
+      if (doc) {
+        const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
+        const dayFormatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz,
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        });
+        const dayTitle = dayFormatter.format(new Date());
+
+        const todayPage = await prisma.page.findFirst({
+          where: { 
+            docId: doc.id, 
+            title: dayTitle 
+          }
+        });
+
+        if (todayPage && todayPage.content) {
+          const blocks = JSON.parse(todayPage.content);
+          
+          const newTaskBlock = {
+            id: `blk-tk-${Date.now()}-${newTask.id}`,
+            type: "text",
+            content: `<p><span data-type="mention" data-id="${newTask.id}" data-label="${newTask.title}" data-mention-type="task">@${newTask.title}</span></p>`
+          };
+          
+          const newSubtaskBlock = {
+            id: `blk-st-${Date.now()}-${subtask.id}`,
+            type: "text",
+            content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
+          };
+          
+          blocks.push(newTaskBlock);
+          blocks.push(newSubtaskBlock);
+
+          await prisma.page.update({
+            where: { id: todayPage.id },
+            data: { content: JSON.stringify(blocks) }
+          });
+
+          io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to inject task into Priorities Journal:', error);
+    }
 
     // Send ASSIGNMENT notifications so the task appears in each assignee's Activity feed
     const notifyUserIds = new Set<string>(finalAssigneeIds);
@@ -652,9 +716,10 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
           subtaskId: subtask.id,
           userId: creator.id,
           content: commentContent
-        }
+        },
+        include: { user: true }
       });
-      io.emit('task_comment_created', comment);
+      io.emit('task:comment_added', { taskId: parentTask.id, subtaskId: subtask.id, comment });
     }
 
     try {

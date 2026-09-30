@@ -52,12 +52,19 @@ const requireApiKey = (req: Request, res: Response) => {
 
 // Default columns/statuses for client boards
 const DEFAULT_CLIENT_STATUSES = [
-  { name: 'Pending', color: 'orange' },
-  { name: 'KYC', color: 'zinc' },
-  { name: 'Pin Board', color: 'green' },
+  { name: 'Pending', color: 'amber' },
+  { name: 'In Progress', color: 'pink' },
+  { name: 'Revision', color: 'blue' },
+  { name: 'Waiting', color: 'red' },
+  { name: 'In Review', color: 'orange' },
+  { name: 'Checking', color: 'purple' },
+  { name: 'On-Hold', color: 'zinc' },
+  { name: 'Closed', color: 'emerald' },
+  { name: 'KYC', color: 'emerald' },
+  { name: 'Pin Board', color: 'teal' },
   { name: 'Daily', color: 'blue' },
-  { name: 'Weekly', color: 'indigo' },
-  { name: 'Monthly', color: 'cyan' },
+  { name: 'Weekly', color: 'blue' },
+  { name: 'Monthly', color: 'blue' }
 ];
 
 async function getClientDashboardFolder() {

@@ -10,6 +10,7 @@ import {
   createTaskComment,
   getTaskComments,
   updateTaskComment,
+  deleteTaskComment,
   toggleCommentReaction,
   getTaskActivities,
   getLiveBlocksData,
@@ -25,7 +26,7 @@ import {
   createTaskAttachment,
   deleteTaskAttachment,
 } from '../controllers/task.controller';
-import { idParams, idAndSubtaskIdParams, idAndChecklistIdParams, idChecklistIdItemIdParams, validate } from '../validation';
+import { idParams, idAndSubtaskIdParams, idAndChecklistIdParams, idChecklistIdItemIdParams, idAndCommentIdParams, validate } from '../validation';
 import {
   attachmentUrlSchema,
   createTaskSchema,
@@ -52,7 +53,8 @@ taskRouter.post('/:id/attachments', optionalAuthenticateToken, validate({ params
 taskRouter.delete('/:id/attachments/:attachmentId', optionalAuthenticateToken, validate({ params: idParams }), deleteTaskAttachment);
 taskRouter.post('/:id/comments', validate({ params: idParams }), createTaskComment);
 taskRouter.get('/:id/comments', validate({ params: idParams }), getTaskComments);
-taskRouter.patch('/:id/comments/:commentId', updateTaskComment);
+taskRouter.patch('/:id/comments/:commentId', validate({ params: idAndCommentIdParams }), updateTaskComment);
+taskRouter.delete('/:id/comments/:commentId', validate({ params: idAndCommentIdParams }), deleteTaskComment);
 taskRouter.post('/:id/comments/:commentId/reactions', toggleCommentReaction);
 taskRouter.get('/:id/activities', validate({ params: idParams }), getTaskActivities);
 
@@ -76,3 +78,4 @@ taskRouter.delete('/:id/checklists/:checklistId/items/:itemId', optionalAuthenti
 taskRouter.get('/:id', validate({ params: idParams }), getTask);
 taskRouter.patch('/:id', optionalAuthenticateToken, validate({ params: idParams, body: updateTaskSchema }), updateTask);
 taskRouter.delete('/:id', validate({ params: idParams }), deleteTask);
+

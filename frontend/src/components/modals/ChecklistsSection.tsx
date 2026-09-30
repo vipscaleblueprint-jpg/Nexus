@@ -209,7 +209,7 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                       className={`flex-1 bg-transparent border-none outline-none text-sm min-w-0 ${item.completed ? 'text-zinc-500 line-through' : 'text-zinc-200'}`}
                     />
 
-                    <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1">
                       {/* Assignee */}
                       <Popover.Root>
                         <Popover.Trigger asChild>

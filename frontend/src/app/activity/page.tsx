@@ -6,12 +6,15 @@ import { notificationsApi, TaskNotification } from '@/api/notifications';
 import { Check, MailOpen, Trash2, Clock, Inbox, Mail } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import Link from 'next/link';
+import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { tasksApi } from '@/api/tasks';
 
 export default function ActivityPage() {
   const [tab, setTab] = useState<'all' | 'assigned' | 'status' | 'comments'>('all');
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
   const [loading, setLoading] = useState(true);
-  const { decrementUnreadNotifications } = useAppStore();
+  const [selectedTask, setSelectedTask] = useState<any>(null);
+  const { decrementUnreadNotifications, workspaceRoles } = useAppStore();
 
   const fetchNotifications = async () => {
     setLoading(true);
@@ -57,6 +60,20 @@ export default function ActivityPage() {
     }
   };
 
+  const handleOpenTask = async (n: TaskNotification) => {
+    if (!n.isRead) handleMarkAsRead(n.id);
+    if (!n.task) return;
+    
+    try {
+      const res = await tasksApi.getTask(n.task.id);
+      setSelectedTask(res.task);
+    } catch (err) {
+      console.error("Failed to fetch task:", err);
+      // Fallback to partial task
+      setSelectedTask(n.task);
+    }
+  };
+
 
 
   const groupNotificationsByDate = (notifs: TaskNotification[]) => {
@@ -88,7 +105,7 @@ export default function ActivityPage() {
   const grouped = groupNotificationsByDate(filteredNotifications);
 
   return (
-    <div className="flex flex-col h-full bg-[#131316] text-[#e4e4e7] p-8">
+    <div className="flex flex-col h-full bg-[#131316] text-[#e4e4e7] p-8 relative">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Activity</h1>
@@ -151,12 +168,12 @@ export default function ActivityPage() {
               <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">{groupName}</h3>
               <div className="bg-[#1c1c1f] rounded-lg border border-white/5 overflow-hidden">
                 {items.map((n, i) => (
-                  <div 
-                    key={n.id} 
-                    className={`group flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.02] cursor-pointer ${
+                  <div
+                    key={n.id}
+                    onClick={() => handleOpenTask(n)}
+                    className={`group flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.04] cursor-pointer ${
                       i !== items.length - 1 ? 'border-b border-white/5' : ''
                     } ${!n.isRead ? 'bg-[#5f5ce6]/5' : ''}`}
-                    onClick={() => { if (!n.isRead) handleMarkAsRead(n.id); }}
                   >
                     <div className="shrink-0 pt-0.5">
                       <div className="size-2 rounded-full mt-1.5" style={{ backgroundColor: !n.isRead ? '#5f5ce6' : 'transparent' }} />
@@ -191,16 +208,16 @@ export default function ActivityPage() {
 
                       {n.task && (
                         <div className="mt-3 flex items-center gap-2">
-                          <Link href={`/lists/${n.task.listId}?task=${n.task.id}`} className="text-xs font-medium text-[#5f5ce6] hover:underline flex items-center gap-1">
+                          <span className="text-xs font-medium text-[#5f5ce6] flex items-center gap-1">
                             {n.task.title}
-                          </Link>
+                          </span>
                         </div>
                       )}
                     </div>
 
                     <div className="shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleClear(n.id); }}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleClear(n.id); }}
                         className="px-3 py-1.5 text-xs font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5"
                       >
                         <Check className="size-3.5" />
@@ -214,6 +231,17 @@ export default function ActivityPage() {
           ))
         )}
       </div>
+
+      <TaskDetailModal
+        isOpen={!!selectedTask}
+        onClose={() => setSelectedTask(null)}
+        task={selectedTask}
+        mode="full"
+        workspaceRoles={workspaceRoles}
+        onUpdateTask={(updatedTask) => {
+          setSelectedTask(updatedTask);
+        }}
+      />
     </div>
   );
 }

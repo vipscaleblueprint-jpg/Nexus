@@ -1,3 +1,4 @@
+import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
 import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -237,21 +238,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
   useEffect(() => {
     if (!editor) return;
 
-    const STATUS_COLORS: Record<string, string> = {
-      'KYC': '#06b6d4',
-      'Pin Board': '#06b6d4',
-      'Daily': '#a855f7',
-      'Weekly': '#a855f7',
-      'Monthly': '#a855f7',
-      'Pending': '#6366f1',
-      'In Progress': '#eab308',
-      'Revision': '#6366f1',
-      'Waiting': '#f97316',
-      'In Review': '#6366f1',
-      'Checking': '#6366f1',
-      'On-Hold': '#ef4444',
-      'Closed': '#10b981',
-    };
+    
     const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
 
     const handleTaskUpdated = (e: any) => {
@@ -523,3 +510,5 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 }, (prev, next) => {
   return prev.content === next.content && prev.editable === next.editable;
 });
+
+

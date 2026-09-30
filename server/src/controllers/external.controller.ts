@@ -358,41 +358,54 @@ export async function createTask(req: Request, res: Response) {
           const blocks = JSON.parse(todayPage.content);
           
           const clientName = list.name || 'Unknown Client';
-          const headerContent = `<h3>${clientName}</h3>`;
+          const headerContentClient = `<h3>${clientName}</h3>`;
+          const headerContentNewTasks = `<h3>New Tasks</h3>`;
           
-          const newTaskBlock = {
-            id: `blk-t-${Date.now()}-${task.id}`,
+          const getNewTaskBlock = (suffix: string) => ({
+            id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
             type: "text",
             content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
-          };
+          });
 
-          const headerIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContent);
-
-          if (headerIndex !== -1) {
-            let insertIndex = headerIndex + 1;
-            while (insertIndex < blocks.length) {
-              const nextBlock = blocks[insertIndex];
-              if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
-                break;
-              }
-              insertIndex++;
-            }
-            blocks.splice(insertIndex, 0, newTaskBlock);
-          } else {
-            const newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === '<h3>New Tasks</h3>');
-            
-            const clientHeaderBlock = {
-              id: `blk-h-${Date.now()}-${clientName.replace(/\\s+/g, '')}`,
+          // 1. Insert into Client section
+          let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentClient);
+          if (clientHeaderIndex === -1) {
+            blocks.push({
+              id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
               type: 'text',
-              content: headerContent
-            };
-
-            if (newTasksHeaderIndex !== -1) {
-              blocks.splice(newTasksHeaderIndex, 0, clientHeaderBlock, newTaskBlock);
-            } else {
-              blocks.push(clientHeaderBlock, newTaskBlock);
-            }
+              content: headerContentClient
+            });
+            clientHeaderIndex = blocks.length - 1;
           }
+          let insertClientIndex = clientHeaderIndex + 1;
+          while (insertClientIndex < blocks.length) {
+            const nextBlock = blocks[insertClientIndex];
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+              break;
+            }
+            insertClientIndex++;
+          }
+          blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
+
+          // 2. Insert into New Tasks section
+          let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentNewTasks);
+          if (newTasksHeaderIndex === -1) {
+            blocks.push({
+              id: `blk-h-${Date.now()}-NewTasks`,
+              type: 'text',
+              content: headerContentNewTasks
+            });
+            newTasksHeaderIndex = blocks.length - 1;
+          }
+          let insertNewTasksIndex = newTasksHeaderIndex + 1;
+          while (insertNewTasksIndex < blocks.length) {
+            const nextBlock = blocks[insertNewTasksIndex];
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+              break;
+            }
+            insertNewTasksIndex++;
+          }
+          blocks.splice(insertNewTasksIndex, 0, getNewTaskBlock('n'));
 
           await prisma.page.update({
             where: { id: todayPage.id },
@@ -470,41 +483,54 @@ export async function updateTask(req: Request, res: Response) {
 
             if (!isAlreadyInJournal) {
               const clientName = existingTask.list?.name || 'Unknown Client';
-              const headerContent = `<h3>${clientName}</h3>`;
+              const headerContentClient = `<h3>${clientName}</h3>`;
+              const headerContentNewTasks = `<h3>New Tasks</h3>`;
               
-              const newTaskBlock = {
-                id: `blk-t-${Date.now()}-${task.id}`,
+              const getNewTaskBlock = (suffix: string) => ({
+                id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
                 type: "text",
                 content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
-              };
+              });
 
-              const headerIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContent);
-
-              if (headerIndex !== -1) {
-                let insertIndex = headerIndex + 1;
-                while (insertIndex < blocks.length) {
-                  const nextBlock = blocks[insertIndex];
-                  if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
-                    break;
-                  }
-                  insertIndex++;
-                }
-                blocks.splice(insertIndex, 0, newTaskBlock);
-              } else {
-                const newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === '<h3>New Tasks</h3>');
-                
-                const clientHeaderBlock = {
-                  id: `blk-h-${Date.now()}-${clientName.replace(/\\s+/g, '')}`,
+              // 1. Insert into Client section
+              let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentClient);
+              if (clientHeaderIndex === -1) {
+                blocks.push({
+                  id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
                   type: 'text',
-                  content: headerContent
-                };
-
-                if (newTasksHeaderIndex !== -1) {
-                  blocks.splice(newTasksHeaderIndex, 0, clientHeaderBlock, newTaskBlock);
-                } else {
-                  blocks.push(clientHeaderBlock, newTaskBlock);
-                }
+                  content: headerContentClient
+                });
+                clientHeaderIndex = blocks.length - 1;
               }
+              let insertClientIndex = clientHeaderIndex + 1;
+              while (insertClientIndex < blocks.length) {
+                const nextBlock = blocks[insertClientIndex];
+                if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+                  break;
+                }
+                insertClientIndex++;
+              }
+              blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
+
+              // 2. Insert into New Tasks section
+              let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentNewTasks);
+              if (newTasksHeaderIndex === -1) {
+                blocks.push({
+                  id: `blk-h-${Date.now()}-NewTasks`,
+                  type: 'text',
+                  content: headerContentNewTasks
+                });
+                newTasksHeaderIndex = blocks.length - 1;
+              }
+              let insertNewTasksIndex = newTasksHeaderIndex + 1;
+              while (insertNewTasksIndex < blocks.length) {
+                const nextBlock = blocks[insertNewTasksIndex];
+                if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+                  break;
+                }
+                insertNewTasksIndex++;
+              }
+              blocks.splice(insertNewTasksIndex, 0, getNewTaskBlock('n'));
 
               await prisma.page.update({
                 where: { id: todayPage.id },

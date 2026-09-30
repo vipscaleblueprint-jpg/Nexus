@@ -66,6 +66,7 @@ model User {
   createdChannels       Channel[]             @relation("ChannelCreatedBy")
   channelMemberships    ChannelMember[]
   checkedItems          ChecklistItem[]       @relation("ItemChecker")
+  assignedItems         ChecklistItem[]       @relation("ItemAssignee")
   favorites             Favorite[]
   sentInvitations       Invitation[]          @relation("UserInvitations")
   pinnedMessages        Message[]             @relation("MessagePinnedBy")
@@ -316,11 +317,14 @@ model ChecklistItem {
   createdAt   DateTime  @default(now())
   checkedById String?
   completed   Boolean   @default(false)
+  assigneeId  String?
   checkedBy   User?     @relation("ItemChecker", fields: [checkedById], references: [id])
+  assignee    User?     @relation("ItemAssignee", fields: [assigneeId], references: [id])
   checklist   Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
 
   @@index([checklistId])
   @@index([checkedById])
+  @@index([assigneeId])
 }
 
 model TaskComment {

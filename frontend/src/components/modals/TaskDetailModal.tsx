@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, Circle, ImageIcon, File, Share2 } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, Circle, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -19,6 +19,8 @@ import { SubtasksSection } from './SubtasksSection';
 import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
+import { CommentEditor } from '../ui/CommentEditor';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 const CommentSkeleton = () => (
   <div className="space-y-4 animate-pulse mt-4">
@@ -76,26 +78,29 @@ export const ALL_STATUSES = [
 ];
 
 export const STATUS_COLORS: Record<string, string> = {
-  KYC: 'bg-cyan-600 text-white',
-  'Pin Board': 'bg-blue-600 text-white',
-  PIN_BOARD: 'bg-blue-600 text-white',
-  Daily: 'bg-purple-600 text-white',
-  Weekly: 'bg-indigo-600 text-white',
-  Monthly: 'bg-violet-600 text-white',
-  Pending: 'bg-amber-600 text-white',
-  PENDING: 'bg-amber-600 text-white',
-  'In Progress': 'bg-blue-600 text-white',
-  IN_PROGRESS: 'bg-blue-600 text-white',
-  Revision: 'bg-rose-600 text-white',
-  REVISION: 'bg-rose-600 text-white',
-  Waiting: 'bg-orange-600 text-white',
-  WAITING: 'bg-orange-600 text-white',
-  'In Review': 'bg-purple-600 text-white',
-  IN_REVIEW: 'bg-purple-600 text-white',
-  Checking: 'bg-teal-600 text-white',
-  CHECKING: 'bg-teal-600 text-white',
-  'On-Hold': 'bg-zinc-700 text-zinc-300',
-  ON_HOLD: 'bg-zinc-700 text-zinc-300',
+  KYC: 'bg-emerald-500 text-white',
+  'Pin Board': 'bg-teal-500 text-zinc-900',
+  PIN_BOARD: 'bg-teal-500 text-zinc-900',
+  Daily: 'bg-blue-500 text-white',
+  DAILY: 'bg-blue-500 text-white',
+  Weekly: 'bg-blue-500 text-white',
+  WEEKLY: 'bg-blue-500 text-white',
+  Monthly: 'bg-blue-500 text-white',
+  MONTHLY: 'bg-blue-500 text-white',
+  Pending: 'bg-amber-400 text-zinc-900 font-medium',
+  PENDING: 'bg-amber-400 text-zinc-900 font-medium',
+  'In Progress': 'bg-pink-600 text-white',
+  IN_PROGRESS: 'bg-pink-600 text-white',
+  Revision: 'bg-blue-600 text-white',
+  REVISION: 'bg-blue-600 text-white',
+  Waiting: 'bg-red-600 text-white',
+  WAITING: 'bg-red-600 text-white',
+  'In Review': 'bg-orange-500 text-white',
+  IN_REVIEW: 'bg-orange-500 text-white',
+  Checking: 'bg-purple-600 text-white',
+  CHECKING: 'bg-purple-600 text-white',
+  'On-Hold': 'bg-zinc-600 text-white',
+  ON_HOLD: 'bg-zinc-600 text-white',
   Closed: 'bg-emerald-600 text-white',
   CLOSED: 'bg-emerald-600 text-white',
   TODO: 'bg-zinc-700 text-zinc-300',
@@ -203,6 +208,7 @@ export function TaskDetailModalContent({
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
@@ -306,6 +312,13 @@ export function TaskDetailModalContent({
   const [isSubmittingReply, setIsSubmittingReply] = useState(false);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
+  const activityScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activityScrollRef.current) {
+      activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;
+    }
+  }, [activities, richComments]);
+
 
   const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'];
 
@@ -471,21 +484,34 @@ export function TaskDetailModalContent({
   };
 
   const handleSaveEdit = async (commentId: string) => {
-    if (!editCommentText.trim() || !task?.id || isSubmittingEdit) return;
+    if ((!editCommentText.trim() || editCommentText === '<p></p>') || !task?.id || isSubmittingEdit) return;
     setIsSubmittingEdit(true);
     try {
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
-      await tasksApi.updateComment(targetId, commentId, editCommentText.trim());
+      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: editCommentText.trim() } : c));
       setEditingCommentId(null);
       setEditCommentText('');
+      await tasksApi.updateComment(targetId, commentId, editCommentText.trim());
       const res = await tasksApi.getComments(targetId, subtaskId);
       if (res?.comments) setRichComments(res.comments);
     } catch (err) {
       console.warn('Edit failed:', err);
     } finally {
       setIsSubmittingEdit(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!task?.id) return;
+    try {
+      const isSubtask = !!(task as any).parentTaskId;
+      const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+      setRichComments(prev => prev.filter(c => c.id !== commentId));
+      await tasksApi.deleteComment(targetId, commentId);
+    } catch (err) {
+      console.warn('Delete failed:', err);
     }
   };
 
@@ -551,16 +577,16 @@ export function TaskDetailModalContent({
     if (task?.listId && (!listStatuses || listStatuses.length === 0)) {
       const cachedList = allLists.find(l => l.id === task.listId);
       if (cachedList?.statuses) {
-        setInternalListStatuses(cachedList.statuses);
+        setinternalListStatuses(cachedList.statuses);
       } else {
         spacesApi.getList(task.listId).then((res: any) => {
           if (res?.list?.statuses) {
-            setInternalListStatuses(res.list.statuses);
+            setinternalListStatuses(res.list.statuses);
           }
         }).catch((err: any) => console.warn(err));
       }
     } else if (listStatuses && listStatuses.length > 0) {
-      setInternalListStatuses(listStatuses);
+      setinternalListStatuses(listStatuses);
     }
   }, [task?.listId, listStatuses, currentUser, allLists]);
 
@@ -573,13 +599,13 @@ export function TaskDetailModalContent({
     const trimmed = localTitle.trim();
     if (!trimmed) { setLocalTitle(task?.title || ''); return; }
     if (trimmed !== task?.title && task) {
-      const updatePromise = (task as any).parentTaskId 
+      const updatePromise = (task as any).parentTaskId
         ? tasksApi.updateSubtask((task as any).parentTaskId, task.id, { title: trimmed })
         : tasksApi.updateTask(task.id, {
-            title: trimmed,
-            currentListId: task.listId,
-            userId: currentUser?.id,
-          });
+          title: trimmed,
+          currentListId: task.listId,
+          userId: currentUser?.id,
+        });
       updatePromise.catch(err => console.warn('Failed to save title:', err));
       if (onUpdateTask) onUpdateTask({ ...task, title: trimmed });
     }
@@ -608,10 +634,10 @@ export function TaskDetailModalContent({
       const updatePromise = (task as any).parentTaskId
         ? tasksApi.updateSubtask((task as any).parentTaskId, task.id, { description: sanitizedDesc })
         : tasksApi.updateTask(task.id, {
-            description: sanitizedDesc,
-            currentListId: task.listId,
-            userId: currentUser?.id,
-          });
+          description: sanitizedDesc,
+          currentListId: task.listId,
+          userId: currentUser?.id,
+        });
       updatePromise.catch(err => console.warn('Failed to save description:', err));
 
       if (onUpdateTask) {
@@ -628,6 +654,11 @@ export function TaskDetailModalContent({
     }
   };
 
+  const taskRef = useRef(task);
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
+
   // Socket: listen for editing lock and description updates
   useEffect(() => {
     if (!socket || !task) return;
@@ -643,8 +674,8 @@ export function TaskDetailModalContent({
         setEditingUser(null);
         setLocalDescription(data.description);
         // Also update the task via callback so the board state is synced
-        if (onUpdateTask && task) {
-          onUpdateTask({ ...task, description: data.description });
+        if (onUpdateTaskRef.current && taskRef.current) {
+          onUpdateTaskRef.current({ ...taskRef.current, description: data.description });
         }
       }
     };
@@ -657,12 +688,13 @@ export function TaskDetailModalContent({
     };
 
     const handleActivity = (data: any) => {
-      if (data.taskId === task.id) {
+      const currentTask = taskRef.current;
+      if (currentTask && data.taskId === currentTask.id) {
         // If viewing main task, ignore activities that belong to a subtask
-        const isSubtask = !!(task as any).parentTaskId;
+        const isSubtask = !!(currentTask as any).parentTaskId;
         if (!isSubtask && data.activity.subtaskTitle) return;
         // If viewing a subtask, ignore activities that don't belong to this subtask
-        if (isSubtask && data.activity.subtaskTitle !== task.title) return;
+        if (isSubtask && data.activity.subtaskTitle !== currentTask.title) return;
 
         setActivities(prev => {
           // If real ID already exists, skip
@@ -685,6 +717,18 @@ export function TaskDetailModalContent({
           }
           return [...prev, data.activity];
         });
+
+        if (data.activity.type === 'status_change' && data.activity.newStatus) {
+          if (currentTask.status !== data.activity.newStatus && onUpdateTaskRef.current) {
+            onUpdateTaskRef.current({ ...currentTask, status: data.activity.newStatus });
+          }
+        }
+
+        if (data.activity.type === 'priority_change' && data.activity.newPriority) {
+          if (currentTask.priority !== data.activity.newPriority && onUpdateTaskRef.current) {
+            onUpdateTaskRef.current({ ...currentTask, priority: data.activity.newPriority });
+          }
+        }
       }
     };
 
@@ -722,12 +766,12 @@ export function TaskDetailModalContent({
 
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
-  const [internalListStatuses, setInternalListStatuses] = useState<any[]>(listStatuses || []);
-  
+  const [internalListStatuses, setinternalListStatuses] = useState<any[]>(listStatuses || []);
+
   const orderedListStatuses = React.useMemo(() => {
     const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
     const list = allLists.find(l => l.id === task?.listId);
-    
+
     // Filter out legacy statuses that are just group headers
     return sortedInternals.filter(s => {
       if (!list?.customGroups) return true;
@@ -1036,6 +1080,10 @@ export function TaskDetailModalContent({
       );
 
       setComment('');
+      setTimeout(() => {
+        const el = document.getElementById('main-task-comment');
+        if (el) el.style.height = '80px';
+      }, 10);
       setStagedFiles([]);
       setMentionedUsers([]);
 
@@ -1247,7 +1295,7 @@ export function TaskDetailModalContent({
                       setIsEditingTitle(false);
                       handleTitleBlur();
                     }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                     className="text-2xl font-bold bg-[#18181b] border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
                   />
                 ) : (
@@ -1275,12 +1323,12 @@ export function TaskDetailModalContent({
                   </div>
                   <div className="flex items-center gap-1.5">
                     {(() => {
-                      const orderedStatuses = orderedListStatuses.length > 0 
+                      const orderedStatuses = orderedListStatuses.length > 0
                         ? orderedListStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
                         : ALL_STATUSES;
-                      
+
                       const statusName = task.status || 'No Status';
-                      const statusObj = internalListStatuses?.find(s => (s.name || s.title || s.status) === statusName);
+                      const statusObj = internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
                       const hasCustomColor = !!statusObj?.color;
                       const defaultClasses = STATUS_COLORS[task.status] ?? 'bg-zinc-800/50 text-zinc-400';
 
@@ -1333,7 +1381,7 @@ export function TaskDetailModalContent({
                             const currentIndex = statuses.indexOf(statusName);
                             const nextIndex = currentIndex !== -1 ? (currentIndex + 1) % statuses.length : 0;
                             const nextStatus = statuses[nextIndex];
-                            
+
                             return (
                               <div
                                 title={`Move to "${nextStatus}"`}
@@ -1494,8 +1542,8 @@ export function TaskDetailModalContent({
                         <motion.div layout
                           title={currentAssignees.map((u) => u.name).join(', ')}
                           className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignTask
-                              ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
-                              : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
+                            ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
+                            : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
                             }`}
                         >
                           {currentAssignees.length > 0 ? (
@@ -1794,13 +1842,13 @@ export function TaskDetailModalContent({
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <div ref={activityScrollRef} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="space-y-5">
 
                 {/* Initial Creation item */}
                 <div className="flex gap-4 text-sm text-zinc-400 items-start">
                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                  <div className="flex-1 leading-snug">
+                  <div className="flex-1 leading-relaxed">
                     <span className="text-zinc-200 font-medium">{task.creator?.name || 'System'}</span> created this task
                   </div>
                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -1836,14 +1884,19 @@ export function TaskDetailModalContent({
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                                  <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                     {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                       <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
                                     ) : (
                                       <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
                                     )}
-                                    {' '}to <span className="text-blue-400 font-medium bg-blue-500/10 px-1 rounded">{act.newStatus}</span>
+                                    {' '}to <span
+                                      className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                      style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
+                                    >
+                                      {act.newStatus}
+                                    </span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -1855,8 +1908,8 @@ export function TaskDetailModalContent({
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                  <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> assigned{' '}
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
                                     {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                       <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
                                     ) : (
@@ -1874,8 +1927,8 @@ export function TaskDetailModalContent({
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-                                  <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                     {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                       <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
                                     ) : (
@@ -1893,8 +1946,8 @@ export function TaskDetailModalContent({
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
-                                  <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                     {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                       <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
                                     ) : (
@@ -1911,8 +1964,8 @@ export function TaskDetailModalContent({
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                                  <div className="flex-1 leading-snug">
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                     {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                       <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
                                     ) : (
@@ -1968,38 +2021,34 @@ export function TaskDetailModalContent({
                                     <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
                                   </div>
                                   {comment.user?.id === currentUser?.id && (
-                                    <button
-                                      onClick={() => {
-                                        if (editingCommentId === comment.id) {
-                                          setEditingCommentId(null);
-                                        } else {
-                                          setEditingCommentId(comment.id);
-                                          setEditCommentText(comment.content);
-                                        }
-                                      }}
-                                      className="text-zinc-500 hover:text-zinc-300 transition-colors p-1"
-                                      title="Edit Comment"
-                                    >
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </button>
+                                    <Popover.Root>
+                                      <Popover.Trigger asChild>
+                                        <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
+                                          <MoreHorizontal className="w-3.5 h-3.5" />
+                                        </button>
+                                      </Popover.Trigger>
+                                      <Popover.Portal>
+                                        <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
+                                          <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                            <Pencil className="w-3.5 h-3.5" /> Edit
+                                          </button>
+                                          <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                                          </button>
+                                        </Popover.Content>
+                                      </Popover.Portal>
+                                    </Popover.Root>
                                   )}
                                 </div>
                               </div>
 
                               {editingCommentId === comment.id ? (
                                 <div className="pl-11 flex gap-2 w-full">
-                                  <input
-                                    value={editCommentText}
-                                    onChange={e => setEditCommentText(e.target.value)}
-                                    disabled={isSubmittingEdit}
-                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEdit(comment.id); } }}
-                                    className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
-                                    autoFocus
-                                  />
-                                  <button onClick={() => handleSaveEdit(comment.id)} disabled={isSubmittingEdit || !editCommentText.trim() || editCommentText === comment.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50">
+                                  <CommentEditor id={`edit-${comment.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
+                                  <button onClick={() => handleSaveEdit(comment.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === comment.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
                                     <Check className="w-3.5 h-3.5" />
                                   </button>
-                                  <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50">
+                                  <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
                                     <X className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
@@ -2076,7 +2125,7 @@ export function TaskDetailModalContent({
                                     value={replyText}
                                     onChange={e => setReplyText(e.target.value)}
                                     disabled={isSubmittingReply}
-                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); } }}
+                                    onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); } }}
                                     placeholder="Write a reply..."
                                     className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
                                   />
@@ -2169,15 +2218,15 @@ export function TaskDetailModalContent({
                     </div>
                   </div>
                 )}
-                <textarea
+                <CommentEditor
+                  id="main-task-comment"
                   value={comment}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setComment(val);
+                  onChange={(html, text, cursorPosition) => {
+                    setComment(html);
+
 
                     // Mention logic
-                    const cursorPosition = e.target.selectionStart;
-                    const textBeforeCursor = val.substring(0, cursorPosition);
+                    const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
                     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
 
                     if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
@@ -2188,14 +2237,8 @@ export function TaskDetailModalContent({
                       setShowMentionMenu(false);
                     }
                   }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleAddComment();
-                    }
-                  }}
+                  onSubmit={handleAddComment}
                   disabled={isSubmittingComment}
-                  className="w-full bg-[#121212] border border-zinc-800 rounded-lg pl-4 pr-12 py-3 text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600 resize-none h-[80px] custom-scrollbar disabled:opacity-50"
                   placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment... (Press Enter to post)"}
                 />
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
@@ -2209,7 +2252,7 @@ export function TaskDetailModalContent({
                 </button>
                 <button
                   onClick={handleAddComment}
-                  disabled={!comment.trim() || isUploading}
+                  disabled={(!comment.trim() || comment === '<p></p>') || isUploading}
                   className="absolute right-3 bottom-3 p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors"
                   title="Send comment"
                 >
@@ -2252,6 +2295,15 @@ export function TaskDetailModalContent({
           )}
         </div>
       )}
+      {commentToDelete && (
+        <ConfirmDeleteModal
+          isOpen={!!commentToDelete}
+          onClose={() => setCommentToDelete(null)}
+          onConfirm={() => handleDeleteComment(commentToDelete)}
+          title="Delete Comment"
+          itemName="this comment"
+        />
+      )}
     </>
   );
 }
@@ -2287,6 +2339,7 @@ function SubtaskDetailView({
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2295,6 +2348,13 @@ function SubtaskDetailView({
   const [localTitle, setLocalTitle] = useState(subtask.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
+  const activityScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activityScrollRef.current) {
+      activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;
+    }
+  }, [activities, richComments]);
+
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [isActivityExpanded, setIsActivityExpanded] = useState(false);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
@@ -2398,6 +2458,16 @@ function SubtaskDetailView({
     setLocalTitle(subtask.title || '');
   }, [subtask.description, subtask.title]);
 
+  const subtaskRef = useRef(subtask);
+  useEffect(() => {
+    subtaskRef.current = subtask;
+  }, [subtask]);
+
+  const parentTaskRef = useRef(parentTask);
+  useEffect(() => {
+    parentTaskRef.current = parentTask;
+  }, [parentTask]);
+
   useEffect(() => {
     if (!socket || !subtask) return;
 
@@ -2421,11 +2491,39 @@ function SubtaskDetailView({
     };
 
     const handleActivity = (data: any) => {
-      if (data.taskId === parentTask.id && data.activity?.subtaskTitle === subtask.title) {
+      const currentSubtask = subtaskRef.current;
+      const currentParentTask = parentTaskRef.current;
+
+      if (data.taskId === currentParentTask?.id && data.activity?.subtaskTitle === currentSubtask?.title) {
         setActivities(prev => {
           if (prev.some(a => a.id === data.activity.id)) return prev;
           return [...prev, data.activity];
         });
+
+        if (data.activity.type === 'status_change' && data.activity.newStatus) {
+          if (currentSubtask.status !== data.activity.newStatus) {
+            const updatedSubtask = {
+              ...currentSubtask,
+              status: data.activity.newStatus,
+              completed: data.activity.newStatus === 'Closed' || data.activity.newStatus === 'CLOSED' || data.activity.newStatus === 'DONE'
+            };
+            if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+            if (onUpdateTask) {
+              const newSubtasks = currentParentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+              onUpdateTask({ ...currentParentTask, subtasks: newSubtasks });
+            }
+          }
+        }
+        if (data.activity.type === 'priority_change' && data.activity.newPriority) {
+          if (currentSubtask.priority !== data.activity.newPriority) {
+            const updatedSubtask = { ...currentSubtask, priority: data.activity.newPriority };
+            if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+            if (onUpdateTask) {
+              const newSubtasks = currentParentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
+              onUpdateTask({ ...currentParentTask, subtasks: newSubtasks });
+            }
+          }
+        }
       }
     };
 
@@ -2562,6 +2660,10 @@ function SubtaskDetailView({
 
       await tasksApi.addComment(parentTask.id, content, currentUser.id, parentTask.listId, [], undefined, subtask.id);
       setComment('');
+      setTimeout(() => {
+        const el = document.getElementById('subtask-comment');
+        if (el) el.style.height = '80px';
+      }, 10);
       setStagedFiles([]);
       const res = await tasksApi.getComments(parentTask.id, subtask.id);
       if (res?.comments) setRichComments(res.comments);
@@ -2582,18 +2684,29 @@ function SubtaskDetailView({
   };
 
   const handleSaveEdit = async (commentId: string) => {
-    if (!editCommentText.trim() || !parentTask?.id || isSubmittingEdit) return;
+    if ((!editCommentText.trim() || editCommentText === '<p></p>') || !parentTask?.id || isSubmittingEdit) return;
     setIsSubmittingEdit(true);
     try {
-      await tasksApi.updateComment(parentTask.id, commentId, editCommentText.trim());
+      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: editCommentText.trim() } : c));
       setEditingCommentId(null);
       setEditCommentText('');
+      await tasksApi.updateComment(parentTask.id, commentId, editCommentText.trim());
       const res = await tasksApi.getComments(parentTask.id, subtask.id);
       if (res?.comments) setRichComments(res.comments);
     } catch (err) {
       console.warn('Edit failed:', err);
     } finally {
       setIsSubmittingEdit(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!parentTask?.id) return;
+    try {
+      setRichComments(prev => prev.filter(c => c.id !== commentId));
+      await tasksApi.deleteComment(parentTask.id, commentId);
+    } catch (err) {
+      console.warn('Delete failed:', err);
     }
   };
 
@@ -2740,7 +2853,7 @@ function SubtaskDetailView({
                     setIsEditingTitle(false);
                     handleTitleBlur();
                   }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                   className="text-2xl font-bold bg-[#18181b] border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
                 />
               ) : (
@@ -2976,8 +3089,8 @@ function SubtaskDetailView({
                       <motion.div layout
                         title={currentAssignees.map((u: any) => u.name).join(', ')}
                         className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignTask
-                            ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
-                            : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
+                          ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
+                          : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
                           }`}
                       >
                         {currentAssignees.length > 0 ? (
@@ -3279,13 +3392,13 @@ function SubtaskDetailView({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+          <div ref={activityScrollRef} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
             <div className="space-y-5">
 
               {/* Initial Creation item */}
               <div className="flex gap-4 text-sm text-zinc-400 items-start">
                 <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                <div className="flex-1 leading-snug">
+                <div className="flex-1 leading-relaxed">
                   <span className="text-zinc-200 font-medium">{subtask.creator?.name || 'System'}</span> created this subtask
                 </div>
                 <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -3321,14 +3434,19 @@ function SubtaskDetailView({
                             return (
                               <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                 <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                                <div className="flex-1 leading-snug">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                <div className="flex-1 leading-relaxed">
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                   {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
                                     <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
                                   ) : (
                                     <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
                                   )}
-                                  {' '}to <span className="text-blue-400 font-medium bg-blue-500/10 px-1 rounded">{act.newStatus}</span>
+                                  {' '}to <span
+                                      className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                      style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
+                                    >
+                                      {act.newStatus}
+                                    </span>
                                 </div>
                                 <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                   {timeStr}
@@ -3340,8 +3458,8 @@ function SubtaskDetailView({
                             return (
                               <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                 <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                <div className="flex-1 leading-snug">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span> assigned{' '}
+                                <div className="flex-1 leading-relaxed">
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
                                   {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
                                     <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
                                   ) : (
@@ -3359,8 +3477,8 @@ function SubtaskDetailView({
                             return (
                               <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                 <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-                                <div className="flex-1 leading-snug">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                <div className="flex-1 leading-relaxed">
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                   {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
                                     <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
                                   ) : (
@@ -3378,8 +3496,8 @@ function SubtaskDetailView({
                             return (
                               <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                 <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
-                                <div className="flex-1 leading-snug">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                <div className="flex-1 leading-relaxed">
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                   {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
                                     <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
                                   ) : (
@@ -3396,8 +3514,8 @@ function SubtaskDetailView({
                             return (
                               <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                 <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                                <div className="flex-1 leading-snug">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1">{act.author || 'Someone'}</span>
+                                <div className="flex-1 leading-relaxed">
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                   {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
                                     <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
                                   ) : (
@@ -3448,38 +3566,34 @@ function SubtaskDetailView({
                           <span className="text-[11px] text-zinc-500">{dateStr} {timeStr}</span>
                         </div>
                         {c.user?.id === currentUser?.id && (
-                          <button
-                            onClick={() => {
-                              if (editingCommentId === c.id) {
-                                setEditingCommentId(null);
-                              } else {
-                                setEditingCommentId(c.id);
-                                setEditCommentText(c.content);
-                              }
-                            }}
-                            className="text-zinc-500 hover:text-zinc-300 transition-colors p-1"
-                            title="Edit Comment"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
+                          <Popover.Root>
+                            <Popover.Trigger asChild>
+                              <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
+                                <MoreHorizontal className="w-3.5 h-3.5" />
+                              </button>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
+                                <button onClick={() => { setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                  <Pencil className="w-3.5 h-3.5" /> Edit
+                                </button>
+                                <button onClick={() => { setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                                </button>
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
                         )}
                       </div>
                     </div>
 
                     {editingCommentId === c.id ? (
                       <div className="pl-11 flex gap-2 w-full">
-                        <input
-                          value={editCommentText}
-                          onChange={e => setEditCommentText(e.target.value)}
-                          disabled={isSubmittingEdit}
-                          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEdit(c.id); } }}
-                          className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
-                          autoFocus
-                        />
-                        <button onClick={() => handleSaveEdit(c.id)} disabled={isSubmittingEdit || !editCommentText.trim() || editCommentText === c.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50">
+                        <CommentEditor id={`edit-${c.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
+                        <button onClick={() => handleSaveEdit(c.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === c.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
                           <Check className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50">
+                        <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -3547,19 +3661,16 @@ function SubtaskDetailView({
                   ))}
                 </div>
               )}
-              <textarea
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleAddComment();
-                  }
-                }}
-                disabled={isSubmitting}
-                className="w-full bg-[#121212] border border-zinc-800 rounded-lg pl-4 pr-12 py-3 text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600 resize-none h-[80px] custom-scrollbar disabled:opacity-50"
-                placeholder={isSubmitting ? "Posting comment..." : "Write a comment... (Press Enter to post)"}
-              />
+              <CommentEditor
+                  id="subtask-comment"
+                  value={comment}
+                  onChange={(html, text, cursorPosition) => {
+                    setComment(html);
+                  }}
+                  onSubmit={handleAddComment}
+                  disabled={isSubmitting}
+                  placeholder={isSubmitting ? "Posting comment..." : "Write a comment... (Press Enter to post)"}
+                />
               <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
               <button
                 onClick={() => commentFileInputRef.current?.click()}
@@ -3571,7 +3682,7 @@ function SubtaskDetailView({
               </button>
               <button
                 onClick={handleAddComment}
-                disabled={(!comment.trim() && stagedFiles.length === 0) || isUploading}
+                disabled={((!comment.trim() || comment === '<p></p>') && stagedFiles.length === 0) || isUploading}
                 className="absolute right-3 bottom-3 p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors cursor-pointer"
                 title="Send comment"
               >
@@ -3581,6 +3692,15 @@ function SubtaskDetailView({
           </div>
         </div >
       </div >
+      {commentToDelete && (
+        <ConfirmDeleteModal
+          isOpen={!!commentToDelete}
+          onClose={() => setCommentToDelete(null)}
+          onConfirm={() => handleDeleteComment(commentToDelete)}
+          title="Delete Comment"
+          itemName="this comment"
+        />
+      )}
     </motion.div >
   );
 }
@@ -3613,7 +3733,6 @@ export function TaskDetailModal(props: Props) {
       setFullTask(null);
     }
   }, [props.isOpen, props.task?.id]);
-
   useEffect(() => {
     if (props.isOpen && props.task && fullTask && props.task.id === fullTask.id) {
       // Merge incoming prop changes, but let our local (optimistic) state take priority
@@ -3678,6 +3797,4 @@ export function TaskDetailModal(props: Props) {
     </AnimatePresence>
   );
 }
-
-
 

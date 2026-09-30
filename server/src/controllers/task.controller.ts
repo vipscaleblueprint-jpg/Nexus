@@ -924,6 +924,29 @@ export async function updateTaskComment(req: Request, res: Response) {
   }
 }
 
+// DELETE /api/tasks/:id/comments/:commentId
+export async function deleteTaskComment(req: Request, res: Response) {
+  try {
+    const { id: taskId, commentId } = req.params;
+    const { listId } = req.body; 
+
+    await prisma.taskComment.delete({
+      where: { id: commentId, taskId },
+    });
+
+    const payload = { taskId, commentId };
+    if (listId) {
+      io.to(`list:${listId}`).emit('task:comment_deleted', payload);
+    } else {
+      io.emit('task:comment_deleted', payload);
+    }
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // POST /api/tasks/:id/comments/:commentId/reactions - toggle (add or remove)
 export async function toggleCommentReaction(req: Request, res: Response) {
   try {
@@ -1661,3 +1684,4 @@ export async function deleteTaskAttachment(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+

@@ -89,17 +89,17 @@ export async function getList(req: Request, res: Response) {
 
 // Default statuses seeded on every new list — mirrors KanbanBoard CATEGORIES
 const DEFAULT_STATUSES = [
-  { name: 'KYC', color: 'cyan', groupName: 'Client Details' },
-  { name: 'Pin Board', color: 'blue', groupName: 'Client Details' },
-  { name: 'Daily', color: 'purple', groupName: 'Recurring' },
-  { name: 'Weekly', color: 'indigo', groupName: 'Recurring' },
-  { name: 'Monthly', color: 'violet', groupName: 'Recurring' },
+  { name: 'KYC', color: 'emerald', groupName: 'Client Details' },
+  { name: 'Pin Board', color: 'teal', groupName: 'Client Details' },
+  { name: 'Daily', color: 'blue', groupName: 'Recurring' },
+  { name: 'Weekly', color: 'blue', groupName: 'Recurring' },
+  { name: 'Monthly', color: 'blue', groupName: 'Recurring' },
   { name: 'Pending', color: 'amber', groupName: 'Workflow & Progress' },
-  { name: 'In Progress', color: 'blue', groupName: 'Workflow & Progress' },
-  { name: 'Revision', color: 'rose', groupName: 'Workflow & Progress' },
-  { name: 'Waiting', color: 'orange', groupName: 'Workflow & Progress' },
-  { name: 'In Review', color: 'purple', groupName: 'Workflow & Progress' },
-  { name: 'Checking', color: 'teal', groupName: 'Workflow & Progress' },
+  { name: 'In Progress', color: 'pink', groupName: 'Workflow & Progress' },
+  { name: 'Revision', color: 'blue', groupName: 'Workflow & Progress' },
+  { name: 'Waiting', color: 'red', groupName: 'Workflow & Progress' },
+  { name: 'In Review', color: 'orange', groupName: 'Workflow & Progress' },
+  { name: 'Checking', color: 'purple', groupName: 'Workflow & Progress' },
   { name: 'On-Hold', color: 'zinc', groupName: 'Workflow & Progress' },
   { name: 'Closed', color: 'emerald', groupName: 'Workflow & Progress' },
 ];

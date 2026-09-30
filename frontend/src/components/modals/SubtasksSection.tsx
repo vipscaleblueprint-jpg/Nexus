@@ -495,6 +495,12 @@ function SubtaskRow({
     }
   };
 
+  const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
+  const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+  const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
+  const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[1] : 'text-zinc-500');
+  const statusIconStyle = statusHexColor ? { color: statusHexColor } : {};
+
   return (
     <div
       ref={resizeRef}
@@ -537,11 +543,11 @@ function SubtaskRow({
           </div>
 
           {/* Collapsed Inline Properties */}
-          <div className={`flex items-center gap-3 overflow-hidden transition-all duration-300 shrink-0 ${isCollapsed ? 'opacity-100 max-w-[500px] ml-4 border-l border-zinc-800/60 pl-4' : 'opacity-0 max-w-0 ml-0 border-transparent pl-0'}`}>
-            <div className={`inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[10px] font-medium select-none whitespace-nowrap ${subtask.completed ? 'bg-emerald-600/15 text-emerald-400' : 'bg-zinc-800/50 text-zinc-400'}`}>
-              {subtask.completed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <CircleDashed className="w-3.5 h-3.5 shrink-0" />}
-              {subtask.completed ? 'Done' : 'Open'}
-            </div>
+            <div className={`flex items-center gap-3 overflow-hidden transition-all duration-300 shrink-0 ${isCollapsed ? 'opacity-100 max-w-[500px] ml-4 border-l border-zinc-800/60 pl-4' : 'opacity-0 max-w-0 ml-0 border-transparent pl-0'}`}>
+              <div className={`inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[10px] font-medium select-none whitespace-nowrap uppercase ${subtask.completed ? 'bg-emerald-600/15 text-emerald-400' : 'bg-zinc-800/50 text-zinc-400'}`}>
+                {subtask.completed ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />}
+                <span className={statusIconColorClass} style={statusIconStyle}>{statusName}</span>
+              </div>
             
             <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-zinc-800/50 rounded-md text-[10px] text-zinc-400 max-w-[150px] shrink-0 truncate">
               {currentAssignees.length > 0 ? (
@@ -602,13 +608,11 @@ function SubtaskRow({
           {/* Status row */}
           <div className="flex items-center gap-3">
             {subtask.completed
-              ? <CheckCircle2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-              : <CircleDashed className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+              ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+              : <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
             }
             <div className="flex items-center gap-1.5">
               {(() => {
-                const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
-                const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
                 const hasCustomColor = !!statusObj?.color;
                 const defaultClasses = STATUS_COLORS[subtask.status || ''] ?? (subtask.completed ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25' : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60');
                 

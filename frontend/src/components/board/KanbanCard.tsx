@@ -231,11 +231,37 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             className={`${fieldHoverClass} text-zinc-300`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >
-            {isClosed ? (
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-            ) : (
-              <CircleDashed className="w-3.5 h-3.5 text-emerald-500" />
-            )}
+            {(() => {
+              const statusObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === statusStr);
+              const getHexColor = (color: string) => {
+                const colors: Record<string, string> = {
+                  slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+                  red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+                  green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+                  blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+                  pink: '#ec4899', rose: '#f43f5e'
+                };
+                return colors[color] || color;
+              };
+              
+              const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
+              
+              const STATUS_COLORS: Record<string, string> = {
+                PENDING: 'text-zinc-500',
+                'IN PROGRESS': 'text-blue-500',
+                COMPLETED: 'text-emerald-500',
+                CLOSED: 'text-emerald-500',
+              };
+              
+              const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusStr] || 'text-zinc-500');
+              const statusIconStyle = statusHexColor ? { color: statusHexColor } : {};
+
+              return isClosed ? (
+                <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+              ) : (
+                <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+              );
+            })()}
             <span className="uppercase font-semibold">{statusStr}</span>
           </div>
           {openDropdown === 'status' && (

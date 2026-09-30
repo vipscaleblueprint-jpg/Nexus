@@ -238,7 +238,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1">
                       {/* Assignee */}
                       <Popover.Root>
                         <Popover.Trigger asChild>
@@ -256,7 +256,20 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                           <Popover.Content className="z-[100] w-56 rounded-lg bg-zinc-900 border border-zinc-800 p-2 shadow-xl outline-none" align="end" sideOffset={5}>
                             <div className="text-xs font-medium text-zinc-500 mb-2 px-1">Assign to</div>
                             <div className="max-h-60 overflow-y-auto">
-                              {users.map(u => (
+                              <button 
+                                className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2 mb-1 cursor-pointer"
+                                onClick={() => handleUpdateAssignee(text, item, '')}
+                              >
+                                <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center"><User className="w-3 h-3 text-zinc-400" /></div>
+                                Unassigned
+                              </button>
+                              {users.filter(u => {
+                                const uRoles = (u.roles || []).map(r => r?.toLowerCase() || '');
+                                if (text === 'UI UX Audit') return uRoles.some(r => r.includes('ui/ux') || r.includes('ui ux') || r.includes('ui-ux'));
+                                if (text === 'Design Audit') return uRoles.some(r => r.includes('design'));
+                                if (text === 'Funnel Audit') return uRoles.some(r => r.includes('funnel') || r.includes('backend'));
+                                return true;
+                              }).map(u => (
                                 <button 
                                   key={u.id}
                                   className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2 cursor-pointer"

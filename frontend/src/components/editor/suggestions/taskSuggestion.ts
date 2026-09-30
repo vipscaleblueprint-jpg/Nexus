@@ -1,3 +1,4 @@
+import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
 import { ReactRenderer } from '@tiptap/react';
 import tippy from 'tippy.js';
 import { TaskListDropdown } from './TaskListDropdown';
@@ -7,21 +8,7 @@ import { useAppStore } from '@/lib/store';
 let cachedTasks: any[] | null = null;
 let cachedLists: any[] | null = null;
 
-const STATUS_COLORS: Record<string, string> = {
-  'KYC': '#06b6d4',
-  'Pin Board': '#06b6d4',
-  'Daily': '#a855f7',
-  'Weekly': '#a855f7',
-  'Monthly': '#a855f7',
-  'Pending': '#6366f1',
-  'In Progress': '#eab308',
-  'Revision': '#6366f1',
-  'Waiting': '#f97316',
-  'In Review': '#6366f1',
-  'Checking': '#6366f1',
-  'On-Hold': '#ef4444',
-  'Closed': '#10b981',
-};
+
 const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
 
 // Frequency badges — derived from status name
@@ -163,3 +150,5 @@ export const taskSuggestion = {
     };
   },
 };
+
+

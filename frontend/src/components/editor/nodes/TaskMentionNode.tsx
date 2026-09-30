@@ -1,3 +1,4 @@
+import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
@@ -7,21 +8,7 @@ import { Flag, User as UserIcon, CheckCircle2, AlignLeft, Shield, Check, Users2 
 import { useAppStore } from '@/lib/store';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const STATUS_COLORS: Record<string, string> = {
-  'KYC': '#06b6d4',
-  'Pin Board': '#06b6d4',
-  'Daily': '#a855f7',
-  'Weekly': '#a855f7',
-  'Monthly': '#a855f7',
-  'Pending': '#6366f1',
-  'In Progress': '#eab308',
-  'Revision': '#6366f1',
-  'Waiting': '#f97316',
-  'In Review': '#6366f1',
-  'Checking': '#6366f1',
-  'On-Hold': '#ef4444',
-  'Closed': '#10b981',
-};
+
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -616,3 +603,5 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     </NodeViewWrapper>
   );
 };
+
+

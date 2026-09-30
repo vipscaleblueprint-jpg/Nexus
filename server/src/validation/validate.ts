@@ -95,3 +95,8 @@ export const idAndStatusIdParams = z.object({
   id: z.string().uuid('must be a valid uuid'),
   statusId: z.string().uuid('must be a valid uuid'),
 });
+
+export const idAndCommentIdParams = z.object({
+  id: z.string().uuid('must be a valid uuid'),
+  commentId: z.string().uuid('must be a valid uuid'),
+});

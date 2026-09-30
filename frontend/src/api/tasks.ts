@@ -63,6 +63,13 @@ export const tasksApi = {
     });
   },
 
+  async deleteComment(taskId: string, commentId: string, listId?: string): Promise<{ success: boolean }> {
+    return apiClient<{ success: boolean }>(`/api/tasks/${taskId}/comments/${commentId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ listId }),
+    });
+  },
+
   async toggleCommentReaction(taskId: string, commentId: string, emoji: string, userId: string): Promise<{ reactions: any[]; toggled: string }> {
     return apiClient<{ reactions: any[]; toggled: string }>(`/api/tasks/${taskId}/comments/${commentId}/reactions`, {
       method: 'POST',
@@ -160,3 +167,4 @@ export const tasksApi = {
     });
   },
 };
+

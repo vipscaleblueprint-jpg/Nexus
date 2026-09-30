@@ -25,7 +25,7 @@ import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { arrayMove } from '@dnd-kit/sortable';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
-import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { TaskDetailModal, STATUS_COLORS } from '@/components/modals/TaskDetailModal';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
 import { toast } from '@/lib/toast';
@@ -38,13 +38,6 @@ const PRIORITY_COLORS: Record<string, string> = {
   MEDIUM: 'text-blue-400 bg-blue-500/20',
   HIGH: 'text-orange-400 bg-orange-500/20',
   URGENT: 'text-red-400 bg-red-500/20',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  TODO: 'bg-zinc-700 text-zinc-300',
-  IN_PROGRESS: 'bg-blue-600 text-white',
-  DONE: 'bg-emerald-600 text-white',
-  CANCELLED: 'bg-red-700/60 text-red-200',
 };
 
 export default function BoardPage() {

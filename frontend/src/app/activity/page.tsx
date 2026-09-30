@@ -201,9 +201,10 @@ export default function ActivityPage() {
                       </div>
 
                       {n.content && (
-                        <div className="mt-2 text-sm text-zinc-300 bg-white/5 p-3 rounded-md border border-white/5">
-                          {n.content}
-                        </div>
+                        <div 
+                          className="mt-2 text-sm text-zinc-300 bg-white/5 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0 prose-a:text-indigo-400"
+                          dangerouslySetInnerHTML={{ __html: n.content }}
+                        />
                       )}
 
                       {n.task && (

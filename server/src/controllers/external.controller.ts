@@ -629,6 +629,9 @@ export async function postComment(req: Request, res: Response) {
       }
     });
 
+    // Realtime update for the frontend
+    io.emit('task:comment_added', { taskId, comment });
+
     return res.json({
       message: 'Comment posted successfully',
       comment
@@ -678,6 +681,8 @@ export async function updateComment(req: Request, res: Response) {
       }
     });
 
+    io.emit('task:comment_updated', { taskId: existingComment.taskId, comment: updatedComment });
+
     return res.json({
       message: 'Comment updated successfully',
       comment: updatedComment
@@ -713,6 +718,8 @@ export async function deleteComment(req: Request, res: Response) {
     await prisma.taskComment.delete({
       where: { id: commentId }
     });
+
+    io.emit('task:comment_deleted', { taskId: existingComment.taskId, commentId });
 
     return res.json({ message: 'Comment deleted successfully' });
   } catch (err: any) {

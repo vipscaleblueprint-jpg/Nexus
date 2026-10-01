@@ -164,7 +164,46 @@ export async function getTasks(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { status, listId } = req.query;
+    const { status, listId, externalId } = req.query;
+
+    // Fast-path: caller wants a single task by its ClickUp URL (externalId)
+    // Returns the same shape as the list response so callers can handle both uniformly.
+    if (externalId) {
+      const task = await prisma.task.findFirst({
+        where: { externalId: String(externalId) },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          listId: true,
+          externalId: true,
+          createdAt: true,
+          updatedAt: true,
+          list: {
+            select: {
+              name: true,
+              space: { select: { name: true } }
+            }
+          }
+        }
+      });
+
+      if (!task) return res.json({ tasks: [] });
+
+      return res.json({
+        tasks: [{
+          id: task.id,
+          title: task.title,
+          status: task.status,
+          externalId: task.externalId,
+          client: task.list?.space?.name || 'Unknown Client',
+          listName: task.list?.name || 'Unknown List',
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+          link: `${process.env.FRONTEND_URL || 'https://nexus.vipscaleph.com'}/lists/${task.listId}?task=${task.id}`
+        }]
+      });
+    }
 
     const where: any = {};
     if (status) where.status = String(status);

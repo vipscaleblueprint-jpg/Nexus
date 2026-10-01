@@ -9,7 +9,7 @@ export const tasksApi = {
     });
   },
 
-  async getTask(id: string): Promise<{ task: Task }> {
+  async getTask(id: string): Promise<{ task: Task; subtask?: any }> {
     return apiClient<{ task: Task }>(`/api/tasks/${id}`, {
       method: 'GET',
     });

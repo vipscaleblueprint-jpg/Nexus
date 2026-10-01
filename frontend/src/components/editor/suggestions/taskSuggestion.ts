@@ -29,22 +29,17 @@ export const taskSuggestion = {
   items: async ({ query }: { query: string }) => {
     try {
       // Fetch tasks (with caching)
-      if (!cachedTasks) {
-        const response = await tasksApi.getTasks();
-        cachedTasks = response.tasks || [];
-      }
-
-      // Use allLists from Zustand store — already fetched and cached by the app at startup
-      if (!cachedLists) {
-        const storeAllLists = useAppStore.getState().allLists;
-        cachedLists = storeAllLists || [];
-      }
+      // Use tasksIndex and allLists from Zustand store for instant suggestions
+      const storeState = useAppStore.getState();
+      const allTasks = Object.values(storeState.tasksIndex || {});
+      const allLists = storeState.allLists || [];
+      cachedLists = allLists;
 
       const search = (query || '').toLowerCase();
 
       // ── Task items ────────────────────────────────────────────────────────────
       const allTasksAndSubtasks: any[] = [];
-      cachedTasks!.forEach(task => {
+      allTasks.forEach((task: any) => {
         allTasksAndSubtasks.push(task);
         if (task.subtasks && task.subtasks.length > 0) {
           task.subtasks.forEach((st: any) => {
@@ -63,7 +58,7 @@ export const taskSuggestion = {
           if (!search) return true;
           return (t.title || '').toLowerCase().includes(search);
         })
-        .slice(0, 20)
+        
         .map(t => ({
           ...t,
           type: 'task',
@@ -83,7 +78,7 @@ export const taskSuggestion = {
           if (!search) return true;
           return listName.toLowerCase().includes(search);
         })
-        .slice(0, 10)
+        
         .map((entry: any) => {
           // Support both wrapped { list: {...} } and flat list objects
           const list = entry.list || entry;

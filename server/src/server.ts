@@ -22,6 +22,7 @@ import { uploadRouter } from './routes/upload.routes';
 import externalRoutes from './routes/external.routes';
 import webhookRoutes from './routes/webhook.routes';
 import teamRouter from './routes/team.routes';
+import clickupRoutes from './routes/clickup.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -113,6 +114,7 @@ app.use('/api/upload', uploadRouter);
 app.use('/api/external', externalRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/teams', teamRouter);
+app.use('/api/clickup', clickupRoutes);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

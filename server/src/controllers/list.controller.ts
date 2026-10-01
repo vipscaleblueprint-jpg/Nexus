@@ -46,16 +46,7 @@ export async function getList(req: Request, res: Response) {
         statuses: { orderBy: { order: 'asc' } },
         tasks: {
           orderBy: { createdAt: 'asc' },
-          select: {
-            id: true,
-            title: true,
-            description: true, // Needed if UI shows hasDescription icon
-            status: true,
-            priority: true,
-            dueDate: true,
-            createdAt: true,
-            listId: true,
-            creatorId: true,
+          include: {
             assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
             assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
             creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
@@ -71,7 +62,7 @@ export async function getList(req: Request, res: Response) {
                 attachments: true,
               }
             }
-          } as any,
+          },
         },
       },
     });

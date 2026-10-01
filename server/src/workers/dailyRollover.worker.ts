@@ -13,6 +13,7 @@ export const dailyRolloverWorker = new Worker(
       where: { status: { not: 'Closed' } },
       include: {
         list: { select: { id: true, name: true } },
+        subtasks: { orderBy: { createdAt: 'asc' } },
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -37,7 +38,7 @@ export const dailyRolloverWorker = new Worker(
       tiptapNodes.push({
         id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
         type: 'text',
-        content: `<h3>${clientName}</h3>`
+        content: `<h2>${clientName}</h2>`
       });
 
       for (const task of clientTasks) {
@@ -46,6 +47,16 @@ export const dailyRolloverWorker = new Worker(
           type: 'text',
           content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
         });
+        
+        if (task.subtasks && task.subtasks.length > 0) {
+          for (const sub of task.subtasks) {
+            tiptapNodes.push({
+              id: `blk-sub-${Date.now()}-${sub.id}`,
+              type: 'text',
+              content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;└─ <span data-type="mention" data-id="${sub.id}" data-label="${sub.title}" data-mention-type="subtask">@${sub.title}</span></p>`
+            });
+          }
+        }
       }
 
       // Add a blank line to space out clients

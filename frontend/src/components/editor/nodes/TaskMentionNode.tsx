@@ -127,31 +127,37 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         oldFrozen !== newFrozen;
 
       if (shouldUpdate) {
-        try { 
-          updateAttributes({
-            label: task.title,
-            taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
-            taskAssignees: JSON.stringify(task.assignees || []),
-            taskPriority: task.priority || null,
-            taskDueDate: task.dueDate || '',
-            taskTeam: task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null,
-            taskHasDescription: !!task.description,
-            taskListName: task.list?.name || '',
-            frozenTaskData: task
-          }); 
-        } catch (e) {}
-        setLocalStatus(JSON.stringify({ name: task.status, color: getStatusColor(task.status) }));
-        setLocalAssignees(JSON.stringify(task.assignees || []));
-        setLocalTeam(task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : '');
-        setLocalPriority(task.priority || '');
+        setTimeout(() => {
+          try { 
+            updateAttributes({
+              label: task.title,
+              taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
+              taskAssignees: JSON.stringify(task.assignees || []),
+              taskPriority: task.priority || null,
+              taskDueDate: task.dueDate || '',
+              taskTeam: task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null,
+              taskHasDescription: !!task.description,
+              taskListName: task.list?.name || '',
+              frozenTaskData: task
+            }); 
+          } catch (e) {}
+          setLocalStatus(JSON.stringify({ name: task.status, color: getStatusColor(task.status) }));
+          setLocalAssignees(JSON.stringify(task.assignees || []));
+          setLocalTeam(task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : '');
+          setLocalPriority(task.priority || '');
+        }, 0);
       }
     };
 
     if (globalTask) {
       handleTaskData(globalTask);
     } else {
-      tasksApi.getTask(id).then(({ task }) => {
-        handleTaskData(task);
+      tasksApi.getTask(id).then(({ task, subtask }) => {
+        if (subtask && mentionType === 'subtask') {
+          handleTaskData(subtask);
+        } else {
+          handleTaskData(task);
+        }
       }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

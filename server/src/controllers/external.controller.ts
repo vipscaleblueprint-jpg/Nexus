@@ -164,13 +164,17 @@ export async function getTasks(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { status, listId, externalId } = req.query;
+    const { status, listId, externalId, title } = req.query;
 
-    // Fast-path: caller wants a single task by its ClickUp URL (externalId)
+    // Fast-path: caller wants a single task by its ClickUp URL (externalId) or exact title
     // Returns the same shape as the list response so callers can handle both uniformly.
-    if (externalId) {
+    if (externalId || title) {
+      const findWhere: any = {};
+      if (externalId) findWhere.externalId = String(externalId);
+      if (title) findWhere.title = { contains: String(title), mode: 'insensitive' };
+
       const task = await prisma.task.findFirst({
-        where: { externalId: String(externalId) },
+        where: findWhere,
         select: {
           id: true,
           title: true,
@@ -185,7 +189,8 @@ export async function getTasks(req: Request, res: Response) {
               space: { select: { name: true } }
             }
           }
-        }
+        },
+        orderBy: { updatedAt: 'desc' } // if multiple matches, get the most recently updated
       });
 
       if (!task) return res.json({ tasks: [] });
@@ -407,24 +412,31 @@ export async function createTask(req: Request, res: Response) {
           });
 
           // 1. Insert into Client section
-          let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentClient);
+          let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === `<h2>${clientName}</h2>`);
           if (clientHeaderIndex === -1) {
             blocks.push({
               id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
               type: 'text',
-              content: headerContentClient
+              content: `<h2>${clientName}</h2>`
             });
             clientHeaderIndex = blocks.length - 1;
           }
+          
           let insertClientIndex = clientHeaderIndex + 1;
           while (insertClientIndex < blocks.length) {
             const nextBlock = blocks[insertClientIndex];
-            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+            // Stop at the next heading or an empty paragraph spacer
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3') || nextBlock.content === '<p></p>')) {
               break;
             }
             insertClientIndex++;
           }
           blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
+          
+          // Ensure a trailing spacer if we created a new client section
+          if (insertClientIndex === blocks.length - 1) {
+             blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+          }
 
           // 2. Insert into New Tasks section
           let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentNewTasks);
@@ -532,24 +544,29 @@ export async function updateTask(req: Request, res: Response) {
               });
 
               // 1. Insert into Client section
-              let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentClient);
+              let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === `<h2>${clientName}</h2>`);
               if (clientHeaderIndex === -1) {
                 blocks.push({
                   id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
                   type: 'text',
-                  content: headerContentClient
+                  content: `<h2>${clientName}</h2>`
                 });
                 clientHeaderIndex = blocks.length - 1;
               }
+              
               let insertClientIndex = clientHeaderIndex + 1;
               while (insertClientIndex < blocks.length) {
                 const nextBlock = blocks[insertClientIndex];
-                if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+                if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3') || nextBlock.content === '<p></p>')) {
                   break;
                 }
                 insertClientIndex++;
               }
               blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
+              
+              if (insertClientIndex === blocks.length - 1) {
+                 blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+              }
 
               // 2. Insert into New Tasks section
               let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentNewTasks);
@@ -693,7 +710,7 @@ export async function updateComment(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { commentId, content } = req.body;
+    const { commentId, content, taskId } = req.body;
 
     if (!commentId || !content) {
       return res.status(400).json({ error: 'commentId and content are required' });
@@ -705,6 +722,12 @@ export async function updateComment(req: Request, res: Response) {
 
     if (!existingComment) {
       return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    // Self-healing: if the client provided a taskId that doesn't match where this comment actually lives,
+    // reject the update so the client knows their cache is stale/wrong and can fall back to creating a new one.
+    if (taskId && existingComment.taskId !== taskId) {
+      return res.status(400).json({ error: 'Task mismatch - comment belongs to a different task' });
     }
 
     // Only allow the API key owner to update their own comments

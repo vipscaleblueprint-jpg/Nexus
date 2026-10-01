@@ -1243,11 +1243,7 @@ export function TaskDetailModalContent({
 
   return (
     <>
-      <motion.div
-        initial={mode === 'full' ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={mode === 'full' ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
-        transition={mode === 'full' ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 25 }}
+      <div
         className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
         onClick={e => e.stopPropagation()}
       >
@@ -2325,7 +2321,7 @@ export function TaskDetailModalContent({
           </div>
 
         </div>
-      </motion.div>
+      </div>
 
       {/* Lightbox Modal */}
       {lightboxImage && (
@@ -2855,11 +2851,7 @@ function SubtaskDetailView({
   const assignee = subtask.assignee;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.96 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.96 }}
-      transition={{ type: "spring", stiffness: 300, damping: 25 }}
+    <div
       className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
       onClick={(e) => e.stopPropagation()}
     >
@@ -3991,7 +3983,7 @@ function SubtaskDetailView({
           )}
         </div>
       )}
-    </motion.div >
+    </div>
   );
 }
 
@@ -4027,7 +4019,14 @@ export function TaskDetailModal(props: Props) {
     if (props.isOpen && props.task && fullTask && props.task.id === fullTask.id) {
       // Merge incoming prop changes, but let our local (optimistic) state take priority
       // so that user's role/assignee changes aren't reverted by socket task:updated events
-      setFullTask(prev => ({ ...props.task!, ...prev! }));
+      setFullTask(prev => {
+        const merged = { ...prev!, ...props.task! };
+        if (!props.task!.subtasks && prev!.subtasks) merged.subtasks = prev!.subtasks;
+        if (!props.task!.checklists && prev!.checklists) merged.checklists = prev!.checklists;
+        if (!props.task!.comments && prev!.comments) merged.comments = prev!.comments;
+        
+        return merged;
+      });
     }
   }, [props.task]);
 
@@ -4060,34 +4059,44 @@ export function TaskDetailModal(props: Props) {
   const content = (
     <AnimatePresence>
       {props.isOpen && fullTask && (
-        <motion.div
-          initial={{ opacity: props.mode === 'full' ? 1 : 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: props.mode === 'full' ? 1 : 0 }}
-          transition={{ duration: props.mode === 'full' ? 0 : 0.15 }}
-          className={
-            props.mode === 'full'
-              ? "absolute inset-0 z-50 bg-[#121212] flex flex-col cursor-default"
-              : "fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
-          }
-          onClick={props.mode === 'full' ? undefined : () => props.onClose()}
-        >
-          {props.mode === 'full' ? (
+        props.mode === 'full' ? (
+          <motion.div
+            key="full-modal"
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 1 }}
+            transition={{ duration: 0 }}
+            className="absolute inset-0 z-[500] bg-[#121212] flex flex-col cursor-default"
+          >
             <TaskDetailModalContent
               {...props}
               task={fullTask}
               onUpdateTask={handleUpdateTask}
             />
-          ) : (
-            <div className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col cursor-default" onClick={e => e.stopPropagation()}>
+          </motion.div>
+        ) : (
+          // Backdrop appears instantly; only the modal card animates
+          <div
+            key="modal-backdrop"
+            className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+            onClick={() => props.onClose()}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col cursor-default"
+              onClick={e => e.stopPropagation()}
+            >
               <TaskDetailModalContent
                 {...props}
                 task={fullTask}
                 onUpdateTask={handleUpdateTask}
               />
-            </div>
-          )}
-        </motion.div>
+            </motion.div>
+          </div>
+        )
       )}
     </AnimatePresence>
   );

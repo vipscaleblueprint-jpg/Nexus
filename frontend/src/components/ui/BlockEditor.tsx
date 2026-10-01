@@ -59,9 +59,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       preserveWhitespace: 'full',
     },
     extensions: [
-      StarterKit.configure({
-        // history is enabled by default
-      }),
+      StarterKit.configure({ horizontalRule: false }),
       Underline,
       TextStyle,
       Color,

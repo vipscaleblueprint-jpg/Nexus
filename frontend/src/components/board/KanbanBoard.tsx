@@ -860,6 +860,18 @@ export function KanbanBoard({ tasks, onTaskMove,
     if (!finalStatus) return;
 
     if (finalStatus !== originalTask.status) {
+      const restrictedStatuses = ['in review', 'inreview', 'checking', 'crm'];
+      if (restrictedStatuses.includes(finalStatus.toLowerCase())) {
+        const hasUnclosedSubtasks = originalTask.subtasks && originalTask.subtasks.length > 0 && originalTask.subtasks.some((st: any) => st.status?.toLowerCase() !== 'closed');
+        if (hasUnclosedSubtasks) {
+          toast.error(`Cannot move task to ${finalStatus} until all subtasks are Closed.`);
+          setLocalTasks([...latestTasksRef.current]);
+          return;
+        }
+      }
+    }
+
+    if (finalStatus !== originalTask.status) {
       // Optimistic update locally on top of the latest tasks (in case we missed websocket updates while dragging)
       setLocalTasks(() => {
         const newTasks = [...latestTasksRef.current];

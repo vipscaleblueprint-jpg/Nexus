@@ -80,36 +80,49 @@ export const THEMES: Record<string, { badge: string; bg: string; text: string; s
   orange: { badge: 'bg-orange-500 text-white', bg: 'bg-orange-500/10', text: 'text-orange-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-orange-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-orange-500/50' },
   rose: { badge: 'bg-rose-500 text-white', bg: 'bg-rose-500/10', text: 'text-rose-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-rose-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-rose-500/50' },
   zinc: { badge: 'bg-zinc-500 text-white', bg: 'bg-zinc-500/10', text: 'text-zinc-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-zinc-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-zinc-500/50' },
+  '#1E7E48': { badge: 'bg-[#1E7E48] text-white', bg: 'bg-[#1E7E48]/10', text: 'text-[#1E7E48]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#1E7E48]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#1E7E48]/50' },
+  '#0F7854': { badge: 'bg-[#0F7854] text-white', bg: 'bg-[#0F7854]/10', text: 'text-[#0F7854]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#0F7854]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#0F7854]/50' },
+  '#0062D6': { badge: 'bg-[#0062D6] text-white', bg: 'bg-[#0062D6]/10', text: 'text-[#0062D6]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#0062D6]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#0062D6]/50' },
+  '#FFC53D': { badge: 'bg-[#FFC53D] text-black', bg: 'bg-[#FFC53D]/10', text: 'text-[#FFC53D]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#FFC53D]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#FFC53D]/50' },
+  '#CF1761': { badge: 'bg-[#CF1761] text-white', bg: 'bg-[#CF1761]/10', text: 'text-[#CF1761]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#CF1761]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#CF1761]/50' },
+  '#3E63DD': { badge: 'bg-[#3E63DD] text-white', bg: 'bg-[#3E63DD]/10', text: 'text-[#3E63DD]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#3E63DD]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#3E63DD]/50' },
+  '#FF0000': { badge: 'bg-[#FF0000] text-white', bg: 'bg-[#FF0000]/10', text: 'text-[#FF0000]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#FF0000]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#FF0000]/50' },
+  '#C36522': { badge: 'bg-[#C36522] text-white', bg: 'bg-[#C36522]/10', text: 'text-[#C36522]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#C36522]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#C36522]/50' },
+  '#9E49AB': { badge: 'bg-[#9E49AB] text-white', bg: 'bg-[#9E49AB]/10', text: 'text-[#9E49AB]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#9E49AB]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#9E49AB]/50' },
+  '#00A6A6': { badge: 'bg-[#00A6A6] text-black', bg: 'bg-[#00A6A6]/10', text: 'text-[#00A6A6]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#00A6A6]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#00A6A6]/50' },
+  '#2C8C5E': { badge: 'bg-[#2C8C5E] text-white', bg: 'bg-[#2C8C5E]/10', text: 'text-[#2C8C5E]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#2C8C5E]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#2C8C5E]/50' },
+  '#808080': { badge: 'bg-[#808080] text-white', bg: 'bg-[#808080]/10', text: 'text-[#808080]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#808080]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#808080]/50' },
 };
 
 const DEFAULT_STATUS_THEMES: Record<string, string> = {
-  KYC: 'cyan',
-  'Pin Board': 'blue',
-  PIN_BOARD: 'blue',
+  KYC: '#1E7E48',
+  'Pin Board': '#0F7854',
+  PIN_BOARD: '#0F7854',
 
-  Daily: 'purple',
-  Weekly: 'indigo',
-  Monthly: 'violet',
-  DAILY: 'purple',
-  WEEKLY: 'indigo',
-  MONTHLY: 'violet',
+  Daily: '#0062D6',
+  Weekly: '#0062D6',
+  Monthly: '#0062D6',
+  DAILY: '#0062D6',
+  WEEKLY: '#0062D6',
+  MONTHLY: '#0062D6',
 
-  Pending: 'amber',
-  PENDING: 'amber',
-  'In Progress': 'blue',
-  IN_PROGRESS: 'blue',
-  Revision: 'rose',
-  REVISION: 'rose',
-  Waiting: 'orange',
-  WAITING: 'orange',
-  'In Review': 'purple',
-  IN_REVIEW: 'purple',
-  Checking: 'teal',
-  CHECKING: 'teal',
-  'On-Hold': 'zinc',
-  ON_HOLD: 'zinc',
-  Closed: 'emerald',
-  CLOSED: 'emerald',
+  Pending: '#FFC53D',
+  PENDING: '#FFC53D',
+  'In Progress': '#CF1761',
+  IN_PROGRESS: '#CF1761',
+  Revision: '#3E63DD',
+  REVISION: '#3E63DD',
+  Waiting: '#FF0000',
+  WAITING: '#FF0000',
+  'In Review': '#C36522',
+  IN_REVIEW: '#C36522',
+  Checking: '#9E49AB',
+  CHECKING: '#9E49AB',
+  CRM: '#00A6A6',
+  'On-Hold': '#808080',
+  ON_HOLD: '#808080',
+  Closed: '#2C8C5E',
+  CLOSED: '#2C8C5E',
 
   TODO: 'teal',
   DONE: 'emerald',
@@ -117,9 +130,13 @@ const DEFAULT_STATUS_THEMES: Record<string, string> = {
 };
 
 const getStatusTheme = (status: string, customTheme?: string) => {
-  if (customTheme && THEMES[customTheme]) return THEMES[customTheme];
+  if (customTheme) {
+    const key = customTheme.toUpperCase();
+    if (THEMES[key]) return THEMES[key];
+    if (THEMES[customTheme]) return THEMES[customTheme];
+  }
   const defaultThemeId = DEFAULT_STATUS_THEMES[status] || 'zinc';
-  return THEMES[defaultThemeId];
+  return THEMES[defaultThemeId.toUpperCase()] || THEMES[defaultThemeId] || THEMES['zinc'];
 };
 
 export const KanbanColumn = memo(function KanbanColumn({

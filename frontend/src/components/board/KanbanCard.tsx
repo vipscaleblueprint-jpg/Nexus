@@ -4,12 +4,19 @@ import { memo, useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
+import { CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { canUserEditTask } from '@/lib/permissions';
+
+const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="7" fill="currentColor" stroke="none" />
+  </svg>
+);
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -30,13 +37,13 @@ interface Props {
 
 const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDropdownOpenChange, listStatuses = [] }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void, listStatuses?: any[] }) => {
   const [task, setTask] = useState(initialTask);
-  
+
   useEffect(() => {
     setTask(initialTask);
   }, [initialTask]);
 
   const [isDescOpen, setIsDescOpen] = useState(false);
-  const [openDropdown, setOpenDropdown] = useState<'status'|'assignee'|'date'|'priority'|null>(null);
+  const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'date' | 'priority' | null>(null);
   const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache } = useAppStore();
 
   useEffect(() => {
@@ -65,10 +72,10 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
   const handlePriorityChange = async (p: string | null) => {
     if (!currentUser) return;
-    
+
     setTask(prev => ({ ...prev, priority: p as any }));
     closeDropdown();
-    
+
     try {
       if (isSubtask) {
         await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { priority: p || undefined });
@@ -94,8 +101,8 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     const t = task as any;
     if (!t.assigneeRoleRestrictions?.length) return workspaceUsers;
     const requiredRoles = t.assigneeRoleRestrictions.map((r: string) => r.trim().toUpperCase());
-      return workspaceUsers.filter((u: any) => {
-        const uRoles = (u.roles || [])
+    return workspaceUsers.filter((u: any) => {
+      const uRoles = (u.roles || [])
         .filter(Boolean).map((r: any) => r.trim().toUpperCase());
       return requiredRoles.some((req: string) => uRoles.includes(req));
     });
@@ -129,9 +136,9 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
   const handleClearAssignees = async () => {
     if (!currentUser) return;
-    
+
     setTask(prev => ({ ...prev, assignees: [], assignee: null, assigneeId: null, assigneeIds: [] }));
-    
+
     try {
       if (isSubtask) {
         await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { assigneeIds: [] });
@@ -243,23 +250,35 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                 };
                 return colors[color] || color;
               };
-              
+
               const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
-              
+
               const STATUS_COLORS: Record<string, string> = {
-                PENDING: 'text-zinc-500',
-                'IN PROGRESS': 'text-blue-500',
-                COMPLETED: 'text-emerald-500',
-                CLOSED: 'text-emerald-500',
+                PENDING: 'text-[#FFC53D]',
+                'IN PROGRESS': 'text-[#CF1761]',
+                CLOSED: 'text-[#2C8C5E]',
+                'KYC': 'text-[#1E7E48]',
+                'PIN BOARD': 'text-[#0F7854]',
+                'DAILY': 'text-[#0062D6]',
+                'WEEKLY': 'text-[#0062D6]',
+                'MONTHLY': 'text-[#0062D6]',
+                'REVISION': 'text-[#3E63DD]',
+                'WAITING': 'text-[#FF0000]',
+                'IN REVIEW': 'text-[#C36522]',
+                'CHECKING': 'text-[#9E49AB]',
+                'CRM': 'text-[#00A6A6]',
+                'ON-HOLD': 'text-[#808080]',
               };
-              
+
               const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusStr] || 'text-zinc-500');
               const statusIconStyle = statusHexColor ? { color: statusHexColor } : {};
 
               return isClosed ? (
                 <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
-              ) : (
+              ) : statusStr.toUpperCase() === 'KYC' ? (
                 <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+              ) : (
+                <CustomCircleDot className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
               );
             })()}
             <span className="uppercase font-semibold">{statusStr}</span>
@@ -270,9 +289,9 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                 <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800">Change Status</div>
                 {listStatuses.length > 0 ? (
                   listStatuses.map(s => (
-                    <div 
-                      key={s.id || s.name} 
-                      className={`px-2 py-1.5 text-xs rounded cursor-pointer transition-colors font-medium ${statusStr === s.name ? 'bg-indigo-500/20 text-indigo-300' : 'text-zinc-300 hover:bg-zinc-700/50'}`} 
+                    <div
+                      key={s.id || s.name}
+                      className={`px-2 py-1.5 text-xs rounded cursor-pointer transition-colors font-medium ${statusStr === s.name ? 'bg-indigo-500/20 text-indigo-300' : 'text-zinc-300 hover:bg-zinc-700/50'}`}
                       onClick={() => handleStatusChange(s.name)}
                     >
                       {s.name}
@@ -330,13 +349,13 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             )}
           </div>
           {assignees.length > 0 && (
-             <div 
-               className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
-               onClick={(e) => { e.stopPropagation(); handleClearAssignees(); }}
-               title="Remove all assignees"
-             >
-               <X className="w-3 h-3" />
-             </div>
+            <div
+              className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
+              onClick={(e) => { e.stopPropagation(); handleClearAssignees(); }}
+              title="Remove all assignees"
+            >
+              <X className="w-3 h-3" />
+            </div>
           )}
           {openDropdown === 'assignee' && (
             <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
@@ -346,8 +365,8 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                   assignableUsers.map(user => {
                     const isAssigned = assignees.some((a: any) => a.id === user.id);
                     return (
-                      <div 
-                        key={user.id} 
+                      <div
+                        key={user.id}
                         className="px-2 py-1.5 flex items-center gap-2 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
                         onClick={() => handleAssigneeToggle(user)}
                       >
@@ -421,7 +440,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             </PortalDropdown>
           )}
         </div>
-        
+
         {children}
       </div>
     </div>
@@ -432,7 +451,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
 
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
-  const pointerPosRef = useRef<{x: number, y: number} | null>(null);
+  const pointerPosRef = useRef<{ x: number, y: number } | null>(null);
 
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -440,7 +459,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
 
   const currentUser = useAppStore((s) => s.currentUser);
   const editCheck = useMemo(() => canUserEditTask(task as any, currentUser), [(task as any).teamAssignAccessRole, currentUser]);
-  
+
   const effectivelyDisabled = isMoveDisabled || !editCheck.allowed;
 
   const sortableData = useMemo(() => ({
@@ -472,9 +491,8 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
           <CornerDownRight className="w-3.5 h-3.5 block group-hover/subtasks:hidden shrink-0" />
         )}
         <ChevronRight
-          className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${
-            isSubtasksExpanded ? 'rotate-90 block' : 'hidden group-hover/subtasks:block'
-          }`}
+          className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${isSubtasksExpanded ? 'rotate-90 block' : 'hidden group-hover/subtasks:block'
+            }`}
         />
         <span>{subtasksCount} subtask{subtasksCount > 1 ? 's' : ''}</span>
       </div>
@@ -526,10 +544,8 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
         }}
         className={isDragging
           ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3"
-          : `bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${
-            effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
-          } ${
-            isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
+          : `bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
+          } ${isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
           } ${hasOpenDropdown ? 'z-50' : 'z-10'}`}
       >
         <div className={isDragging ? 'opacity-0 pointer-events-none flex flex-col gap-3 w-full h-full' : 'contents'}>
@@ -557,7 +573,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
                   style={{ top: '1.25rem', width: 10 }}
                 />
                 {/* Subtask card */}
-                <div 
+                <div
                   className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg px-2.5 py-2 hover:border-zinc-600 hover:bg-zinc-800 transition-all cursor-pointer"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -568,7 +584,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
                     if (onClick) onClick(task);
                   }}
                 >
-                  <CardContent task={{...sub, list: task.list} as any} isSubtask={true} listStatuses={listStatuses} />
+                  <CardContent task={{ ...sub, list: task.list } as any} isSubtask={true} listStatuses={listStatuses} />
                 </div>
               </div>
             );
@@ -576,69 +592,69 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
 
           {isAddingSubtask ? (
             <div className="relative flex items-start" onClick={(e) => e.stopPropagation()}>
-                <div
-                  className="absolute left-0 w-px bg-zinc-700/50"
-                  style={{ top: 0, bottom: '50%' }}
-                />
-                <div
-                  className="absolute left-0 h-px bg-zinc-700/50"
-                  style={{ top: '1.25rem', width: 10 }}
-                />
-                <div className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 border border-indigo-500/50 rounded-lg px-2.5 py-2">
-                  <input
-                    autoFocus
-                    type="text"
-                    disabled={isCreatingSubtask}
-                    placeholder="Subtask title..."
-                    value={newSubtaskTitle}
-                    onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                    onKeyDown={async (e) => {
-                      if (e.key === 'Enter' && newSubtaskTitle.trim() && !isCreatingSubtask) {
-                        try {
-                           setIsCreatingSubtask(true);
-                           await tasksApi.createSubtask(task.id, { 
-                             title: newSubtaskTitle.trim(), 
-                             status: 'PENDING',
-                             listId: 'listId' in task ? task.listId : undefined 
-                           });
-                           setNewSubtaskTitle('');
-                           setIsAddingSubtask(false);
-                           toast.success('Subtask created');
-                        } catch (err: any) {
-                           toast.error('Failed to create subtask');
-                        } finally {
-                           setIsCreatingSubtask(false);
-                        }
-                      }
-                      if (e.key === 'Escape') {
-                        setIsAddingSubtask(false);
+              <div
+                className="absolute left-0 w-px bg-zinc-700/50"
+                style={{ top: 0, bottom: '50%' }}
+              />
+              <div
+                className="absolute left-0 h-px bg-zinc-700/50"
+                style={{ top: '1.25rem', width: 10 }}
+              />
+              <div className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 border border-indigo-500/50 rounded-lg px-2.5 py-2">
+                <input
+                  autoFocus
+                  type="text"
+                  disabled={isCreatingSubtask}
+                  placeholder="Subtask title..."
+                  value={newSubtaskTitle}
+                  onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && newSubtaskTitle.trim() && !isCreatingSubtask) {
+                      try {
+                        setIsCreatingSubtask(true);
+                        await tasksApi.createSubtask(task.id, {
+                          title: newSubtaskTitle.trim(),
+                          status: 'PENDING',
+                          listId: 'listId' in task ? task.listId : undefined
+                        });
                         setNewSubtaskTitle('');
+                        setIsAddingSubtask(false);
+                        toast.success('Subtask created');
+                      } catch (err: any) {
+                        toast.error('Failed to create subtask');
+                      } finally {
+                        setIsCreatingSubtask(false);
                       }
-                    }}
-                    onBlur={() => {
-                       setIsAddingSubtask(false);
-                       setNewSubtaskTitle('');
-                    }}
-                    className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
-                  />
-                </div>
+                    }
+                    if (e.key === 'Escape') {
+                      setIsAddingSubtask(false);
+                      setNewSubtaskTitle('');
+                    }
+                  }}
+                  onBlur={() => {
+                    setIsAddingSubtask(false);
+                    setNewSubtaskTitle('');
+                  }}
+                  className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
+                />
+              </div>
             </div>
           ) : (
             <div className="relative flex items-start" onClick={(e) => e.stopPropagation()}>
-               <div
-                  className="absolute left-0 w-px bg-zinc-700/50"
-                  style={{ top: 0, bottom: '50%' }}
-                />
-                <div
-                  className="absolute left-0 h-px bg-zinc-700/50"
-                  style={{ top: '1.25rem', width: 10 }}
-                />
-                <button 
-                  onClick={() => setIsAddingSubtask(true)}
-                  className="ml-3 mt-1.5 flex items-center gap-2 text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 hover:bg-zinc-800/30 rounded text-xs font-medium"
-                >
-                  <Plus className="w-3 h-3" /> Add Subtask
-                </button>
+              <div
+                className="absolute left-0 w-px bg-zinc-700/50"
+                style={{ top: 0, bottom: '50%' }}
+              />
+              <div
+                className="absolute left-0 h-px bg-zinc-700/50"
+                style={{ top: '1.25rem', width: 10 }}
+              />
+              <button
+                onClick={() => setIsAddingSubtask(true)}
+                className="ml-3 mt-1.5 flex items-center gap-2 text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 hover:bg-zinc-800/30 rounded text-xs font-medium"
+              >
+                <Plus className="w-3 h-3" /> Add Subtask
+              </button>
             </div>
           )}
         </div>

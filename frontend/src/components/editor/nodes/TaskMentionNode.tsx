@@ -4,11 +4,19 @@ import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { toast } from '@/lib/toast';
-import { Flag, User as UserIcon, CheckCircle2, AlignLeft, Shield, Check, Users2 } from 'lucide-react';
+import { Flag, User as UserIcon, CheckCircle2, CircleDashed, AlignLeft, Shield, Check, Users2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { motion, AnimatePresence } from 'framer-motion';
 
 
+
+
+const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+    <circle cx="12" cy="12" r="10"></circle>
+    <circle cx="12" cy="12" r="3" fill="currentColor"></circle>
+  </svg>
+);
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -17,7 +25,12 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: 'text-red-400',
 };
 
-const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
+const getStatusColor = (status: string) => {
+  const colorStr = STATUS_COLORS[status];
+  if (!colorStr) return '#3b82f6';
+  const match = colorStr.match(/bg-\[([^\]]+)\]/);
+  return match ? match[1] : (colorStr.split(' ')[0] || '#3b82f6');
+};
 
 export const TaskMentionNode = (props: NodeViewProps) => {
   const { node, updateAttributes } = props;
@@ -54,7 +67,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const listStatuses = React.useMemo(() => {
     if (fallbackListStatuses.length > 0) return fallbackListStatuses;
     if (!taskData?.listId) return [];
-    const found = allLists.find(l => l.id === taskData.listId);
+    const foundObj = allLists.find((l: any) => l.list?.id === taskData.listId || l.id === taskData.listId);
+    const found = foundObj?.list || foundObj;
     return found?.statuses || [];
   }, [allLists, taskData?.listId, fallbackListStatuses]);
 
@@ -188,7 +202,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   // Task Mention UI
   let assignees: any[] = [];
   let parsedStatusName = localStatus;
-  let parsedStatusColor = '#3b82f6'; // default blue
+  let parsedStatusColor = getStatusColor(parsedStatusName);
   let team: any = null;
 
   try {
@@ -207,7 +221,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     if (localStatus && typeof localStatus === 'string' && localStatus.startsWith('{')) {
       const parsed = JSON.parse(localStatus);
       parsedStatusName = parsed.name || parsed.NAME || localStatus;
-      parsedStatusColor = parsed.color || parsed.COLOR || '#3b82f6';
+      parsedStatusColor = parsed.color || parsed.COLOR || getStatusColor(parsedStatusName);
     }
   } catch (e) {}
 
@@ -289,6 +303,20 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       <motion.span layout className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 dark:hover:bg-[#1f1f1f] transition-colors duration-200 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800">
         
         <span 
+          className="flex items-center justify-center shrink-0 cursor-pointer" 
+          title={parsedStatusName || 'Status'}
+          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
+        >
+          {taskStatus === 'Closed' || taskStatus === 'CLOSED' || taskStatus === 'DONE' ? (
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor, fill: 'transparent' }} />
+          ) : ((taskStatus || '').toUpperCase() === 'KYC' ? (
+            <CircleDashed className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
+          ) : (
+            <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
+          ))}
+        </span>
+
+        <span 
           className="font-medium text-sm text-zinc-700 dark:text-zinc-200 max-w-[200px] truncate cursor-pointer hover:opacity-70 transition-opacity"
           onClick={(e) => {
             e.stopPropagation();
@@ -324,11 +352,19 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         <span 
           ref={priorityRef}
-          className={`flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer transition-colors ${PRIORITY_COLORS[localPriority] || 'text-zinc-500'}`}
+          className={localPriority 
+            ? `px-1.5 py-[1px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 ml-1 cursor-pointer transition-all hover:opacity-80 ${
+                localPriority === 'URGENT' ? 'bg-[#ef4444]' :
+                localPriority === 'HIGH' ? 'bg-[#f97316]' :
+                localPriority === 'MEDIUM' ? 'bg-[#3b82f6]' :
+                localPriority === 'LOW' ? 'bg-[#8b5cf6]' : 'bg-zinc-600'
+              }`
+            : `flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer transition-colors text-zinc-500 ml-1`
+          }
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           title={localPriority ? `${localPriority} Priority` : 'Set Priority'}
         >
-          <Flag className="w-3 h-3" />
+          {localPriority ? localPriority : <Flag className="w-3 h-3" />}
         </span>
 
         <motion.span layout

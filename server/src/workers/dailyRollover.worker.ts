@@ -47,6 +47,13 @@ export const dailyRolloverWorker = new Worker(
           content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
         });
       }
+
+      // Add a blank line to space out clients
+      tiptapNodes.push({
+        id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
+        type: 'text',
+        content: `<p></p>`
+      });
     }
 
     // Prepend the Priorities Header

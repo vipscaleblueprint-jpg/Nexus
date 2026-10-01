@@ -1,5 +1,6 @@
+import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, Circle, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -21,6 +22,13 @@ import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
 import { CommentEditor } from '../ui/CommentEditor';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+
+const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="7" fill="currentColor" stroke="none" />
+  </svg>
+);
 
 const CommentSkeleton = () => (
   <div className="space-y-4 animate-pulse mt-4">
@@ -63,49 +71,52 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 export const ALL_STATUSES = [
   'KYC',
-  'Pin Board',
-  'Daily',
-  'Weekly',
-  'Monthly',
-  'Pending',
-  'In Progress',
-  'Revision',
-  'Waiting',
-  'In Review',
-  'Checking',
-  'On-Hold',
-  'Closed',
+  'PIN BOARD',
+  'DAILY',
+  'WEEKLY',
+  'MONTHLY',
+  'PENDING',
+  'IN PROGRESS',
+  'REVISION',
+  'WAITING',
+  'IN REVIEW',
+  'CHECKING',
+  'CRM',
+  'CLOSED',
+  'ON-HOLD',
 ];
 
 export const STATUS_COLORS: Record<string, string> = {
-  KYC: 'bg-emerald-500 text-white',
-  'Pin Board': 'bg-teal-500 text-zinc-900',
-  PIN_BOARD: 'bg-teal-500 text-zinc-900',
-  Daily: 'bg-blue-500 text-white',
-  DAILY: 'bg-blue-500 text-white',
-  Weekly: 'bg-blue-500 text-white',
-  WEEKLY: 'bg-blue-500 text-white',
-  Monthly: 'bg-blue-500 text-white',
-  MONTHLY: 'bg-blue-500 text-white',
-  Pending: 'bg-amber-400 text-zinc-900 font-medium',
-  PENDING: 'bg-amber-400 text-zinc-900 font-medium',
-  'In Progress': 'bg-pink-600 text-white',
-  IN_PROGRESS: 'bg-pink-600 text-white',
-  Revision: 'bg-blue-600 text-white',
-  REVISION: 'bg-blue-600 text-white',
-  Waiting: 'bg-red-600 text-white',
-  WAITING: 'bg-red-600 text-white',
-  'In Review': 'bg-orange-500 text-white',
-  IN_REVIEW: 'bg-orange-500 text-white',
-  Checking: 'bg-purple-600 text-white',
-  CHECKING: 'bg-purple-600 text-white',
-  'On-Hold': 'bg-zinc-600 text-white',
-  ON_HOLD: 'bg-zinc-600 text-white',
-  Closed: 'bg-emerald-600 text-white',
-  CLOSED: 'bg-emerald-600 text-white',
-  TODO: 'bg-zinc-700 text-zinc-300',
-  DONE: 'bg-emerald-600 text-white',
-  CANCELLED: 'bg-red-700/60 text-red-200',
+  'KYC': 'bg-[#1E7E48] text-white',
+  'PIN BOARD': 'bg-[#0F7854] text-white',
+  'DAILY': 'bg-[#0062D6] text-white',
+  'WEEKLY': 'bg-[#0062D6] text-white',
+  'MONTHLY': 'bg-[#0062D6] text-white',
+  'PENDING': 'bg-[#FFC53D] text-black',
+  'IN PROGRESS': 'bg-[#CF1761] text-white',
+  'REVISION': 'bg-[#3E63DD] text-white',
+  'WAITING': 'bg-[#FF0000] text-white',
+  'IN REVIEW': 'bg-[#C36522] text-white',
+  'CHECKING': 'bg-[#9E49AB] text-white',
+  'CRM': 'bg-[#00A6A6] text-white',
+  'CLOSED': 'bg-[#2C8C5E] text-white',
+  'ON-HOLD': 'bg-[#808080] text-white',
+
+  // Fallback for capitalized formats
+  'Kyc': 'bg-[#1E7E48] text-white',
+  'Pin Board': 'bg-[#0F7854] text-white',
+  'Daily': 'bg-[#0062D6] text-white',
+  'Weekly': 'bg-[#0062D6] text-white',
+  'Monthly': 'bg-[#0062D6] text-white',
+  'Pending': 'bg-[#FFC53D] text-black',
+  'In Progress': 'bg-[#CF1761] text-white',
+  'Revision': 'bg-[#3E63DD] text-white',
+  'Waiting': 'bg-[#FF0000] text-white',
+  'In Review': 'bg-[#C36522] text-white',
+  'Checking': 'bg-[#9E49AB] text-white',
+  'Crm': 'bg-[#00A6A6] text-white',
+  'Closed': 'bg-[#2C8C5E] text-white',
+  'On-Hold': 'bg-[#808080] text-white',
 };
 
 function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
@@ -348,7 +359,7 @@ export function TaskDetailModalContent({
         );
       }
       return (
-        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer">
+        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
@@ -421,10 +432,10 @@ export function TaskDetailModalContent({
 
 
   // Fetch persistent activities and comments from DB
-  const loadActivities = useCallback(async () => {
+  const loadActivities = useCallback(async (silent = false) => {
     if (!task?.id || !currentUser) return;
     try {
-      setLoadingActivities(true);
+      if (!silent) setLoadingActivities(true);
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
@@ -575,7 +586,8 @@ export function TaskDetailModalContent({
   useEffect(() => {
     if (!currentUser) return;
     if (task?.listId && (!listStatuses || listStatuses.length === 0)) {
-      const cachedList = allLists.find(l => l.id === task.listId);
+      const listObj = allLists.find((l: any) => l.list?.id === task.listId || l.id === task.listId);
+      const cachedList = listObj?.list || listObj;
       if (cachedList?.statuses) {
         setinternalListStatuses(cachedList.statuses);
       } else {
@@ -770,14 +782,42 @@ export function TaskDetailModalContent({
 
   const orderedListStatuses = React.useMemo(() => {
     const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
-    const list = allLists.find(l => l.id === task?.listId);
+    const listObj = allLists.find((l: any) => l.list?.id === task?.listId || l.id === task?.listId);
+    const list = listObj?.list || listObj;
 
-    // Filter out legacy statuses that are just group headers
-    return sortedInternals.filter(s => {
-      if (!list?.customGroups) return true;
-      const sName = (s.name || s.status || s.title || '').toUpperCase();
-      return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
+    if (!list?.customGroups || list.customGroups.length === 0) {
+      // Filter out legacy statuses that are just group headers
+      return sortedInternals.filter(s => {
+        if (!list?.customGroups) return true;
+        const sName = (s.name || s.status || s.title || '').toUpperCase();
+        return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
+      });
+    }
+
+    const finalStatuses: any[] = [];
+    const processed = new Set<string>();
+
+    list.customGroups.forEach((groupName: string) => {
+      const groupStatuses = sortedInternals.filter(s => s.groupName === groupName);
+      groupStatuses.forEach(s => {
+        const sName = s.name || s.status || s.title || '';
+        finalStatuses.push(s);
+        processed.add(sName);
+      });
     });
+
+    // Add any remaining statuses
+    sortedInternals.forEach(s => {
+      const sName = s.name || s.status || s.title || '';
+      if (!processed.has(sName)) {
+        if (!list.customGroups.some((g: string) => g.toUpperCase() === sName.toUpperCase())) {
+          finalStatuses.push(s);
+          processed.add(sName);
+        }
+      }
+    });
+
+    return finalStatuses;
   }, [allLists, task?.listId, internalListStatuses]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showApiSettings, setShowApiSettings] = useState(false);
@@ -832,10 +872,23 @@ export function TaskDetailModalContent({
       }
     }
 
-    const oldStatus = task.status;
-    if (onStatusChange) onStatusChange(newStatus);
-    else task.status = newStatus;
+    if (newStatus.toLowerCase() === 'revision') {
+      const updatedChecklists = (task.checklists || []).map(c => {
+        if (c.name.toLowerCase() === 'audit') {
+          return {
+            ...c,
+            items: c.items?.map(i => ({ ...i, completed: false })) || []
+          };
+        }
+        return c;
+      });
+      if (onUpdateTask) {
+        onUpdateTask({ ...task, checklists: updatedChecklists });
+      }
+    }
 
+    const oldStatus = task.status;
+    
     // Optimistically append activity to local feed immediately
     const optimisticId = `optimistic-status-${Date.now()}`;
     const optimisticActivity = {
@@ -848,6 +901,13 @@ export function TaskDetailModalContent({
       user: currentUser,
     };
     setActivities(prev => [...prev, optimisticActivity]);
+
+    if (onStatusChange) {
+      onStatusChange(newStatus);
+      return;
+    }
+    
+    task.status = newStatus;
 
     try {
       let res: any;
@@ -1069,6 +1129,29 @@ export function TaskDetailModalContent({
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
+      // Optimistic update
+      const tempId = 'temp-comment-' + Date.now();
+      const optimisticActivity = {
+        id: tempId,
+        type: 'comment',
+        content: finalComment,
+        createdAt: new Date().toISOString(),
+        userId: currentUser?.id,
+        user: { name: currentUser?.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
+        isActivityType: false,
+        sortDate: Date.now(),
+        reactions: []
+      };
+      setActivities(prev => [...prev, optimisticActivity]);
+
+      setComment('');
+      setTimeout(() => {
+        const el = document.getElementById('main-task-comment');
+        if (el) el.style.height = '80px';
+      }, 10);
+      setStagedFiles([]);
+      setMentionedUsers([]);
+
       const res = await tasksApi.addComment(
         targetId,
         finalComment,
@@ -1079,22 +1162,11 @@ export function TaskDetailModalContent({
         subtaskId
       );
 
-      setComment('');
-      setTimeout(() => {
-        const el = document.getElementById('main-task-comment');
-        if (el) el.style.height = '80px';
-      }, 10);
-      setStagedFiles([]);
-      setMentionedUsers([]);
-
       if (res?.activity) {
-        setActivities(prev => {
-          if (prev.some(a => a.id === res.activity.id)) return prev;
-          return [...prev, res.activity];
-        });
+        setActivities(prev => prev.map(a => a.id === tempId ? res.activity : a));
       }
-      // Always reload to get fresh richComments + reactions
-      loadActivities();
+      // Silently reload to get fresh richComments + reactions
+      loadActivities(true);
     } catch (err: any) {
       toast.error(err.message || 'Failed to post comment');
     } finally {
@@ -1317,7 +1389,7 @@ export function TaskDetailModalContent({
                   <div className="flex items-center gap-2 w-28 shrink-0">
                     {(() => {
                       const isClosed = task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE';
-                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" />;
+                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
                     })()}
                     <span className="text-[12px] text-zinc-500">Status</span>
                   </div>
@@ -1856,296 +1928,286 @@ export function TaskDetailModalContent({
                   </span>
                 </div>
 
-                {/* Sort activities oldest to newest */}
+                {/* Sort activities and comments oldest to newest */}
                 {loadingActivities ? <CommentSkeleton /> : (() => {
-                  const sorted = [...activities].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                  const otherActivities = activities.filter(a => a.type !== 'comment');
+                  const combined = [
+                    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
+                    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
+                  ].sort((a, b) => a.sortDate - b.sortDate);
 
-                  // Separate comments from non-comments
-                  const comments = sorted.filter(a => a.type === 'comment');
-                  const otherActivities = sorted.filter(a => a.type !== 'comment');
+                  const renderComment = (comment: any, isReply = false) => {
+                    const cTimeStr = new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
+                    (comment.reactions || []).forEach((r: any) => {
+                      if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
+                      cGroups[r.emoji].count++;
+                      cGroups[r.emoji].users.push(r.user?.name || '?');
+                      if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
+                    });
+                    return (
+                      <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-[#1a1a1e]' : ''}`}>
+                        <div className="flex items-center gap-3 w-full">
+                          {comment.user?.avatarUrl ? (
+                            <img src={comment.user.avatarUrl} alt={comment.user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center text-white text-[11px] font-bold">
+                              {(comment.user?.name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="flex-1 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
+                              <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
+                            </div>
+                            {comment.user?.id === currentUser?.id && (
+                              <Popover.Root>
+                                <Popover.Trigger asChild>
+                                  <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
+                                    <MoreHorizontal className="w-3.5 h-3.5" />
+                                  </button>
+                                </Popover.Trigger>
+                                <Popover.Portal>
+                                  <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
+                                    <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                      <Pencil className="w-3.5 h-3.5" /> Edit
+                                    </button>
+                                    <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                                    </button>
+                                  </Popover.Content>
+                                </Popover.Portal>
+                              </Popover.Root>
+                            )}
+                          </div>
+                        </div>
+
+                        {editingCommentId === comment.id ? (
+                          <div className="pl-11 flex gap-2 w-full">
+                            <CommentEditor id={`edit-${comment.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
+                            <button onClick={() => handleSaveEdit(comment.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === comment.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
+                              {(() => {
+                                let text = comment.content || '';
+                                workspaceUsers.forEach(u => {
+                                  if (text.includes(`@${u.name}`)) {
+                                    text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
+                                  }
+                                });
+                                return text;
+                              })()}
+                            </ReactMarkdown>
+                          </div>
+                        )}
+                        {/* Reaction pills */}
+                        {Object.keys(cGroups).length > 0 && (
+                          <div className="flex flex-wrap gap-1 pl-11">
+                            {Object.entries(cGroups).map(([emoji, data]) => (
+                              <button
+                                key={emoji}
+                                title={data.users.join(', ')}
+                                onClick={() => handleToggleReaction(comment.id, emoji)}
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
+                              >
+                                {emoji} <span className="font-medium">{data.count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {/* Action row */}
+                        <div className="flex items-center gap-1 mt-1 pl-11 relative">
+                          <button
+                            onClick={() => handleToggleReaction(comment.id, '👍')}
+                            className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                            title="Like"
+                          >
+                            <ThumbsUp className="w-3.5 h-3.5" />
+                          </button>
+                          <div className="relative">
+                            <button
+                              onClick={() => setShowEmojiPickerFor(showEmojiPickerFor === comment.id ? null : comment.id)}
+                              className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
+                              title="React"
+                            >
+                              <SmilePlus className="w-3.5 h-3.5" />
+                            </button>
+                            {showEmojiPickerFor === comment.id && (
+                              <div className="absolute bottom-8 left-0 bg-[#202024] border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
+                                {QUICK_EMOJIS.map(e => (
+                                  <button key={e} onClick={() => handleToggleReaction(comment.id, e)} className="text-lg hover:scale-125 cursor-pointer transition-transform p-0.5">
+                                    {e}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {!isReply && (
+                            <button
+                              onClick={() => setReplyingToId(replyingToId === comment.id ? null : comment.id)}
+                              className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
+                            >
+                              <MessageSquare className="w-3 h-3" /> Reply {comment.replyCount > 0 && `(${comment.replyCount})`}
+                            </button>
+                          )}
+                        </div>
+                        {/* Reply input */}
+                        {!isReply && replyingToId === comment.id && (
+                          <div className="pl-11 flex gap-2 mt-1">
+                            <input
+                              value={replyText}
+                              onChange={e => setReplyText(e.target.value)}
+                              disabled={isSubmittingReply}
+                              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); } }}
+                              placeholder="Write a reply..."
+                              className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
+                            />
+                            <button onClick={() => handleSubmitReply(comment.id)} disabled={isSubmittingReply || !replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
+                              <Send className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                        {/* Replies */}
+                        {!isReply && comment.replies?.length > 0 && (
+                          <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800">
+                            {comment.replies.map((r: any) => renderComment(r, true))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
 
                   return (
                     <>
-                      {/* Render other activities with Show More logic */}
-                      {otherActivities.length > 0 && (
+                      {/* Combined Timeline */}
+                      {combined.length > 0 && (
                         <>
-                          {otherActivities.length > 3 && (
+                          {combined.length > 15 && (
                             <button
                               onClick={() => setIsActivityExpanded(!isActivityExpanded)}
-                              className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2"
+                              className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
                             >
                               {isActivityExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                              {isActivityExpanded ? 'Show less' : `Show more (${otherActivities.length - 3} older updates)`}
+                              {isActivityExpanded ? 'Show less updates' : `Show more (${combined.length - 15} older updates)`}
                             </button>
                           )}
-                          {(isActivityExpanded ? otherActivities : otherActivities.slice(-3)).map(act => {
-                            const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                            if (act.type === 'status_change') {
-                              return (
-                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                                  <div className="flex-1 leading-relaxed">
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                      <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
-                                    ) : (
-                                      <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
-                                    )}
-                                    {' '}to <span
-                                      className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
-                                      style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
-                                    >
-                                      {act.newStatus}
+                          {(isActivityExpanded ? combined : combined.slice(-15)).map(item => {
+                            if (item.isActivityType) {
+                              const act = item;
+                              const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                              if (act.type === 'status_change') {
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                        <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
+                                      ) : (
+                                        <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
+                                      )}
+                                      {' '}to <span
+                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                        style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
+                                      >
+                                        {act.newStatus}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
                                     </span>
                                   </div>
-                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                    {timeStr}
-                                  </span>
-                                </div>
-                              );
-                            }
-                            if (act.type === 'assignment') {
-                              return (
-                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                  <div className="flex-1 leading-relaxed">
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
-                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                      <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
-                                    ) : (
-                                      <>to{' '}</>
-                                    )}
-                                    <span className="text-purple-400 font-medium">{act.assigneeName}</span>
+                                );
+                              }
+                              if (act.type === 'assignment') {
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
+                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                        <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                      ) : (
+                                        <>to{' '}</>
+                                      )}
+                                      <span className="text-purple-400 font-medium">{act.assigneeName}</span>
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
                                   </div>
-                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                    {timeStr}
-                                  </span>
-                                </div>
-                              );
-                            }
-                            if (act.type === 'priority_change') {
-                              return (
-                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-                                  <div className="flex-1 leading-relaxed">
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                      <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
-                                    ) : (
-                                      <>changed priority to{' '}</>
-                                    )}
-                                    <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                                );
+                              }
+                              if (act.type === 'priority_change') {
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                        <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
+                                      ) : (
+                                        <>changed priority to{' '}</>
+                                      )}
+                                      <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
                                   </div>
-                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                    {timeStr}
-                                  </span>
-                                </div>
-                              );
-                            }
-                            if (act.type === 'team_role_change') {
-                              return (
-                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
-                                  <div className="flex-1 leading-relaxed">
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                      <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
-                                    ) : (
-                                      <>updated team roles</>
-                                    )}
+                                );
+                              }
+                              if (act.type === 'team_role_change') {
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                        <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
+                                      ) : (
+                                        <>updated team roles</>
+                                      )}
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
                                   </div>
-                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                    {timeStr}
-                                  </span>
-                                </div>
-                              );
-                            }
-                            if (act.type === 'attachment') {
-                              return (
-                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                                  <div className="flex-1 leading-relaxed">
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                      <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
-                                    ) : (
-                                      <>attached a file:{' '}</>
-                                    )}
-                                    <span className="text-indigo-400 ml-1">{act.fileName}</span>
+                                );
+                              }
+                              if (act.type === 'attachment') {
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
+                                        <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                      ) : (
+                                        <>attached a file:{' '}</>
+                                      )}
+                                      <span className="text-indigo-400 ml-1">{act.fileName}</span>
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
                                   </div>
-                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                    {timeStr}
-                                  </span>
-                                </div>
-                              );
+                                );
+                              }
+                              return null;
+                            } else {
+                              return renderComment(item);
                             }
-                            return null;
                           })}
                         </>
                       )}
-
-                      {/* Rich comments with reactions + replies */}
-                      {loadingActivities ? <CommentSkeleton /> : richComments.map(c => {
-                        const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                        // Group reactions by emoji
-                        const reactionGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
-                        (c.reactions || []).forEach((r: any) => {
-                          if (!reactionGroups[r.emoji]) reactionGroups[r.emoji] = { count: 0, users: [], hasMe: false };
-                          reactionGroups[r.emoji].count++;
-                          reactionGroups[r.emoji].users.push(r.user?.name || '?');
-                          if (r.userId === currentUser?.id) reactionGroups[r.emoji].hasMe = true;
-                        });
-
-                        const renderComment = (comment: any, isReply = false) => {
-                          const cTimeStr = new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                          const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
-                          (comment.reactions || []).forEach((r: any) => {
-                            if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
-                            cGroups[r.emoji].count++;
-                            cGroups[r.emoji].users.push(r.user?.name || '?');
-                            if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
-                          });
-                          return (
-                            <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-[#1a1a1e]' : ''}`}>
-                              <div className="flex items-center gap-3 w-full">
-                                {comment.user?.avatarUrl ? (
-                                  <img src={comment.user.avatarUrl} alt={comment.user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
-                                ) : (
-                                  <div className="w-8 h-8 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center text-white text-[11px] font-bold">
-                                    {(comment.user?.name || 'U').charAt(0).toUpperCase()}
-                                  </div>
-                                )}
-                                <div className="flex-1 flex items-center justify-between gap-2">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
-                                    <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
-                                  </div>
-                                  {comment.user?.id === currentUser?.id && (
-                                    <Popover.Root>
-                                      <Popover.Trigger asChild>
-                                        <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
-                                          <MoreHorizontal className="w-3.5 h-3.5" />
-                                        </button>
-                                      </Popover.Trigger>
-                                      <Popover.Portal>
-                                        <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
-                                          <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
-                                            <Pencil className="w-3.5 h-3.5" /> Edit
-                                          </button>
-                                          <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
-                                            <Trash2 className="w-3.5 h-3.5" /> Delete
-                                          </button>
-                                        </Popover.Content>
-                                      </Popover.Portal>
-                                    </Popover.Root>
-                                  )}
-                                </div>
-                              </div>
-
-                              {editingCommentId === comment.id ? (
-                                <div className="pl-11 flex gap-2 w-full">
-                                  <CommentEditor id={`edit-${comment.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
-                                  <button onClick={() => handleSaveEdit(comment.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === comment.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
-                                    <Check className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-                                    {(() => {
-                                      let text = comment.content || '';
-                                      workspaceUsers.forEach(u => {
-                                        if (text.includes(`@${u.name}`)) {
-                                          text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
-                                        }
-                                      });
-                                      return text;
-                                    })()}
-                                  </ReactMarkdown>
-                                </div>
-                              )}
-                              {/* Reaction pills */}
-                              {Object.keys(cGroups).length > 0 && (
-                                <div className="flex flex-wrap gap-1 pl-11">
-                                  {Object.entries(cGroups).map(([emoji, data]) => (
-                                    <button
-                                      key={emoji}
-                                      title={data.users.join(', ')}
-                                      onClick={() => handleToggleReaction(comment.id, emoji)}
-                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
-                                    >
-                                      {emoji} <span className="font-medium">{data.count}</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                              {/* Action row */}
-                              <div className="flex items-center gap-1 mt-1 pl-11 relative">
-                                <button
-                                  onClick={() => handleToggleReaction(comment.id, '👍')}
-                                  className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                                  title="Like"
-                                >
-                                  <ThumbsUp className="w-3.5 h-3.5" />
-                                </button>
-                                <div className="relative">
-                                  <button
-                                    onClick={() => setShowEmojiPickerFor(showEmojiPickerFor === comment.id ? null : comment.id)}
-                                    className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
-                                    title="React"
-                                  >
-                                    <SmilePlus className="w-3.5 h-3.5" />
-                                  </button>
-                                  {showEmojiPickerFor === comment.id && (
-                                    <div className="absolute bottom-8 left-0 bg-[#202024] border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
-                                      {QUICK_EMOJIS.map(e => (
-                                        <button key={e} onClick={() => handleToggleReaction(comment.id, e)} className="text-lg hover:scale-125 cursor-pointer transition-transform p-0.5">
-                                          {e}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                                {!isReply && (
-                                  <button
-                                    onClick={() => setReplyingToId(replyingToId === comment.id ? null : comment.id)}
-                                    className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
-                                  >
-                                    <MessageSquare className="w-3 h-3" /> Reply {comment.replyCount > 0 && `(${comment.replyCount})`}
-                                  </button>
-                                )}
-                              </div>
-                              {/* Reply input */}
-                              {!isReply && replyingToId === comment.id && (
-                                <div className="pl-11 flex gap-2 mt-1">
-                                  <input
-                                    value={replyText}
-                                    onChange={e => setReplyText(e.target.value)}
-                                    disabled={isSubmittingReply}
-                                    onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); } }}
-                                    placeholder="Write a reply..."
-                                    className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
-                                  />
-                                  <button onClick={() => handleSubmitReply(comment.id)} disabled={isSubmittingReply || !replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
-                                    <Send className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              )}
-                              {/* Replies */}
-                              {!isReply && comment.replies?.length > 0 && (
-                                <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800">
-                                  {comment.replies.map((r: any) => renderComment(r, true))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        };
-
-                        return renderComment(c);
-                      })}
                     </>
                   );
                 })()}
@@ -2340,6 +2402,10 @@ function SubtaskDetailView({
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
+  const [showMentionMenu, setShowMentionMenu] = useState(false);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [mentionStartIndex, setMentionStartIndex] = useState(0);
+  const [mentionedUsers, setMentionedUsers] = useState<{ id: string, name: string }[]>([]);
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2364,6 +2430,43 @@ function SubtaskDetailView({
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  const markdownComponents = React.useMemo(() => ({
+    a: (props: any) => {
+      const { node, ...rest } = props;
+      const href = rest.href || '';
+      if (href.match(/\.(mp4|webm|ogg|mov)$/i)) {
+        return <LazyMarkdownVideo src={href} onPreview={setLightboxImage} />;
+      }
+      if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
+        return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} />;
+      }
+      if (href.startsWith('mention://')) {
+        const userId = href.replace('mention://', '');
+        return (
+          <a
+            href={`/profile/${userId}`}
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
+            className="bg-blue-500/10 text-blue-400 hover:text-blue-300 font-medium px-1 rounded hover:underline cursor-pointer"
+          >
+            {rest.children}
+          </a>
+        );
+      }
+      return (
+        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer">
+          {rest.children}
+        </a>
+      );
+    },
+    img: (props: any) => {
+      const { node, ...rest } = props;
+      return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} />;
+    }
+  }), []);
   const editorRef = useRef<any>(null);
   // Task edits are open to all
   const canEditTask = true;
@@ -2411,8 +2514,21 @@ function SubtaskDetailView({
     if (!subtask || isSubmitting) return;
     setIsSubmitting(true);
     try {
+      let updatedChecklists = subtask.checklists || [];
+      if (newStatus.toLowerCase() === 'revision') {
+        updatedChecklists = updatedChecklists.map((c: any) => {
+          if (c.name.toLowerCase() === 'audit') {
+            return {
+              ...c,
+              items: c.items?.map((i: any) => ({ ...i, completed: false })) || []
+            };
+          }
+          return c;
+        });
+      }
+
       const isCompleted = newStatus === 'Closed' || newStatus === 'CLOSED' || newStatus === 'DONE';
-      const updatedSubtask = { ...subtask, status: newStatus, completed: isCompleted };
+      const updatedSubtask = { ...subtask, status: newStatus, completed: isCompleted, checklists: updatedChecklists };
 
       if (setActiveSubtask) setActiveSubtask(updatedSubtask);
       if (onUpdateTask) {
@@ -2658,13 +2774,27 @@ function SubtaskDetailView({
         setIsUploading(false);
       }
 
-      await tasksApi.addComment(parentTask.id, content, currentUser.id, parentTask.listId, [], undefined, subtask.id);
+      const tempId = 'temp-comment-' + Date.now();
+      const optimisticComment = {
+        id: tempId,
+        content,
+        createdAt: new Date().toISOString(),
+        userId: currentUser?.id,
+        user: { name: currentUser?.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
+        reactions: [],
+        replies: []
+      };
+      setRichComments((prev: any[]) => [...prev, optimisticComment]);
+
       setComment('');
       setTimeout(() => {
         const el = document.getElementById('subtask-comment');
         if (el) el.style.height = '80px';
       }, 10);
       setStagedFiles([]);
+
+      await tasksApi.addComment(parentTask.id, content, currentUser.id, parentTask.listId, [], undefined, subtask.id);
+
       const res = await tasksApi.getComments(parentTask.id, subtask.id);
       if (res?.comments) setRichComments(res.comments);
 
@@ -2875,80 +3005,151 @@ function SubtaskDetailView({
                 <div className="flex items-center gap-2 w-28 shrink-0">
                   {(() => {
                     const isClosed = subtask.completed || subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.status === 'DONE';
-                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" />;
+                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
                   })()}
                   <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
-                {(() => {
-                  const statusName = subtask.status || 'No Status';
-                  const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
-                  const hasCustomColor = !!statusObj?.color;
-                  const defaultClasses = STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400';
+                  <div className="flex items-center gap-1.5">
+                    {(() => {
+                      const orderedStatuses = (listStatuses && listStatuses.length > 0)
+                        ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+                        : ALL_STATUSES;
 
-                  return (
-                    <div
-                      style={hasCustomColor ? { backgroundColor: statusObj.color } : {}}
-                      className={`inline-flex items-center h-7 rounded-md text-[11px] font-medium select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} cursor-pointer hover:brightness-110`}
-                    >
-                      <span className="px-2.5 uppercase">{statusName}</span>
-                      <div className="h-4 w-[1px] bg-white/20" />
-                      <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
-                        <Popover.Trigger asChild>
-                          <div
-                            title="Change Status"
-                            onClick={() => setIsStatusOpen(true)}
-                            className="flex items-center gap-1.5 px-2.5 h-full hover:brightness-110 cursor-pointer"
-                          >
-                            <ChevronDown className="w-3.5 h-3.5 opacity-80" />
-                          </div>
-                        </Popover.Trigger>
-                        <Popover.Portal>
-                          <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                            <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                              {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
-                                <div
-                                  key={s}
-                                  onClick={() => {
-                                    tasksApi.updateSubtask(parentTask.id, subtask.id, {
-                                      status: s,
-                                      completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed'
-                                    }).catch(err => console.error(err));
-                                    if (setActiveSubtask) {
-                                      setActiveSubtask({ ...subtask, status: s, completed: s.toLowerCase() === 'done' || s.toLowerCase() === 'completed' || s.toLowerCase() === 'closed' });
-                                    }
-                                    setIsStatusOpen(false);
-                                  }}
-                                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
-                                >
-                                  {(() => {
-                                    const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                                    if (customObj?.color) {
-                                      return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: customObj.color }} />;
-                                    }
-                                    return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
-                                  })()}
-                                  {s}
-                                  {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                      const statusName = subtask.status || 'No Status';
+                      const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+                      const hasCustomColor = !!statusObj?.color;
+                      const defaultClasses = STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400';
+
+                      const getHex = (colorStr: string) => {
+                        const tailwindColors: Record<string, string> = {
+                          slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+                          red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+                          green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+                          blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+                          pink: '#ec4899', rose: '#f43f5e'
+                        };
+                        return tailwindColors[colorStr] || colorStr;
+                      };
+
+                      return (
+                        <div
+                          style={hasCustomColor ? { backgroundColor: getHex(statusObj.color) } : {}}
+                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} shadow-sm group/status`}
+                        >
+                          <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                            <Popover.Trigger asChild>
+                              <div
+                                onClick={() => setIsStatusOpen(true)}
+                                className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
+                              >
+                                {statusName}
+                              </div>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                                <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                                  {orderedStatuses.map((s: string) => (
+                                    <div
+                                      key={s}
+                                      onClick={() => {
+                                        const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
+                                        
+                                        // Update parent task subtasks state to trigger real-time UI refresh
+                                        if (parentTask?.subtasks) {
+                                          const updatedSubtasks = parentTask.subtasks.map((st: any) => 
+                                            st.id === subtask.id ? { ...st, status: s, completed: isFinal } : st
+                                          );
+                                          onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
+                                        }
+
+                                        tasksApi.updateSubtask(parentTask.id, subtask.id, {
+                                          status: s,
+                                          completed: isFinal
+                                        }).catch(err => console.error(err));
+                                        
+                                        if (setActiveSubtask) {
+                                          setActiveSubtask({ ...subtask, status: s, completed: isFinal });
+                                        }
+                                        setIsStatusOpen(false);
+                                      }}
+                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                                    >
+                                      {(() => {
+                                        const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                                        if (customObj?.color) {
+                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHex(customObj.color) }} />;
+                                        }
+                                        return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                      })()}
+                                      {s}
+                                      {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
-                            </div>
-                          </Popover.Content>
-                        </Popover.Portal>
-                      </Popover.Root>
-                    </div>
-                  );
-                })()}
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
 
-                <button
-                  onClick={() => {
-                    tasksApi.updateSubtask(parentTask.id, subtask.id, { status: 'Closed', completed: true }).catch(err => console.error(err));
-                    if (setActiveSubtask) setActiveSubtask({ ...subtask, status: 'Closed', completed: true });
-                  }}
-                  title="Mark as Closed"
-                  className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                </button>
+                          <div className="h-4 w-[1px] bg-white/20" />
+
+                          {(() => {
+                            const statuses = orderedStatuses;
+                            const currentIndex = statuses.indexOf(statusName);
+                            const nextIndex = currentIndex !== -1 ? (currentIndex + 1) % statuses.length : 0;
+                            const nextStatus = statuses[nextIndex];
+
+                            return (
+                              <div
+                                title={`Move to "${nextStatus}"`}
+                                className="flex items-center justify-center h-full px-1.5 cursor-pointer hover:brightness-110 rounded-r-md"
+                                onClick={() => {
+                                  const isFinal = nextStatus.toLowerCase() === 'closed' || nextStatus.toLowerCase() === 'done' || nextStatus.toLowerCase() === 'completed';
+                                  
+                                  if (parentTask?.subtasks) {
+                                    const updatedSubtasks = parentTask.subtasks.map((st: any) => 
+                                      st.id === subtask.id ? { ...st, status: nextStatus, completed: isFinal } : st
+                                    );
+                                    onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
+                                  }
+
+                                  tasksApi.updateSubtask(parentTask.id, subtask.id, {
+                                    status: nextStatus,
+                                    completed: isFinal
+                                  }).catch(err => console.error(err));
+                                  
+                                  if (setActiveSubtask) {
+                                    setActiveSubtask({ ...subtask, status: nextStatus, completed: isFinal });
+                                  }
+                                }}
+                              >
+                                <ChevronRight className="w-3.5 h-3.5 opacity-90" />
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })()}
+
+                    <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                      <button
+                        onClick={() => {
+                          const s = 'Closed';
+                          if (parentTask?.subtasks) {
+                            const updatedSubtasks = parentTask.subtasks.map((st: any) => 
+                              st.id === subtask.id ? { ...st, status: s, completed: true } : st
+                            );
+                            onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
+                          }
+                          tasksApi.updateSubtask(parentTask.id, subtask.id, { status: s, completed: true }).catch(err => console.error(err));
+                          if (setActiveSubtask) setActiveSubtask({ ...subtask, status: s, completed: true });
+                        }}
+                        title="Mark as Closed"
+                        className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
               </div>
 
 
@@ -3406,243 +3607,255 @@ function SubtaskDetailView({
                 </span>
               </div>
 
-              {/* Sort activities oldest to newest */}
+              {/* Sort activities and comments oldest to newest */}
               {loadingActivities ? <CommentSkeleton /> : (() => {
-                const sorted = [...activities].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                const otherActivities = activities.filter(a => a.type !== 'comment');
+                const combined = [
+                  ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
+                  ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
+                ].sort((a, b) => a.sortDate - b.sortDate);
 
-                // Separate comments from non-comments
-                const comments = sorted.filter(a => a.type === 'comment');
-                const otherActivities = sorted.filter(a => a.type !== 'comment');
+                const renderComment = (c: any) => {
+                  const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  const dateStr = new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+
+                  const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
+                  (c.reactions || []).forEach((r: any) => {
+                    if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
+                    cGroups[r.emoji].count++;
+                    cGroups[r.emoji].users.push(r.user?.name || '?');
+                    if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
+                  });
+
+                  return (
+                    <div key={c.id} className="flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm mt-2">
+                      <div className="flex items-center gap-3 w-full">
+                        {c.user?.avatarUrl ? (
+                          <img src={c.user.avatarUrl} alt={c.user?.name} className="w-8 h-8 rounded-full shrink-0 object-cover" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center text-white text-[11px] font-bold">
+                            {(c.user?.name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex-1 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-zinc-200 font-medium text-[13px]">{c.user?.name || 'Someone'}</span>
+                            <span className="text-[11px] text-zinc-500">{dateStr} {timeStr}</span>
+                          </div>
+                          {c.user?.id === currentUser?.id && (
+                            <Popover.Root>
+                              <Popover.Trigger asChild>
+                                <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
+                                  <MoreHorizontal className="w-3.5 h-3.5" />
+                                </button>
+                              </Popover.Trigger>
+                              <Popover.Portal>
+                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
+                                  <button onClick={() => { setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                    <Pencil className="w-3.5 h-3.5" /> Edit
+                                  </button>
+                                  <button onClick={() => { setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                    <Trash2 className="w-3.5 h-3.5" /> Delete
+                                  </button>
+                                </Popover.Content>
+                              </Popover.Portal>
+                            </Popover.Root>
+                          )}
+                        </div>
+                      </div>
+
+                      {editingCommentId === c.id ? (
+                        <div className="pl-11 flex gap-2 w-full">
+                          <CommentEditor id={`edit-${c.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
+                          <button onClick={() => handleSaveEdit(c.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === c.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
+                            {(() => {
+                              let text = c.content || '';
+                              (workspaceUsers || []).forEach(u => {
+                                if (text.includes(`@${u.name}`)) {
+                                  text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
+                                }
+                              });
+                              return text;
+                            })()}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+
+                      {/* Reaction pills */}
+                      {Object.keys(cGroups).length > 0 && (
+                        <div className="flex flex-wrap gap-1 pl-11">
+                          {Object.entries(cGroups).map(([emoji, data]) => (
+                            <button
+                              key={emoji}
+                              title={data.users.join(', ')}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
+                            >
+                              {emoji} <span className="font-medium">{data.count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Action row */}
+                      <div className="flex items-center gap-1 mt-1 pl-11 relative">
+                        <button
+                          className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                          title="Like"
+                        >
+                          <ThumbsUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
+                          title="React"
+                        >
+                          <SmilePlus className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
+                        >
+                          <MessageSquare className="w-3 h-3" /> Reply {c.replyCount > 0 && `(${c.replyCount})`}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                };
 
                 return (
                   <>
-                    {/* Render other activities with Show More logic */}
-                    {otherActivities.length > 0 && (
+                    {/* Combined Timeline */}
+                    {combined.length > 0 && (
                       <>
-                        {otherActivities.length > 3 && (
+                        {combined.length > 15 && (
                           <button
                             onClick={() => setIsActivityExpanded(!isActivityExpanded)}
-                            className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2"
+                            className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
                           >
                             {isActivityExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                            {isActivityExpanded ? 'Show less' : `Show more (${otherActivities.length - 3} older updates)`}
+                            {isActivityExpanded ? 'Show less updates' : `Show more (${combined.length - 15} older updates)`}
                           </button>
                         )}
-                        {(isActivityExpanded ? otherActivities : otherActivities.slice(-3)).map(act => {
-                          const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                          if (act.type === 'status_change') {
-                            return (
-                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                                <div className="flex-1 leading-relaxed">
-                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                    <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
-                                  ) : (
-                                    <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
-                                  )}
-                                  {' '}to <span
-                                      className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
-                                      style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
-                                    >
-                                      {act.newStatus}
-                                    </span>
+                        {(isActivityExpanded ? combined : combined.slice(-15)).map((item: any) => {
+                          if (item.isActivityType) {
+                            const act = item;
+                            const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            if (act.type === 'status_change') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                      <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
+                                    ) : (
+                                      <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
+                                    )}
+                                    {' '}to <span
+                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                        style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
+                                      >
+                                        {act.newStatus}
+                                      </span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
                                 </div>
-                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                  {timeStr}
-                                </span>
-                              </div>
-                            );
-                          }
-                          if (act.type === 'assignment') {
-                            return (
-                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                <div className="flex-1 leading-relaxed">
-                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
-                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                    <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
-                                  ) : (
-                                    <>to{' '}</>
-                                  )}
-                                  <span className="text-purple-400 font-medium">{act.assigneeName}</span>
+                              );
+                            }
+                            if (act.type === 'assignment') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
+                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                      <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                    ) : (
+                                      <>to{' '}</>
+                                    )}
+                                    <span className="text-purple-400 font-medium">{act.assigneeName}</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
                                 </div>
-                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                  {timeStr}
-                                </span>
-                              </div>
-                            );
-                          }
-                          if (act.type === 'priority_change') {
-                            return (
-                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-                                <div className="flex-1 leading-relaxed">
-                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                    <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
-                                  ) : (
-                                    <>changed priority to{' '}</>
-                                  )}
-                                  <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                              );
+                            }
+                            if (act.type === 'priority_change') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                      <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
+                                    ) : (
+                                      <>changed priority to{' '}</>
+                                    )}
+                                    <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
                                 </div>
-                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                  {timeStr}
-                                </span>
-                              </div>
-                            );
-                          }
-                          if (act.type === 'team_role_change') {
-                            return (
-                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
-                                <div className="flex-1 leading-relaxed">
-                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                    <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
-                                  ) : (
-                                    <>updated team roles</>
-                                  )}
+                              );
+                            }
+                            if (act.type === 'team_role_change') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                      <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
+                                    ) : (
+                                      <>updated team roles</>
+                                    )}
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
                                 </div>
-                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                  {timeStr}
-                                </span>
-                              </div>
-                            );
-                          }
-                          if (act.type === 'attachment') {
-                            return (
-                              <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                                <div className="flex-1 leading-relaxed">
-                                  <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                  {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                    <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
-                                  ) : (
-                                    <>attached a file:{' '}</>
-                                  )}
-                                  <span className="text-zinc-300 font-medium">{act.fileName}</span>
+                              );
+                            }
+                            if (act.type === 'attachment') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
+                                      <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
+                                    ) : (
+                                      <>attached a file:{' '}</>
+                                    )}
+                                    <span className="text-zinc-300 font-medium">{act.fileName}</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
                                 </div>
-                                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                  {timeStr}
-                                </span>
-                              </div>
-                            );
+                              );
+                            }
+                            return null;
+                          } else {
+                            return renderComment(item);
                           }
-                          return null;
                         })}
                       </>
                     )}
                   </>
                 );
               })()}
-
-              {/* Rich comments with reactions + replies */}
-              {false ? <CommentSkeleton /> : richComments.map(c => {
-                const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const dateStr = new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-
-                const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
-                (c.reactions || []).forEach((r: any) => {
-                  if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
-                  cGroups[r.emoji].count++;
-                  cGroups[r.emoji].users.push(r.user?.name || '?');
-                  if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
-                });
-
-                return (
-                  <div key={c.id} className="flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm">
-                    <div className="flex items-center gap-3 w-full">
-                      {c.user?.avatarUrl ? (
-                        <img src={c.user.avatarUrl} alt={c.user?.name} className="w-8 h-8 rounded-full shrink-0 object-cover" />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center text-white text-[11px] font-bold">
-                          {(c.user?.name || 'U').charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      <div className="flex-1 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-zinc-200 font-medium text-[13px]">{c.user?.name || 'Someone'}</span>
-                          <span className="text-[11px] text-zinc-500">{dateStr} {timeStr}</span>
-                        </div>
-                        {c.user?.id === currentUser?.id && (
-                          <Popover.Root>
-                            <Popover.Trigger asChild>
-                              <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
-                                <MoreHorizontal className="w-3.5 h-3.5" />
-                              </button>
-                            </Popover.Trigger>
-                            <Popover.Portal>
-                              <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
-                                <button onClick={() => { setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
-                                  <Pencil className="w-3.5 h-3.5" /> Edit
-                                </button>
-                                <button onClick={() => { setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
-                                  <Trash2 className="w-3.5 h-3.5" /> Delete
-                                </button>
-                              </Popover.Content>
-                            </Popover.Portal>
-                          </Popover.Root>
-                        )}
-                      </div>
-                    </div>
-
-                    {editingCommentId === c.id ? (
-                      <div className="pl-11 flex gap-2 w-full">
-                        <CommentEditor id={`edit-${c.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
-                        <button onClick={() => handleSaveEdit(c.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === c.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                          {c.content}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-
-                    {/* Reaction pills */}
-                    {Object.keys(cGroups).length > 0 && (
-                      <div className="flex flex-wrap gap-1 pl-11">
-                        {Object.entries(cGroups).map(([emoji, data]) => (
-                          <button
-                            key={emoji}
-                            title={data.users.join(', ')}
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
-                          >
-                            {emoji} <span className="font-medium">{data.count}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Action row */}
-                    <div className="flex items-center gap-1 mt-1 pl-11 relative">
-                      <button
-                        className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                        title="Like"
-                      >
-                        <ThumbsUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
-                        title="React"
-                      >
-                        <SmilePlus className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
-                      >
-                        <MessageSquare className="w-3 h-3" /> Reply {c.replyCount > 0 && `(${c.replyCount})`}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </div>
 
@@ -3661,11 +3874,59 @@ function SubtaskDetailView({
                   ))}
                 </div>
               )}
+              {showMentionMenu && (
+                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100]">
+                  <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
+                    People
+                  </div>
+                  <div className="max-h-48 overflow-y-auto">
+                    {(workspaceUsers || []).filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).map(u => (
+                      <div
+                        key={u.id}
+                        className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
+                        onClick={() => {
+                          const before = comment.substring(0, mentionStartIndex);
+                          const after = comment.substring(comment.length);
+                          setComment(`${before}@${u.name} `);
+                          setShowMentionMenu(false);
+                          if (!mentionedUsers.some(m => m.id === u.id)) {
+                            setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
+                          }
+                        }}
+                      >
+                        {u.avatarUrl ? (
+                          <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold">
+                            {(u.name || '?').substring(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <span>{u.name}</span>
+                      </div>
+                    ))}
+                    {(workspaceUsers || []).filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).length === 0 && (
+                      <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
+                    )}
+                  </div>
+                </div>
+              )}
               <CommentEditor
                   id="subtask-comment"
                   value={comment}
                   onChange={(html, text, cursorPosition) => {
                     setComment(html);
+                    
+                    // Mention logic
+                    const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
+                    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+
+                    if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
+                      setShowMentionMenu(true);
+                      setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
+                      setMentionStartIndex(lastAtIndex);
+                    } else {
+                      setShowMentionMenu(false);
+                    }
                   }}
                   onSubmit={handleAddComment}
                   disabled={isSubmitting}
@@ -3700,6 +3961,35 @@ function SubtaskDetailView({
           title="Delete Comment"
           itemName="this comment"
         />
+      )}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
+          onClick={() => setLightboxImage(null)}
+        >
+          <button
+            className="absolute top-6 right-6 p-2 rounded-full bg-black/50 text-white hover:bg-white/20 transition-colors"
+            onClick={() => setLightboxImage(null)}
+          >
+            <X className="w-6 h-6" />
+          </button>
+          {lightboxImage.match(/\.(mp4|webm|ogg|mov)$/i) ? (
+            <video
+              controls
+              autoPlay
+              src={lightboxImage}
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <img
+              src={lightboxImage}
+              alt="Fullscreen"
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
+              onClick={e => e.stopPropagation()}
+            />
+          )}
+        </div>
       )}
     </motion.div >
   );
@@ -3762,7 +4052,12 @@ export function TaskDetailModal(props: Props) {
     if (props.onUpdateTask) props.onUpdateTask(updatedTask);
   };
 
-  return (
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  
+  if (!mounted) return null;
+
+  return createPortal(
     <AnimatePresence>
       {props.isOpen && fullTask && (
         <motion.div
@@ -3772,8 +4067,8 @@ export function TaskDetailModal(props: Props) {
           transition={{ duration: props.mode === 'full' ? 0 : 0.15 }}
           className={
             props.mode === 'full'
-              ? "absolute inset-0 z-[100] bg-[#121212] flex flex-col cursor-default"
-              : "fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+              ? "absolute inset-0 z-[999999] bg-[#121212] flex flex-col cursor-default"
+              : "fixed inset-0 z-[999999] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
           }
           onClick={props.mode === 'full' ? undefined : () => props.onClose()}
         >
@@ -3794,7 +4089,8 @@ export function TaskDetailModal(props: Props) {
           )}
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
 

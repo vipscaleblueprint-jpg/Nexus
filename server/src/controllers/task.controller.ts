@@ -699,6 +699,17 @@ export async function moveTask(req: Request, res: Response) {
     const oldStatus = currentTask.status;
 
     // Immediately persist to DB (scalar fields only for max speed)
+    if (status && status.toLowerCase() === 'revision') {
+      const auditChecklist = await prisma.checklist.findFirst({
+        where: { taskId: id, subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
+      });
+      if (auditChecklist) {
+        await prisma.checklistItem.updateMany({
+          where: { checklistId: auditChecklist.id },
+          data: { completed: false },
+        });
+      }
+    }
     const updated = await prisma.task.update({
       where: { id },
       data: { status },
@@ -744,8 +755,7 @@ export async function moveTask(req: Request, res: Response) {
             };
             if (roomListId) {
               io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId: id, activity });
-            }
-            io.emit('task_activity', { taskId: id, activity });
+            } else { io.emit('task_activity', { taskId: id, activity }); }
           }).catch(console.error);
         }).catch(console.error);
       }
@@ -1356,6 +1366,17 @@ export async function updateSubtask(req: Request, res: Response) {
       computedAssigneeIds = await resolveUsersFromRoles(assigneeRoleRestrictions);
     }
 
+    if (status && status.toLowerCase() === 'revision') {
+      const auditChecklist = await prisma.checklist.findFirst({
+        where: { subtaskId: subtaskId, name: { equals: 'Audit', mode: 'insensitive' } },
+      });
+      if (auditChecklist) {
+        await prisma.checklistItem.updateMany({
+          where: { checklistId: auditChecklist.id },
+          data: { completed: false },
+        });
+      }
+    }
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
       data: {
@@ -1468,7 +1489,7 @@ export async function updateSubtask(req: Request, res: Response) {
             date: new Date().toISOString(),
           };
           io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
-          io.to(`list:${task.listId}`).emit('task_activity', { taskId: subtask.id, activity: act });
+          // removed duplicate emit
         }
         if (status !== undefined) {
           const act = {
@@ -1481,7 +1502,7 @@ export async function updateSubtask(req: Request, res: Response) {
             date: new Date().toISOString(),
           };
           io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
-          io.to(`list:${task.listId}`).emit('task_activity', { taskId: subtask.id, activity: act });
+          // removed duplicate emit
         }
       }
     }

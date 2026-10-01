@@ -4,14 +4,23 @@ import { BlockEditor } from '../ui/BlockEditor';
 import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { canUserEditTask } from '@/lib/permissions';
-import { Check, CheckCircle2, Circle, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
+import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
 import { ALL_STATUSES, STATUS_COLORS } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 
+const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="7" fill="currentColor" stroke="none" />
+  </svg>
+);
 const getHexColor = (color: string) => {
   const colors: Record<string, string> = {
     slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
@@ -361,6 +370,7 @@ function SubtaskRow({
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [statusRowOpen, setStatusRowOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState<number | undefined>(undefined);
   const resizeRef = useRef<HTMLDivElement>(null);
   const priorityColor = subtask.priority ? PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400' : 'text-zinc-600';
@@ -511,7 +521,50 @@ function SubtaskRow({
       {/* Row 1: Title and Collapse Button */}
       <div className={`flex items-center gap-2.5 shrink-0 min-w-0 max-w-full justify-between transition-all duration-300 ${isCollapsed ? 'mb-0 pb-0 border-transparent' : 'mb-4 pb-3 border-b border-zinc-800/60'}`}>
         <div className="flex items-center gap-4 shrink-0 min-w-0 flex-1">
-          <div className="flex items-center min-w-0 shrink-0">
+          <div className="flex items-center min-w-0 shrink-0 gap-3">
+            {isCollapsed && (
+              <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
+                <Popover.Trigger asChild>
+                  <div
+                    title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
+                    onClick={(e) => { e.stopPropagation(); if (canEditTask) setStatusOpen(true); }}
+                    className={`flex items-center justify-center cursor-pointer transition-transform duration-200 ${canEditTask ? 'hover:scale-110 active:scale-95' : 'opacity-50 cursor-not-allowed'}`}
+                  >
+                    {subtask.completed ? <CheckCircle2 className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CircleDashed className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
+                  </div>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                    <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                      {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                        <div
+                          key={s}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!canEditTask) return;
+                            const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
+                            onUpdate(subtask.id, { status: s, completed: isFinal });
+                            setStatusOpen(false);
+                          }}
+                          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                        >
+                          {(() => {
+                            const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                            if (customObj?.color) {
+                              return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
+                            }
+                            return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                          })()}
+                          {s}
+                          {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                        </div>
+                      ))}
+                    </div>
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+            )}
+
             {isEditingTitle ? (
               <input
                 autoFocus
@@ -544,10 +597,7 @@ function SubtaskRow({
 
           {/* Collapsed Inline Properties */}
             <div className={`flex items-center gap-3 overflow-hidden transition-all duration-300 shrink-0 ${isCollapsed ? 'opacity-100 max-w-[500px] ml-4 border-l border-zinc-800/60 pl-4' : 'opacity-0 max-w-0 ml-0 border-transparent pl-0'}`}>
-              <div className={`inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[10px] font-medium select-none whitespace-nowrap uppercase ${subtask.completed ? 'bg-emerald-600/15 text-emerald-400' : 'bg-zinc-800/50 text-zinc-400'}`}>
-                {subtask.completed ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />}
-                <span className={statusIconColorClass} style={statusIconStyle}>{statusName}</span>
-              </div>
+
             
             <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-zinc-800/50 rounded-md text-[10px] text-zinc-400 max-w-[150px] shrink-0 truncate">
               {currentAssignees.length > 0 ? (
@@ -605,90 +655,70 @@ function SubtaskRow({
           <div className="flex items-stretch gap-4 w-full min-h-[250px] max-h-[300px]">
         {/* Column 1: Properties Stack — icon + pill rows */}
         <div className="flex flex-col shrink-0 gap-2 pt-1 w-auto min-w-[140px]">
+
           {/* Status row */}
           <div className="flex items-center gap-3">
-            {subtask.completed
-              ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
-              : <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
-            }
-            <div className="flex items-center gap-1.5">
-              {(() => {
-                const hasCustomColor = !!statusObj?.color;
-                const defaultClasses = STATUS_COLORS[subtask.status || ''] ?? (subtask.completed ? 'bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25' : 'bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60');
-                
-                return (
-                  <div
-                    style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
-                    className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors w-fit ${hasCustomColor ? 'text-white' : defaultClasses} shadow-sm group/status`}
-                  >
-                    <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
-                      <Popover.Trigger asChild>
-                        <div
-                          title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
-                          onClick={() => { if (canEditTask) setStatusOpen(true); }}
-                          className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
-                        >
-                          {statusName.replace('_', ' ')}
-                        </div>
-                      </Popover.Trigger>
-                      <Popover.Portal>
-                        <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                          <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                            {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
-                              <div
-                                key={s}
-                                onClick={() => {
-                                  if (!canEditTask) return;
-                                  const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
-                                  onUpdate(subtask.id, { status: s, completed: isFinal });
-                                  setStatusOpen(false);
-                                }}
-                                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
-                              >
-                                {(() => {
-                                  const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                                  if (customObj?.color) {
-                                    return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
-                                  }
-                                  return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
-                                })()}
-                                {s}
-                                {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
-                              </div>
-                            ))}
-                          </div>
-                        </Popover.Content>
-                      </Popover.Portal>
-                    </Popover.Root>
-
-                    <div className="h-4 w-[1px] bg-white/20" />
-                    
-                    {(() => {
-                      const statuses = (listStatuses && listStatuses.length > 0)
-                        ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
-                        : ALL_STATUSES;
-                      const currentIndex = statuses.indexOf(statusName);
-                      const nextIndex = currentIndex !== -1 ? (currentIndex + 1) % statuses.length : 0;
-                      const nextStatus = statuses[nextIndex];
-                      
-                      return (
-                        <div 
-                          title={`Move to "${nextStatus}"`}
-                          className="flex items-center justify-center h-full px-1.5 cursor-pointer hover:brightness-110 rounded-r-md"
-                          onClick={() => {
-                            if (!canEditTask) return;
-                            const isFinal = nextStatus.toLowerCase() === 'closed' || nextStatus.toLowerCase() === 'done' || nextStatus.toLowerCase() === 'completed';
-                            onUpdate(subtask.id, { status: nextStatus, completed: isFinal });
-                          }}
-                        >
-                          <ChevronRight className="w-3.5 h-3.5 opacity-90" />
-                        </div>
-                      );
-                    })()}
+            {subtask.completed ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
+            
+            <Popover.Root open={statusRowOpen && !!canEditTask} onOpenChange={(open) => { if (canEditTask) setStatusRowOpen(open); }}>
+              <Popover.Trigger asChild>
+                <div
+                  title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
+                  className={`inline-flex items-center h-7 px-3 rounded-md text-[11px] font-bold tracking-wider uppercase select-none w-fit transition-all ${
+                    !statusHexColor && (!STATUS_COLORS[statusName] || STATUS_COLORS[statusName].includes('bg-')) 
+                      ? (STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[0] : 'bg-zinc-700') 
+                      : ''
+                  } ${
+                    !canEditTask
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'cursor-pointer hover:opacity-90'
+                  }`}
+                  style={statusHexColor ? { backgroundColor: statusHexColor, color: '#fff' } : { color: '#fff' }}
+                >
+                  <span className="mr-2">
+                    {statusName}
+                  </span>
+                  <div className="w-px h-3 bg-white/30 mr-1.5" />
+                  <ChevronRight className="w-3 h-3 text-white/80" />
+                </div>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                  <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+                    {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                      <div
+                        key={s}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!canEditTask) return;
+                          const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
+                          onUpdate(subtask.id, { status: s, completed: isFinal });
+                          setStatusRowOpen(false);
+                        }}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                      >
+                        {(() => {
+                          const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                          if (customObj?.color) {
+                            return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
+                          }
+                          return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                        })()}
+                        {s}
+                        {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                      </div>
+                    ))}
                   </div>
-                );
-              })()}
-            </div>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+            <button
+              onClick={(e) => { e.stopPropagation(); if (canEditTask) onUpdate(subtask.id, { completed: !subtask.completed }); }}
+              className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${subtask.completed ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-[#27272a] hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200'}`}
+              disabled={!canEditTask}
+            >
+              <Check className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Assignees row */}
@@ -965,6 +995,8 @@ function SubtaskRow({
               </Popover.Portal>
             </Popover.Root>
           </div>
+
+
         </div>
 
         {/* Column 2: Description (Middle) */}
@@ -1172,7 +1204,11 @@ function SubtaskRow({
                               <span className="text-[12px] font-medium text-zinc-300 truncate">{comment.user?.name || 'System'}</span>
                               <span className="text-[10px] text-zinc-500 shrink-0">{dateStr}</span>
                             </div>
-                            <p className="text-[12px] text-zinc-400 leading-relaxed break-words">{comment.content}</p>
+                            <div className="text-[12px] text-zinc-400 leading-relaxed break-words prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-[#1a1a20] prose-pre:border prose-pre:border-zinc-800">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                                {comment.content || ''}
+                              </ReactMarkdown>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1271,6 +1307,19 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
         const found = users?.filter((u: any) => ids.includes(u.id)) ?? [];
         (merged as any).assignees = found;
       }
+
+      if ('status' in data && typeof data.status === 'string' && data.status.toLowerCase() === 'revision') {
+        merged.checklists = (merged.checklists || []).map((c: any) => {
+          if (c.name.toLowerCase() === 'audit') {
+            return {
+              ...c,
+              items: c.items?.map((i: any) => ({ ...i, completed: false })) || []
+            };
+          }
+          return c;
+        });
+      }
+
       return merged;
     });
 
@@ -1329,8 +1378,6 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   return (
     <>
       <div className="mt-8 mb-8">
-        <h3 className="text-sm font-semibold text-zinc-300 mb-3">Subtasks</h3>
-
         <div className="flex flex-col gap-3">
           {/* Subtask rows */}
           {visibleSubtasks.map(subtask => (

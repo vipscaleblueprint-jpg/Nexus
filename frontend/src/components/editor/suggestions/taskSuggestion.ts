@@ -9,7 +9,12 @@ let cachedTasks: any[] | null = null;
 let cachedLists: any[] | null = null;
 
 
-const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
+const getStatusColor = (status: string) => {
+  const colorStr = STATUS_COLORS[status];
+  if (!colorStr) return '#3b82f6';
+  const match = colorStr.match(/bg-\[([^\]]+)\]/);
+  return match ? match[1] : (colorStr.split(' ')[0] || '#3b82f6');
+};
 
 // Frequency badges — derived from status name
 const FREQUENCY_LABELS: Record<string, string> = {

@@ -8,7 +8,12 @@ import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { BlockEditor } from '@/components/ui/BlockEditor';
 
-const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
+const getStatusColor = (status: string) => {
+  const colorStr = STATUS_COLORS[status];
+  if (!colorStr) return '#3b82f6';
+  const match = colorStr.match(/bg-\[([^\]]+)\]/);
+  return match ? match[1] : (colorStr.split(' ')[0] || '#3b82f6');
+};
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -60,15 +65,15 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
   }, [openDropdown, dbUsers.length, listStatuses.length, currentTask.listId]);
 
   let parsedStatusName = currentTask.status;
-  let parsedStatusColor = '#3b82f6';
+  let parsedStatusColor = getStatusColor(parsedStatusName);
   try {
     if (currentTask.status && typeof currentTask.status === 'string' && currentTask.status.startsWith('{')) {
       const parsed = JSON.parse(currentTask.status);
       parsedStatusName = parsed.name || parsed.NAME || currentTask.status;
-      parsedStatusColor = parsed.color || parsed.COLOR || '#3b82f6';
+      parsedStatusColor = parsed.color || parsed.COLOR || getStatusColor(parsedStatusName);
     } else if (currentTask.status && typeof currentTask.status === 'object') {
       parsedStatusName = currentTask.status.name || currentTask.status.NAME || 'Unknown';
-      parsedStatusColor = currentTask.status.color || currentTask.status.COLOR || '#3b82f6';
+      parsedStatusColor = currentTask.status.color || currentTask.status.COLOR || getStatusColor(parsedStatusName);
     }
   } catch (e) { }
   const assignees = currentTask.assignees || [];

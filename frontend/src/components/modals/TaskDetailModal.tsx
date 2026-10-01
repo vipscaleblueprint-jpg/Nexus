@@ -1419,7 +1419,7 @@ export function TaskDetailModalContent({
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map(s => (
                                     <div
@@ -1523,7 +1523,7 @@ export function TaskDetailModalContent({
                         )}
                       </Popover.Trigger>
                       <Popover.Portal>
-                        <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                        <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                             {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -1673,7 +1673,7 @@ export function TaskDetailModalContent({
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
-                          className="z-[200] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                          className="z-[300] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                           align="start"
                           sideOffset={4}
                         >
@@ -1773,7 +1773,7 @@ export function TaskDetailModalContent({
                       </div>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
+                      <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
                         {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map(p => (
                           <div
                             key={p}
@@ -2330,7 +2330,7 @@ export function TaskDetailModalContent({
       {/* Lightbox Modal */}
       {lightboxImage && (
         <div
-          className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
+          className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
           <button
@@ -3046,7 +3046,7 @@ function SubtaskDetailView({
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map((s: string) => (
                                     <div
@@ -3187,7 +3187,7 @@ function SubtaskDetailView({
                       )}
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[200] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                      <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                         <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                           <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                           {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -3349,7 +3349,7 @@ function SubtaskDetailView({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content
-                        className="z-[200] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                        className="z-[300] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                         align="start"
                         sideOffset={4}
                       >
@@ -3443,7 +3443,7 @@ function SubtaskDetailView({
                     </div>
                   </Popover.Trigger>
                   <Popover.Portal>
-                    <Popover.Content className="z-[200] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
+                    <Popover.Content className="z-[300] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
                       <div className="flex flex-col gap-0.5">
                         <div
                           onClick={() => handleUpdatePriority(null)}
@@ -3650,11 +3650,11 @@ function SubtaskDetailView({
                                 </button>
                               </Popover.Trigger>
                               <Popover.Portal>
-                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
-                                  <button onClick={() => { setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[300]" align="end">
+                                  <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
                                     <Pencil className="w-3.5 h-3.5" /> Edit
                                   </button>
-                                  <button onClick={() => { setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                  <button onClick={(e) => { e.stopPropagation(); setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
                                     <Trash2 className="w-3.5 h-3.5" /> Delete
                                   </button>
                                 </Popover.Content>
@@ -3964,7 +3964,7 @@ function SubtaskDetailView({
       )}
       {lightboxImage && (
         <div
-          className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
+          className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
           <button
@@ -4057,7 +4057,7 @@ export function TaskDetailModal(props: Props) {
   
   if (!mounted) return null;
 
-  return createPortal(
+  const content = (
     <AnimatePresence>
       {props.isOpen && fullTask && (
         <motion.div
@@ -4067,8 +4067,8 @@ export function TaskDetailModal(props: Props) {
           transition={{ duration: props.mode === 'full' ? 0 : 0.15 }}
           className={
             props.mode === 'full'
-              ? "absolute inset-0 z-[999999] bg-[#121212] flex flex-col cursor-default"
-              : "fixed inset-0 z-[999999] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+              ? "absolute inset-0 z-50 bg-[#121212] flex flex-col cursor-default"
+              : "fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
           }
           onClick={props.mode === 'full' ? undefined : () => props.onClose()}
         >
@@ -4089,8 +4089,13 @@ export function TaskDetailModal(props: Props) {
           )}
         </motion.div>
       )}
-    </AnimatePresence>,
-    document.body
+    </AnimatePresence>
   );
+
+  if (props.mode === 'full') {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 }
 

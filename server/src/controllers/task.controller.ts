@@ -4,6 +4,13 @@ import { getR2PresignedUrl } from '../services/r2Service';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { io } from '../server';
+import {
+  safeCreateClickUpTask,
+  safeUpdateClickUpTask,
+  safeCreateClickUpComment,
+  mapNexusStatusToClickUp,
+  mapNexusPriorityToClickUp,
+} from '../services/clickupService';
 
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
   const t = taskTitle.toLowerCase();
@@ -144,14 +151,18 @@ export async function getTask(req: Request, res: Response) {
       include: taskInclude,
     });
 
+    let foundSubtask = null;
     if (!task) {
-      const subtask = await prisma.subtask.findUnique({
+      foundSubtask = await prisma.subtask.findUnique({
         where: { id: taskId },
-        select: { taskId: true }
+        include: {
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+          team: { select: { id: true, name: true, color: true } }
+        }
       });
-      if (subtask) {
+      if (foundSubtask) {
         task = await prisma.task.findUnique({
-          where: { id: subtask.taskId },
+          where: { id: foundSubtask.taskId },
           include: taskInclude,
         });
       }
@@ -162,7 +173,7 @@ export async function getTask(req: Request, res: Response) {
     // Cache under the actual task ID, not the requested ID (in case it was a subtask ID)
     await setCache(`task:${task.id}`, task, 300);
 
-    return res.json({ task, cached: false });
+    return res.json({ task, subtask: foundSubtask, cached: false });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -226,33 +237,71 @@ export async function createTask(req: Request, res: Response) {
           blocks = JSON.parse(dayPage.content);
         } catch(e) {}
 
-        let newTasksIdx = -1;
-        for (let i = 0; i < blocks.length; i++) {
-          if (blocks[i].content && blocks[i].content.includes('>New Tasks</')) {
-            newTasksIdx = i;
+        let clientName = task.list?.name || 'Unknown Client';
+        let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === `<h2>${clientName}</h2>`);
+        if (clientHeaderIndex === -1) {
+          blocks.push({
+            id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
+            type: 'text',
+            content: `<h2>${clientName}</h2>`
+          });
+          clientHeaderIndex = blocks.length - 1;
+        }
+
+        let insertClientIndex = clientHeaderIndex + 1;
+        while (insertClientIndex < blocks.length) {
+          const nextBlock = blocks[insertClientIndex];
+          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3') || nextBlock.content === '<p></p>')) {
             break;
           }
+          insertClientIndex++;
         }
-        
-        if (newTasksIdx !== -1) {
-          const escapedTitle = task.title.replace(/"/g, '&quot;');
-          const statusColor = '#3b82f6';
-          const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
-          const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
-          
-          blocks.splice(newTasksIdx + 1, 0, {
-            id: `blk-t-${Date.now()}-${task.id}`,
+                const escapedTitle = task.title.replace(/"/g, '&quot;');
+        const statusColor = '#3b82f6';
+        const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
+        const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
+
+        blocks.splice(insertClientIndex, 0, {
+          id: `blk-t-${Date.now()}-${task.id}`,
+          type: 'text',
+          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}">@${escapedTitle}</span></p>`
+        });
+
+        if (insertClientIndex === blocks.length - 1) {
+           blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+        }
+
+        let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === '<h3>New Tasks</h3>');
+        if (newTasksHeaderIndex === -1) {
+          blocks.push({
+            id: `blk-h-${Date.now()}-NewTasks`,
             type: 'text',
-            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}">@${escapedTitle}</span></p>`
+            content: '<h3>New Tasks</h3>'
           });
-          
-          await prisma.page.update({
-            where: { id: dayPage.id },
-            data: { content: JSON.stringify(blocks) }
-          });
-          
-          io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
+          newTasksHeaderIndex = blocks.length - 1;
         }
+
+        let insertNewTasksIndex = newTasksHeaderIndex + 1;
+        while (insertNewTasksIndex < blocks.length) {
+          const nextBlock = blocks[insertNewTasksIndex];
+          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+            break;
+          }
+          insertNewTasksIndex++;
+        }
+
+        blocks.splice(insertNewTasksIndex, 0, {
+          id: `blk-t-${Date.now()}-${task.id}-n`,
+          type: 'text',
+          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}">@${escapedTitle}</span></p>`
+        });
+        
+        await prisma.page.update({
+          where: { id: dayPage.id },
+          data: { content: JSON.stringify(blocks) }
+        });
+        
+        io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
       }
     } catch (err) {
       console.error('Failed to inject task into daily rollover:', err);
@@ -261,6 +310,41 @@ export async function createTask(req: Request, res: Response) {
     // Broadcast new task to the list room and globally for real-time sync
     io.to(`list:${listId}`).emit('task:created', task);
     io.emit('task:created', task);
+
+    // --- ClickUp Sync (fire-and-forget) ---
+    // Look up whether the target Nexus list is mapped to a ClickUp list
+    (async () => {
+      try {
+        const nexusList = await prisma.list.findUnique({
+          where: { id: listId },
+          select: { externalId: true }
+        });
+        const clickUpListId = nexusList?.externalId?.startsWith('cu:')
+          ? nexusList.externalId.replace('cu:', '')
+          : null;
+
+        if (clickUpListId) {
+          const cuPayload = {
+            name: task.title,
+            description: task.description ?? undefined,
+            status: mapNexusStatusToClickUp(task.status),
+            priority: mapNexusPriorityToClickUp(task.priority),
+            ...(task.dueDate ? { due_date: new Date(task.dueDate).getTime() } : {}),
+            ...(task.startDate ? { start_date: new Date(task.startDate).getTime() } : {}),
+          };
+          const clickUpTaskId = await safeCreateClickUpTask(clickUpListId, cuPayload);
+          if (clickUpTaskId) {
+            // Persist the ClickUp task ID on the Nexus task for future syncs
+            await prisma.task.update({
+              where: { id: task.id },
+              data: { externalId: clickUpTaskId } as any,
+            }).catch(console.error);
+          }
+        }
+      } catch (err) {
+        console.error('[ClickUp] createTask sync error:', err);
+      }
+    })();
 
     return res.status(201).json({ task });
   } catch (err: any) {
@@ -391,6 +475,7 @@ export async function updateTask(req: Request, res: Response) {
         assigneeId: true,
         listId: true,
         creatorId: true,
+        externalId: true,
         assignees: { select: { id: true, name: true } },
         assigneeRoleRestrictions: true,
         checklists: { include: { items: true } },
@@ -400,6 +485,17 @@ export async function updateTask(req: Request, res: Response) {
 
     if (!currentTask) {
       return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (status !== undefined) {
+      const restrictedStatuses = ['in review', 'inreview', 'checking', 'crm'];
+      if (restrictedStatuses.includes(status.toLowerCase())) {
+        // Find if ANY subtask is NOT "Closed"
+        const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => st.status.toLowerCase() !== 'closed');
+        if (hasUnclosedSubtasks) {
+          return res.status(400).json({ error: `Cannot move to ${status}: All subtasks must be Closed first.` });
+        }
+      }
     }
 
     if (status !== undefined && status.toLowerCase() === 'checking') {
@@ -488,6 +584,27 @@ export async function updateTask(req: Request, res: Response) {
 
     // Return the response immediately so the client doesn't wait
     res.json({ task: payload, queued: true });
+
+    // --- ClickUp Sync (fire-and-forget) ---
+    (async () => {
+      try {
+        const clickUpTaskId = currentTask.externalId ?? null;
+        if (clickUpTaskId) {
+          const cuPayload: Record<string, any> = {};
+          if (title !== undefined) cuPayload.name = title;
+          if (description !== undefined) cuPayload.description = description;
+          if (status !== undefined) cuPayload.status = mapNexusStatusToClickUp(status);
+          if (priority !== undefined) cuPayload.priority = mapNexusPriorityToClickUp(priority);
+          if (dueDate !== undefined) cuPayload.due_date = dueDate ? new Date(dueDate).getTime() : null;
+          if (startDate !== undefined) cuPayload.start_date = startDate ? new Date(startDate).getTime() : null;
+          if (Object.keys(cuPayload).length > 0) {
+            await safeUpdateClickUpTask(clickUpTaskId, cuPayload);
+          }
+        }
+      } catch (err) {
+        console.error('[ClickUp] updateTask sync error:', err);
+      }
+    })();
 
     // Background Processing: Cache Invalidation & Audit Logs
     invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all').catch(console.error);
@@ -689,7 +806,7 @@ export async function moveTask(req: Request, res: Response) {
 
     const currentTask = await prisma.task.findUnique({
       where: { id },
-      select: { id: true, status: true, listId: true, creatorId: true },
+      select: { id: true, status: true, listId: true, creatorId: true, externalId: true },
     });
 
     if (!currentTask) {
@@ -721,6 +838,18 @@ export async function moveTask(req: Request, res: Response) {
       io.to(`list:${roomListId}`).emit('task:updated', updated);
     }
     io.emit('task:updated', updated);
+
+    // --- ClickUp Sync: status change (fire-and-forget) ---
+    (async () => {
+      try {
+        const clickUpTaskId = currentTask.externalId ?? null;
+        if (clickUpTaskId && status) {
+          await safeUpdateClickUpTask(clickUpTaskId, { status: mapNexusStatusToClickUp(status) });
+        }
+      } catch (err) {
+        console.error('[ClickUp] moveTask sync error:', err);
+      }
+    })();
 
     // Fire and forget cache invalidation so we don't block the API response
     invalidateCache(`task:${id}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all').catch(err => {
@@ -890,6 +1019,27 @@ export async function createTaskComment(req: Request, res: Response) {
       io.emit('task:comment_added', payload);
       io.emit('task_activity', { taskId, activity });
     }
+
+    // --- ClickUp Sync: mirror comment to ClickUp (fire-and-forget) ---
+    (async () => {
+      try {
+        const taskRecord = await prisma.task.findUnique({
+          where: { id: taskId },
+          select: { externalId: true }
+        });
+        const clickUpTaskId = taskRecord?.externalId ?? null;
+        if (clickUpTaskId && !parentCommentId) {
+          // Only mirror top-level comments (not internal thread replies)
+          const authorName = user?.name || 'Nexus';
+          await safeCreateClickUpComment(
+            clickUpTaskId,
+            `**[${authorName}]** ${content.trim()}`
+          );
+        }
+      } catch (err) {
+        console.error('[ClickUp] createTaskComment sync error:', err);
+      }
+    })();
 
     return res.status(201).json({ comment, activity });
   } catch (err: any) {
@@ -1328,6 +1478,50 @@ export async function createSubtask(req: Request, res: Response) {
       select: { id: true, listId: true, subtasks: taskInclude.subtasks }
     });
     if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+
+        try {
+      const today = new Date();
+      const monthTitle = today.toLocaleString('default', { month: 'long', year: 'numeric' });
+      const dayTitle = today.toLocaleString('default', { weekday: 'long', month: 'short', day: 'numeric' });
+      
+      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
+      if (doc) {
+        const monthPage = await prisma.page.findFirst({ where: { docId: doc.id, title: monthTitle } });
+        if (monthPage) {
+          const dayPage = await prisma.page.findFirst({ where: { docId: doc.id, title: dayTitle, parentPageId: monthPage.id } });
+          if (dayPage) {
+            let blocks = [];
+            try { blocks = JSON.parse(dayPage.content); } catch(e) {}
+            
+            let updated = false;
+            let i = 0;
+            while (i < blocks.length) {
+              if (blocks[i].content && blocks[i].content.includes(`data-id="${taskId}"`) && blocks[i].content.includes('data-mention-type="task"')) {
+                const escapedTitle = subtask.title.replace(/"/g, '&quot;');
+                blocks.splice(i + 1, 0, {
+                  id: `blk-sub-${Date.now()}-${subtask.id}`,
+                  type: 'text',
+                  content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${escapedTitle}" data-mention-type="subtask">@${escapedTitle}</span></p>`
+                });
+                updated = true;
+                i++; // skip new block
+              }
+              i++;
+            }
+            if (updated) {
+              await prisma.page.update({
+                where: { id: dayPage.id },
+                data: { content: JSON.stringify(blocks) }
+              });
+              const { io } = require('../socket');
+              io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
+            }
+          }
+        }
+      }
+    } catch(err) {
+      console.error('Failed to inject subtask', err);
+    }
 
     return res.json({ subtask });
   } catch (err: any) {

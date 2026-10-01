@@ -50,21 +50,21 @@ const requireApiKey = (req: Request, res: Response) => {
   return true;
 };
 
-// Default columns/statuses for client boards
 const DEFAULT_CLIENT_STATUSES = [
-  { name: 'Pending', color: 'amber' },
-  { name: 'In Progress', color: 'pink' },
-  { name: 'Revision', color: 'blue' },
-  { name: 'Waiting', color: 'red' },
-  { name: 'In Review', color: 'orange' },
-  { name: 'Checking', color: 'purple' },
-  { name: 'On-Hold', color: 'zinc' },
-  { name: 'Closed', color: 'emerald' },
-  { name: 'KYC', color: 'emerald' },
-  { name: 'Pin Board', color: 'teal' },
-  { name: 'Daily', color: 'blue' },
-  { name: 'Weekly', color: 'blue' },
-  { name: 'Monthly', color: 'blue' }
+  { name: 'KYC', color: '#1E7E48', groupName: 'Client Details' },
+  { name: 'PIN BOARD', color: '#0F7854', groupName: 'Client Details' },
+  { name: 'DAILY', color: '#0062D6', groupName: 'Recurring' },
+  { name: 'WEEKLY', color: '#0062D6', groupName: 'Recurring' },
+  { name: 'MONTHLY', color: '#0062D6', groupName: 'Recurring' },
+  { name: 'PENDING', color: '#FFC53D', groupName: 'Workflow & Progress' },
+  { name: 'IN PROGRESS', color: '#CF1761', groupName: 'Workflow & Progress' },
+  { name: 'REVISION', color: '#3E63DD', groupName: 'Workflow & Progress' },
+  { name: 'WAITING', color: '#FF0000', groupName: 'Management' },
+  { name: 'IN REVIEW', color: '#C36522', groupName: 'Management' },
+  { name: 'CHECKING', color: '#9E49AB', groupName: 'Management' },
+  { name: 'CRM', color: '#00A6A6', groupName: 'Management' },
+  { name: 'CLOSED', color: '#2C8C5E', groupName: 'Workflow & Progress' },
+  { name: 'ON-HOLD', color: '#808080', groupName: 'Workflow & Progress' },
 ];
 
 async function getClientDashboardFolder() {
@@ -141,6 +141,7 @@ export const syncClients = async (req: Request, res: Response) => {
             externalId: client.id,
             folderId: folder.id,
             spaceId: folder.spaceId,
+            customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
           }
         });
 
@@ -150,6 +151,7 @@ export const syncClients = async (req: Request, res: Response) => {
             data: {
               name: status.name,
               color: status.color,
+              groupName: status.groupName,
               listId: list.id,
             }
           });
@@ -390,7 +392,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
 
     const newTask = await prisma.task.create({
       data: {
-        title: title || 'New Task',
+        title: title ? (clientName ? `${title} - ${clientName}` : title) : (clientName ? `New Task - ${clientName}` : 'New Task'),
         description: prompt || '',
         listId: list.id,
         creatorId: creator.id,

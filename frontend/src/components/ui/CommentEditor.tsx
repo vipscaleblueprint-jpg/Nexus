@@ -7,7 +7,8 @@ import TextStyle from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered } from 'lucide-react';
+import Link from '@tiptap/extension-link';
+import { Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2 } from 'lucide-react';
 
 const colors = [
   '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1', '#d946ef', '#22c55e', '#14b8a6', '#52525b', 'transparent'
@@ -33,7 +34,13 @@ export function CommentEditor({ value, onChange, placeholder = 'Write a comment.
       Color,
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Placeholder.configure({ placeholder })
+      Placeholder.configure({ placeholder }),
+      Link.configure({
+        openOnClick: false,
+        HTMLAttributes: {
+          class: 'text-blue-400 underline cursor-pointer',
+        },
+      })
     ],
     content: value,
     editable: !disabled,
@@ -123,6 +130,23 @@ export function CommentEditor({ value, onChange, placeholder = 'Write a comment.
               </button>
               <button onClick={() => editor.chain().focus().toggleStrike().run()} className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('strike') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}>
                 <Strikethrough className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => {
+                  const previousUrl = editor.getAttributes('link').href;
+                  const url = window.prompt('URL', previousUrl);
+                  
+                  if (url === null) return;
+                  if (url === '') {
+                    editor.chain().focus().extendMarkRange('link').unsetLink().run();
+                    return;
+                  }
+                  
+                  editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+                }}
+                className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('link') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+              >
+                <Link2 className="w-4 h-4" />
               </button>
 
               <div className="w-px h-5 bg-zinc-800 mx-1" />

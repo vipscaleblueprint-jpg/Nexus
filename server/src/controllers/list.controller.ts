@@ -89,19 +89,20 @@ export async function getList(req: Request, res: Response) {
 
 // Default statuses seeded on every new list — mirrors KanbanBoard CATEGORIES
 const DEFAULT_STATUSES = [
-  { name: 'KYC', color: 'emerald', groupName: 'Client Details' },
-  { name: 'Pin Board', color: 'teal', groupName: 'Client Details' },
-  { name: 'Daily', color: 'blue', groupName: 'Recurring' },
-  { name: 'Weekly', color: 'blue', groupName: 'Recurring' },
-  { name: 'Monthly', color: 'blue', groupName: 'Recurring' },
-  { name: 'Pending', color: 'amber', groupName: 'Workflow & Progress' },
-  { name: 'In Progress', color: 'pink', groupName: 'Workflow & Progress' },
-  { name: 'Revision', color: 'blue', groupName: 'Workflow & Progress' },
-  { name: 'Waiting', color: 'red', groupName: 'Workflow & Progress' },
-  { name: 'In Review', color: 'orange', groupName: 'Workflow & Progress' },
-  { name: 'Checking', color: 'purple', groupName: 'Workflow & Progress' },
-  { name: 'On-Hold', color: 'zinc', groupName: 'Workflow & Progress' },
-  { name: 'Closed', color: 'emerald', groupName: 'Workflow & Progress' },
+  { name: 'KYC', color: '#1E7E48', groupName: 'Client Details' },
+  { name: 'PIN BOARD', color: '#0F7854', groupName: 'Client Details' },
+  { name: 'DAILY', color: '#0062D6', groupName: 'Recurring' },
+  { name: 'WEEKLY', color: '#0062D6', groupName: 'Recurring' },
+  { name: 'MONTHLY', color: '#0062D6', groupName: 'Recurring' },
+  { name: 'PENDING', color: '#FFC53D', groupName: 'Workflow & Progress' },
+  { name: 'IN PROGRESS', color: '#CF1761', groupName: 'Workflow & Progress' },
+  { name: 'REVISION', color: '#3E63DD', groupName: 'Workflow & Progress' },
+  { name: 'WAITING', color: '#FF0000', groupName: 'Management' },
+  { name: 'IN REVIEW', color: '#C36522', groupName: 'Management' },
+  { name: 'CHECKING', color: '#9E49AB', groupName: 'Management' },
+  { name: 'CRM', color: '#00A6A6', groupName: 'Management' },
+  { name: 'CLOSED', color: '#2C8C5E', groupName: 'Workflow & Progress' },
+  { name: 'ON-HOLD', color: '#808080', groupName: 'Workflow & Progress' },
 ];
 
 // POST /api/lists
@@ -113,7 +114,7 @@ export async function createList(req: Request, res: Response) {
         name, 
         spaceId: spaceId || null, 
         folderId: folderId || null,
-        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress']
+        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
       },
     });
 

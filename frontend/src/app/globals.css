@@ -35,6 +35,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Ensure typing cursor only on actually typable fields */
@@ -49,6 +51,8 @@ textarea,
 [contenteditable="true"],
 .ProseMirror {
   cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Every native clickable element gets a hand cursor by default; disabled

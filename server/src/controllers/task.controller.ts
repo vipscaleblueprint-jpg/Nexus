@@ -8,9 +8,25 @@ import {
   safeCreateClickUpTask,
   safeUpdateClickUpTask,
   safeCreateClickUpComment,
+  safeCreateClickUpChecklist,
+  safeUpdateClickUpChecklist,
+  safeDeleteClickUpChecklist,
+  safeCreateClickUpChecklistItem,
+  safeUpdateClickUpChecklistItem,
+  safeDeleteClickUpChecklistItem,
+  safeCreateClickUpSubtask,
+  findClickUpChecklistByName,
+  findClickUpSubtaskByName,
   mapNexusStatusToClickUp,
   mapNexusPriorityToClickUp,
+  extractClickUpTaskId,
 } from '../services/clickupService';
+
+// In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
+const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
+const cuChecklistItemIdMap = new Map<string, { cuChecklistId: string; cuItemId: string }>(); // nexusItemId -> { cuChecklistId, cuItemId }
+const cuSubtaskIdMap = new Map<string, string>(); // nexusSubtaskId -> cuSubtaskId
+
 
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
   const t = taskTitle.toLowerCase();
@@ -1483,9 +1499,37 @@ export async function createSubtask(req: Request, res: Response) {
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 
-      select: { id: true, listId: true, subtasks: taskInclude.subtasks }
+      select: { id: true, listId: true, externalId: true, subtasks: taskInclude.subtasks }
     });
     if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+
+    // --- ClickUp Sync: create subtask (fire-and-forget) ---
+    if (task?.externalId) {
+      (async () => {
+        try {
+          const list = await prisma.list.findUnique({ where: { id: task.listId }, select: { externalId: true } });
+          const cuListId = list?.externalId?.startsWith('cu:') ? list.externalId.replace('cu:', '') : null;
+          if (cuListId) {
+            const cuSubtaskId = await safeCreateClickUpSubtask(
+              cuListId,
+              task.externalId!,
+              {
+                name: title,
+                description: description,
+                status: status ? mapNexusStatusToClickUp(status) : undefined,
+                priority: priority ? mapNexusPriorityToClickUp(priority) : undefined,
+              }
+            );
+            if (cuSubtaskId) {
+              cuSubtaskIdMap.set(subtask.id, cuSubtaskId);
+              console.log(`[ClickUp]   ✅ subtask stored in map: ${subtask.id} → ${cuSubtaskId}`);
+            }
+          }
+        } catch (err) {
+          console.error('[ClickUp] createSubtask sync error:', err);
+        }
+      })();
+    }
 
         try {
       const today = new Date();
@@ -1681,11 +1725,14 @@ export async function updateSubtask(req: Request, res: Response) {
       
       // Emit socket events for the newly created audit logs so the frontend updates in real-time
       if (actingUserId) {
+        const actorUser = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
+        const authorName = actorUser?.name || 'Someone';
+
         if (computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)) {
           const act = {
             id: Date.now().toString(),
             type: 'assignment',
-            author: (req as any).user?.name || 'Someone',
+            author: authorName,
             assigneeName: (subtask as any).assignees?.length ? (subtask as any).assignees.map((u: any) => u.name).join(', ') : ((subtask as any).User ? (subtask as any).User.name : 'Unassigned'),
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
@@ -1697,7 +1744,7 @@ export async function updateSubtask(req: Request, res: Response) {
           const act = {
             id: (Date.now() + 1).toString(),
             type: 'status_change',
-            author: (req as any).user?.name || 'Someone',
+            author: authorName,
             oldStatus: undefined,
             newStatus: status,
             subtaskTitle: subtask.title,
@@ -1708,6 +1755,34 @@ export async function updateSubtask(req: Request, res: Response) {
         }
       }
     }
+
+    // --- ClickUp Sync: update subtask (fire-and-forget) ---
+    (async () => {
+      try {
+        let clickUpParentId = cuSubtaskIdMap.get(subtask.id) || null;
+        
+        if (!clickUpParentId) {
+          const parent = await prisma.task.findUnique({ where: { id: taskId }, select: { externalId: true } });
+          if (parent?.externalId) {
+            clickUpParentId = await findClickUpSubtaskByName(parent.externalId, subtask.title);
+            if (clickUpParentId) cuSubtaskIdMap.set(subtask.id, clickUpParentId);
+          }
+        }
+        
+        if (clickUpParentId) {
+          const cuPayload: Record<string, any> = {};
+          if (title !== undefined) cuPayload.name = title;
+          if (description !== undefined) cuPayload.description = description;
+          if (status !== undefined) cuPayload.status = mapNexusStatusToClickUp(status);
+          if (priority !== undefined) cuPayload.priority = mapNexusPriorityToClickUp(priority);
+          if (Object.keys(cuPayload).length > 0) {
+            await safeUpdateClickUpTask(clickUpParentId, cuPayload);
+          }
+        }
+      } catch (err) {
+        console.error('[ClickUp] updateSubtask sync error:', err);
+      }
+    })();
 
     return res.json({ subtask });
   } catch (err: any) {
@@ -1751,6 +1826,51 @@ export async function createChecklist(req: Request, res: Response) {
       include: { items: true },
     });
 
+    // --- ClickUp Sync: create checklist (fire-and-forget) ---
+    (async () => {
+      try {
+        console.log(`[ClickUp] createChecklist sync triggered — nexusChecklistId=${checklist.id}, name="${name}", taskId=${taskId}, subtaskId=${subtaskId || 'none'}`);
+        
+        // If this checklist belongs to a subtask, find the subtask's ClickUp ID
+        let clickUpParentId: string | null = null;
+        if (subtaskId) {
+          clickUpParentId = cuSubtaskIdMap.get(subtaskId) || null;
+          
+          // Fallback: look up subtask by name in ClickUp
+          if (!clickUpParentId) {
+            const sub = await prisma.subtask.findUnique({ where: { id: subtaskId } });
+            const parent = await prisma.task.findUnique({ where: { id: taskId }, select: { externalId: true } });
+            if (sub && parent?.externalId) {
+              clickUpParentId = await findClickUpSubtaskByName(parent.externalId, sub.title);
+              if (clickUpParentId) cuSubtaskIdMap.set(subtaskId, clickUpParentId);
+            }
+          }
+          console.log(`[ClickUp]   subtask externalId=${clickUpParentId}`);
+        } else {
+          // Parent task checklist
+          const parentTask = await prisma.task.findUnique({ where: { id: taskId }, select: { externalId: true } });
+          clickUpParentId = parentTask?.externalId || null;
+          console.log(`[ClickUp]   parent task externalId=${clickUpParentId}`);
+        }
+
+        if (clickUpParentId) {
+          console.log(`[ClickUp]   calling safeCreateClickUpChecklist with id=${clickUpParentId}`);
+          const cuChecklistId = await safeCreateClickUpChecklist(clickUpParentId, name || 'New Checklist');
+          console.log(`[ClickUp]   result cuChecklistId=${cuChecklistId}`);
+          if (cuChecklistId) {
+            cuChecklistIdMap.set(checklist.id, cuChecklistId);
+            console.log(`[ClickUp]   ✅ stored in map: ${checklist.id} → ${cuChecklistId}`);
+          } else {
+            console.warn(`[ClickUp]   ⚠️  safeCreateClickUpChecklist returned null`);
+          }
+        } else {
+          console.warn(`[ClickUp]   ⚠️  no ClickUp parent ID found — sync skipped`);
+        }
+      } catch (err) {
+        console.error('[ClickUp] createChecklist sync error:', err);
+      }
+    })();
+
     return res.json({ checklist });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1768,6 +1888,14 @@ export async function updateChecklist(req: Request, res: Response) {
       include: { items: true },
     });
 
+    // --- ClickUp Sync: rename checklist ---
+    (async () => {
+      try {
+        const cuChecklistId = cuChecklistIdMap.get(checklistId);
+        if (cuChecklistId) await safeUpdateClickUpChecklist(cuChecklistId, name);
+      } catch (err) { console.error('[ClickUp] updateChecklist sync error:', err); }
+    })();
+
     return res.json({ checklist });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1777,9 +1905,15 @@ export async function updateChecklist(req: Request, res: Response) {
 export async function deleteChecklist(req: Request, res: Response) {
   try {
     const { checklistId } = req.params;
-    await prisma.checklist.delete({
-      where: { id: checklistId },
-    });
+    await prisma.checklist.delete({ where: { id: checklistId } });
+
+    // --- ClickUp Sync ---
+    const cuChecklistId = cuChecklistIdMap.get(checklistId);
+    if (cuChecklistId) {
+      safeDeleteClickUpChecklist(cuChecklistId).catch(console.error);
+      cuChecklistIdMap.delete(checklistId);
+    }
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1797,6 +1931,44 @@ export async function createChecklistItem(req: Request, res: Response) {
         checklistId,
       },
     });
+
+    // --- ClickUp Sync: add checklist item ---
+    (async () => {
+      try {
+        // 1. Try the in-memory map first (populated when checklist was created this session)
+        let cuChecklistId = cuChecklistIdMap.get(checklistId);
+
+        // 2. Fallback: if not in map (server restart / pre-existing checklist),
+        //    look it up from ClickUp by matching the checklist name against the parent task
+        if (!cuChecklistId) {
+          const cl = await prisma.checklist.findUnique({
+            where: { id: checklistId },
+            select: { name: true, taskId: true },
+          });
+          if (cl) {
+            const parentTask = await prisma.task.findUnique({
+              where: { id: cl.taskId },
+              select: { externalId: true },
+            });
+            if (parentTask?.externalId) {
+              const taskId = extractClickUpTaskId(parentTask.externalId);
+              const foundId = await findClickUpChecklistByName(taskId, cl.name);
+              if (foundId) {
+                cuChecklistIdMap.set(checklistId, foundId); // cache it for future calls
+                cuChecklistId = foundId;
+              }
+            }
+          }
+        }
+
+        if (cuChecklistId) {
+          const cuItemId = await safeCreateClickUpChecklistItem(cuChecklistId, text || '');
+          if (cuItemId) {
+            cuChecklistItemIdMap.set(item.id, { cuChecklistId, cuItemId });
+          }
+        }
+      } catch (err) { console.error('[ClickUp] createChecklistItem sync error:', err); }
+    })();
 
     return res.json({ item });
   } catch (err: any) {
@@ -1831,6 +2003,21 @@ export async function updateChecklistItem(req: Request, res: Response) {
       data,
     });
 
+    // --- ClickUp Sync: update checklist item ---
+    (async () => {
+      try {
+        const ids = cuChecklistItemIdMap.get(itemId);
+        if (ids) {
+          const cuPayload: { name?: string; resolved?: boolean } = {};
+          if (text !== undefined) cuPayload.name = text;
+          if (completed !== undefined) cuPayload.resolved = completed;
+          if (Object.keys(cuPayload).length > 0) {
+            await safeUpdateClickUpChecklistItem(ids.cuChecklistId, ids.cuItemId, cuPayload);
+          }
+        }
+      } catch (err) { console.error('[ClickUp] updateChecklistItem sync error:', err); }
+    })();
+
     return res.json({ item });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1840,9 +2027,15 @@ export async function updateChecklistItem(req: Request, res: Response) {
 export async function deleteChecklistItem(req: Request, res: Response) {
   try {
     const { itemId } = req.params;
-    await prisma.checklistItem.delete({
-      where: { id: itemId },
-    });
+    await prisma.checklistItem.delete({ where: { id: itemId } });
+
+    // --- ClickUp Sync ---
+    const ids = cuChecklistItemIdMap.get(itemId);
+    if (ids) {
+      safeDeleteClickUpChecklistItem(ids.cuChecklistId, ids.cuItemId).catch(console.error);
+      cuChecklistItemIdMap.delete(itemId);
+    }
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

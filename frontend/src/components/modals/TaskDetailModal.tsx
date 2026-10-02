@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -232,6 +232,7 @@ export function TaskDetailModalContent({
   const [loadingActivities, setLoadingActivities] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
+  const commentEditorRef = useRef<any>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [activeSubtask, setActiveSubtask] = useState<any>(() => {
     if (typeof window !== 'undefined' && task?.subtasks) {
@@ -267,6 +268,26 @@ export function TaskDetailModalContent({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [localDescription, setLocalDescription] = useState(task?.description || '');
   const [localTitle, setLocalTitle] = useState(task?.title || '');
+  const descContentRef = useRef<HTMLDivElement>(null);
+  const [isDescOverflowing, setIsDescOverflowing] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (descContentRef.current) {
+        setIsDescOverflowing(descContentRef.current.scrollHeight > 160);
+      }
+    };
+    checkOverflow();
+    const observer = new ResizeObserver(checkOverflow);
+    if (descContentRef.current) {
+      observer.observe(descContentRef.current);
+      if (descContentRef.current.firstElementChild) {
+        observer.observe(descContentRef.current.firstElementChild);
+      }
+    }
+    return () => observer.disconnect();
+  }, [localDescription, isDescExpanded]);
+
   // State for handling attachments
   const [attachments, setAttachments] = useState<any[]>(() => {
     const existing = task?.attachments || [];
@@ -360,7 +381,7 @@ export function TaskDetailModalContent({
         );
       }
       return (
-        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
+        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
@@ -765,6 +786,8 @@ export function TaskDetailModalContent({
       socket.emit('task_activity', { listId: task.listId, taskId: task.id, activity: act });
     }
   };
+
+  const [isLocalEditing, setIsLocalEditing] = useState(false);
 
   // Start editing: lock the description for this user
   const handleStartEditing = useCallback(() => {
@@ -1815,23 +1838,74 @@ export function TaskDetailModalContent({
                   </div>
                 </div>
 
-                <div
-                  className={`relative p-2 -mx-2 rounded-lg transition-colors hover:bg-zinc-800/20 cursor-text`}
-                  onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
-                  onClick={() => handleStartEditing()}
-                >
-                  <BlockEditor
-                    content={localDescription}
-                    onChange={handleDescChange}
-                    onBlur={handleDescBlur}
-                    editable={!editingUser}
-                    onEditorReady={(editor) => { editorRef.current = editor; }}
-                  />
+                <div className="relative">
+                  <div
+                    ref={descContentRef}
+                  className={`relative p-2 -mx-2 rounded-lg hover:bg-zinc-800/20 cursor-text break-words overflow-hidden transition-[max-height,background-color] duration-300 ease-in-out`}
+                  style={{ maxHeight: (!isLocalEditing && !editingUser && isDescOverflowing && !isDescExpanded) ? 160 : (descContentRef.current ? descContentRef.current.scrollHeight + 100 : 3000) }}
+                  onFocus={(e) => { 
+                    if (canEditTask) {
+                        setIsLocalEditing(true);
+                        setIsDescExpanded(true);
+                        handleStartEditing(); 
+                      } else {
+                        e.target.blur();
+                      }
+                    }}
+                    onClick={() => {
+                      if (canEditTask) {
+                        setIsLocalEditing(true);
+                        setIsDescExpanded(true);
+                        handleStartEditing();
+                      }
+                    }}
+                  >
+                    <BlockEditor
+                      content={localDescription}
+                      onChange={handleDescChange}
+                      onBlur={() => {
+                        setIsLocalEditing(false);
+                        handleDescBlur();
+                      }}
+                      editable={!editingUser}
+                      onEditorReady={(editor) => { editorRef.current = editor; }}
+                    />
 
-                  {(!localDescription || localDescription === '<p></p>' || localDescription === '<p><br></p>') && (
-                    <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-                      Add description...
-                    </div>
+                    {(!localDescription || localDescription === '<p></p>' || localDescription === '<p><br></p>') && (
+                      <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+                        Add description...
+                      </div>
+                    )}
+                    
+                    {!editingUser && isDescOverflowing && !isDescExpanded && (
+                      <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] via-[#121212]/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setIsDescExpanded(true); }}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onFocus={(e) => e.stopPropagation()}
+                          className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-[#1e1e20] hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
+                        >
+                          <ChevronDown className="w-3 h-3" />
+                          Expand
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {isDescOverflowing && !editingUser && isDescExpanded && (
+                    <button
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        setIsDescExpanded(false); 
+                        setIsLocalEditing(false);
+                      }}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onFocus={(e) => e.stopPropagation()}
+                      className="mt-2 flex items-center gap-1.5 px-3 py-1 self-center mx-auto bg-zinc-800/50 hover:bg-zinc-700 border border-zinc-700/30 rounded-md text-[10px] text-zinc-400 font-medium transition-colors shadow-sm cursor-pointer"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                      Collapse
+                    </button>
                   )}
                 </div>
 
@@ -2000,17 +2074,9 @@ export function TaskDetailModalContent({
                             </button>
                           </div>
                         ) : (
-                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
                             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-                              {(() => {
-                                let text = comment.content || '';
-                                workspaceUsers.forEach(u => {
-                                  if (text.includes(`@${u.name}`)) {
-                                    text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
-                                  }
-                                });
-                                return text;
-                              })()}
+                              {comment.content || ''}
                             </ReactMarkdown>
                           </div>
                         )}
@@ -2311,9 +2377,8 @@ export function TaskDetailModalContent({
                           key={u.id}
                           className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
                           onClick={() => {
-                            const before = comment.substring(0, mentionStartIndex);
-                            const after = comment.substring(comment.length);
-                            setComment(`${before}@${u.name} `);
+                            const matchLength = mentionSearch.length + 1;
+                            commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
                             setShowMentionMenu(false);
                             if (!mentionedUsers.some(m => m.id === u.id)) {
                               setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
@@ -2337,6 +2402,7 @@ export function TaskDetailModalContent({
                   </div>
                 )}
                 <CommentEditor
+                  ref={commentEditorRef}
                   id="main-task-comment"
                   value={comment}
                   onChange={(html, text, cursorPosition) => {
@@ -2484,9 +2550,31 @@ function SubtaskDetailView({
   const [isUploading, setIsUploading] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
+  const commentEditorRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
+  const descContentRef = useRef<HTMLDivElement>(null);
+  const [isDescOverflowing, setIsDescOverflowing] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (descContentRef.current) {
+        setIsDescOverflowing(descContentRef.current.scrollHeight > 160);
+      }
+    };
+    checkOverflow();
+    const observer = new ResizeObserver(checkOverflow);
+    if (descContentRef.current) {
+      observer.observe(descContentRef.current);
+      if (descContentRef.current.firstElementChild) {
+        observer.observe(descContentRef.current.firstElementChild);
+      }
+    }
+    return () => observer.disconnect();
+  }, [localDesc, isDescExpanded]);
 
   const markdownComponents = React.useMemo(() => ({
     a: (props: any) => {
@@ -2509,7 +2597,7 @@ function SubtaskDetailView({
         );
       }
       return (
-        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer">
+        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer">
           {rest.children}
         </a>
       );
@@ -2749,6 +2837,8 @@ function SubtaskDetailView({
     tasksApi.updateSubtask(parentTask.id, subtask.id, { priority: newPriority } as any).catch(console.error);
     setIsPriorityOpen(false);
   };
+
+  const [isLocalEditing, setIsLocalEditing] = useState(false);
 
   const handleStartEditing = () => {
     if (socket && subtask) {
@@ -3538,48 +3628,97 @@ function SubtaskDetailView({
                 )}
               </div>
 
-              <div
-                className="flex-1 relative group hover:bg-zinc-800/20 rounded-lg p-2 -mx-2 transition-colors cursor-text"
-                onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
-                onClick={() => handleStartEditing()}
-              >
-                <BlockEditor
-                  content={localDesc}
-                  onChange={(html) => {
-                    setLocalDesc(html);
-                    if (socket && subtask) {
-                      if (debounceRef.current) clearTimeout(debounceRef.current);
-                      debounceRef.current = setTimeout(() => {
-                        socket.emit('task_editing_content', {
+              <div className="relative">
+                <div
+                  ref={descContentRef}
+                  className={`relative p-2 -mx-2 rounded-lg hover:bg-zinc-800/20 cursor-text break-words overflow-hidden transition-[max-height,background-color] duration-300 ease-in-out`}
+                  style={{ maxHeight: (!isLocalEditing && !editingUser && isDescOverflowing && !isDescExpanded) ? 160 : (descContentRef.current ? descContentRef.current.scrollHeight + 100 : 3000) }}
+                  onFocus={(e) => { 
+                    if (canEditTask) {
+                      setIsLocalEditing(true);
+                      setIsDescExpanded(true);
+                      handleStartEditing(); 
+                    } else {
+                      e.target.blur(); 
+                    }
+                  }}
+                  onClick={() => {
+                    if (canEditTask) {
+                      setIsLocalEditing(true);
+                      setIsDescExpanded(true);
+                      handleStartEditing();
+                    }
+                  }}
+                >
+                  <BlockEditor
+                    content={localDesc}
+                    onChange={(html) => {
+                      setLocalDesc(html);
+                      if (socket && subtask) {
+                        if (debounceRef.current) clearTimeout(debounceRef.current);
+                        debounceRef.current = setTimeout(() => {
+                          socket.emit('task_editing_content', {
+                            listId: parentTask.listId,
+                            taskId: subtask.id,
+                            content: html,
+                          });
+                        }, 150);
+                      }
+                    }}
+                    onBlur={() => {
+                      setIsLocalEditing(false);
+                      if (onUpdateTask) {
+                        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
+                        onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+                      }
+                      if (socket && subtask) {
+                        socket.emit('task_editing_end', {
                           listId: parentTask.listId,
                           taskId: subtask.id,
-                          content: html,
+                          userName: currentUser?.name || 'Someone',
                         });
-                      }, 150);
-                    }
-                  }}
-                  onBlur={() => {
-                    if (onUpdateTask) {
-                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
-                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-                    }
-                    if (socket && subtask) {
-                      socket.emit('task_editing_end', {
-                        listId: parentTask.listId,
-                        taskId: subtask.id,
-                        userName: currentUser?.name || 'Someone',
-                      });
-                    }
-                    setEditingUser(null);
-                  }}
-                  editable={!editingUser}
-                  onEditorReady={(editor) => { editorRef.current = editor; }}
-                />
+                      }
+                      setEditingUser(null);
+                    }}
+                    editable={!editingUser}
+                    onEditorReady={(editor) => { editorRef.current = editor; }}
+                  />
 
-                {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
-                  <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-                    Add description...
-                  </div>
+                  {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
+                    <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+                      Add description...
+                    </div>
+                  )}
+
+                  {!editingUser && isDescOverflowing && !isDescExpanded && (
+                    <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] via-[#121212]/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setIsDescExpanded(true); }}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onFocus={(e) => e.stopPropagation()}
+                        className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-[#1e1e20] hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
+                      >
+                        <ChevronDown className="w-3 h-3" />
+                        Expand
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {isDescOverflowing && !editingUser && isDescExpanded && (
+                  <button
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setIsDescExpanded(false); 
+                      setIsLocalEditing(false);
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onFocus={(e) => e.stopPropagation()}
+                    className="mt-2 flex items-center gap-1.5 px-3 py-1 self-center mx-auto bg-zinc-800/50 hover:bg-zinc-700 border border-zinc-700/30 rounded-md text-[10px] text-zinc-400 font-medium transition-colors shadow-sm cursor-pointer"
+                  >
+                    <ChevronUp className="w-3 h-3" />
+                    Collapse
+                  </button>
                 )}
               </div>
 
@@ -3729,17 +3868,9 @@ function SubtaskDetailView({
                           </button>
                         </div>
                       ) : (
-                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
                           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-                            {(() => {
-                              let text = c.content || '';
-                              (workspaceUsers || []).forEach(u => {
-                                if (text.includes(`@${u.name}`)) {
-                                  text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
-                                }
-                              });
-                              return text;
-                            })()}
+                              {c.content || ''}
                           </ReactMarkdown>
                         </div>
                       )}
@@ -3988,9 +4119,8 @@ function SubtaskDetailView({
                         key={u.id}
                         className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
                         onClick={() => {
-                          const before = comment.substring(0, mentionStartIndex);
-                          const after = comment.substring(comment.length);
-                          setComment(`${before}@${u.name} `);
+                          const matchLength = mentionSearch.length + 1;
+                          commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
                           setShowMentionMenu(false);
                           if (!mentionedUsers.some(m => m.id === u.id)) {
                             setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
@@ -4014,6 +4144,7 @@ function SubtaskDetailView({
                 </div>
               )}
               <CommentEditor
+                  ref={commentEditorRef}
                   id="subtask-comment"
                   value={comment}
                   onChange={(html, text, cursorPosition) => {
@@ -4177,7 +4308,7 @@ export function TaskDetailModal(props: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 1 }}
             transition={{ duration: 0 }}
-            className="absolute inset-0 z-[500] bg-[#121212] flex flex-col cursor-default"
+            className="absolute inset-0 z-[100] bg-[#121212] flex flex-col cursor-default"
           >
             <TaskDetailModalContent
               {...props}
@@ -4220,3 +4351,4 @@ export function TaskDetailModal(props: Props) {
 }
 
 // Force hot reload
+

@@ -255,6 +255,22 @@ export function KanbanBoard({ tasks, onTaskMove,
   // Snapshot of localStatuses at drag start — used to rollback on cancel
   const localStatusesSnapshotRef = useRef<any[]>([]);
 
+  // Apply grabbing cursor globally on document.body during drag — zero-cost, no re-renders
+  useEffect(() => {
+    const isDragging = !!(activeTask || activeGroup || activeColumn);
+    if (isDragging) {
+      document.body.style.cursor = 'grabbing';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [activeTask, activeGroup, activeColumn]);
+
   // Close dropdown on outside click or scroll
   useEffect(() => {
     if (!openGroupMenu) return;

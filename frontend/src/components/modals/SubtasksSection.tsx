@@ -68,6 +68,28 @@ function SubtaskDescription({
   const [desc, setDesc] = useState(subtask.description || '');
   const [expanded, setExpanded] = useState(false);
   const [editingUser, setEditingUser] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (contentRef.current) {
+        setIsOverflowing(contentRef.current.scrollHeight > 160);
+      }
+    };
+    
+    checkOverflow();
+    const observer = new ResizeObserver(checkOverflow);
+    if (contentRef.current) {
+      observer.observe(contentRef.current);
+      // Also observe the inner editor just in case
+      if (contentRef.current.firstElementChild) {
+        observer.observe(contentRef.current.firstElementChild);
+      }
+    }
+    
+    return () => observer.disconnect();
+  }, [desc, expanded]);
 
   useEffect(() => {
     if (!isEditing && !editingUser) {
@@ -153,7 +175,8 @@ function SubtaskDescription({
       >
         <div className="flex items-start gap-1.5 min-w-0">
           <div className="flex-1 flex flex-col gap-1 min-w-0">
-            <div className={`relative ${!isEditing && desc.length > 60 && !expanded ? 'max-h-[60px] overflow-hidden' : ''}`}>
+            <div ref={contentRef} style={{ maxHeight: (!isEditing && isOverflowing && !expanded) ? 160 : (contentRef.current ? contentRef.current.scrollHeight + 100 : 3000) }} className={`relative prose-sm text-xs break-words overflow-hidden transition-[max-height] duration-300 ease-in-out`}>
+
               <BlockEditor
                 content={desc}
                 onChange={(val) => {
@@ -172,19 +195,33 @@ function SubtaskDescription({
                 editable={!editingUser && !subtask.completed && !!canEditTask}
               />
               
-              {!isEditing && desc.length > 60 && !expanded && (
-                <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-zinc-900/50 to-transparent pointer-events-none" />
+              {isOverflowing && !expanded && (
+                <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] via-[#121212]/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+                  <button 
+                    onMouseDown={(e) => e.preventDefault()}
+                    onFocus={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+                    className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-[#1e1e20] hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
+                  >
+                    <ChevronDown className="w-3 h-3" />
+                    Expand
+                  </button>
+                </div>
               )}
             </div>
 
-            {desc.length > 60 && !editingUser && !isEditing && (
+            {isOverflowing && expanded && (
               <button
-                onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-                className="text-zinc-500 hover:text-zinc-300 text-[10px] font-semibold self-start hover:underline mt-0.5 cursor-pointer"
+                onClick={(e) => { e.stopPropagation(); setExpanded(false); setIsEditing(false); }}
+                onMouseDown={(e) => e.preventDefault()}
+                onFocus={(e) => e.stopPropagation()}
+                className="mt-2 flex items-center gap-1.5 px-3 py-1 self-center mx-auto bg-zinc-800/50 hover:bg-zinc-700 border border-zinc-700/30 rounded-md text-[10px] text-zinc-400 font-medium transition-colors shadow-sm cursor-pointer"
               >
-                {expanded ? 'See less' : 'See more'}
+                <ChevronUp className="w-3 h-3" />
+                Collapse
               </button>
             )}
+            
           </div>
         </div>
         {editingUser && !isEditing && (
@@ -367,7 +404,7 @@ function SubtaskRow({
   const [statusRowOpen, setStatusRowOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState<number | undefined>(undefined);
   const resizeRef = useRef<HTMLDivElement>(null);
-  const priorityColor = subtask.priority ? PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400' : 'text-zinc-600';
+  const priorityColor = 'text-zinc-400';
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleVal, setTitleVal] = useState(subtask.title);
@@ -584,7 +621,7 @@ function SubtaskRow({
                   if (subtask.completed) return;
                   setIsEditingTitle(true);
                 }}
-                className={`text-[14px] font-bold truncate transition-colors ${subtask.completed ? 'text-zinc-600 line-through cursor-not-allowed' : 'text-zinc-100 hover:text-white cursor-pointer hover:underline decoration-zinc-500 underline-offset-2'}`}
+                className={`text-[14px] font-bold truncate transition-colors ${subtask.completed ? 'text-zinc-600 line-through cursor-not-allowed' : 'text-zinc-100 hover:text-white cursor-pointer hover:bg-zinc-800/80 px-1.5 py-0.5 -ml-1.5 rounded-md'}`}
               >
                 {subtask.title}
               </button>
@@ -654,7 +691,7 @@ function SubtaskRow({
 
           {/* Status row */}
           <div className="flex items-center gap-3">
-            {subtask.completed ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
+            {subtask.completed ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 text-zinc-500`} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className={`w-3.5 h-3.5 shrink-0 text-zinc-500`} /> : <CustomCircleDot className={`w-3.5 h-3.5 shrink-0 text-zinc-500`} />)}
             
             <Popover.Root open={statusRowOpen && !!canEditTask} onOpenChange={(open) => { if (canEditTask) setStatusRowOpen(open); }}>
               <Popover.Trigger asChild>
@@ -662,14 +699,14 @@ function SubtaskRow({
                   title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
                   className={`inline-flex items-center h-7 px-3 rounded-md text-[11px] font-bold tracking-wider uppercase select-none w-fit transition-all ${
                     !statusHexColor && (!STATUS_COLORS[statusName] || STATUS_COLORS[statusName].includes('bg-')) 
-                      ? (STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[0] : 'bg-zinc-700') 
-                      : ''
+                      ? 'bg-zinc-800/50 text-zinc-400' 
+                      : 'bg-zinc-800/50 text-zinc-400'
                   } ${
                     !canEditTask
                       ? 'opacity-50 cursor-not-allowed'
                       : 'cursor-pointer hover:opacity-90'
                   }`}
-                  style={statusHexColor ? { backgroundColor: statusHexColor, color: '#fff' } : { color: '#fff' }}
+                  style={{}}
                 >
                   <span className="mr-2">
                     {statusName}
@@ -697,14 +734,14 @@ function SubtaskRow({
                           const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
                           if (customObj?.color) {
                               if ((s || '').toUpperCase() === 'KYC') {
-                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                                return <CustomCircleDotted className="w-3 h-3 shrink-0 text-zinc-500" />;
                               }
-                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                              return <CustomCircleDot className="w-3 h-3 shrink-0 text-zinc-500" />;
                             }
                           if ((s || '').toUpperCase() === 'KYC') {
-                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 text-zinc-500`} />;
                             }
-                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                            return <CustomCircleDot className={`w-3 h-3 shrink-0 text-zinc-500`} />;
                         })()}
                         {s}
                         {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -978,7 +1015,7 @@ function SubtaskRow({
                         onClick={() => { onUpdate(subtask.id, { priority: p }); setPriorityOpen(false); }}
                         className="flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer"
                       >
-                        <Flag className={`w-3.5 h-3.5 ${PRIORITY_COLORS[p]}`} />
+                        <Flag className={`w-3.5 h-3.5 text-zinc-400`} />
                         <span className="capitalize">{p.toLowerCase()}</span>
                         {subtask.priority === p && <Check className="w-3.5 h-3.5 ml-auto text-blue-400" />}
                       </button>
@@ -1452,3 +1489,6 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
 
 
 // Force hot reload
+
+
+

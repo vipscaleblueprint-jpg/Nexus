@@ -31,44 +31,47 @@ export const taskSuggestion = {
       // Fetch tasks (with caching)
       // Use tasksIndex and allLists from Zustand store for instant suggestions
       const storeState = useAppStore.getState();
-      const allTasks = Object.values(storeState.tasksIndex || {});
+      const tasksIndex = storeState.tasksIndex || {};
       const allLists = storeState.allLists || [];
       cachedLists = allLists;
-
       const search = (query || '').toLowerCase();
 
-      // ── Task items ────────────────────────────────────────────────────────────
-      const allTasksAndSubtasks: any[] = [];
-      allTasks.forEach((task: any) => {
-        allTasksAndSubtasks.push(task);
-        if (task.subtasks && task.subtasks.length > 0) {
-          task.subtasks.forEach((st: any) => {
-            allTasksAndSubtasks.push({
-              ...st,
-              isSubtask: true,
-              list: task.list,
-              listId: task.listId,
-            });
+      const taskItems: any[] = [];
+
+      for (const key in tasksIndex) {
+        if (taskItems.length >= 50) break;
+        const task = tasksIndex[key];
+        
+        if (!search || (task.title || '').toLowerCase().includes(search)) {
+          taskItems.push({
+            ...task,
+            type: 'task',
+            name: task.title,
+            statusColor: getStatusColor(task.status || ''),
+            frequencyLabel: FREQUENCY_LABELS[task.status || ''] || null,
+            listName: task.list?.name || '',
+            listId: task.listId || task.list?.id || '',
           });
         }
-      });
 
-      const taskItems = allTasksAndSubtasks
-        .filter(t => {
-          if (!search) return true;
-          return (t.title || '').toLowerCase().includes(search);
-        })
-        
-        .map(t => ({
-          ...t,
-          type: 'task',
-          name: t.isSubtask ? `└─ ${t.title}` : t.title,
-          statusColor: getStatusColor(t.status || ''),
-          frequencyLabel: FREQUENCY_LABELS[t.status || ''] || null,
-          // Board/list info for chip and display
-          listName: t.list?.name || '',
-          listId: t.listId || t.list?.id || '',
-        }));
+        if (task.subtasks && task.subtasks.length > 0) {
+          for (const st of task.subtasks) {
+            if (taskItems.length >= 50) break;
+            if (!search || (st.title || '').toLowerCase().includes(search)) {
+              taskItems.push({
+                ...st,
+                isSubtask: true,
+                type: 'task',
+                name: `└─ ${st.title}`,
+                statusColor: getStatusColor(st.status || ''),
+                frequencyLabel: FREQUENCY_LABELS[st.status || ''] || null,
+                listName: task.list?.name || '',
+                listId: task.listId || task.list?.id || '',
+              });
+            }
+          }
+        }
+      }
 
       // ── Board/list items ──────────────────────────────────────────────────────
       // Each allLists entry = { list: { id, name, color, icon, ... }, spaceName?, folderName? }

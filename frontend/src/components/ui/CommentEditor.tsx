@@ -24,7 +24,11 @@ interface CommentEditorProps {
   onSubmit?: () => void;
 }
 
-export function CommentEditor({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit }: CommentEditorProps) {
+export interface CommentEditorRef {
+  insertMention: (name: string, matchLength: number, userId: string) => void;
+}
+
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit }, ref) => {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -37,6 +41,7 @@ export function CommentEditor({ value, onChange, placeholder = 'Write a comment.
       Placeholder.configure({ placeholder }),
       Link.configure({
         openOnClick: false,
+        protocols: ['mention'],
         HTMLAttributes: {
           class: 'text-blue-400 underline cursor-pointer',
         },
@@ -63,6 +68,23 @@ export function CommentEditor({ value, onChange, placeholder = 'Write a comment.
       }
     }
   });
+
+  React.useImperativeHandle(ref, () => ({
+    insertMention: (name: string, matchLength: number, userId: string) => {
+      if (!editor) return;
+      const { from } = editor.state.selection;
+      // We insert a link with href mention://userId
+      editor.chain().focus().deleteRange({ from: from - matchLength, to: from })
+        .insertContent([
+          {
+            type: 'text',
+            text: `@${name}`,
+            marks: [{ type: 'link', attrs: { href: `mention://${userId}` } }]
+          },
+          { type: 'text', text: ' ' }
+        ]).run();
+    }
+  }));
 
   React.useEffect(() => {
     if (editor && value === '' && editor.getHTML() !== '<p></p>') {
@@ -173,4 +195,4 @@ export function CommentEditor({ value, onChange, placeholder = 'Write a comment.
       <div><EditorContent editor={editor} /></div>
     </div>
   );
-}
+});

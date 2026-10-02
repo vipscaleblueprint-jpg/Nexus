@@ -4,19 +4,14 @@ import { memo, useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
+import { Check, CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
+import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { canUserEditTask } from '@/lib/permissions';
 
-const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="10" />
-    <circle cx="12" cy="12" r="7" fill="currentColor" stroke="none" />
-  </svg>
-);
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -44,7 +39,48 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
   const [isDescOpen, setIsDescOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'date' | 'priority' | null>(null);
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache } = useAppStore();
+
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists } = useAppStore();
+
+  const orderedListStatuses = useMemo(() => {
+    const sortedInternals = [...(listStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const listObj = allLists.find((l: any) => l.list?.id === (task as any)?.listId || l.id === (task as any)?.listId);
+    const list = listObj?.list || listObj;
+
+    if (!list?.customGroups || list.customGroups.length === 0) {
+      return sortedInternals.filter(s => {
+        if (!list?.customGroups) return true;
+        const sName = (s.name || s.status || s.title || '').toUpperCase();
+        return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
+      });
+    }
+
+    const finalStatuses: any[] = [];
+    const processed = new Set<string>();
+
+    list.customGroups.forEach((groupName: string) => {
+      const groupStatuses = sortedInternals.filter(s => s.groupName === groupName);
+      groupStatuses.forEach(s => {
+        const sName = s.name || s.status || s.title || '';
+        finalStatuses.push(s);
+        processed.add(sName);
+      });
+    });
+
+    sortedInternals.forEach(s => {
+      const sName = s.name || s.status || s.title || '';
+      if (!processed.has(sName)) {
+        if (!list.customGroups.some((g: string) => g.toUpperCase() === sName.toUpperCase())) {
+          finalStatuses.push(s);
+          processed.add(sName);
+        }
+      }
+    });
+
+    return finalStatuses;
+  }, [listStatuses, allLists, (task as any)?.listId]);
+
+  
 
   useEffect(() => {
     let cancelled = false;
@@ -276,7 +312,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
               return isClosed ? (
                 <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
               ) : statusStr.toUpperCase() === 'KYC' ? (
-                <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+                <CustomCircleDotted className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
               ) : (
                 <CustomCircleDot className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
               );
@@ -285,21 +321,67 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           </div>
           {openDropdown === 'status' && (
             <PortalDropdown triggerRef={statusTriggerRef} onClose={closeDropdown}>
-              <div className="w-36 max-h-64 overflow-y-auto custom-scrollbar">
-                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800">Change Status</div>
-                {listStatuses.length > 0 ? (
-                  listStatuses.map(s => (
-                    <div
-                      key={s.id || s.name}
-                      className={`px-2 py-1.5 text-xs rounded cursor-pointer transition-colors font-medium ${statusStr === s.name ? 'bg-indigo-500/20 text-indigo-300' : 'text-zinc-300 hover:bg-zinc-700/50'}`}
-                      onClick={() => handleStatusChange(s.name)}
-                    >
-                      {s.name}
-                    </div>
-                  ))
+              <div className="w-48 max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pb-1.5 px-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl">
+                <div className="px-2 pt-2 pb-1 text-[10px] text-zinc-500 font-bold tracking-wider uppercase sticky top-0 bg-[#121212] z-10 mb-0.5">Change Status</div>
+                {orderedListStatuses.length > 0 ? (
+                  orderedListStatuses.map(s => {
+                    const statusName = s.name || s.status || s.title;
+                    const customObj = s;
+                    const getHexColor = (color: string) => {
+                      const colors: Record<string, string> = {
+                        slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+                        red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+                        green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+                        blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+                        pink: '#ec4899', rose: '#f43f5e'
+                      };
+                      return colors[color] || color;
+                    };
+                    
+                    const STATUS_COLORS: Record<string, string> = {
+                      PENDING: 'text-[#FFC53D]',
+                      'IN PROGRESS': 'text-[#CF1761]',
+                      CLOSED: 'text-[#2C8C5E]',
+                      'KYC': 'text-[#1E7E48]',
+                      'PIN BOARD': 'text-[#0F7854]',
+                      'DAILY': 'text-[#0062D6]',
+                      'WEEKLY': 'text-[#0062D6]',
+                      'MONTHLY': 'text-[#0062D6]',
+                      'REVISION': 'text-[#3E63DD]',
+                      'WAITING': 'text-[#FF0000]',
+                      'IN REVIEW': 'text-[#C36522]',
+                      'CHECKING': 'text-[#9E49AB]',
+                      'CRM': 'text-[#00A6A6]',
+                      'ON-HOLD': 'text-[#808080]',
+                    };
+
+                    return (
+                      <div
+                        key={s.id || statusName}
+                        onClick={() => handleStatusChange(statusName)}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${statusStr === statusName ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                      >
+                        {(() => {
+                          if (customObj?.color) {
+                            if ((statusName || '').toUpperCase() === 'KYC') {
+                              return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                            }
+                            return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                          }
+                          
+                          if ((statusName || '').toUpperCase() === 'KYC') {
+                            return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500'}`} />;
+                          }
+                          return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500'}`} />;
+                        })()}
+                        <span className="uppercase">{statusName}</span>
+                        {statusName === statusStr && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                      </div>
+                    );
+                  })
                 ) : (
                   ['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
-                    <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium" onClick={() => handleStatusChange(s)}>
+                    <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium uppercase" onClick={() => handleStatusChange(s)}>
                       {s}
                     </div>
                   ))

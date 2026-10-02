@@ -1,4 +1,4 @@
-import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES } from '@/components/modals/TaskDetailModal';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
@@ -11,12 +11,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 
 
-const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="10"></circle>
-    <circle cx="12" cy="12" r="3" fill="currentColor"></circle>
-  </svg>
-);
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -163,21 +157,29 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, mentionType, globalTask]);
 
+  // Pre-populate statuses from store cache immediately — zero network latency
+  useEffect(() => {
+    if (!taskData?.listId || fallbackListStatuses.length > 0) return;
+    const entry = allLists.find((l: any) => l.list?.id === taskData.listId || l.id === taskData.listId);
+    const cached = entry?.list || entry;
+    if (cached?.statuses?.length > 0) {
+      setFallbackListStatuses(cached.statuses);
+    } else {
+      spacesApi.getList(taskData.listId).then(res => {
+        if (res?.list?.statuses) setFallbackListStatuses(res.list.statuses);
+      }).catch(console.error);
+    }
+  }, [taskData?.listId, allLists]);
+
   useEffect(() => {
     let cancelled = false;
     if (openDropdown === 'assignee' && !hasLoadedUsers) {
       loadUsers().catch(console.error);
     } else if (openDropdown === 'team' && !hasLoadedTeams) {
       loadTeams().catch(console.error);
-    } else if (openDropdown === 'status' && listStatuses.length === 0 && taskData?.listId) {
-      spacesApi.getList(taskData.listId).then(res => {
-        if (!cancelled && res?.list?.statuses) {
-          setFallbackListStatuses(res.list.statuses);
-        }
-      }).catch(console.error);
     }
     return () => { cancelled = true; };
-  }, [openDropdown, hasLoadedUsers, hasLoadedTeams, loadUsers, loadTeams, listStatuses.length, taskData?.listId]);
+  }, [openDropdown, hasLoadedUsers, hasLoadedTeams, loadUsers, loadTeams]);
   
   if (mentionType === 'status') {
     let statusObj = null;
@@ -316,7 +318,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           {taskStatus === 'Closed' || taskStatus === 'CLOSED' || taskStatus === 'DONE' ? (
             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor, fill: 'transparent' }} />
           ) : ((taskStatus || '').toUpperCase() === 'KYC' ? (
-            <CircleDashed className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
+            <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
           ) : (
             <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
           ))}
@@ -461,19 +463,29 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
           <div className="w-48 py-1">
             <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Change Status</div>
-            {listStatuses.length > 0 ? listStatuses.map((s: any) => (
-              <button
-                key={s.id}
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(s.name); }}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 cursor-pointer transition-colors"
-              >
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
-                <span className="text-zinc-300">{s.name}</span>
-                {s.name === parsedStatusName && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto" />}
-              </button>
-            )) : (
-              <div className="px-3 py-2 text-xs text-zinc-500 italic">Loading statuses...</div>
-            )}
+            {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
+              const isActive = statusName === parsedStatusName;
+              const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
+              const colorHex = customObj?.color || null;
+              const textColorClass = STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[1] : 'text-zinc-500';
+              return (
+                <button
+                  key={statusName}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(statusName); }}
+                  className={`w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${
+                    isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'
+                  }`}
+                >
+                  {(statusName || '').toUpperCase() === 'KYC' ? (
+                    <CustomCircleDotted className="w-3 h-3 shrink-0" style={colorHex ? { color: colorHex } : undefined} />
+                  ) : (
+                    <CustomCircleDot className={`w-3 h-3 shrink-0 ${!colorHex ? textColorClass : ''}`} style={colorHex ? { color: colorHex } : undefined} />
+                  )}
+                  <span>{statusName}</span>
+                  {isActive && <CheckCircle2 className="w-3 h-3 ml-auto opacity-70" />}
+                </button>
+              );
+            })}
           </div>
         </PortalDropdown>
       )}

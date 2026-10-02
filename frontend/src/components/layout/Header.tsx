@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/store";
 import { User } from "@/lib/types";
 import { authApi } from "@/api";
 import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
+import { ClickUpStatusPanel } from "./ClickUpStatusPanel";
 import { motion, AnimatePresence } from "framer-motion";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -74,6 +75,10 @@ export function Header() {
           <span className="text-xs font-semibold text-zinc-200">{title}</span>
         </div>
 
+        <div className="flex items-center gap-2">
+          {Array.isArray((activeUser as any).roles) && (activeUser as any).roles.includes('DEV') && (
+            <ClickUpStatusPanel />
+          )}
         <div className="relative text-xs">
           <button
             onClick={() => setIsProfileOpen(!isProfileOpen)}
@@ -206,6 +211,7 @@ export function Header() {
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useState, useCallback, useMemo } from 'react';
-import { CornerDownLeft, Layout, Search, Filter, Folder, ListTodo, X, ChevronRight, Hash } from 'lucide-react';
+import { CornerDownLeft, Layout, Search, Filter, Folder, ListTodo, X, ChevronRight, Hash, CircleDashed } from 'lucide-react';
+import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import * as Popover from '@radix-ui/react-popover';
 
 type FilterType = 'all' | 'task' | 'board';
@@ -254,10 +255,17 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                         <div className="flex items-center gap-2">
                           {task.status && (
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <div 
-                                className="w-1.5 h-1.5 rounded-full shadow-sm"
-                                style={{ backgroundColor: task.statusColor }}
-                              />
+                              {(task.status || '').toUpperCase() === 'KYC' ? (
+                                <CustomCircleDotted 
+                                  className="w-3 h-3 shrink-0"
+                                  style={{ color: task.statusColor }}
+                                />
+                              ) : (
+                                <CustomCircleDot
+                                  className="w-3 h-3 shrink-0"
+                                  style={{ color: task.statusColor }}
+                                />
+                              )}
                               <span className="text-[10px] font-medium text-zinc-500">
                                 {task.status}
                               </span>

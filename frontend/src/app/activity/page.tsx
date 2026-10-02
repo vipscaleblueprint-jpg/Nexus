@@ -36,8 +36,16 @@ export default function ActivityPage() {
       fetchNotifications();
     };
 
+    const handleClearTask = () => {
+      setSelectedTask(null);
+    };
+
     window.addEventListener('notification_received', handleNewNotification);
-    return () => window.removeEventListener('notification_received', handleNewNotification);
+    window.addEventListener('clear_activity_task', handleClearTask);
+    return () => {
+      window.removeEventListener('notification_received', handleNewNotification);
+      window.removeEventListener('clear_activity_task', handleClearTask);
+    };
   }, []);
 
   const handleClear = async (id: string) => {

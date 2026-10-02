@@ -87,14 +87,27 @@ export async function createExternalList(req: Request, res: Response) {
       ? Array.from(new Set(statuses.map((s: any) => s.groupName).filter(Boolean))) as string[]
       : ['Client Details', 'Recurring', 'Workflow & Progress'];
 
-    const list = await prisma.list.create({
-      data: {
+    let list = await prisma.list.findFirst({
+      where: {
         name,
-        spaceId: targetSpaceId || null,
         folderId: targetFolderId || null,
-        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+        spaceId: targetSpaceId || null
       }
     });
+
+    if (!list) {
+      list = await prisma.list.create({
+        data: {
+          name,
+          spaceId: targetSpaceId || null,
+          folderId: targetFolderId || null,
+          customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+        }
+      });
+    } else {
+      // Return early if the list already exists (to avoid duplicate status seeding)
+      return res.status(200).json({ list });
+    }
 
     // We will use standard DEFAULT_STATUSES but NEVER rename KYC to list.name
     // (As requested: "instead of names of the boards it should be kyc")

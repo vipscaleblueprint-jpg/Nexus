@@ -1,4 +1,4 @@
-import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot } from '@/components/modals/TaskDetailModal';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
@@ -11,12 +11,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 
 
-const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="10"></circle>
-    <circle cx="12" cy="12" r="3" fill="currentColor"></circle>
-  </svg>
-);
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400',
@@ -316,7 +310,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           {taskStatus === 'Closed' || taskStatus === 'CLOSED' || taskStatus === 'DONE' ? (
             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor, fill: 'transparent' }} />
           ) : ((taskStatus || '').toUpperCase() === 'KYC' ? (
-            <CircleDashed className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
+            <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
           ) : (
             <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
           ))}

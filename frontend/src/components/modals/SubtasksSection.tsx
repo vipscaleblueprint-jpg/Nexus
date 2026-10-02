@@ -9,18 +9,12 @@ import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, su
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
-import { ALL_STATUSES, STATUS_COLORS } from './TaskDetailModal';
+import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 
-const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="10" />
-    <circle cx="12" cy="12" r="7" fill="currentColor" stroke="none" />
-  </svg>
-);
 const getHexColor = (color: string) => {
   const colors: Record<string, string> = {
     slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
@@ -257,7 +251,7 @@ function DatePickerPopover({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
-          className="z-[200] w-[260px] p-3 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
+          className="z-[9999] w-[260px] p-3 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
           side="bottom"
           align="start"
           sideOffset={4}
@@ -530,11 +524,13 @@ function SubtaskRow({
                     onClick={(e) => { e.stopPropagation(); if (canEditTask) setStatusOpen(true); }}
                     className={`flex items-center justify-center cursor-pointer transition-transform duration-200 ${canEditTask ? 'hover:scale-110 active:scale-95' : 'opacity-50 cursor-not-allowed'}`}
                   >
-                    {subtask.completed ? <CheckCircle2 className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CircleDashed className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
+
+                    {subtask.completed ? <CheckCircle2 className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
+                  
                   </div>
                 </Popover.Trigger>
                 <Popover.Portal>
-                  <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                  <Popover.Content className="z-[9999] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                     <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                       {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
                         <div
@@ -550,10 +546,10 @@ function SubtaskRow({
                         >
                           {(() => {
                             const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                            if (customObj?.color) {
-                              return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
+                            if ((s || '').toUpperCase() === 'KYC') {
+                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
                             }
-                            return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
                           })()}
                           {s}
                           {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -658,7 +654,7 @@ function SubtaskRow({
 
           {/* Status row */}
           <div className="flex items-center gap-3">
-            {subtask.completed ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
+            {subtask.completed ? <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-3.5 h-3.5 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
             
             <Popover.Root open={statusRowOpen && !!canEditTask} onOpenChange={(open) => { if (canEditTask) setStatusRowOpen(open); }}>
               <Popover.Trigger asChild>
@@ -683,7 +679,7 @@ function SubtaskRow({
                 </div>
               </Popover.Trigger>
               <Popover.Portal>
-                <Popover.Content className="z-[200] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                <Popover.Content className="z-[9999] w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                   <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                     {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
                       <div
@@ -700,9 +696,15 @@ function SubtaskRow({
                         {(() => {
                           const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
                           if (customObj?.color) {
-                            return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
-                          }
-                          return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                              if ((s || '').toUpperCase() === 'KYC') {
+                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                              }
+                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                            }
+                          if ((s || '').toUpperCase() === 'KYC') {
+                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                            }
+                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
                         })()}
                         {s}
                         {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -751,7 +753,7 @@ function SubtaskRow({
                   )}
                 </Popover.Trigger>
                 <Popover.Portal>
-                  <Popover.Content className="z-[200] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                  <Popover.Content className="z-[9999] w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                     <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                       <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                       {(!teams || teams.length === 0) && (
@@ -868,7 +870,7 @@ function SubtaskRow({
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content
-                  className="z-[200] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden outline-none"
+                  className="z-[9999] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden outline-none"
                   side="bottom"
                   align="start"
                   sideOffset={8}
@@ -964,7 +966,7 @@ function SubtaskRow({
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content
-                  className="z-[200] w-36 p-1.5 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
+                  className="z-[9999] w-36 p-1.5 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none"
                   side="bottom"
                   align="start"
                   sideOffset={4}
@@ -1449,3 +1451,4 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
 }
 
 
+// Force hot reload

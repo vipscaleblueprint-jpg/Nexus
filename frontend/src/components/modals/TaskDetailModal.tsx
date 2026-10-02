@@ -23,10 +23,16 @@ import { AttachmentsGrid } from './AttachmentsGrid';
 import { CommentEditor } from '../ui/CommentEditor';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
-const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+export const CustomCircleDotted = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="10" />
-    <circle cx="12" cy="12" r="7" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="9" strokeDasharray="3 4" />
+  </svg>
+);
+
+export const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
   </svg>
 );
 
@@ -306,7 +312,7 @@ export function TaskDetailModalContent({
     return [...existing, ...oldAttachments];
   });
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -346,16 +352,11 @@ export function TaskDetailModalContent({
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
         return (
-          <a
-            href={`/profile/${userId}`}
-            onClick={(e) => {
-              // Just a dummy action for now, usually navigates to user profile
-              e.stopPropagation();
-            }}
-            className="bg-blue-500/10 text-blue-400 hover:text-blue-300 font-medium px-1 rounded hover:underline cursor-pointer"
+          <span
+            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
           >
             {rest.children}
-          </a>
+          </span>
         );
       }
       return (
@@ -1385,7 +1386,7 @@ export function TaskDetailModalContent({
                   <div className="flex items-center gap-2 w-28 shrink-0">
                     {(() => {
                       const isClosed = task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE';
-                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
+                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
                     })()}
                     <span className="text-[12px] text-zinc-500">Status</span>
                   </div>
@@ -1408,14 +1409,14 @@ export function TaskDetailModalContent({
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={() => setIsStatusOpen(true)}
+                                onClick={(e) => e.stopPropagation()}
                                 className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
                               >
                                 {statusName}
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map(s => (
                                     <div
@@ -1429,9 +1430,19 @@ export function TaskDetailModalContent({
                                       {(() => {
                                         const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
                                         if (customObj?.color) {
-                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
+                              if ((s || '').toUpperCase() === 'KYC') {
+                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                              }
+                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                            }
+                                        
+                                        if ((s || '').toUpperCase() === 'KYC') {
+                                          return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
                                         }
-                                        return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+
+
                                       })()}
                                       {s}
                                       {s === task.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -1519,7 +1530,7 @@ export function TaskDetailModalContent({
                         )}
                       </Popover.Trigger>
                       <Popover.Portal>
-                        <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                        <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                             {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -1669,7 +1680,7 @@ export function TaskDetailModalContent({
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
-                          className="z-[300] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                          className="z-[9999] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                           align="start"
                           sideOffset={4}
                         >
@@ -1769,7 +1780,7 @@ export function TaskDetailModalContent({
                       </div>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
+                      <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
                         {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map(p => (
                           <div
                             key={p}
@@ -1964,7 +1975,7 @@ export function TaskDetailModalContent({
                                   </button>
                                 </Popover.Trigger>
                                 <Popover.Portal>
-                                  <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
+                                  <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[9999]" align="end">
                                     <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
                                       <Pencil className="w-3.5 h-3.5" /> Edit
                                     </button>
@@ -2083,18 +2094,66 @@ export function TaskDetailModalContent({
                   return (
                     <>
                       {/* Combined Timeline */}
-                      {combined.length > 0 && (
-                        <>
-                          {combined.length > 15 && (
-                            <button
-                              onClick={() => setIsActivityExpanded(!isActivityExpanded)}
-                              className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                            >
-                              {isActivityExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                              {isActivityExpanded ? 'Show less updates' : `Show more (${combined.length - 15} older updates)`}
-                            </button>
-                          )}
-                          {(isActivityExpanded ? combined : combined.slice(-15)).map(item => {
+                      {combined.length > 0 && (() => {
+                        const timelineItems: any[] = [];
+                        let currentIsActivity: boolean | null = null;
+                        let currentBlock: any[] = [];
+                        const blocks: any[][] = [];
+                        
+                        combined.forEach(item => {
+                          if (currentIsActivity === null) {
+                              currentIsActivity = item.isActivityType;
+                              currentBlock.push(item);
+                          } else if (currentIsActivity === item.isActivityType) {
+                              currentBlock.push(item);
+                          } else {
+                              blocks.push(currentBlock);
+                              currentIsActivity = item.isActivityType;
+                              currentBlock = [item];
+                          }
+                        });
+                        if (currentBlock.length > 0) blocks.push(currentBlock);
+                        
+                        blocks.forEach((block, bIdx) => {
+                            const isExpanded = expandedBlocks.includes(bIdx);
+                            if (!block[0].isActivityType || block.length <= 5) {
+                                timelineItems.push(...block);
+                            } else if (isExpanded) {
+                                timelineItems.push({ isShowLess: true, blockId: bIdx });
+                                timelineItems.push(...block);
+                            } else {
+                                timelineItems.push({ isShowMore: true, count: block.length - 5, blockId: bIdx });
+                                timelineItems.push(...block.slice(-5));
+                            }
+                        });
+
+                        return (
+                          <>
+                            {timelineItems.map((item, idx) => {
+                              if (item.isShowMore) {
+                                return (
+                                  <button
+                                    key={`show-more-${item.blockId}`}
+                                    onClick={() => setExpandedBlocks(prev => [...prev, item.blockId])}
+                                    className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                  >
+                                    <ChevronRight className="w-4 h-4" />
+                                    Show {item.count} older updates
+                                  </button>
+                                );
+                              }
+                              if (item.isShowLess) {
+                                return (
+                                  <button
+                                    key={`show-less-${item.blockId}`}
+                                    onClick={() => setExpandedBlocks(prev => prev.filter(id => id !== item.blockId))}
+                                    className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                  >
+                                    <ChevronDown className="w-4 h-4" />
+                                    Show less updates
+                                  </button>
+                                );
+                              }
                             if (item.isActivityType) {
                               const act = item;
                               const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -2202,11 +2261,12 @@ export function TaskDetailModalContent({
                               return renderComment(item);
                             }
                           })}
-                        </>
-                      )}
-                    </>
-                  );
-                })()}
+                      </>
+                    );
+                  })()}
+                </>
+              );
+            })()}
 
               </div>
             </div>
@@ -2241,7 +2301,7 @@ export function TaskDetailModalContent({
               )}
               <div className="relative">
                 {showMentionMenu && (
-                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100]">
+                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[9999]">
                     <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
                       People
                     </div>
@@ -2418,7 +2478,7 @@ function SubtaskDetailView({
   }, [activities, richComments]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null);
-  const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -2441,15 +2501,11 @@ function SubtaskDetailView({
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
         return (
-          <a
-            href={`/profile/${userId}`}
-            onClick={(e) => {
-              e.stopPropagation();
-            }}
-            className="bg-blue-500/10 text-blue-400 hover:text-blue-300 font-medium px-1 rounded hover:underline cursor-pointer"
+          <span
+            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
           >
             {rest.children}
-          </a>
+          </span>
         );
       }
       return (
@@ -2997,7 +3053,7 @@ function SubtaskDetailView({
                 <div className="flex items-center gap-2 w-28 shrink-0">
                   {(() => {
                     const isClosed = subtask.completed || subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.status === 'DONE';
-                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
+                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
                   })()}
                   <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
@@ -3031,14 +3087,14 @@ function SubtaskDetailView({
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={() => setIsStatusOpen(true)}
+                                onClick={(e) => e.stopPropagation()}
                                 className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
                               >
                                 {statusName}
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map((s: string) => (
                                     <div
@@ -3069,9 +3125,15 @@ function SubtaskDetailView({
                                       {(() => {
                                         const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
                                         if (customObj?.color) {
-                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHex(customObj.color) }} />;
+                                          if ((s || '').toUpperCase() === 'KYC') {
+                                            return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHex(customObj.color) }} />;
+                                          }
+                                          return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHex(customObj.color) }} />;
                                         }
-                                        return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                        if ((s || '').toUpperCase() === 'KYC') {
+                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                            }
+                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
                                       })()}
                                       {s}
                                       {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -3179,7 +3241,7 @@ function SubtaskDetailView({
                       )}
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                      <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                         <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                           <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                           {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -3341,7 +3403,7 @@ function SubtaskDetailView({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content
-                        className="z-[300] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                        className="z-[9999] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                         align="start"
                         sideOffset={4}
                       >
@@ -3435,7 +3497,7 @@ function SubtaskDetailView({
                     </div>
                   </Popover.Trigger>
                   <Popover.Portal>
-                    <Popover.Content className="z-[300] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
+                    <Popover.Content className="z-[9999] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
                       <div className="flex flex-col gap-0.5">
                         <div
                           onClick={() => handleUpdatePriority(null)}
@@ -3642,7 +3704,7 @@ function SubtaskDetailView({
                                 </button>
                               </Popover.Trigger>
                               <Popover.Portal>
-                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[300]" align="end">
+                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[9999]" align="end">
                                   <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
                                     <Pencil className="w-3.5 h-3.5" /> Edit
                                   </button>
@@ -3724,18 +3786,66 @@ function SubtaskDetailView({
                 return (
                   <>
                     {/* Combined Timeline */}
-                    {combined.length > 0 && (
-                      <>
-                        {combined.length > 15 && (
-                          <button
-                            onClick={() => setIsActivityExpanded(!isActivityExpanded)}
-                            className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                          >
-                            {isActivityExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                            {isActivityExpanded ? 'Show less updates' : `Show more (${combined.length - 15} older updates)`}
-                          </button>
-                        )}
-                        {(isActivityExpanded ? combined : combined.slice(-15)).map((item: any) => {
+                    {combined.length > 0 && (() => {
+                      const timelineItems: any[] = [];
+                      let currentIsActivity: boolean | null = null;
+                      let currentBlock: any[] = [];
+                      const blocks: any[][] = [];
+                      
+                      combined.forEach(item => {
+                        if (currentIsActivity === null) {
+                            currentIsActivity = item.isActivityType;
+                            currentBlock.push(item);
+                        } else if (currentIsActivity === item.isActivityType) {
+                            currentBlock.push(item);
+                        } else {
+                            blocks.push(currentBlock);
+                            currentIsActivity = item.isActivityType;
+                            currentBlock = [item];
+                        }
+                      });
+                      if (currentBlock.length > 0) blocks.push(currentBlock);
+                      
+                      blocks.forEach((block, bIdx) => {
+                          const isExpanded = expandedBlocks.includes(bIdx);
+                          if (!block[0].isActivityType || block.length <= 5) {
+                              timelineItems.push(...block);
+                          } else if (isExpanded) {
+                              timelineItems.push({ isShowLess: true, blockId: bIdx });
+                              timelineItems.push(...block);
+                          } else {
+                              timelineItems.push({ isShowMore: true, count: block.length - 5, blockId: bIdx });
+                              timelineItems.push(...block.slice(-5));
+                          }
+                      });
+
+                      return (
+                        <>
+                          {timelineItems.map((item: any, idx: number) => {
+                            if (item.isShowMore) {
+                              return (
+                                <button
+                                  key={`show-more-${item.blockId}`}
+                                  onClick={() => setExpandedBlocks(prev => [...prev, item.blockId])}
+                                  className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                >
+                                  <ChevronRight className="w-4 h-4" />
+                                  Show {item.count} older updates
+                                </button>
+                              );
+                            }
+                            if (item.isShowLess) {
+                              return (
+                                <button
+                                  key={`show-less-${item.blockId}`}
+                                  onClick={() => setExpandedBlocks(prev => prev.filter(id => id !== item.blockId))}
+                                  className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                >
+                                  <ChevronDown className="w-4 h-4" />
+                                  Show less updates
+                                </button>
+                              );
+                            }
                           if (item.isActivityType) {
                             const act = item;
                             const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -3844,10 +3954,11 @@ function SubtaskDetailView({
                           }
                         })}
                       </>
-                    )}
-                  </>
-                );
-              })()}
+                    );
+                  })()}
+                </>
+              );
+            })()}
             </div>
           </div>
 
@@ -3867,7 +3978,7 @@ function SubtaskDetailView({
                 </div>
               )}
               {showMentionMenu && (
-                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100]">
+                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[9999]">
                   <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
                     People
                   </div>
@@ -4108,3 +4219,4 @@ export function TaskDetailModal(props: Props) {
   return createPortal(content, document.body);
 }
 
+// Force hot reload

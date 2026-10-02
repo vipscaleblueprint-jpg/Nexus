@@ -157,6 +157,13 @@ export async function updateClickUpTask(
   });
 }
 
+export async function deleteClickUpTask(taskId: string): Promise<any> {
+  const id = extractClickUpTaskId(taskId);
+  return clickupFetch(`/task/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 /**
  * Posts a comment on a ClickUp task.
  */
@@ -168,6 +175,11 @@ export async function createClickUpComment(
   return clickupFetch(`/task/${taskId}/comment`, {
     method: 'POST',
     body: JSON.stringify({ comment_text: commentText, notify_all }),
+  });
+}
+export async function deleteClickUpComment(commentId: string): Promise<any> {
+  return clickupFetch(`/comment/${commentId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -413,6 +425,16 @@ export async function safeCreateClickUpSubtask(
 }
 
 
+export async function safeDeleteClickUpTask(
+  clickUpTaskId: string | null | undefined
+): Promise<void> {
+  if (!clickUpTaskId || !getApiKey()) return;
+  try {
+    await deleteClickUpTask(clickUpTaskId);
+  } catch (err) {
+    console.error('[ClickUp] safeDeleteClickUpTask error:', err);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Status helper
@@ -501,14 +523,16 @@ export async function safeUpdateClickUpTask(
 export async function safeCreateClickUpComment(
   clickUpTaskId: string | null | undefined,
   commentText: string
-): Promise<void> {
-  if (!clickUpTaskId || !getApiKey()) return;
+): Promise<string | null> {
+  if (!clickUpTaskId || !getApiKey()) return null;
   try {
     // Normalise: support both full URL and bare ID
     const id = extractClickUpTaskId(clickUpTaskId);
-    await createClickUpComment(id, commentText);
+    const res = await createClickUpComment(id, commentText);
+    return res?.id || null;
   } catch (err) {
     console.error('[ClickUp] safeCreateClickUpComment error:', err);
+    return null;
   }
 }
 

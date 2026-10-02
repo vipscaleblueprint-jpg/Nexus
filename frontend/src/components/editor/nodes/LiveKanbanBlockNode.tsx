@@ -1,4 +1,4 @@
-import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi } from '@/api/tasks';
@@ -28,6 +28,7 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
   const [listStatuses, setListStatuses] = useState<any[]>([]);
   const [optimisticTask, setOptimisticTask] = useState<any>({});
   const lastOptimisticTime = useRef<number>(0);
+  const allLists = useAppStore(s => s.allLists);
 
   const [localDesc, setLocalDesc] = useState(task.description || '');
   useEffect(() => {
@@ -36,6 +37,21 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
       setOptimisticTask({});
     }
   }, [task]);
+
+  // Pre-populate statuses from store cache immediately — zero network latency
+  useEffect(() => {
+    if (!task.listId || listStatuses.length > 0) return;
+    const entry = allLists.find((l: any) => l.list?.id === task.listId || l.id === task.listId);
+    const cached = entry?.list || entry;
+    if (cached?.statuses?.length > 0) {
+      setListStatuses(cached.statuses);
+    } else {
+      // Background fetch — only if not already in cache
+      spacesApi.getList(task.listId).then(res => {
+        if (res?.list?.statuses) setListStatuses(res.list.statuses);
+      }).catch(console.error);
+    }
+  }, [task.listId, allLists]);
 
   const handleDescBlur = () => {
     if (localDesc !== currentTask.description) {
@@ -56,13 +72,9 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
     let cancelled = false;
     if (openDropdown === 'assignee' && dbUsers.length === 0) {
       usersApi.getUsers().then(res => { if (!cancelled && res?.users) setDbUsers(res.users); }).catch(console.error);
-    } else if (openDropdown === 'status' && listStatuses.length === 0 && currentTask.listId) {
-      spacesApi.getList(currentTask.listId).then(res => {
-        if (!cancelled && res?.list?.statuses) setListStatuses(res.list.statuses);
-      }).catch(console.error);
     }
     return () => { cancelled = true; };
-  }, [openDropdown, dbUsers.length, listStatuses.length, currentTask.listId]);
+  }, [openDropdown, dbUsers.length]);
 
   let parsedStatusName = currentTask.status;
   let parsedStatusColor = getStatusColor(parsedStatusName);
@@ -222,19 +234,29 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
           <div className="w-48 py-1">
             <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Change Status</div>
-            {listStatuses.length > 0 ? listStatuses.map(s => (
-              <button
-                key={s.id}
-                onClick={(e) => { e.stopPropagation(); handleStatusChange(s.name); }}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2"
-              >
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
-                <span className="text-zinc-300">{s.name}</span>
-                {s.name === parsedStatusName && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400 ml-auto"><polyline points="20 6 9 17 4 12"></polyline></svg>}
-              </button>
-            )) : (
-              <div className="px-3 py-2 text-xs text-zinc-500 italic">Loading statuses...</div>
-            )}
+            {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
+              const isActive = statusName === parsedStatusName;
+              const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
+              const colorHex = customObj?.color || null;
+              const textColorClass = STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[1] : 'text-zinc-500';
+              return (
+                <button
+                  key={statusName}
+                  onClick={(e) => { e.stopPropagation(); handleStatusChange(statusName); }}
+                  className={`w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${
+                    isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'
+                  }`}
+                >
+                  {(statusName || '').toUpperCase() === 'KYC' ? (
+                    <CustomCircleDotted className="w-3 h-3 shrink-0" style={colorHex ? { color: colorHex } : undefined} />
+                  ) : (
+                    <CustomCircleDot className={`w-3 h-3 shrink-0 ${!colorHex ? textColorClass : ''}`} style={colorHex ? { color: colorHex } : undefined} />
+                  )}
+                  <span>{statusName}</span>
+                  {isActive && <svg className="w-3 h-3 ml-auto opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>}
+                </button>
+              );
+            })}
           </div>
         </PortalDropdown>
       )}

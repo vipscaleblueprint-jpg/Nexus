@@ -74,6 +74,29 @@ export async function getFolderlessLists(spaceId: string): Promise<any> {
 }
 
 // ---------------------------------------------------------------------------
+
+function htmlToClickupMarkdown(html: string | undefined): string | undefined {
+  if (!html) return html;
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p>/gi, '\n\n')
+    .replace(/<p>/gi, '')
+    .replace(/<\/p>/gi, '')
+    .replace(/<li>/gi, '- ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<strong>/gi, '**')
+    .replace(/<\/strong>/gi, '**')
+    .replace(/<em>/gi, '*')
+    .replace(/<\/em>/gi, '*')
+    .replace(/<[^>]+>/g, '') // strip any other tags
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim();
+}
+
+// ---------------------------------------------------------------------------
 // Task Operations
 // ---------------------------------------------------------------------------
 
@@ -93,9 +116,16 @@ export async function createClickUpTask(
     assignees?: number[];
   }
 ): Promise<any> {
+  const finalPayload: any = { ...payload };
+  if (payload.description !== undefined) {
+    let md = htmlToClickupMarkdown(payload.description);
+    if (!md || md.trim() === '') md = ' ';
+    finalPayload.markdown_description = md;
+    delete finalPayload.description;
+  }
   return clickupFetch(`/list/${listId}/task`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(finalPayload),
   });
 }
 
@@ -114,9 +144,23 @@ export async function updateClickUpTask(
     start_date?: number | null;
   }
 ): Promise<any> {
+  const finalPayload: any = { ...payload };
+  if (payload.description !== undefined) {
+    let md = htmlToClickupMarkdown(payload.description);
+    if (!md || md.trim() === '') md = ' ';
+    finalPayload.markdown_content = md;
+    delete finalPayload.description;
+  }
   return clickupFetch(`/task/${taskId}`, {
     method: 'PUT',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(finalPayload),
+  });
+}
+
+export async function deleteClickUpTask(taskId: string): Promise<any> {
+  const id = extractClickUpTaskId(taskId);
+  return clickupFetch(`/task/${id}`, {
+    method: 'DELETE',
   });
 }
 
@@ -133,12 +177,263 @@ export async function createClickUpComment(
     body: JSON.stringify({ comment_text: commentText, notify_all }),
   });
 }
+export async function deleteClickUpComment(commentId: string): Promise<any> {
+  return clickupFetch(`/comment/${commentId}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Checklist Operations
+// ---------------------------------------------------------------------------
 
 /**
- * Returns a single ClickUp task.
+ * Fetches a full ClickUp task object (which includes its checklists array).
+ * Use this to discover existing checklist IDs by name.
  */
 export async function getClickUpTask(taskId: string): Promise<any> {
-  return clickupFetch(`/task/${taskId}`);
+  const id = extractClickUpTaskId(taskId);
+  return clickupFetch(`/task/${id}?include_subtasks=true`);
+}
+
+/**
+ * Given a Nexus taskExternalId and a checklist name, find the ClickUp checklist ID.
+ * Looks up the task in ClickUp and finds the first checklist matching the name.
+ */
+export async function findClickUpChecklistByName(
+  taskExternalId: string,
+  checklistName: string
+): Promise<string | null> {
+  try {
+    const task = await getClickUpTask(taskExternalId);
+    const checklists: any[] = task?.checklists ?? [];
+    const match = checklists.find(
+      (c: any) => (c.name || '').toLowerCase() === checklistName.toLowerCase()
+    );
+    return match?.id ?? null;
+  } catch (err) {
+    console.error('[ClickUp] findClickUpChecklistByName error:', err);
+    return null;
+  }
+}
+
+/**
+ * Given a Nexus parent task externalId and a subtask title, find the ClickUp subtask ID.
+ * Looks up the parent task in ClickUp and finds the first subtask matching the name.
+ */
+export async function findClickUpSubtaskByName(
+  parentTaskExternalId: string,
+  subtaskTitle: string
+): Promise<string | null> {
+  try {
+    const task = await getClickUpTask(parentTaskExternalId);
+    const subtasks: any[] = task?.subtasks ?? [];
+    const match = subtasks.find(
+      (s: any) => (s.name || '').toLowerCase() === subtaskTitle.toLowerCase()
+    );
+    return match?.id ?? null;
+  } catch (err) {
+    console.error('[ClickUp] findClickUpSubtaskByName error:', err);
+    return null;
+  }
+}
+
+/** Creates a checklist on a ClickUp task. Returns the ClickUp checklist id or null. */
+export async function createClickUpChecklist(taskId: string, name: string): Promise<string | null> {
+  const result = await clickupFetch(`/task/${taskId}/checklist`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  // ClickUp v2 returns: { checklist: { id, name, orderindex, resolved, unresolved, items: [] } }
+  return result?.checklist?.id ?? null;
+}
+
+/** Renames a ClickUp checklist. */
+export async function updateClickUpChecklist(checklistId: string, name: string): Promise<any> {
+  return clickupFetch(`/checklist/${checklistId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  });
+}
+
+/** Deletes a ClickUp checklist. */
+export async function deleteClickUpChecklist(checklistId: string): Promise<any> {
+  return clickupFetch(`/checklist/${checklistId}`, { method: 'DELETE' });
+}
+
+/**
+ * Creates an item inside a ClickUp checklist.
+ * Returns the new checklist_item id or null.
+ * ClickUp v2 POST /checklist/:id/checklist_item returns the full updated checklist object:
+ * { checklist: { id, name, items: [{ id, name, ... }] } }
+ */
+export async function createClickUpChecklistItem(
+  checklistId: string,
+  name: string
+): Promise<string | null> {
+  const result = await clickupFetch(`/checklist/${checklistId}/checklist_item`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  // Find the newly created item — it will be the last one with matching name
+  const items: any[] = result?.checklist?.items ?? [];
+  // Find last item matching name (most recently added)
+  const match = [...items].reverse().find((i: any) => i.name === name);
+  return match?.id ?? items[items.length - 1]?.id ?? null;
+}
+
+/** Updates a checklist item (name, resolved/unresolved). */
+export async function updateClickUpChecklistItem(
+  checklistId: string,
+  itemId: string,
+  payload: { name?: string; resolved?: boolean }
+): Promise<any> {
+  return clickupFetch(`/checklist/${checklistId}/checklist_item/${itemId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Deletes a checklist item. */
+export async function deleteClickUpChecklistItem(
+  checklistId: string,
+  itemId: string
+): Promise<any> {
+  return clickupFetch(`/checklist/${checklistId}/checklist_item/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Subtask Operations (ClickUp subtasks are tasks with a parent)
+// ---------------------------------------------------------------------------
+
+/** Creates a subtask under a ClickUp parent task. */
+export async function createClickUpSubtask(
+  listId: string,
+  parentTaskId: string,
+  payload: { name: string; description?: string; status?: string; priority?: number }
+): Promise<any> {
+  const finalPayload: any = { ...payload, parent: parentTaskId };
+  if (payload.description !== undefined) {
+    let md = htmlToClickupMarkdown(payload.description);
+    if (!md || md.trim() === '') md = ' ';
+    finalPayload.markdown_description = md;
+    delete finalPayload.description;
+  }
+  return clickupFetch(`/list/${listId}/task`, {
+    method: 'POST',
+    body: JSON.stringify(finalPayload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Safe wrappers for Checklists (fire-and-forget)
+// ---------------------------------------------------------------------------
+
+export async function safeCreateClickUpChecklist(
+  clickUpTaskId: string | null | undefined,
+  name: string
+): Promise<string | null> {
+  if (!clickUpTaskId || !getApiKey()) return null;
+  try {
+    const id = extractClickUpTaskId(clickUpTaskId);
+    // createClickUpChecklist now returns the id directly (string | null)
+    return await createClickUpChecklist(id, name);
+  } catch (err) {
+    console.error('[ClickUp] safeCreateClickUpChecklist error:', err);
+    return null;
+  }
+}
+
+export async function safeUpdateClickUpChecklist(
+  clickUpChecklistId: string | null | undefined,
+  name: string
+): Promise<void> {
+  if (!clickUpChecklistId || !getApiKey()) return;
+  try {
+    await updateClickUpChecklist(clickUpChecklistId, name);
+  } catch (err) {
+    console.error('[ClickUp] safeUpdateClickUpChecklist error:', err);
+  }
+}
+
+export async function safeDeleteClickUpChecklist(
+  clickUpChecklistId: string | null | undefined
+): Promise<void> {
+  if (!clickUpChecklistId || !getApiKey()) return;
+  try {
+    await deleteClickUpChecklist(clickUpChecklistId);
+  } catch (err) {
+    console.error('[ClickUp] safeDeleteClickUpChecklist error:', err);
+  }
+}
+
+export async function safeCreateClickUpChecklistItem(
+  clickUpChecklistId: string | null | undefined,
+  name: string
+): Promise<string | null> {
+  if (!clickUpChecklistId || !getApiKey()) return null;
+  try {
+    // createClickUpChecklistItem now returns the item id directly (string | null)
+    return await createClickUpChecklistItem(clickUpChecklistId, name);
+  } catch (err) {
+    console.error('[ClickUp] safeCreateClickUpChecklistItem error:', err);
+    return null;
+  }
+}
+
+export async function safeUpdateClickUpChecklistItem(
+  clickUpChecklistId: string | null | undefined,
+  clickUpItemId: string | null | undefined,
+  payload: { name?: string; resolved?: boolean }
+): Promise<void> {
+  if (!clickUpChecklistId || !clickUpItemId || !getApiKey()) return;
+  try {
+    await updateClickUpChecklistItem(clickUpChecklistId, clickUpItemId, payload);
+  } catch (err) {
+    console.error('[ClickUp] safeUpdateClickUpChecklistItem error:', err);
+  }
+}
+
+export async function safeDeleteClickUpChecklistItem(
+  clickUpChecklistId: string | null | undefined,
+  clickUpItemId: string | null | undefined
+): Promise<void> {
+  if (!clickUpChecklistId || !clickUpItemId || !getApiKey()) return;
+  try {
+    await deleteClickUpChecklistItem(clickUpChecklistId, clickUpItemId);
+  } catch (err) {
+    console.error('[ClickUp] safeDeleteClickUpChecklistItem error:', err);
+  }
+}
+
+export async function safeCreateClickUpSubtask(
+  clickUpListId: string | null | undefined,
+  clickUpParentTaskId: string | null | undefined,
+  payload: Parameters<typeof createClickUpSubtask>[2]
+): Promise<string | null> {
+  if (!clickUpListId || !clickUpParentTaskId || !getApiKey()) return null;
+  try {
+    const parentId = extractClickUpTaskId(clickUpParentTaskId);
+    const result = await createClickUpSubtask(clickUpListId, parentId, payload);
+    return result?.id ?? null;
+  } catch (err) {
+    console.error('[ClickUp] safeCreateClickUpSubtask error:', err);
+    return null;
+  }
+}
+
+
+export async function safeDeleteClickUpTask(
+  clickUpTaskId: string | null | undefined
+): Promise<void> {
+  if (!clickUpTaskId || !getApiKey()) return;
+  try {
+    await deleteClickUpTask(clickUpTaskId);
+  } catch (err) {
+    console.error('[ClickUp] safeDeleteClickUpTask error:', err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,14 +523,16 @@ export async function safeUpdateClickUpTask(
 export async function safeCreateClickUpComment(
   clickUpTaskId: string | null | undefined,
   commentText: string
-): Promise<void> {
-  if (!clickUpTaskId || !getApiKey()) return;
+): Promise<string | null> {
+  if (!clickUpTaskId || !getApiKey()) return null;
   try {
     // Normalise: support both full URL and bare ID
     const id = extractClickUpTaskId(clickUpTaskId);
-    await createClickUpComment(id, commentText);
+    const res = await createClickUpComment(id, commentText);
+    return res?.id || null;
   } catch (err) {
     console.error('[ClickUp] safeCreateClickUpComment error:', err);
+    return null;
   }
 }
 

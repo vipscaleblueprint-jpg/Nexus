@@ -744,6 +744,11 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
           <div className="flex-1 overflow-y-auto px-2 py-2 space-y-px">
             <Link
               href="/activity"
+              onClick={() => {
+                if (pathname === '/activity') {
+                  window.dispatchEvent(new CustomEvent('clear_activity_task'));
+                }
+              }}
               className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${
                 pathname === '/activity' ? 'bg-[hsl(240,3.7%,15.9%)] text-white font-medium' : 'text-[hsl(240,4.8%,95.9%)]'
               }`}

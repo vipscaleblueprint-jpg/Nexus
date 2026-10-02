@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -23,10 +23,16 @@ import { AttachmentsGrid } from './AttachmentsGrid';
 import { CommentEditor } from '../ui/CommentEditor';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
-const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+export const CustomCircleDotted = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="10" />
-    <circle cx="12" cy="12" r="7" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="9" strokeDasharray="3 4" />
+  </svg>
+);
+
+export const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
   </svg>
 );
 
@@ -226,6 +232,7 @@ export function TaskDetailModalContent({
   const [loadingActivities, setLoadingActivities] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
+  const commentEditorRef = useRef<any>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [activeSubtask, setActiveSubtask] = useState<any>(() => {
     if (typeof window !== 'undefined' && task?.subtasks) {
@@ -261,6 +268,26 @@ export function TaskDetailModalContent({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [localDescription, setLocalDescription] = useState(task?.description || '');
   const [localTitle, setLocalTitle] = useState(task?.title || '');
+  const descContentRef = useRef<HTMLDivElement>(null);
+  const [isDescOverflowing, setIsDescOverflowing] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (descContentRef.current) {
+        setIsDescOverflowing(descContentRef.current.scrollHeight > 160);
+      }
+    };
+    checkOverflow();
+    const observer = new ResizeObserver(checkOverflow);
+    if (descContentRef.current) {
+      observer.observe(descContentRef.current);
+      if (descContentRef.current.firstElementChild) {
+        observer.observe(descContentRef.current.firstElementChild);
+      }
+    }
+    return () => observer.disconnect();
+  }, [localDescription, isDescExpanded]);
+
   // State for handling attachments
   const [attachments, setAttachments] = useState<any[]>(() => {
     const existing = task?.attachments || [];
@@ -306,7 +333,7 @@ export function TaskDetailModalContent({
     return [...existing, ...oldAttachments];
   });
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -346,20 +373,15 @@ export function TaskDetailModalContent({
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
         return (
-          <a
-            href={`/profile/${userId}`}
-            onClick={(e) => {
-              // Just a dummy action for now, usually navigates to user profile
-              e.stopPropagation();
-            }}
-            className="bg-blue-500/10 text-blue-400 hover:text-blue-300 font-medium px-1 rounded hover:underline cursor-pointer"
+          <span
+            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
           >
             {rest.children}
-          </a>
+          </span>
         );
       }
       return (
-        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
+        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
@@ -764,6 +786,8 @@ export function TaskDetailModalContent({
       socket.emit('task_activity', { listId: task.listId, taskId: task.id, activity: act });
     }
   };
+
+  const [isLocalEditing, setIsLocalEditing] = useState(false);
 
   // Start editing: lock the description for this user
   const handleStartEditing = useCallback(() => {
@@ -1385,7 +1409,7 @@ export function TaskDetailModalContent({
                   <div className="flex items-center gap-2 w-28 shrink-0">
                     {(() => {
                       const isClosed = task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE';
-                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
+                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
                     })()}
                     <span className="text-[12px] text-zinc-500">Status</span>
                   </div>
@@ -1408,14 +1432,14 @@ export function TaskDetailModalContent({
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={() => setIsStatusOpen(true)}
+                                onClick={(e) => e.stopPropagation()}
                                 className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
                               >
                                 {statusName}
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map(s => (
                                     <div
@@ -1429,9 +1453,19 @@ export function TaskDetailModalContent({
                                       {(() => {
                                         const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
                                         if (customObj?.color) {
-                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHexColor(customObj.color) }} />;
+                              if ((s || '').toUpperCase() === 'KYC') {
+                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                              }
+                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                            }
+                                        
+                                        if ((s || '').toUpperCase() === 'KYC') {
+                                          return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
                                         }
-                                        return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+
+
                                       })()}
                                       {s}
                                       {s === task.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -1519,7 +1553,7 @@ export function TaskDetailModalContent({
                         )}
                       </Popover.Trigger>
                       <Popover.Portal>
-                        <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                        <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                             {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -1669,7 +1703,7 @@ export function TaskDetailModalContent({
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
-                          className="z-[300] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                          className="z-[9999] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                           align="start"
                           sideOffset={4}
                         >
@@ -1769,7 +1803,7 @@ export function TaskDetailModalContent({
                       </div>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
+                      <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
                         {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map(p => (
                           <div
                             key={p}
@@ -1804,23 +1838,74 @@ export function TaskDetailModalContent({
                   </div>
                 </div>
 
-                <div
-                  className={`relative p-2 -mx-2 rounded-lg transition-colors hover:bg-zinc-800/20 cursor-text`}
-                  onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
-                  onClick={() => handleStartEditing()}
-                >
-                  <BlockEditor
-                    content={localDescription}
-                    onChange={handleDescChange}
-                    onBlur={handleDescBlur}
-                    editable={!editingUser}
-                    onEditorReady={(editor) => { editorRef.current = editor; }}
-                  />
+                <div className="relative">
+                  <div
+                    ref={descContentRef}
+                  className={`relative p-2 -mx-2 rounded-lg hover:bg-zinc-800/20 cursor-text break-words overflow-hidden transition-[max-height,background-color] duration-300 ease-in-out`}
+                  style={{ maxHeight: (!isLocalEditing && !editingUser && isDescOverflowing && !isDescExpanded) ? 160 : (descContentRef.current ? descContentRef.current.scrollHeight + 100 : 3000) }}
+                  onFocus={(e) => { 
+                    if (canEditTask) {
+                        setIsLocalEditing(true);
+                        setIsDescExpanded(true);
+                        handleStartEditing(); 
+                      } else {
+                        e.target.blur();
+                      }
+                    }}
+                    onClick={() => {
+                      if (canEditTask) {
+                        setIsLocalEditing(true);
+                        setIsDescExpanded(true);
+                        handleStartEditing();
+                      }
+                    }}
+                  >
+                    <BlockEditor
+                      content={localDescription}
+                      onChange={handleDescChange}
+                      onBlur={() => {
+                        setIsLocalEditing(false);
+                        handleDescBlur();
+                      }}
+                      editable={!editingUser}
+                      onEditorReady={(editor) => { editorRef.current = editor; }}
+                    />
 
-                  {(!localDescription || localDescription === '<p></p>' || localDescription === '<p><br></p>') && (
-                    <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-                      Add description...
-                    </div>
+                    {(!localDescription || localDescription === '<p></p>' || localDescription === '<p><br></p>') && (
+                      <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+                        Add description...
+                      </div>
+                    )}
+                    
+                    {!editingUser && isDescOverflowing && !isDescExpanded && (
+                      <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] via-[#121212]/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setIsDescExpanded(true); }}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onFocus={(e) => e.stopPropagation()}
+                          className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-[#1e1e20] hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
+                        >
+                          <ChevronDown className="w-3 h-3" />
+                          Expand
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {isDescOverflowing && !editingUser && isDescExpanded && (
+                    <button
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        setIsDescExpanded(false); 
+                        setIsLocalEditing(false);
+                      }}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onFocus={(e) => e.stopPropagation()}
+                      className="mt-2 flex items-center gap-1.5 px-3 py-1 self-center mx-auto bg-zinc-800/50 hover:bg-zinc-700 border border-zinc-700/30 rounded-md text-[10px] text-zinc-400 font-medium transition-colors shadow-sm cursor-pointer"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                      Collapse
+                    </button>
                   )}
                 </div>
 
@@ -1964,7 +2049,7 @@ export function TaskDetailModalContent({
                                   </button>
                                 </Popover.Trigger>
                                 <Popover.Portal>
-                                  <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100]" align="end">
+                                  <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[9999]" align="end">
                                     <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
                                       <Pencil className="w-3.5 h-3.5" /> Edit
                                     </button>
@@ -1989,17 +2074,9 @@ export function TaskDetailModalContent({
                             </button>
                           </div>
                         ) : (
-                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-                              {(() => {
-                                let text = comment.content || '';
-                                workspaceUsers.forEach(u => {
-                                  if (text.includes(`@${u.name}`)) {
-                                    text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
-                                  }
-                                });
-                                return text;
-                              })()}
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents} urlTransform={(url) => url}>
+                              {comment.content || ''}
                             </ReactMarkdown>
                           </div>
                         )}
@@ -2083,18 +2160,66 @@ export function TaskDetailModalContent({
                   return (
                     <>
                       {/* Combined Timeline */}
-                      {combined.length > 0 && (
-                        <>
-                          {combined.length > 15 && (
-                            <button
-                              onClick={() => setIsActivityExpanded(!isActivityExpanded)}
-                              className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                            >
-                              {isActivityExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                              {isActivityExpanded ? 'Show less updates' : `Show more (${combined.length - 15} older updates)`}
-                            </button>
-                          )}
-                          {(isActivityExpanded ? combined : combined.slice(-15)).map(item => {
+                      {combined.length > 0 && (() => {
+                        const timelineItems: any[] = [];
+                        let currentIsActivity: boolean | null = null;
+                        let currentBlock: any[] = [];
+                        const blocks: any[][] = [];
+                        
+                        combined.forEach(item => {
+                          if (currentIsActivity === null) {
+                              currentIsActivity = item.isActivityType;
+                              currentBlock.push(item);
+                          } else if (currentIsActivity === item.isActivityType) {
+                              currentBlock.push(item);
+                          } else {
+                              blocks.push(currentBlock);
+                              currentIsActivity = item.isActivityType;
+                              currentBlock = [item];
+                          }
+                        });
+                        if (currentBlock.length > 0) blocks.push(currentBlock);
+                        
+                        blocks.forEach((block, bIdx) => {
+                            const isExpanded = expandedBlocks.includes(bIdx);
+                            if (!block[0].isActivityType || block.length <= 5) {
+                                timelineItems.push(...block);
+                            } else if (isExpanded) {
+                                timelineItems.push({ isShowLess: true, blockId: bIdx });
+                                timelineItems.push(...block);
+                            } else {
+                                timelineItems.push({ isShowMore: true, count: block.length - 5, blockId: bIdx });
+                                timelineItems.push(...block.slice(-5));
+                            }
+                        });
+
+                        return (
+                          <>
+                            {timelineItems.map((item, idx) => {
+                              if (item.isShowMore) {
+                                return (
+                                  <button
+                                    key={`show-more-${item.blockId}`}
+                                    onClick={() => setExpandedBlocks(prev => [...prev, item.blockId])}
+                                    className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                  >
+                                    <ChevronRight className="w-4 h-4" />
+                                    Show {item.count} older updates
+                                  </button>
+                                );
+                              }
+                              if (item.isShowLess) {
+                                return (
+                                  <button
+                                    key={`show-less-${item.blockId}`}
+                                    onClick={() => setExpandedBlocks(prev => prev.filter(id => id !== item.blockId))}
+                                    className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                  >
+                                    <ChevronDown className="w-4 h-4" />
+                                    Show less updates
+                                  </button>
+                                );
+                              }
                             if (item.isActivityType) {
                               const act = item;
                               const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -2202,11 +2327,12 @@ export function TaskDetailModalContent({
                               return renderComment(item);
                             }
                           })}
-                        </>
-                      )}
-                    </>
-                  );
-                })()}
+                      </>
+                    );
+                  })()}
+                </>
+              );
+            })()}
 
               </div>
             </div>
@@ -2241,7 +2367,7 @@ export function TaskDetailModalContent({
               )}
               <div className="relative">
                 {showMentionMenu && (
-                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100]">
+                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[9999]">
                     <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
                       People
                     </div>
@@ -2251,9 +2377,8 @@ export function TaskDetailModalContent({
                           key={u.id}
                           className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
                           onClick={() => {
-                            const before = comment.substring(0, mentionStartIndex);
-                            const after = comment.substring(comment.length);
-                            setComment(`${before}@${u.name} `);
+                            const matchLength = mentionSearch.length + 1;
+                            commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
                             setShowMentionMenu(false);
                             if (!mentionedUsers.some(m => m.id === u.id)) {
                               setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
@@ -2277,6 +2402,7 @@ export function TaskDetailModalContent({
                   </div>
                 )}
                 <CommentEditor
+                  ref={commentEditorRef}
                   id="main-task-comment"
                   value={comment}
                   onChange={(html, text, cursorPosition) => {
@@ -2418,15 +2544,37 @@ function SubtaskDetailView({
   }, [activities, richComments]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null);
-  const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
+  const commentEditorRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
+  const descContentRef = useRef<HTMLDivElement>(null);
+  const [isDescOverflowing, setIsDescOverflowing] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (descContentRef.current) {
+        setIsDescOverflowing(descContentRef.current.scrollHeight > 160);
+      }
+    };
+    checkOverflow();
+    const observer = new ResizeObserver(checkOverflow);
+    if (descContentRef.current) {
+      observer.observe(descContentRef.current);
+      if (descContentRef.current.firstElementChild) {
+        observer.observe(descContentRef.current.firstElementChild);
+      }
+    }
+    return () => observer.disconnect();
+  }, [localDesc, isDescExpanded]);
 
   const markdownComponents = React.useMemo(() => ({
     a: (props: any) => {
@@ -2441,19 +2589,15 @@ function SubtaskDetailView({
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
         return (
-          <a
-            href={`/profile/${userId}`}
-            onClick={(e) => {
-              e.stopPropagation();
-            }}
-            className="bg-blue-500/10 text-blue-400 hover:text-blue-300 font-medium px-1 rounded hover:underline cursor-pointer"
+          <span
+            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
           >
             {rest.children}
-          </a>
+          </span>
         );
       }
       return (
-        <a {...rest} className="text-blue-400 hover:underline hover:text-blue-300" target="_blank" rel="noopener noreferrer">
+        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer">
           {rest.children}
         </a>
       );
@@ -2693,6 +2837,8 @@ function SubtaskDetailView({
     tasksApi.updateSubtask(parentTask.id, subtask.id, { priority: newPriority } as any).catch(console.error);
     setIsPriorityOpen(false);
   };
+
+  const [isLocalEditing, setIsLocalEditing] = useState(false);
 
   const handleStartEditing = () => {
     if (socket && subtask) {
@@ -2997,7 +3143,7 @@ function SubtaskDetailView({
                 <div className="flex items-center gap-2 w-28 shrink-0">
                   {(() => {
                     const isClosed = subtask.completed || subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.status === 'DONE';
-                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CircleDashed className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
+                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
                   })()}
                   <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
@@ -3031,14 +3177,14 @@ function SubtaskDetailView({
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={() => setIsStatusOpen(true)}
+                                onClick={(e) => e.stopPropagation()}
                                 className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
                               >
                                 {statusName}
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map((s: string) => (
                                     <div
@@ -3069,9 +3215,15 @@ function SubtaskDetailView({
                                       {(() => {
                                         const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
                                         if (customObj?.color) {
-                                          return <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getHex(customObj.color) }} />;
+                                          if ((s || '').toUpperCase() === 'KYC') {
+                                            return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHex(customObj.color) }} />;
+                                          }
+                                          return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHex(customObj.color) }} />;
                                         }
-                                        return <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[0] : 'bg-zinc-500'}`} />;
+                                        if ((s || '').toUpperCase() === 'KYC') {
+                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                            }
+                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
                                       })()}
                                       {s}
                                       {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -3179,7 +3331,7 @@ function SubtaskDetailView({
                       )}
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[300] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                      <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                         <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                           <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                           {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -3341,7 +3493,7 @@ function SubtaskDetailView({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content
-                        className="z-[300] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                        className="z-[9999] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                         align="start"
                         sideOffset={4}
                       >
@@ -3435,7 +3587,7 @@ function SubtaskDetailView({
                     </div>
                   </Popover.Trigger>
                   <Popover.Portal>
-                    <Popover.Content className="z-[300] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
+                    <Popover.Content className="z-[9999] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
                       <div className="flex flex-col gap-0.5">
                         <div
                           onClick={() => handleUpdatePriority(null)}
@@ -3476,48 +3628,97 @@ function SubtaskDetailView({
                 )}
               </div>
 
-              <div
-                className="flex-1 relative group hover:bg-zinc-800/20 rounded-lg p-2 -mx-2 transition-colors cursor-text"
-                onFocus={(e) => { if (canEditTask) handleStartEditing(); else e.target.blur(); }}
-                onClick={() => handleStartEditing()}
-              >
-                <BlockEditor
-                  content={localDesc}
-                  onChange={(html) => {
-                    setLocalDesc(html);
-                    if (socket && subtask) {
-                      if (debounceRef.current) clearTimeout(debounceRef.current);
-                      debounceRef.current = setTimeout(() => {
-                        socket.emit('task_editing_content', {
+              <div className="relative">
+                <div
+                  ref={descContentRef}
+                  className={`relative p-2 -mx-2 rounded-lg hover:bg-zinc-800/20 cursor-text break-words overflow-hidden transition-[max-height,background-color] duration-300 ease-in-out`}
+                  style={{ maxHeight: (!isLocalEditing && !editingUser && isDescOverflowing && !isDescExpanded) ? 160 : (descContentRef.current ? descContentRef.current.scrollHeight + 100 : 3000) }}
+                  onFocus={(e) => { 
+                    if (canEditTask) {
+                      setIsLocalEditing(true);
+                      setIsDescExpanded(true);
+                      handleStartEditing(); 
+                    } else {
+                      e.target.blur(); 
+                    }
+                  }}
+                  onClick={() => {
+                    if (canEditTask) {
+                      setIsLocalEditing(true);
+                      setIsDescExpanded(true);
+                      handleStartEditing();
+                    }
+                  }}
+                >
+                  <BlockEditor
+                    content={localDesc}
+                    onChange={(html) => {
+                      setLocalDesc(html);
+                      if (socket && subtask) {
+                        if (debounceRef.current) clearTimeout(debounceRef.current);
+                        debounceRef.current = setTimeout(() => {
+                          socket.emit('task_editing_content', {
+                            listId: parentTask.listId,
+                            taskId: subtask.id,
+                            content: html,
+                          });
+                        }, 150);
+                      }
+                    }}
+                    onBlur={() => {
+                      setIsLocalEditing(false);
+                      if (onUpdateTask) {
+                        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
+                        onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+                      }
+                      if (socket && subtask) {
+                        socket.emit('task_editing_end', {
                           listId: parentTask.listId,
                           taskId: subtask.id,
-                          content: html,
+                          userName: currentUser?.name || 'Someone',
                         });
-                      }, 150);
-                    }
-                  }}
-                  onBlur={() => {
-                    if (onUpdateTask) {
-                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
-                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-                    }
-                    if (socket && subtask) {
-                      socket.emit('task_editing_end', {
-                        listId: parentTask.listId,
-                        taskId: subtask.id,
-                        userName: currentUser?.name || 'Someone',
-                      });
-                    }
-                    setEditingUser(null);
-                  }}
-                  editable={!editingUser}
-                  onEditorReady={(editor) => { editorRef.current = editor; }}
-                />
+                      }
+                      setEditingUser(null);
+                    }}
+                    editable={!editingUser}
+                    onEditorReady={(editor) => { editorRef.current = editor; }}
+                  />
 
-                {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
-                  <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
-                    Add description...
-                  </div>
+                  {(!localDesc || localDesc === '<p></p>' || localDesc === '<p><br></p>') && (
+                    <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+                      Add description...
+                    </div>
+                  )}
+
+                  {!editingUser && isDescOverflowing && !isDescExpanded && (
+                    <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] via-[#121212]/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setIsDescExpanded(true); }}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onFocus={(e) => e.stopPropagation()}
+                        className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-[#1e1e20] hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
+                      >
+                        <ChevronDown className="w-3 h-3" />
+                        Expand
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {isDescOverflowing && !editingUser && isDescExpanded && (
+                  <button
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setIsDescExpanded(false); 
+                      setIsLocalEditing(false);
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onFocus={(e) => e.stopPropagation()}
+                    className="mt-2 flex items-center gap-1.5 px-3 py-1 self-center mx-auto bg-zinc-800/50 hover:bg-zinc-700 border border-zinc-700/30 rounded-md text-[10px] text-zinc-400 font-medium transition-colors shadow-sm cursor-pointer"
+                  >
+                    <ChevronUp className="w-3 h-3" />
+                    Collapse
+                  </button>
                 )}
               </div>
 
@@ -3642,7 +3843,7 @@ function SubtaskDetailView({
                                 </button>
                               </Popover.Trigger>
                               <Popover.Portal>
-                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[300]" align="end">
+                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[9999]" align="end">
                                   <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
                                     <Pencil className="w-3.5 h-3.5" /> Edit
                                   </button>
@@ -3667,17 +3868,9 @@ function SubtaskDetailView({
                           </button>
                         </div>
                       ) : (
-                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:underline prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-                            {(() => {
-                              let text = c.content || '';
-                              (workspaceUsers || []).forEach(u => {
-                                if (text.includes(`@${u.name}`)) {
-                                  text = text.replace(new RegExp(`@${u.name}`, 'g'), `[@${u.name}](mention://${u.id})`);
-                                }
-                              });
-                              return text;
-                            })()}
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents} urlTransform={(url) => url}>
+                              {c.content || ''}
                           </ReactMarkdown>
                         </div>
                       )}
@@ -3724,18 +3917,66 @@ function SubtaskDetailView({
                 return (
                   <>
                     {/* Combined Timeline */}
-                    {combined.length > 0 && (
-                      <>
-                        {combined.length > 15 && (
-                          <button
-                            onClick={() => setIsActivityExpanded(!isActivityExpanded)}
-                            className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                          >
-                            {isActivityExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                            {isActivityExpanded ? 'Show less updates' : `Show more (${combined.length - 15} older updates)`}
-                          </button>
-                        )}
-                        {(isActivityExpanded ? combined : combined.slice(-15)).map((item: any) => {
+                    {combined.length > 0 && (() => {
+                      const timelineItems: any[] = [];
+                      let currentIsActivity: boolean | null = null;
+                      let currentBlock: any[] = [];
+                      const blocks: any[][] = [];
+                      
+                      combined.forEach(item => {
+                        if (currentIsActivity === null) {
+                            currentIsActivity = item.isActivityType;
+                            currentBlock.push(item);
+                        } else if (currentIsActivity === item.isActivityType) {
+                            currentBlock.push(item);
+                        } else {
+                            blocks.push(currentBlock);
+                            currentIsActivity = item.isActivityType;
+                            currentBlock = [item];
+                        }
+                      });
+                      if (currentBlock.length > 0) blocks.push(currentBlock);
+                      
+                      blocks.forEach((block, bIdx) => {
+                          const isExpanded = expandedBlocks.includes(bIdx);
+                          if (!block[0].isActivityType || block.length <= 5) {
+                              timelineItems.push(...block);
+                          } else if (isExpanded) {
+                              timelineItems.push({ isShowLess: true, blockId: bIdx });
+                              timelineItems.push(...block);
+                          } else {
+                              timelineItems.push({ isShowMore: true, count: block.length - 5, blockId: bIdx });
+                              timelineItems.push(...block.slice(-5));
+                          }
+                      });
+
+                      return (
+                        <>
+                          {timelineItems.map((item: any, idx: number) => {
+                            if (item.isShowMore) {
+                              return (
+                                <button
+                                  key={`show-more-${item.blockId}`}
+                                  onClick={() => setExpandedBlocks(prev => [...prev, item.blockId])}
+                                  className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                >
+                                  <ChevronRight className="w-4 h-4" />
+                                  Show {item.count} older updates
+                                </button>
+                              );
+                            }
+                            if (item.isShowLess) {
+                              return (
+                                <button
+                                  key={`show-less-${item.blockId}`}
+                                  onClick={() => setExpandedBlocks(prev => prev.filter(id => id !== item.blockId))}
+                                  className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
+                                >
+                                  <ChevronDown className="w-4 h-4" />
+                                  Show less updates
+                                </button>
+                              );
+                            }
                           if (item.isActivityType) {
                             const act = item;
                             const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -3844,10 +4085,11 @@ function SubtaskDetailView({
                           }
                         })}
                       </>
-                    )}
-                  </>
-                );
-              })()}
+                    );
+                  })()}
+                </>
+              );
+            })()}
             </div>
           </div>
 
@@ -3867,7 +4109,7 @@ function SubtaskDetailView({
                 </div>
               )}
               {showMentionMenu && (
-                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100]">
+                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[9999]">
                   <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
                     People
                   </div>
@@ -3877,9 +4119,8 @@ function SubtaskDetailView({
                         key={u.id}
                         className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
                         onClick={() => {
-                          const before = comment.substring(0, mentionStartIndex);
-                          const after = comment.substring(comment.length);
-                          setComment(`${before}@${u.name} `);
+                          const matchLength = mentionSearch.length + 1;
+                          commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
                           setShowMentionMenu(false);
                           if (!mentionedUsers.some(m => m.id === u.id)) {
                             setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
@@ -3903,6 +4144,7 @@ function SubtaskDetailView({
                 </div>
               )}
               <CommentEditor
+                  ref={commentEditorRef}
                   id="subtask-comment"
                   value={comment}
                   onChange={(html, text, cursorPosition) => {
@@ -4066,7 +4308,7 @@ export function TaskDetailModal(props: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 1 }}
             transition={{ duration: 0 }}
-            className="absolute inset-0 z-[500] bg-[#121212] flex flex-col cursor-default"
+            className="absolute inset-0 z-[100] bg-[#121212] flex flex-col cursor-default"
           >
             <TaskDetailModalContent
               {...props}
@@ -4107,4 +4349,6 @@ export function TaskDetailModal(props: Props) {
 
   return createPortal(content, document.body);
 }
+
+// Force hot reload
 

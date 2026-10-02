@@ -68,16 +68,17 @@ export default function BoardPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Resolve auth
-      if (!currentUser) {
-        try {
-          const { user } = await authApi.getMe();
-          if (!cancelled && user) setCurrentUser(user);
-        } catch { }
-      }
+      // Start both requests in parallel if auth is missing
+      const userPromise = !currentUser ? authApi.getMe().catch(() => null) : Promise.resolve(null);
+      const listPromise = spacesApi.getList(id);
 
       try {
-        const listRes = await spacesApi.getList(id);
+        const [userResult, listRes] = await Promise.all([userPromise, listPromise]);
+        
+        if (userResult?.user && !cancelled) {
+          setCurrentUser(userResult.user);
+        }
+
         if (!cancelled) {
           setList(listRes.list);
           if (listRes.list?.customGroups) {
@@ -91,6 +92,7 @@ export default function BoardPage() {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const lastUrlTaskId = useRef<string | null>(null);

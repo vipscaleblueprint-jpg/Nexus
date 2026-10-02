@@ -41,6 +41,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       Placeholder.configure({ placeholder }),
       Link.configure({
         openOnClick: false,
+        protocols: ['mention'],
         HTMLAttributes: {
           class: 'text-blue-400 underline cursor-pointer',
         },
@@ -73,7 +74,15 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       if (!editor) return;
       const { from } = editor.state.selection;
       // We insert a link with href mention://userId
-      editor.chain().focus().deleteRange({ from: from - matchLength, to: from }).insertContent(`<a href="mention://${userId}">@${name}</a> `).run();
+      editor.chain().focus().deleteRange({ from: from - matchLength, to: from })
+        .insertContent([
+          {
+            type: 'text',
+            text: `@${name}`,
+            marks: [{ type: 'link', attrs: { href: `mention://${userId}` } }]
+          },
+          { type: 'text', text: ' ' }
+        ]).run();
     }
   }));
 

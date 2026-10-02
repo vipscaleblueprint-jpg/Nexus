@@ -1045,11 +1045,15 @@ export async function createTaskComment(req: Request, res: Response) {
     // --- ClickUp Sync: mirror comment to ClickUp (fire-and-forget) ---
     (async () => {
       try {
-        const taskRecord = await prisma.task.findUnique({
-          where: { id: taskId },
-          select: { externalId: true }
-        });
-        const clickUpTaskId = taskRecord?.externalId ?? null;
+        let clickUpTaskId: string | null = null;
+        if (subtaskId) {
+          const subRecord = await prisma.subtask.findUnique({ where: { id: subtaskId }, select: { externalId: true } });
+          clickUpTaskId = subRecord?.externalId ?? null;
+        } else {
+          const taskRecord = await prisma.task.findUnique({ where: { id: taskId }, select: { externalId: true } });
+          clickUpTaskId = taskRecord?.externalId ?? null;
+        }
+        
         if (clickUpTaskId && !parentCommentId) {
           // Only mirror top-level comments (not internal thread replies)
           const authorName = user?.name || 'Nexus';

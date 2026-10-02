@@ -148,7 +148,7 @@ export async function updateClickUpTask(
   if (payload.description !== undefined) {
     let md = htmlToClickupMarkdown(payload.description);
     if (!md || md.trim() === '') md = ' ';
-    finalPayload.markdown_description = md;
+    finalPayload.markdown_content = md;
     delete finalPayload.description;
   }
   return clickupFetch(`/task/${taskId}`, {

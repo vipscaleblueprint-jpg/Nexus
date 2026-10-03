@@ -19,11 +19,28 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: 'text-red-400',
 };
 
+const STATUS_HEX_MAP: Record<string, string> = {
+  PENDING: '#D29A2A',
+  'IN PROGRESS': '#D04A7C',
+  DONE: '#22c55e', 
+  REVISION: '#5B6BD6',
+  CHECKING: '#A35DB8',
+  CLOSED: '#2FA37A',
+};
+
 const getStatusColor = (status: string) => {
-  const colorStr = STATUS_COLORS[status];
+  if (!status) return '#3b82f6';
+  
+  // Directly map from known hex codes first
+  const up = status.toUpperCase();
+  if (STATUS_HEX_MAP[up]) return STATUS_HEX_MAP[up];
+
+  const colorStr = STATUS_COLORS[up];
   if (!colorStr) return '#3b82f6';
+  
+  // Custom bg-[hex] match
   const match = colorStr.match(/bg-\[([^\]]+)\]/);
-  return match ? match[1] : (colorStr.split(' ')[0] || '#3b82f6');
+  return match ? match[1] : '#3b82f6';
 };
 
 export const TaskMentionNode = (props: NodeViewProps) => {
@@ -54,6 +71,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const hasLoadedTeams = useAppStore(s => s.hasLoadedTeams);
   const loadUsers = useAppStore(s => s.loadUsers);
   const loadTeams = useAppStore(s => s.loadTeams);
+  const hydrateUsersFromCache = useAppStore(s => s.hydrateUsersFromCache);
+  const hydrateTeamsFromCache = useAppStore(s => s.hydrateTeamsFromCache);
 
   const dbUsers = workspaceUsers;
   const dbTeams = workspaceTeams;
@@ -173,13 +192,21 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   useEffect(() => {
     let cancelled = false;
-    if (openDropdown === 'assignee' && !hasLoadedUsers) {
+
+    if (!hasLoadedUsers && workspaceUsers.length === 0) {
+      hydrateUsersFromCache();
+    }
+    if (!hasLoadedTeams && workspaceTeams.length === 0) {
+      hydrateTeamsFromCache();
+    }
+
+    if (openDropdown === 'assignee' && (!hasLoadedUsers || workspaceUsers.length === 0)) {
       loadUsers().catch(console.error);
-    } else if (openDropdown === 'team' && !hasLoadedTeams) {
+    } else if (openDropdown === 'team' && (!hasLoadedTeams || workspaceTeams.length === 0)) {
       loadTeams().catch(console.error);
     }
     return () => { cancelled = true; };
-  }, [openDropdown, hasLoadedUsers, hasLoadedTeams, loadUsers, loadTeams]);
+  }, [openDropdown, hasLoadedUsers, hasLoadedTeams, workspaceUsers.length, workspaceTeams.length, loadUsers, loadTeams, hydrateUsersFromCache, hydrateTeamsFromCache]);
   
   if (mentionType === 'status') {
     let statusObj = null;
@@ -235,18 +262,25 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || !taskData) return;
+    
+    // Optimistic UI updates
     const optimisticTask = { ...taskData, status: newStatus };
     updateTaskStore(optimisticTask);
+    try { updateAttributes({ taskStatus: JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }) }); } catch (e) {}
+    setLocalStatus(JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }));
+    setOpenDropdown(null);
     
     try {
-      await tasksApi.moveTask(id, newStatus, taskData.listId, currentUser.id);
-      try { updateAttributes({ taskStatus: JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }) }); } catch (e) {}
-      setLocalStatus(JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }));
+      if (mentionType === 'subtask') {
+        await tasksApi.updateSubtask(taskData.taskId, id, { status: newStatus });
+      } else {
+        await tasksApi.moveTask(id, newStatus, taskData.listId, currentUser.id);
+      }
       toast.success('Status updated');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update status');
+      // Revert could be added here if needed
     }
-    setOpenDropdown(null);
   };
 
   const handlePriorityChange = async (p: string | null) => {
@@ -258,7 +292,11 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       updateTaskStore({ ...taskData, priority: p });
     }
     try {
-      await tasksApi.updateTask(id, { priority: (p || undefined) as any, userId: currentUser.id });
+      if (mentionType === 'subtask') {
+        await tasksApi.updateSubtask(taskData?.taskId, id, { priority: (p !== null ? p : null) as any });
+      } else {
+        await tasksApi.updateTask(id, { priority: (p !== null ? p : null) as any, userId: currentUser.id });
+      }
       toast.success('Priority updated');
     } catch (e: any) {
       toast.error('Failed to update priority');
@@ -280,7 +318,11 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       updateTaskStore({ ...taskData, assignees: newAssignees, assigneeIds: newAssignees.map(a => a.id) });
     }
     try {
-      await tasksApi.updateTask(id, { assigneeIds: newAssignees.map(a => a.id), userId: currentUser.id });
+      if (mentionType === 'subtask') {
+        await tasksApi.updateSubtask(taskData?.taskId, id, { assigneeIds: newAssignees.map(a => a.id) });
+      } else {
+        await tasksApi.updateTask(id, { assigneeIds: newAssignees.map(a => a.id), userId: currentUser.id });
+      }
     } catch (e) {
       toast.error('Failed to update assignees');
     }
@@ -296,7 +338,11 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       updateTaskStore({ ...taskData, team: selectedTeam, teamId: selectedTeam ? selectedTeam.id : null });
     }
     try {
-      await tasksApi.updateTask(id, { teamId: selectedTeam ? selectedTeam.id : null, userId: currentUser.id });
+      if (mentionType === 'subtask') {
+        await tasksApi.updateSubtask(taskData?.taskId, id, { teamId: selectedTeam ? selectedTeam.id : null });
+      } else {
+        await tasksApi.updateTask(id, { teamId: selectedTeam ? selectedTeam.id : null, userId: currentUser.id });
+      }
       toast.success('Team updated');
     } catch (e) {
       toast.error('Failed to update team');
@@ -307,13 +353,16 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
   return (
-    <NodeViewWrapper as="span" className="inline-block align-middle mx-1 group" data-drag-handle>
-      <motion.span layout className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 dark:hover:bg-[#1f1f1f] transition-colors duration-200 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800">
+    <NodeViewWrapper as="span" className="inline mx-1 group leading-[1.8]" data-drag-handle>
+      <motion.span layout className="inline px-1 py-0.5 rounded-md hover:bg-zinc-500/10 transition-all duration-300 box-decoration-clone">
         
         <span 
-          className="flex items-center justify-center shrink-0 cursor-pointer" 
-          title={parsedStatusName || 'Status'}
-          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
+          className="inline-flex items-center justify-center shrink-0 cursor-pointer mr-1.5 align-middle transition-transform duration-300 group-hover:scale-110" 
+          title="Open Task Detail"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id, task: taskData } }));
+          }}
         >
           {taskStatus === 'Closed' || taskStatus === 'CLOSED' || taskStatus === 'DONE' ? (
             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor, fill: 'transparent' }} />
@@ -325,10 +374,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         </span>
 
         <span 
-          className="font-medium text-sm text-zinc-700 dark:text-zinc-200 max-w-[200px] truncate cursor-pointer hover:opacity-70 transition-opacity"
+          className="font-medium text-sm text-zinc-700 dark:text-zinc-200 cursor-pointer border-b border-zinc-300 dark:border-zinc-700/80 hover:border-zinc-500 dark:hover:border-zinc-400 group-hover:text-black dark:group-hover:text-white pb-[1px] transition-all duration-300 mr-1.5 align-middle"
           onClick={(e) => {
             e.stopPropagation();
-            window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id } }));
+            window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id, task: taskData } }));
           }}
           title="Open Task Detail"
         >
@@ -337,7 +386,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         <span
           ref={descTriggerRef}
-          className="cursor-pointer hover:opacity-70 transition-opacity flex items-center justify-center p-0.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 rounded"
+          className="cursor-pointer hover:opacity-70 transition-opacity inline-flex items-center justify-center p-0.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 rounded mr-1.5 align-middle"
           onClick={(e) => {
             e.stopPropagation();
             setOpenDropdown(openDropdown === 'description' ? null : 'description');
@@ -350,7 +399,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         {parsedStatusName && (
           <span 
             ref={statusRef}
-            className="px-1.5 py-[1px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 ml-1 cursor-pointer hover:opacity-80 transition-opacity"
+            className="px-1.5 py-[1px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 inline-flex align-middle"
             style={{ backgroundColor: parsedStatusColor }}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >
@@ -360,24 +409,20 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         <span 
           ref={priorityRef}
-          className={localPriority 
-            ? `px-1.5 py-[1px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 ml-1 cursor-pointer transition-all hover:opacity-80 ${
-                localPriority === 'URGENT' ? 'bg-[#ef4444]' :
-                localPriority === 'HIGH' ? 'bg-[#f97316]' :
-                localPriority === 'MEDIUM' ? 'bg-[#3b82f6]' :
-                localPriority === 'LOW' ? 'bg-[#8b5cf6]' : 'bg-zinc-600'
-              }`
-            : `flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer transition-colors text-zinc-500 ml-1`
-          }
+          className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700/50 cursor-pointer transition-colors mr-1.5 align-middle"
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           title={localPriority ? `${localPriority} Priority` : 'Set Priority'}
         >
-          {localPriority ? localPriority : <Flag className="w-3 h-3" />}
+          <Flag className={`w-3.5 h-3.5 shrink-0 transition-colors ${
+            localPriority === 'URGENT' ? 'text-red-500 dark:text-red-400 fill-red-500/20' :
+            localPriority === 'HIGH' ? 'text-orange-500 dark:text-orange-400 fill-orange-500/20' :
+            'text-zinc-400 dark:text-zinc-500'
+          }`} />
         </span>
 
         <motion.span layout
           ref={teamRef}
-          className="inline-flex items-center justify-center shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
+          className="inline-flex items-center justify-center shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 align-middle"
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'team' ? null : 'team'); }}
           title={taskData?.assigneeRoleRestrictions?.length ? taskData.assigneeRoleRestrictions.join(', ') : 'Assign Role'}
         >
@@ -416,9 +461,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
             )}
           </AnimatePresence>
         </motion.span>
+
         <motion.span layout
           ref={assigneesRef}
-          className="inline-flex items-center -space-x-1 shrink-0 ml-0.5 cursor-pointer hover:opacity-80 transition-opacity"
+          className="inline-flex items-center -space-x-1 shrink-0 cursor-pointer hover:opacity-80 transition-opacity align-middle"
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
         >
           <AnimatePresence mode="popLayout">
@@ -466,8 +512,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
             {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
               const isActive = statusName === parsedStatusName;
               const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
-              const colorHex = customObj?.color || null;
-              const textColorClass = STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[1] : 'text-zinc-500';
+              const colorHex = customObj?.color || getStatusColor(statusName);
               return (
                 <button
                   key={statusName}
@@ -477,11 +522,11 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                   }`}
                 >
                   {(statusName || '').toUpperCase() === 'KYC' ? (
-                    <CustomCircleDotted className="w-3 h-3 shrink-0" style={colorHex ? { color: colorHex } : undefined} />
+                    <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: colorHex }} />
                   ) : (
-                    <CustomCircleDot className={`w-3 h-3 shrink-0 ${!colorHex ? textColorClass : ''}`} style={colorHex ? { color: colorHex } : undefined} />
+                    <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: colorHex }} />
                   )}
-                  <span>{statusName}</span>
+                  <span style={{ color: colorHex }}>{statusName}</span>
                   {isActive && <CheckCircle2 className="w-3 h-3 ml-auto opacity-70" />}
                 </button>
               );
@@ -492,8 +537,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
       {openDropdown === 'priority' && (
         <PortalDropdown triggerRef={priorityRef} onClose={() => setOpenDropdown(null)}>
-          <div className="w-40 py-1">
-            <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Priority</div>
+          <div className="w-40 p-1">
+            <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Priority</div>
             {[
               { id: 'URGENT', label: 'Urgent', color: 'text-red-400' },
               { id: 'HIGH', label: 'High', color: 'text-orange-400' },
@@ -504,11 +549,13 @@ export const TaskMentionNode = (props: NodeViewProps) => {
               <button
                 key={p.id || 'clear'}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); handlePriorityChange(p.id); }}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group cursor-pointer transition-colors"
+                className={`w-full text-left px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors flex items-center gap-2 group ${
+                  p.id === localPriority ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'
+                }`}
               >
                 <Flag className={`w-3.5 h-3.5 ${p.color}`} />
-                <span className="text-zinc-300 group-hover:text-white transition-colors">{p.label}</span>
-                {p.id === localPriority && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto" />}
+                <span>{p.label}</span>
+                {p.id === localPriority && <CheckCircle2 className="w-3 h-3 ml-auto opacity-70" />}
               </button>
             ))}
           </div>

@@ -637,7 +637,13 @@ export default function DocPage({ docId }: { docId?: string }) {
   useEffect(() => {
     const handleOpenTaskDetail = async (e: any) => {
       const taskId = e.detail?.taskId;
+      const taskObj = e.detail?.task;
       if (!taskId) return;
+      if (taskObj) {
+        setSelectedTaskForModal(taskObj);
+        setIsTaskModalOpen(true);
+        return;
+      }
       const foundTask = tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
       if (foundTask) {
         setSelectedTaskForModal(foundTask);

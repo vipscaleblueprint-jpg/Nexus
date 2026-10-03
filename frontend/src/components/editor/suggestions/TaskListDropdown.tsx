@@ -33,6 +33,7 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
   const boards: BoardItem[] = rawItems.boards || [];
 
   const [filter, setFilter] = useState<FilterType>('all');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -84,13 +85,14 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
     props.command({
       id: task.id,
       label: task.name || task.title || 'Untitled',
-      mentionType: 'task',
+      mentionType: (task as any).isSubtask ? 'subtask' : 'task',
       taskStatus: task.status || '',
       tasks: '',
       taskAssignees: task.assignees ? JSON.stringify(task.assignees) : '',
       taskPriority: task.priority || '',
       taskDueDate: (task as any).dueDate || '',
       taskListName: task.listName || '',
+      frozenTaskData: JSON.stringify(task),
     });
   }, [props]);
 
@@ -125,46 +127,56 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
   return (
     <div className="bg-[#131315] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden w-[400px] z-[99999] flex flex-col font-sans">
       
-      {/* ── Search & Filter Header ───────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-800/80 bg-[#18181b]">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <Search className="w-4 h-4 text-indigo-400 shrink-0" />
-          <div className="text-[13px] text-zinc-300 truncate flex-1 flex items-center gap-1.5">
-            {selectedListId && (
-              <div className="flex items-center gap-1 bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded text-[11px] font-medium border border-indigo-500/20">
-                <span>{boards.find(b => b.id === selectedListId)?.name}</span>
-                <button onClick={() => setSelectedListId(null)} className="hover:text-indigo-300 transition-colors ml-0.5">
-                  <X className="w-3 h-3" />
-                </button>
+      {/* ── Search Header ───────────────────────────────────────── */}
+      <div className="flex flex-col border-b border-zinc-800/80 bg-[#18181b]">
+        <div className="flex items-center px-3 py-2.5 cursor-text">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Search className="w-4 h-4 text-teal-400 shrink-0" />
+            <div className="text-[13px] text-zinc-300 flex-1 flex items-center gap-1.5 min-w-0">
+              {selectedListId && (
+                <div className="flex items-center gap-1 bg-teal-500/10 text-teal-400 px-1.5 py-0.5 rounded text-[11px] font-medium border border-teal-500/20 shrink-0">
+                  <span>{boards.find(b => b.id === selectedListId)?.name}</span>
+                  <button onClick={() => setSelectedListId(null)} className="hover:text-teal-300 transition-colors ml-0.5">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+              <div className="flex flex-row items-baseline flex-1 min-w-0 pt-[1px] relative">
+                {props.query ? (
+                  <>
+                    <span className="text-zinc-100 truncate">{props.query}</span>
+                    <span className="inline-block w-[1.5px] h-[15px] bg-teal-400 ml-[1px] shrink-0 animate-[blink_1s_step-end_infinite] relative top-[2px]" />
+                  </>
+                ) : (
+                  <>
+                    <span className="inline-block w-[1.5px] h-[15px] bg-teal-400 mr-[1px] shrink-0 animate-[blink_1s_step-end_infinite] relative top-[2px]" />
+                    <span className="text-zinc-500 italic truncate">Search for a task...</span>
+                  </>
+                )}
               </div>
-            )}
-            <span className={props.query ? 'text-zinc-100' : 'text-zinc-500 italic'}>
-              {props.query || 'Search for a task...'}
-            </span>
+            </div>
           </div>
         </div>
 
-        <Popover.Root>
-          <Popover.Trigger asChild>
-            <button className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors text-[11px] font-medium border border-zinc-700/50 ml-2">
-              <Filter className="w-3 h-3" />
-              <span>{filter === 'all' ? 'All' : filter === 'task' ? 'Tasks' : 'Clients'}</span>
+        {/* Tabs Row */}
+        {!selectedListId && (
+          <div className="flex items-center px-2 pb-2 gap-4">
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('board'); }}
+              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'board' || filter === 'all' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 border-transparent hover:text-zinc-400'}`}
+            >
+              <Folder className="w-3 h-3" /> Clients
             </button>
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Content className="z-[100000] w-32 p-1 bg-[#18181b] border border-zinc-800 rounded-lg shadow-xl" sideOffset={4} align="end">
-              {(['all', 'task', 'board'] as FilterType[]).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors ${filter === f ? 'bg-indigo-500 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}`}
-                >
-                  {f === 'all' ? 'Everything' : f === 'task' ? 'Only Tasks' : 'Only Clients'}
-                </button>
-              ))}
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover.Root>
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('task'); }}
+              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'task' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 border-transparent hover:text-zinc-400'}`}
+            >
+              <ListTodo className="w-3 h-3" /> Tasks
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Results list ─────────────────────────────────────────────────── */}
@@ -183,9 +195,6 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
             {/* Clients / Boards section */}
             {visibleBoards.length > 0 && (
               <div className="mb-1">
-                <div className="px-2 py-1.5 text-[10px] font-bold tracking-widest text-zinc-500 uppercase flex items-center gap-1.5">
-                  <Folder className="w-3 h-3" /> Clients
-                </div>
                 {visibleBoards.map((board, idx) => {
                   const isSelected = idx === selectedIndex;
                   return (
@@ -226,9 +235,6 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
             {/* Tasks section */}
             {visibleTasks.length > 0 && (
               <div>
-                <div className="px-2 py-1.5 text-[10px] font-bold tracking-widest text-zinc-500 uppercase flex items-center gap-1.5">
-                  <ListTodo className="w-3 h-3" /> Tasks
-                </div>
                 {visibleTasks.map((task, relativeIdx) => {
                   const idx = visibleBoards.length + relativeIdx;
                   const isSelected = idx === selectedIndex;
@@ -309,23 +315,6 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
 
           </div>
         )}
-      </div>
-
-      {/* ── Footer ────────────────────────────────────────────────────────── */}
-      <div className="px-3 py-2 bg-[#101012] border-t border-zinc-800/80 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] font-medium text-zinc-400 border border-zinc-700/50 shadow-sm">↑↓</kbd>
-            <span className="text-[10px] text-zinc-500 font-medium">Navigate</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] font-medium text-zinc-400 border border-zinc-700/50 shadow-sm">↵</kbd>
-            <span className="text-[10px] text-zinc-500 font-medium">Select</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 text-zinc-600">
-          <CornerDownLeft className="w-3 h-3" />
-        </div>
       </div>
     </div>
   );

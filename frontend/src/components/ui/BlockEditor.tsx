@@ -321,26 +321,26 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
     <div className="w-full relative" ref={editorContainerRef}>
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
-          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999 }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
+          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999, appendTo: typeof document !== 'undefined' ? document.body : undefined, popperOptions: { strategy: 'absolute', modifiers: [{ name: 'preventOverflow', enabled: false }, { name: 'flip', enabled: false }, { name: 'hide', enabled: true }] } }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
             
             {/* Headings */}
             <button
               onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 1 }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 1 }) ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Heading 1"
             >
               <Heading1 className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 2 }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 2 }) ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Heading 2"
             >
               <Heading2 className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 3 }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${editor.isActive('heading', { level: 3 }) ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Heading 3"
             >
               <Heading3 className="w-3.5 h-3.5" />
@@ -350,28 +350,28 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
             <button
               onClick={() => editor.chain().focus().toggleBold().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bold') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bold') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Bold"
             >
               <Bold className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleItalic().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('italic') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('italic') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Italic"
             >
               <Italic className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleUnderline().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('underline') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('underline') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Underline"
             >
               <UnderlineIcon className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleStrike().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('strike') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('strike') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Strikethrough"
             >
               <Strikethrough className="w-3.5 h-3.5" />
@@ -381,7 +381,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
             <button
               onClick={() => (editor.chain().focus() as any).setToggle().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('toggle') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('toggle') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Toggle / Collapsible"
             >
               <ChevronRight className="w-3.5 h-3.5" />
@@ -391,21 +391,21 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
             <button
               onClick={() => editor.chain().focus().setTextAlign('left').run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'left' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'left' }) ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Align Left"
             >
               <AlignLeft className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().setTextAlign('center').run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'center' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'center' }) ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Align Center"
             >
               <AlignCenter className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().setTextAlign('right').run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'right' }) ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive({ textAlign: 'right' }) ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Align Right"
             >
               <AlignRight className="w-3.5 h-3.5" />
@@ -415,21 +415,21 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
             <button
               onClick={() => editor.chain().focus().toggleBulletList().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bulletList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bulletList') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Bullet List"
             >
               <List className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleOrderedList().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('orderedList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('orderedList') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Numbered List"
             >
               <ListOrdered className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => editor.chain().focus().toggleTaskList().run()}
-              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('taskList') ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-300'}`}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('taskList') ? 'text-[#00a884] bg-[#00a884]/10' : 'text-zinc-300'}`}
               title="Task List"
             >
               <CheckSquare className="w-3.5 h-3.5" />

@@ -29,8 +29,35 @@ export default function ActivityPage() {
     }
   };
 
+  const handleOpenTask = async (n: TaskNotification | string) => {
+    const taskId = typeof n === 'string' ? n : n.task?.id;
+    if (typeof n !== 'string' && !n.isRead) handleMarkAsRead(n.id);
+    if (!taskId) return;
+    
+    try {
+      const res = await tasksApi.getTask(taskId);
+      setSelectedTask(res.task);
+      // Update URL to persist state
+      const url = new URL(window.location.href);
+      url.searchParams.set('task', taskId);
+      window.history.pushState({}, '', url.toString());
+    } catch (err) {
+      console.error("Failed to fetch task:", err);
+      // Fallback to partial task if passed from notification object
+      if (typeof n !== 'string' && n.task) {
+        setSelectedTask(n.task);
+      }
+    }
+  };
+
   useEffect(() => {
     fetchNotifications();
+
+    const url = new URL(window.location.href);
+    const taskId = url.searchParams.get('task');
+    if (taskId) {
+      handleOpenTask(taskId);
+    }
 
     const handleNewNotification = () => {
       fetchNotifications();
@@ -38,6 +65,9 @@ export default function ActivityPage() {
 
     const handleClearTask = () => {
       setSelectedTask(null);
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('task');
+      window.history.pushState({}, '', newUrl.toString());
     };
 
     window.addEventListener('notification_received', handleNewNotification);
@@ -68,21 +98,25 @@ export default function ActivityPage() {
     }
   };
 
-  const handleOpenTask = async (n: TaskNotification) => {
-    if (!n.isRead) handleMarkAsRead(n.id);
-    if (!n.task) return;
-    
+  const handleMarkAllAsRead = async () => {
     try {
-      const res = await tasksApi.getTask(n.task.id);
-      setSelectedTask(res.task);
+      await notificationsApi.markAllAsRead();
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      useAppStore.getState().setUnreadNotifications(0);
     } catch (err) {
-      console.error("Failed to fetch task:", err);
-      // Fallback to partial task
-      setSelectedTask(n.task);
+      console.error(err);
     }
   };
 
-
+  const handleClearAll = async () => {
+    try {
+      await notificationsApi.clearAll();
+      setNotifications([]);
+      useAppStore.getState().setUnreadNotifications(0);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const groupNotificationsByDate = (notifs: TaskNotification[]) => {
     const groups: { [key: string]: TaskNotification[] } = {};
@@ -117,6 +151,22 @@ export default function ActivityPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Activity</h1>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleMarkAllAsRead}
+            className="px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-md shadow-sm transition-colors flex items-center gap-1.5"
+          >
+            <MailOpen className="size-3.5" />
+            Mark all as read
+          </button>
+          <button
+            onClick={handleClearAll}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5 transition-colors"
+          >
+            <Check className="size-3.5" />
+            Clear all
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

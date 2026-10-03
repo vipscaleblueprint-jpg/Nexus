@@ -70,3 +70,46 @@ export async function deleteCleared(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// PATCH /api/notifications/read-all
+export async function markAllAsRead(req: Request, res: Response) {
+  try {
+    const authReq = req as any;
+    if (!authReq.user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await prisma.taskNotification.updateMany({
+      where: {
+        userId: authReq.user.id,
+        isRead: false,
+        isCleared: false,
+      },
+      data: { isRead: true },
+    });
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// PATCH /api/notifications/clear-all
+export async function clearAll(req: Request, res: Response) {
+  try {
+    const authReq = req as any;
+    if (!authReq.user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await prisma.taskNotification.updateMany({
+      where: {
+        userId: authReq.user.id,
+        isCleared: false,
+      },
+      data: { isCleared: true, isRead: true },
+    });
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}

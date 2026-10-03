@@ -10,7 +10,8 @@ let cachedLists: any[] | null = null;
 
 
 const getStatusColor = (status: string) => {
-  const colorStr = STATUS_COLORS[status];
+  if (!status) return '#3b82f6';
+  const colorStr = STATUS_COLORS[status.toUpperCase()];
   if (!colorStr) return '#3b82f6';
   const match = colorStr.match(/bg-\[([^\]]+)\]/);
   return match ? match[1] : (colorStr.split(' ')[0] || '#3b82f6');
@@ -18,9 +19,9 @@ const getStatusColor = (status: string) => {
 
 // Frequency badges — derived from status name
 const FREQUENCY_LABELS: Record<string, string> = {
-  'Daily': 'DAILY',
-  'Weekly': 'WEEKLY',
-  'Monthly': 'MONTHLY',
+  'DAILY': 'DAILY',
+  'WEEKLY': 'WEEKLY',
+  'MONTHLY': 'MONTHLY',
 };
 
 export const taskSuggestion = {
@@ -48,7 +49,7 @@ export const taskSuggestion = {
             type: 'task',
             name: task.title,
             statusColor: getStatusColor(task.status || ''),
-            frequencyLabel: FREQUENCY_LABELS[task.status || ''] || null,
+            frequencyLabel: FREQUENCY_LABELS[(task.status || '').toUpperCase()] || null,
             listName: task.list?.name || '',
             listId: task.listId || task.list?.id || '',
           });
@@ -64,7 +65,7 @@ export const taskSuggestion = {
                 type: 'task',
                 name: `└─ ${st.title}`,
                 statusColor: getStatusColor(st.status || ''),
-                frequencyLabel: FREQUENCY_LABELS[st.status || ''] || null,
+                frequencyLabel: FREQUENCY_LABELS[(st.status || '').toUpperCase()] || null,
                 listName: task.list?.name || '',
                 listId: task.listId || task.list?.id || '',
               });
@@ -106,9 +107,12 @@ export const taskSuggestion = {
   render: () => {
     let component: ReactRenderer;
     let popup: any;
+    let scrollHandler: any;
+    let lastProps: any;
 
     return {
       onStart: (props: any) => {
+        lastProps = props;
         component = new ReactRenderer(TaskListDropdown, {
           props,
           editor: props.editor,
@@ -124,14 +128,35 @@ export const taskSuggestion = {
           interactive: true,
           trigger: 'manual',
           placement: 'bottom-start',
+          animation: false,
+          popperOptions: {
+            modifiers: [
+              { name: 'computeStyles', options: { adaptive: false } }
+            ]
+          }
         });
+        
+        if (popup && popup[0] && popup[0].popper) {
+          popup[0].popper.style.transition = 'none';
+        }
+
+        scrollHandler = () => {
+          if (popup && popup[0] && !popup[0].state.isDestroyed && lastProps?.clientRect) {
+            popup[0].setProps({ getReferenceClientRect: lastProps.clientRect });
+            if (popup[0].popper) popup[0].popper.style.transition = 'none';
+          }
+        };
+        window.addEventListener('scroll', scrollHandler, true);
+        window.addEventListener('resize', scrollHandler);
       },
 
       onUpdate(props: any) {
+        lastProps = props;
         component.updateProps(props);
         if (!props.clientRect) return;
         if (popup && popup[0] && !popup[0].state.isDestroyed) {
           popup[0].setProps({ getReferenceClientRect: props.clientRect });
+          if (popup[0].popper) popup[0].popper.style.transition = 'none';
         }
       },
 
@@ -144,11 +169,14 @@ export const taskSuggestion = {
       },
 
       onExit() {
+        if (scrollHandler) {
+          window.removeEventListener('scroll', scrollHandler, true);
+          window.removeEventListener('resize', scrollHandler);
+        }
         if (popup && popup[0] && !popup[0].state.isDestroyed) popup[0].destroy();
         if (component) component.destroy();
-        // Reset task cache every 5 minutes; list cache resets immediately (reads from store)
         setTimeout(() => { cachedTasks = null; }, 5 * 60 * 1000);
-        cachedLists = null; // Always refresh from store on next open
+        cachedLists = null;
       },
     };
   },

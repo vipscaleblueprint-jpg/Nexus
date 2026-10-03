@@ -86,6 +86,7 @@ const taskInclude = {
     }
   },
   checklists: { 
+    where: { subtaskId: null },
     include: { 
       items: {
         include: { checkedBy: { select: { id: true, name: true, avatarUrl: true } } }
@@ -495,7 +496,7 @@ export async function updateTask(req: Request, res: Response) {
         externalId: true,
         assignees: { select: { id: true, name: true } },
         assigneeRoleRestrictions: true,
-        checklists: { include: { items: true } },
+        checklists: { where: { subtaskId: null }, include: { items: true } },
         subtasks: { include: { checklists: { include: { items: true } } } },
       },
     });
@@ -615,11 +616,13 @@ export async function updateTask(req: Request, res: Response) {
           if (dueDate !== undefined) cuPayload.due_date = dueDate ? new Date(dueDate).getTime() : null;
           if (startDate !== undefined) cuPayload.start_date = startDate ? new Date(startDate).getTime() : null;
           if (Object.keys(cuPayload).length > 0) {
+            console.log(`[ClickUp Debug] Syncing updateTask payload for ${clickUpTaskId}:`, cuPayload);
             await safeUpdateClickUpTask(clickUpTaskId, cuPayload);
+            console.log(`[ClickUp Debug] Sync success for updateTask ${clickUpTaskId}`);
           }
         }
-      } catch (err) {
-        console.error('[ClickUp] updateTask sync error:', err);
+      } catch (err: any) {
+        console.error('[ClickUp Debug] updateTask sync error:', err?.response?.data || err?.message || err);
       }
     })();
 
@@ -866,10 +869,13 @@ export async function moveTask(req: Request, res: Response) {
       try {
         const clickUpTaskId = currentTask.externalId ?? null;
         if (clickUpTaskId && status) {
-          await safeUpdateClickUpTask(clickUpTaskId, { status: mapNexusStatusToClickUp(status) });
+          const cuPayload = { status: mapNexusStatusToClickUp(status) };
+          console.log(`[ClickUp Debug] Syncing moveTask payload for ${clickUpTaskId}:`, cuPayload);
+          await safeUpdateClickUpTask(clickUpTaskId, cuPayload);
+          console.log(`[ClickUp Debug] Sync success for moveTask ${clickUpTaskId}`);
         }
-      } catch (err) {
-        console.error('[ClickUp] moveTask sync error:', err);
+      } catch (err: any) {
+        console.error('[ClickUp Debug] moveTask sync error:', err?.response?.data || err?.message || err);
       }
     })();
 
@@ -1404,7 +1410,7 @@ export async function getLiveBlocksData(req: Request, res: Response) {
       },
       include: {
         subtasks: true,
-        checklists: { include: { items: true } },
+        checklists: { where: { subtaskId: null }, include: { items: true } },
         assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
         assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
         creator: { select: { id: true, name: true, email: true } },
@@ -1533,14 +1539,30 @@ export async function createSubtask(req: Request, res: Response) {
       where: { id: taskId }, 
       select: { id: true, listId: true, externalId: true, subtasks: taskInclude.subtasks }
     });
-    if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+    if (task) {
+      await invalidateCache(`tasks:all:${task.listId}*`);
+      io.to(`list:${task.listId}`).emit('task:updated', task);
+    }
 
     // --- ClickUp Sync: create subtask (fire-and-forget) ---
     if (task?.externalId) {
       (async () => {
         try {
           const list = await prisma.list.findUnique({ where: { id: task.listId }, select: { externalId: true } });
-          const cuListId = list?.externalId?.startsWith('cu:') ? list.externalId.replace('cu:', '') : null;
+          let cuListId = list?.externalId?.startsWith('cu:') ? list.externalId.replace('cu:', '') : null;
+          
+          if (!cuListId && task.externalId) {
+            try {
+              const { getClickUpTask } = require('../services/clickupService');
+              const cuTask = await getClickUpTask(task.externalId);
+              if (cuTask?.list?.id) {
+                cuListId = cuTask.list.id;
+              }
+            } catch (err) {
+              console.error('[ClickUp] Failed to fetch ClickUp task for fallback list ID:', err);
+            }
+          }
+
           if (cuListId) {
             const cuSubtaskId = await safeCreateClickUpSubtask(
               cuListId,
@@ -1820,11 +1842,13 @@ export async function updateSubtask(req: Request, res: Response) {
           if (status !== undefined) cuPayload.status = mapNexusStatusToClickUp(status);
           if (priority !== undefined) cuPayload.priority = mapNexusPriorityToClickUp(priority);
           if (Object.keys(cuPayload).length > 0) {
+            console.log(`[ClickUp Debug] Syncing updateSubtask payload for ${clickUpSubtaskId}:`, cuPayload);
             await safeUpdateClickUpTask(clickUpSubtaskId, cuPayload);
+            console.log(`[ClickUp Debug] Sync success for updateSubtask ${clickUpSubtaskId}`);
           }
         }
-      } catch (err) {
-        console.error('[ClickUp] updateSubtask sync error:', err);
+      } catch (err: any) {
+        console.error('[ClickUp Debug] updateSubtask sync error:', err?.response?.data || err?.message || err);
       }
     })();
 

@@ -290,20 +290,20 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
               const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
 
               const STATUS_COLORS: Record<string, string> = {
-                PENDING: 'text-[#FFC53D]',
-                'IN PROGRESS': 'text-[#CF1761]',
-                CLOSED: 'text-[#2C8C5E]',
-                'KYC': 'text-[#1E7E48]',
-                'PIN BOARD': 'text-[#0F7854]',
-                'DAILY': 'text-[#0062D6]',
-                'WEEKLY': 'text-[#0062D6]',
-                'MONTHLY': 'text-[#0062D6]',
-                'REVISION': 'text-[#3E63DD]',
-                'WAITING': 'text-[#FF0000]',
-                'IN REVIEW': 'text-[#C36522]',
-                'CHECKING': 'text-[#9E49AB]',
-                'CRM': 'text-[#00A6A6]',
-                'ON-HOLD': 'text-[#808080]',
+                PENDING: 'text-[#D29A2A]',
+                'IN PROGRESS': 'text-[#D04A7C]',
+                CLOSED: 'text-[#2FA37A]',
+                'KYC': 'text-[#3A8F55]',
+                'PIN BOARD': 'text-[#1F8A6E]',
+                'DAILY': 'text-[#2F7BD0]',
+                'WEEKLY': 'text-[#2F7BD0]',
+                'MONTHLY': 'text-[#2F7BD0]',
+                'REVISION': 'text-[#5B6BD6]',
+                'WAITING': 'text-[#D9534F]',
+                'IN REVIEW': 'text-[#D97B3A]',
+                'CHECKING': 'text-[#A35DB8]',
+                'CRM': 'text-[#22A3AE]',
+                'ON-HOLD': 'text-[#8A8F98]',
               };
 
               const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusStr] || 'text-zinc-500');
@@ -339,20 +339,20 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                     };
                     
                     const STATUS_COLORS: Record<string, string> = {
-                      PENDING: 'text-[#FFC53D]',
-                      'IN PROGRESS': 'text-[#CF1761]',
-                      CLOSED: 'text-[#2C8C5E]',
-                      'KYC': 'text-[#1E7E48]',
-                      'PIN BOARD': 'text-[#0F7854]',
-                      'DAILY': 'text-[#0062D6]',
-                      'WEEKLY': 'text-[#0062D6]',
-                      'MONTHLY': 'text-[#0062D6]',
-                      'REVISION': 'text-[#3E63DD]',
-                      'WAITING': 'text-[#FF0000]',
-                      'IN REVIEW': 'text-[#C36522]',
-                      'CHECKING': 'text-[#9E49AB]',
-                      'CRM': 'text-[#00A6A6]',
-                      'ON-HOLD': 'text-[#808080]',
+                      PENDING: 'text-[#D29A2A]',
+                      'IN PROGRESS': 'text-[#D04A7C]',
+                      CLOSED: 'text-[#2FA37A]',
+                      'KYC': 'text-[#3A8F55]',
+                      'PIN BOARD': 'text-[#1F8A6E]',
+                      'DAILY': 'text-[#2F7BD0]',
+                      'WEEKLY': 'text-[#2F7BD0]',
+                      'MONTHLY': 'text-[#2F7BD0]',
+                      'REVISION': 'text-[#5B6BD6]',
+                      'WAITING': 'text-[#D9534F]',
+                      'IN REVIEW': 'text-[#D97B3A]',
+                      'CHECKING': 'text-[#A35DB8]',
+                      'CRM': 'text-[#22A3AE]',
+                      'ON-HOLD': 'text-[#8A8F98]',
                     };
 
                     return (

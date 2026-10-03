@@ -35,6 +35,12 @@ export const notificationsApi = {
   clearNotification: async (id: string): Promise<{ notification: TaskNotification }> => {
     return apiClient(`/api/notifications/${id}/clear`, { method: 'PATCH' });
   },
+  markAllAsRead: async (): Promise<{ success: boolean }> => {
+    return apiClient(`/api/notifications/read-all`, { method: 'PATCH' });
+  },
+  clearAll: async (): Promise<{ success: boolean }> => {
+    return apiClient(`/api/notifications/clear-all`, { method: 'PATCH' });
+  },
   deleteCleared: async (): Promise<{ success: boolean }> => {
     return apiClient(`/api/notifications/cleared`, { method: 'DELETE' });
   },

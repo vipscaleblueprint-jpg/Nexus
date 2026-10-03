@@ -110,7 +110,7 @@ export async function createClickUpTask(
     name: string;
     description?: string;
     status?: string;
-    priority?: number; // 1=urgent 2=high 3=normal 4=low
+    priority?: number | null; // 1=urgent 2=high 3=normal 4=low
     due_date?: number; // unix ms
     start_date?: number;
     assignees?: number[];
@@ -139,7 +139,7 @@ export async function updateClickUpTask(
     name?: string;
     description?: string;
     status?: string;
-    priority?: number;
+    priority?: number | null;
     due_date?: number | null;
     start_date?: number | null;
   }
@@ -312,7 +312,7 @@ export async function deleteClickUpChecklistItem(
 export async function createClickUpSubtask(
   listId: string,
   parentTaskId: string,
-  payload: { name: string; description?: string; status?: string; priority?: number }
+  payload: { name: string; description?: string; status?: string; priority?: number | null }
 ): Promise<any> {
   const finalPayload: any = { ...payload, parent: parentTaskId };
   if (payload.description !== undefined) {
@@ -453,8 +453,9 @@ export function mapNexusStatusToClickUp(nexusStatus: string): string {
  * Maps a Nexus priority to a ClickUp numeric priority.
  * ClickUp: 1=urgent, 2=high, 3=normal, 4=low
  */
-export function mapNexusPriorityToClickUp(nexusPriority: string): number {
-  switch (nexusPriority?.toUpperCase()) {
+export function mapNexusPriorityToClickUp(nexusPriority: string | null | undefined): number | null {
+  if (!nexusPriority) return null;
+  switch (nexusPriority.toUpperCase()) {
     case 'URGENT': return 1;
     case 'HIGH': return 2;
     case 'MEDIUM': return 3;

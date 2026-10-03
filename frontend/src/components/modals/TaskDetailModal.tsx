@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -69,7 +69,7 @@ interface Props {
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400 bg-zinc-800',
+  LOW: 'text-zinc-400 bg-zinc-500/20',
   MEDIUM: 'text-blue-400 bg-blue-500/20',
   HIGH: 'text-orange-400 bg-orange-500/20',
   URGENT: 'text-red-400 bg-red-500/20',
@@ -93,36 +93,36 @@ export const ALL_STATUSES = [
 ];
 
 export const STATUS_COLORS: Record<string, string> = {
-  'KYC': 'bg-[#1E7E48] text-white',
-  'PIN BOARD': 'bg-[#0F7854] text-white',
-  'DAILY': 'bg-[#0062D6] text-white',
-  'WEEKLY': 'bg-[#0062D6] text-white',
-  'MONTHLY': 'bg-[#0062D6] text-white',
-  'PENDING': 'bg-[#FFC53D] text-black',
-  'IN PROGRESS': 'bg-[#CF1761] text-white',
-  'REVISION': 'bg-[#3E63DD] text-white',
-  'WAITING': 'bg-[#FF0000] text-white',
-  'IN REVIEW': 'bg-[#C36522] text-white',
-  'CHECKING': 'bg-[#9E49AB] text-white',
-  'CRM': 'bg-[#00A6A6] text-white',
-  'CLOSED': 'bg-[#2C8C5E] text-white',
-  'ON-HOLD': 'bg-[#808080] text-white',
+  'KYC': 'bg-[#3A8F55] text-white',
+  'PIN BOARD': 'bg-[#1F8A6E] text-white',
+  'DAILY': 'bg-[#2F7BD0] text-white',
+  'WEEKLY': 'bg-[#2F7BD0] text-white',
+  'MONTHLY': 'bg-[#2F7BD0] text-white',
+  'PENDING': 'bg-[#D29A2A] text-white',
+  'IN PROGRESS': 'bg-[#D04A7C] text-white',
+  'REVISION': 'bg-[#5B6BD6] text-white',
+  'WAITING': 'bg-[#D9534F] text-white',
+  'IN REVIEW': 'bg-[#D97B3A] text-white',
+  'CHECKING': 'bg-[#A35DB8] text-white',
+  'CRM': 'bg-[#22A3AE] text-white',
+  'CLOSED': 'bg-[#2FA37A] text-white',
+  'ON-HOLD': 'bg-[#8A8F98] text-white',
 
   // Fallback for capitalized formats
-  'Kyc': 'bg-[#1E7E48] text-white',
-  'Pin Board': 'bg-[#0F7854] text-white',
-  'Daily': 'bg-[#0062D6] text-white',
-  'Weekly': 'bg-[#0062D6] text-white',
-  'Monthly': 'bg-[#0062D6] text-white',
-  'Pending': 'bg-[#FFC53D] text-black',
-  'In Progress': 'bg-[#CF1761] text-white',
-  'Revision': 'bg-[#3E63DD] text-white',
-  'Waiting': 'bg-[#FF0000] text-white',
-  'In Review': 'bg-[#C36522] text-white',
-  'Checking': 'bg-[#9E49AB] text-white',
-  'Crm': 'bg-[#00A6A6] text-white',
-  'Closed': 'bg-[#2C8C5E] text-white',
-  'On-Hold': 'bg-[#808080] text-white',
+  'Kyc': 'bg-[#3A8F55] text-white',
+  'Pin Board': 'bg-[#1F8A6E] text-white',
+  'Daily': 'bg-[#2F7BD0] text-white',
+  'Weekly': 'bg-[#2F7BD0] text-white',
+  'Monthly': 'bg-[#2F7BD0] text-white',
+  'Pending': 'bg-[#D29A2A] text-white',
+  'In Progress': 'bg-[#D04A7C] text-white',
+  'Revision': 'bg-[#5B6BD6] text-white',
+  'Waiting': 'bg-[#D9534F] text-white',
+  'In Review': 'bg-[#D97B3A] text-white',
+  'Checking': 'bg-[#A35DB8] text-white',
+  'Crm': 'bg-[#22A3AE] text-white',
+  'Closed': 'bg-[#2FA37A] text-white',
+  'On-Hold': 'bg-[#8A8F98] text-white',
 };
 
 function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
@@ -741,7 +741,21 @@ export function TaskDetailModalContent({
                 : null;
           if (typePrefix) {
             const optimisticIdx = prev.findIndex(
-              a => typeof a.id === 'string' && a.id.startsWith(typePrefix)
+              a => {
+                if (typeof a.id !== 'string' || !a.id.startsWith(typePrefix)) return false;
+                
+                // Match specific fields to avoid race conditions overriding the wrong optimistic item
+                if (data.activity.type === 'assignment') {
+                  return a.assigneeName === data.activity.assigneeName;
+                }
+                if (data.activity.type === 'status_change') {
+                  return a.newStatus === data.activity.newStatus;
+                }
+                if (data.activity.type === 'priority_change') {
+                  return a.newPriority === data.activity.newPriority;
+                }
+                return true;
+              }
             );
             if (optimisticIdx !== -1) {
               const updated = [...prev];
@@ -1269,7 +1283,6 @@ export function TaskDetailModalContent({
     <>
       <div
         className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
-        onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-[#18181b]">
@@ -1358,6 +1371,18 @@ export function TaskDetailModalContent({
               <Share2 className="w-3.5 h-3.5 text-zinc-400" />
               Share
             </button>
+            {mode === 'modal' && (
+              <button
+                onClick={() => {
+                  onClose();
+                  router.push(`/tasks/${task.id}`);
+                }}
+                className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
+                title="Open in full page"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={() => {
                 onClose();
@@ -1422,7 +1447,7 @@ export function TaskDetailModalContent({
                       const statusName = task.status || 'No Status';
                       const statusObj = internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
                       const hasCustomColor = !!statusObj?.color;
-                      const defaultClasses = STATUS_COLORS[task.status] ?? 'bg-zinc-800/50 text-zinc-400';
+                      const defaultClasses = STATUS_COLORS[(task.status || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
 
                       return (
                         <div
@@ -1458,13 +1483,13 @@ export function TaskDetailModalContent({
                               }
                               return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
                             }
+                                        const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+                                        const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
                                         
                                         if ((s || '').toUpperCase() === 'KYC') {
-                                          return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                                          return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
                                         }
-                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
-                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
-
+                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
 
                                       })()}
                                       {s}
@@ -1804,15 +1829,31 @@ export function TaskDetailModalContent({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
-                        {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map(p => (
-                          <div
-                            key={p}
-                            onClick={() => handlePriorityChange(p)}
-                            className="cursor-pointer flex items-center px-2 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-sm"
-                          >
-                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${PRIORITY_COLORS[p]}`}>{p}</span>
-                          </div>
-                        ))}
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
+                          {(['URGENT', 'HIGH', 'MEDIUM', 'LOW'] as Priority[]).map(p => (
+                            <button
+                              key={p}
+                              onClick={() => { handlePriorityChange(p); setIsPriorityOpen(false); }}
+                              className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${task.priority === p ? 'text-zinc-100 bg-zinc-800/50' : 'text-zinc-300 hover:text-zinc-100'}`}
+                            >
+                              <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p]?.split(' ')[0] ?? 'text-zinc-400'}`} />
+                              <span className="capitalize">{p.toLowerCase()}</span>
+                              {task.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
+                            </button>
+                          ))}
+                          {task.priority && (
+                            <div className="border-t border-zinc-800/60 mt-1 pt-1">
+                              <button
+                                className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                                onClick={() => { handlePriorityChange(null as any); setIsPriorityOpen(false); }}
+                              >
+                                <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                                <span>Clear Priority</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </Popover.Content>
                     </Popover.Portal>
                   </Popover.Root>
@@ -2162,19 +2203,20 @@ export function TaskDetailModalContent({
                       {/* Combined Timeline */}
                       {combined.length > 0 && (() => {
                         const timelineItems: any[] = [];
-                        let currentIsActivity: boolean | null = null;
+                        let currentGroupKey: string | null = null;
                         let currentBlock: any[] = [];
                         const blocks: any[][] = [];
                         
                         combined.forEach(item => {
-                          if (currentIsActivity === null) {
-                              currentIsActivity = item.isActivityType;
+                          const key = item.isActivityType ? `activity_${item.type}_${item.author || ''}` : 'comment';
+                          if (currentGroupKey === null) {
+                              currentGroupKey = key;
                               currentBlock.push(item);
-                          } else if (currentIsActivity === item.isActivityType) {
+                          } else if (currentGroupKey === key && item.isActivityType) {
                               currentBlock.push(item);
                           } else {
                               blocks.push(currentBlock);
-                              currentIsActivity = item.isActivityType;
+                              currentGroupKey = key;
                               currentBlock = [item];
                           }
                         });
@@ -2182,14 +2224,14 @@ export function TaskDetailModalContent({
                         
                         blocks.forEach((block, bIdx) => {
                             const isExpanded = expandedBlocks.includes(bIdx);
-                            if (!block[0].isActivityType || block.length <= 5) {
+                            if (!block[0].isActivityType || block.length <= 1) {
                                 timelineItems.push(...block);
                             } else if (isExpanded) {
                                 timelineItems.push({ isShowLess: true, blockId: bIdx });
                                 timelineItems.push(...block);
                             } else {
-                                timelineItems.push({ isShowMore: true, count: block.length - 5, blockId: bIdx });
-                                timelineItems.push(...block.slice(-5));
+                                timelineItems.push({ isShowMore: true, count: block.length - 1, blockId: bIdx });
+                                timelineItems.push(...block.slice(-1));
                             }
                         });
 
@@ -2204,7 +2246,7 @@ export function TaskDetailModalContent({
                                     className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
                                   >
                                     <ChevronRight className="w-4 h-4" />
-                                    Show {item.count} older updates
+                                    Show more
                                   </button>
                                 );
                               }
@@ -2216,7 +2258,7 @@ export function TaskDetailModalContent({
                                     className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
                                   >
                                     <ChevronDown className="w-4 h-4" />
-                                    Show less updates
+                                    Show less
                                   </button>
                                 );
                               }
@@ -2232,11 +2274,16 @@ export function TaskDetailModalContent({
                                       {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
                                         <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
                                       ) : (
-                                        <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
+                                        <>changed status from <span
+                                          className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
+                                          style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
+                                        >
+                                          {act.oldStatus || 'Unknown'}
+                                        </span></>
                                       )}
                                       {' '}to <span
-                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
-                                        style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
+                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[(act.newStatus || '').toUpperCase()] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                        style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color) } : {}}
                                       >
                                         {act.newStatus}
                                       </span>
@@ -2247,18 +2294,27 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
-                              if (act.type === 'assignment') {
+                              if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower') {
+                                const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                                const assigneeName = act.assigneeName === currentUser?.name ? 'You' : act.assigneeName;
+                                const isUnassigned = act.assigneeName === 'Unassigned';
+
+                                let actionText = 'assigned to:';
+                                if (act.type === 'unassignment') actionText = 'removed assignee:';
+                                else if (act.type === 'add_follower') actionText = 'added follower:';
+                                else if (act.type === 'remove_follower') actionText = 'removed follower:';
+                                
                                 return (
-                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                    <div className="flex-1 leading-relaxed">
-                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
-                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                        <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
-                                      ) : (
-                                        <>to{' '}</>
-                                      )}
-                                      <span className="text-purple-400 font-medium">{act.assigneeName}</span>
+                                  <div key={act.id} className="flex justify-between items-center text-sm text-zinc-400 py-1">
+                                    <div className="flex gap-2 items-center">
+                                      <span className="text-zinc-500 text-lg leading-none mt-[-2px]">&bull;</span>
+                                      <span>
+                                        {isUnassigned && act.type === 'assignment' ? (
+                                          <>{actorName} removed all assignees</>
+                                        ) : (
+                                          <>{actorName} {actionText} {assigneeName}</>
+                                        )}
+                                      </span>
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                       {timeStr}
@@ -2999,7 +3055,6 @@ function SubtaskDetailView({
   return (
     <div
       className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
-      onClick={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 bg-[#18181b] shrink-0">
@@ -3156,7 +3211,7 @@ function SubtaskDetailView({
                       const statusName = subtask.status || 'No Status';
                       const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
                       const hasCustomColor = !!statusObj?.color;
-                      const defaultClasses = STATUS_COLORS[subtask.status] ?? 'bg-zinc-800/50 text-zinc-400';
+                      const defaultClasses = STATUS_COLORS[(subtask.status || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
 
                       const getHex = (colorStr: string) => {
                         const tailwindColors: Record<string, string> = {
@@ -3171,7 +3226,7 @@ function SubtaskDetailView({
 
                       return (
                         <div
-                          style={hasCustomColor ? { backgroundColor: getHex(statusObj.color) } : {}}
+                          style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
                           className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} shadow-sm group/status`}
                         >
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
@@ -3216,14 +3271,17 @@ function SubtaskDetailView({
                                         const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
                                         if (customObj?.color) {
                                           if ((s || '').toUpperCase() === 'KYC') {
-                                            return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHex(customObj.color) }} />;
+                                            return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
                                           }
-                                          return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHex(customObj.color) }} />;
+                                          return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
                                         }
+                                        const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+                                        const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
+                                        
                                         if ((s || '').toUpperCase() === 'KYC') {
-                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
-                            }
-                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                                          return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                                        }
+                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
                                       })()}
                                       {s}
                                       {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -3667,8 +3725,21 @@ function SubtaskDetailView({
                     }}
                     onBlur={() => {
                       setIsLocalEditing(false);
+                      const sanitizedDesc = (localDesc === '<p></p>' || localDesc === '<p><br></p>') ? '' : localDesc;
+                      
+                      if (sanitizedDesc !== subtask.description) {
+                        tasksApi.updateSubtask(parentTask.id, subtask.id, { description: sanitizedDesc }).catch(err => console.error(err));
+                        if (socket) {
+                          socket.emit('task_editing_stop', {
+                            listId: parentTask.listId,
+                            taskId: subtask.id,
+                            description: sanitizedDesc,
+                          });
+                        }
+                      }
+                      
                       if (onUpdateTask) {
-                        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: localDesc } : st) || [];
+                        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: sanitizedDesc } : st) || [];
                         onUpdateTask({ ...parentTask, subtasks: newSubtasks });
                       }
                       if (socket && subtask) {
@@ -3919,19 +3990,20 @@ function SubtaskDetailView({
                     {/* Combined Timeline */}
                     {combined.length > 0 && (() => {
                       const timelineItems: any[] = [];
-                      let currentIsActivity: boolean | null = null;
+                      let currentGroupKey: string | null = null;
                       let currentBlock: any[] = [];
                       const blocks: any[][] = [];
                       
                       combined.forEach(item => {
-                        if (currentIsActivity === null) {
-                            currentIsActivity = item.isActivityType;
+                        const key = item.isActivityType ? `activity_${item.type}_${item.author || ''}` : 'comment';
+                        if (currentGroupKey === null) {
+                            currentGroupKey = key;
                             currentBlock.push(item);
-                        } else if (currentIsActivity === item.isActivityType) {
+                        } else if (currentGroupKey === key && item.isActivityType) {
                             currentBlock.push(item);
                         } else {
                             blocks.push(currentBlock);
-                            currentIsActivity = item.isActivityType;
+                            currentGroupKey = key;
                             currentBlock = [item];
                         }
                       });
@@ -3939,14 +4011,14 @@ function SubtaskDetailView({
                       
                       blocks.forEach((block, bIdx) => {
                           const isExpanded = expandedBlocks.includes(bIdx);
-                          if (!block[0].isActivityType || block.length <= 5) {
+                          if (!block[0].isActivityType || block.length <= 1) {
                               timelineItems.push(...block);
                           } else if (isExpanded) {
                               timelineItems.push({ isShowLess: true, blockId: bIdx });
                               timelineItems.push(...block);
                           } else {
-                              timelineItems.push({ isShowMore: true, count: block.length - 5, blockId: bIdx });
-                              timelineItems.push(...block.slice(-5));
+                              timelineItems.push({ isShowMore: true, count: block.length - 1, blockId: bIdx });
+                              timelineItems.push(...block.slice(-1));
                           }
                       });
 
@@ -3961,7 +4033,7 @@ function SubtaskDetailView({
                                   className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
                                 >
                                   <ChevronRight className="w-4 h-4" />
-                                  Show {item.count} older updates
+                                  Show more
                                 </button>
                               );
                             }
@@ -3973,7 +4045,7 @@ function SubtaskDetailView({
                                   className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
                                 >
                                   <ChevronDown className="w-4 h-4" />
-                                  Show less updates
+                                  Show less
                                 </button>
                               );
                             }
@@ -3989,11 +4061,16 @@ function SubtaskDetailView({
                                     {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
                                       <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
                                     ) : (
-                                      <>changed status from <span className="font-medium text-zinc-300 px-1">{act.oldStatus || 'Unknown'}</span></>
+                                      <>changed status from <span
+                                          className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
+                                          style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
+                                        >
+                                          {act.oldStatus || 'Unknown'}
+                                        </span></>
                                     )}
                                     {' '}to <span
-                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[act.newStatus] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
-                                        style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: (listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color } : {}}
+                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[(act.newStatus || '').toUpperCase()] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                        style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: getHexColor((listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color) } : {}}
                                       >
                                         {act.newStatus}
                                       </span>
@@ -4004,18 +4081,27 @@ function SubtaskDetailView({
                                 </div>
                               );
                             }
-                            if (act.type === 'assignment') {
+                            if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower') {
+                              const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                              const assigneeName = act.assigneeName === currentUser?.name ? 'You' : act.assigneeName;
+                              const isUnassigned = act.assigneeName === 'Unassigned';
+
+                              let actionText = 'assigned to:';
+                              if (act.type === 'unassignment') actionText = 'removed assignee:';
+                              else if (act.type === 'add_follower') actionText = 'added follower:';
+                              else if (act.type === 'remove_follower') actionText = 'removed follower:';
+
                               return (
-                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
-                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                                  <div className="flex-1 leading-relaxed">
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span> assigned{' '}
-                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                      <>to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
-                                    ) : (
-                                      <>to{' '}</>
-                                    )}
-                                    <span className="text-purple-400 font-medium">{act.assigneeName}</span>
+                                <div key={act.id} className="flex justify-between items-center text-sm text-zinc-400 py-1 mb-2">
+                                  <div className="flex gap-2 items-center">
+                                    <span className="text-zinc-500 text-lg leading-none mt-[-2px]">&bull;</span>
+                                    <span>
+                                      {isUnassigned && act.type === 'assignment' ? (
+                                        <>{actorName} removed all assignees</>
+                                      ) : (
+                                        <>{actorName} {actionText} {assigneeName}</>
+                                      )}
+                                    </span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -4321,7 +4407,11 @@ export function TaskDetailModal(props: Props) {
           <div
             key="modal-backdrop"
             className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
-            onClick={() => props.onClose()}
+            onPointerDown={(e) => {
+              if (e.target === e.currentTarget) {
+                props.onClose();
+              }
+            }}
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.97 }}
@@ -4329,7 +4419,6 @@ export function TaskDetailModal(props: Props) {
               exit={{ opacity: 0, scale: 0.97 }}
               transition={{ duration: 0.15, ease: 'easeOut' }}
               className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col cursor-default"
-              onClick={e => e.stopPropagation()}
             >
               <TaskDetailModalContent
                 {...props}

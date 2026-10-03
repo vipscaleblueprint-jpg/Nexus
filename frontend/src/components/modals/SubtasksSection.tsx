@@ -39,10 +39,10 @@ interface SubtasksSectionProps {
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400',
-  MEDIUM: 'text-blue-400',
-  HIGH: 'text-orange-400',
-  URGENT: 'text-red-400',
+  LOW: 'text-zinc-400 bg-zinc-500/20',
+  MEDIUM: 'text-blue-400 bg-blue-500/20',
+  HIGH: 'text-orange-400 bg-orange-500/20',
+  URGENT: 'text-red-400 bg-red-500/20',
 };
 
 // Subcomponent for description to avoid hook-in-loop issues
@@ -403,8 +403,9 @@ function SubtaskRow({
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusRowOpen, setStatusRowOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState<number | undefined>(undefined);
+  const priorityClass = subtask.priority ? (PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400 bg-transparent') : 'text-zinc-500 bg-transparent';
+  const priorityTextColor = priorityClass.split(' ')[0];
   const resizeRef = useRef<HTMLDivElement>(null);
-  const priorityColor = 'text-zinc-400';
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleVal, setTitleVal] = useState(subtask.title);
@@ -539,7 +540,7 @@ function SubtaskRow({
   const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
   const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
   const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
-  const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[1] : 'text-zinc-500');
+  const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusName.toUpperCase()] ? STATUS_COLORS[statusName.toUpperCase()].split(' ')[1] : 'text-zinc-500');
   const statusIconStyle = statusHexColor ? { color: statusHexColor } : {};
 
   return (
@@ -583,10 +584,33 @@ function SubtaskRow({
                         >
                           {(() => {
                             const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                            if ((s || '').toUpperCase() === 'KYC') {
-                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                            const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+                            const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
+                            
+                            const getHexColor = (color: string) => {
+                              const tailwindColors: Record<string, string> = {
+                                slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+                                red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+                                green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+                                blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+                                pink: '#ec4899', rose: '#f43f5e'
+                              };
+                              if (color.startsWith('#')) return color;
+                              if (tailwindColors[color]) return tailwindColors[color];
+                              return undefined;
+                            };
+
+                            if (customObj?.color) {
+                              if ((s || '').toUpperCase() === 'KYC') {
+                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                              }
+                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
                             }
-                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[s] ? STATUS_COLORS[s].split(' ')[1] : 'text-zinc-500'}`} />;
+                            
+                            if ((s || '').toUpperCase() === 'KYC') {
+                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                            }
+                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
                           })()}
                           {s}
                           {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -632,7 +656,7 @@ function SubtaskRow({
             <div className={`flex items-center gap-3 overflow-hidden transition-all duration-300 shrink-0 ${isCollapsed ? 'opacity-100 max-w-[500px] ml-4 border-l border-zinc-800/60 pl-4' : 'opacity-0 max-w-0 ml-0 border-transparent pl-0'}`}>
 
             
-            <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-zinc-800/50 rounded-md text-[10px] text-zinc-400 max-w-[150px] shrink-0 truncate">
+            <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-transparent rounded-md text-[10px] text-zinc-400 max-w-[150px] shrink-0 truncate">
               {currentAssignees.length > 0 ? (
                 <>
                   <div className="flex items-center -space-x-1.5">
@@ -665,9 +689,9 @@ function SubtaskRow({
               )}
             </div>
 
-            <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-zinc-800/50 rounded-md text-[10px] text-zinc-400 shrink-0 whitespace-nowrap">
-              <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityColor}`} />
-              <span className={priorityColor}>{subtask.priority || 'Empty'}</span>
+            <div className={`inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[10px] shrink-0 whitespace-nowrap ${priorityClass}`}>
+              <Flag className={`w-3.5 h-3.5 shrink-0 text-zinc-500`} />
+              <span className={priorityTextColor}>{subtask.priority || 'Empty'}</span>
             </div>
           </div>
         </div>
@@ -698,15 +722,15 @@ function SubtaskRow({
                 <div
                   title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
                   className={`inline-flex items-center h-7 px-3 rounded-md text-[11px] font-bold tracking-wider uppercase select-none w-fit transition-all ${
-                    !statusHexColor && (!STATUS_COLORS[statusName] || STATUS_COLORS[statusName].includes('bg-')) 
-                      ? 'bg-zinc-800/50 text-zinc-400' 
-                      : 'bg-zinc-800/50 text-zinc-400'
+                    statusHexColor 
+                      ? 'text-white' 
+                      : (STATUS_COLORS[statusName.toUpperCase()] || 'bg-zinc-800/50 text-zinc-400')
                   } ${
                     !canEditTask
                       ? 'opacity-50 cursor-not-allowed'
                       : 'cursor-pointer hover:opacity-90'
                   }`}
-                  style={{}}
+                  style={statusHexColor ? { backgroundColor: statusHexColor } : {}}
                 >
                   <span className="mr-2">
                     {statusName}
@@ -985,18 +1009,18 @@ function SubtaskRow({
 
           {/* Priority row */}
           <div className="flex items-center gap-3">
-            <Flag className={`w-3.5 h-3.5 shrink-0 ${subtask.priority ? priorityColor : 'text-zinc-500'}`} />
+            <Flag className={`w-3.5 h-3.5 shrink-0 text-zinc-500`} />
             <Popover.Root open={priorityOpen} onOpenChange={(open) => { if (!subtask.completed) setPriorityOpen(open); }}>
               <Popover.Trigger asChild>
                 <div
                   title={subtask.completed ? 'Locked' : (subtask.priority ? subtask.priority.toLowerCase() : 'No priority')}
-                  className={`inline-flex items-center h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-all ${
+                  className={`inline-flex items-center h-7 px-2.5 rounded-md text-[11px] font-semibold tracking-wide select-none w-fit transition-all ${
                     subtask.completed
                       ? 'bg-zinc-800/40 cursor-not-allowed opacity-60'
-                      : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50'
+                      : `cursor-pointer ${priorityClass} hover:brightness-110`
                   }`}
                 >
-                  <span className={`capitalize ${subtask.priority ? priorityColor : 'text-zinc-500'}`}>
+                  <span className={`capitalize`}>
                     {subtask.priority?.toLowerCase() || 'Empty'}
                   </span>
                 </div>
@@ -1009,24 +1033,27 @@ function SubtaskRow({
                   sideOffset={4}
                 >
                   <div className="flex flex-col gap-0.5">
+                    <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
                     {(['URGENT', 'HIGH', 'MEDIUM', 'LOW'] as Priority[]).map((p) => (
                       <button
                         key={p}
                         onClick={() => { onUpdate(subtask.id, { priority: p }); setPriorityOpen(false); }}
                         className="flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer"
                       >
-                        <Flag className={`w-3.5 h-3.5 text-zinc-400`} />
+                        <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p]?.split(' ')[0] ?? 'text-zinc-400'}`} />
                         <span className="capitalize">{p.toLowerCase()}</span>
-                        {subtask.priority === p && <Check className="w-3.5 h-3.5 ml-auto text-blue-400" />}
+                        {subtask.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
                       </button>
                     ))}
                     {subtask.priority && (
-                      <div
-                        className="flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer border-t border-zinc-800/60 mt-1 pt-2"
-                        onClick={() => { onUpdate(subtask.id, { priority: undefined }); setPriorityOpen(false); }}
-                      >
-                        <X className="w-4 h-4" />
-                        <span>Clear</span>
+                      <div className="border-t border-zinc-800/60 mt-1 pt-1">
+                        <button
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                          onClick={() => { onUpdate(subtask.id, { priority: undefined }); setPriorityOpen(false); }}
+                        >
+                          <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                          <span>Clear Priority</span>
+                        </button>
                       </div>
                     )}
                   </div>

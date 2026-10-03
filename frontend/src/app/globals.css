@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @plugin "../../node_modules/@tailwindcss/typography";
 
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 :root {
   --background: #131316;
   --foreground: #e4e4e7;

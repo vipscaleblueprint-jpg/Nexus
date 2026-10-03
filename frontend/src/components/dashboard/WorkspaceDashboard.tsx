@@ -823,17 +823,8 @@ function WorkspaceDashboardContent({
       {/* ClickUp Header & Quick Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          {/* Breadcrumb Header matching ClickUp */}
-          <div className="flex items-center gap-1.5 text-xs text-zinc-500 mb-1">
-            <span className="hover:text-zinc-400 cursor-pointer">My Tasks</span>
-            <span>/</span>
-            <span className="text-zinc-300 font-medium">
-              {currentTab === "my" ? "Assigned to me" : "All Tasks"}
-            </span>
-          </div>
-
-          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2">
-            {currentTab === "my" ? "Assigned to me" : "All Tasks"}
+          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2 mb-1">
+            My Tasks
           </h1>
         </div>
 
@@ -1074,124 +1065,154 @@ function WorkspaceDashboardContent({
               </div>
             ) : (
               <div className="space-y-6">
+                {currentTab !== "clients" && (
+                  <div className="hidden sm:flex items-center justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-2 pb-2 border-b border-zinc-800/80 w-full mb-2">
+                    <span className="text-left pl-4">Name</span>
+                    <div className="flex items-center gap-1">
+                      <div className={`flex items-center shrink-0 ${currentTab !== 'priorities' ? 'w-[320px]' : 'w-[220px]'}`}>
+                        <span className="w-[120px] shrink-0 text-center">Assignee</span>
+                        {currentTab !== "priorities" && <span className="w-[100px] shrink-0 text-center">Priority</span>}
+                        <span className="w-[100px] shrink-0 text-center">Due</span>
+                      </div>
+                      <div className="w-8 shrink-0" />
+                    </div>
+                  </div>
+                )}
                 {activeGroups.map(
                   (groupData) => {
                     const { key, label, pillClass, customColor, tasks: groupTasks, subGroups, totalTasks } = groupData as any;
                     const isCollapsed = collapsedGroups.has(key);
                     const count = totalTasks ?? groupTasks.length;
                     
+                    const unassignedCount = subGroups 
+                      ? subGroups.reduce((acc: number, sg: any) => acc + sg.tasks.filter((t: any) => !t.assignee && (!t.assignees || t.assignees.length === 0)).length, 0) 
+                      : groupTasks.filter((t: any) => !t.assignee && (!t.assignees || t.assignees.length === 0)).length;
+                    
                     const renderTasks = (tasksToRender: Task[]) => (
-                      <>
-                        <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-2 pb-1.5 border-b border-zinc-800/60 w-full">
-                          <span className="text-left pl-9">Name</span>
-                          <span className="w-32 text-left">Priority</span>
-                        </div>
-                        <div className="flex flex-col w-full">
-                          {tasksToRender.map((task) => {
-                            const statusConfig = getStatusConfig(task.status, allLists);
-                            const priorityConfig =
-                              task.priority && PRIORITY_FLAGS[task.priority]
-                                ? PRIORITY_FLAGS[task.priority]
-                                : {
-                                    label: task.priority || "Normal",
-                                    color: "text-zinc-500",
-                                    iconColor: "text-zinc-500",
-                                  };
-                            
-                            const taskAssignees = task.assignees && task.assignees.length > 0 ? task.assignees : (task.assignee ? [task.assignee] : []);
+                      <div className="flex flex-col w-full">
+                        {tasksToRender.map((task) => {
+                          const priorityConfig =
+                            task.priority && PRIORITY_FLAGS[task.priority]
+                              ? PRIORITY_FLAGS[task.priority]
+                              : {
+                                  label: task.priority || "Normal",
+                                  color: "text-blue-400",
+                                };
+                          
+                          const taskAssignees = task.assignees && task.assignees.length > 0 ? task.assignees : (task.assignee ? [task.assignee] : []);
 
-                            return (
-                              <div
-                                key={task.id}
-                                onClick={() => setSelectedTask(task)}
-                                className="group relative flex items-center justify-between px-2 py-2.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
-                              >
-                                <div className="flex items-center gap-3 min-w-0 flex-1 pl-4 pr-4">
-                                  <div className="w-3.5 h-3.5 rounded-[4px] border border-zinc-700 shrink-0 flex items-center justify-center transition-colors shadow-sm group-hover:border-zinc-500" />
-                                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusConfig.dot}`} style={(statusConfig as any).customColor ? { backgroundColor: (statusConfig as any).customColor } : {}} />
-                                  <span className="text-[13px] font-medium text-zinc-200 truncate group-hover:text-blue-400 transition-colors">
-                                    {task.title}
+                          return (
+                            <div
+                              key={task.id}
+                              onClick={() => setSelectedTask(task)}
+                              className="group relative flex items-center justify-between px-2 py-2.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-3 min-w-0 flex-1 pl-4 pr-4">
+                                <div className="w-4 h-4 rounded-[4px] border border-zinc-700 shrink-0 flex items-center justify-center transition-colors shadow-sm group-hover:border-zinc-500" />
+                                <span className="text-[13px] font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors">
+                                  {task.title}
+                                </span>
+                                {task.list && (
+                                  <span className="hidden sm:inline-block text-[11px] font-medium text-zinc-500 truncate max-w-[140px] ml-2">
+                                    {task.list.name}
                                   </span>
-                                  <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-medium group-hover:text-zinc-400 transition-colors text-zinc-500 shrink-0 ml-1">
-                                    <ListIcon className="w-3 h-3 opacity-60" />
-                                    <span className="truncate max-w-[140px]">
-                                      {task.list?.name || "Workspace"}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="hidden sm:flex items-center gap-4 shrink-0 w-32 pr-2">
-                                  {/* Assignees */}
-                                  <div className="flex items-center -space-x-1 shrink-0" title={taskAssignees.map(a => a.name).join(", ")}>
-                                    {taskAssignees.slice(0, 3).map((a, i) => (
-                                      <div key={i} className="w-5 h-5 rounded-full border border-[#18181c] flex items-center justify-center text-[9px] font-bold text-white uppercase bg-red-500">
-                                        {a.name?.substring(0, 2) || "U"}
-                                      </div>
-                                    ))}
-                                    {taskAssignees.length === 0 && (
-                                      <div className="w-5 h-5 rounded-full bg-zinc-800 border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500">
-                                        <UserIcon className="w-3 h-3" />
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-1.5 min-w-[70px]">
-                                    <Flag
-                                      className={`w-3 h-3 ${priorityConfig.iconColor}`}
-                                    />
-                                    <span
-                                      className={`text-[11px] font-medium ${priorityConfig.color}`}
-                                    >
-                                      {priorityConfig.label}
-                                    </span>
-                                  </div>
-                                </div>
+                                )}
                               </div>
-                            );
-                          })}
-                        </div>
-                      </>
+                              <div className="flex items-center gap-1">
+                                <div className={`hidden sm:flex items-center shrink-0 ${currentTab !== 'priorities' ? 'w-[320px]' : 'w-[220px]'}`}>
+                                  {/* Assignees */}
+                                  <div className="flex items-center justify-center shrink-0 w-[120px]" title={taskAssignees.map(a => a.name).join(", ")}>
+                                    <div className="flex items-center -space-x-1 z-10">
+                                      {taskAssignees.slice(0, 3).map((a, i) => (
+                                        <div key={i} className="w-6 h-6 rounded-full border border-[#18181c] flex items-center justify-center text-[9px] font-bold text-white uppercase bg-red-500 shadow-sm">
+                                          {a.name?.substring(0, 2) || "U"}
+                                        </div>
+                                      ))}
+                                      {taskAssignees.length === 0 && (
+                                        <div className="w-6 h-6 rounded-full bg-[#18181c] border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer">
+                                          <Plus className="w-3.5 h-3.5" />
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {/* Priority Pill */}
+                                  {currentTab !== "priorities" && (
+                                    <div className="w-[100px] flex justify-center shrink-0">
+                                      <span
+                                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-800/60 ${priorityConfig.color}`}
+                                      >
+                                        {priorityConfig.label}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {/* Due Date (Placeholder) */}
+                                  <div className="w-[100px] flex justify-center shrink-0">
+                                    <span className="text-[11px] font-bold text-zinc-500">
+                                      No date
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="w-8 shrink-0" /> {/* Placeholder for the count spacing */}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     );
 
                     return (
                     <div key={key} className="space-y-0.5">
                       <div 
-                        className="flex items-center justify-between px-1 pb-2 cursor-pointer select-none group"
+                        className="flex items-center justify-between px-1 pb-2 pt-2 cursor-pointer select-none group"
                         onClick={() => toggleGroup(key)}
                       >
                         <div className="flex items-center gap-2">
+                          <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                           <span
-                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${pillClass} shadow-sm flex items-center gap-1 transition-transform`}
+                            className={`text-[11px] font-bold px-2 py-1 rounded-md uppercase tracking-wide ${pillClass} shadow-sm`}
                             style={(customColor as any) ? { backgroundColor: customColor as any } : {}}
                           >
                             {label}
-                            <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                           </span>
-                          <span className="text-xs font-semibold text-zinc-500 ml-1">
-                            {count}
-                          </span>
+                          {unassignedCount > 0 && (
+                            <span className="px-2.5 py-1 rounded-full bg-zinc-800/80 text-[10px] text-zinc-400 font-bold ml-1">
+                              {unassignedCount} unassigned
+                            </span>
+                          )}
                         </div>
+                        <span className="text-sm font-bold text-zinc-300 w-8 shrink-0 text-center">
+                          {count}
+                        </span>
                       </div>
                       
                       {!isCollapsed && (
                         subGroups ? (
-                          <div className="pl-2 sm:pl-6 space-y-4 pt-2 border-l-2 border-zinc-800/40 ml-2">
+                          <div className="pl-6 space-y-4 pt-2 border-l border-zinc-800/60 ml-2.5">
                             {subGroups.map((sg: any) => {
                               const sgKey = `${key}-${sg.status}`;
                               const isSgCollapsed = collapsedGroups.has(sgKey);
                               return (
                                 <div key={sgKey} className="space-y-0.5">
                                   <div 
-                                    className="flex items-center justify-between px-1 pb-2 cursor-pointer select-none group"
+                                    className="flex items-center justify-between px-1 pb-2 pt-1 cursor-pointer select-none group"
                                     onClick={() => toggleGroup(sgKey)}
                                   >
                                     <div className="flex items-center gap-2">
-                                      <span
-                                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${sg.config.pill} shadow-sm flex items-center gap-1 transition-transform`}
-                                        style={(sg.config as any).customColor ? { backgroundColor: (sg.config as any).customColor } : {}}
-                                      >
+                                      <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isSgCollapsed ? "-rotate-90" : ""}`} />
+                                      <div className={`w-2 h-2 rounded-full ${sg.config.dot}`} style={(sg.config as any).customColor ? { backgroundColor: (sg.config as any).customColor } : {}} />
+                                      <span className="text-[13px] font-bold text-zinc-200">
                                         {sg.config.label}
-                                        <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isSgCollapsed ? "-rotate-90" : ""}`} />
                                       </span>
-                                      <span className="text-xs font-semibold text-zinc-500 ml-1">
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      {currentTab === "clients" && (
+                                        <div className="hidden sm:flex items-center shrink-0 w-[320px] text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                                          <span className="w-[120px] shrink-0 text-center">Assignee</span>
+                                          <span className="w-[100px] shrink-0 text-center">Priority</span>
+                                          <span className="w-[100px] shrink-0 text-center">Due</span>
+                                        </div>
+                                      )}
+                                      <span className="text-xs font-bold text-zinc-300 w-8 shrink-0 text-center">
                                         {sg.tasks.length}
                                       </span>
                                     </div>

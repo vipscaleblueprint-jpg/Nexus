@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { requireEnv } from '../config/env';
-import { logger } from '../config/logger';
+import { logger, errMsg } from '../config/logger';
 import { PrismaClient } from '@prisma/client';
 import path from 'path';
 
@@ -53,7 +53,7 @@ export const uploadFile = async (req: Request, res: Response) => {
 
     res.status(200).json({ url: fileUrl, name: originalname });
   } catch (error: any) {
-    logger.error({ err: error }, 'Error uploading file to R2');
+    logger.error({ err: error }, `Error uploading file to R2: ${error?.name}: ${errMsg(error)}`);
     res.status(500).json({ error: error.message || 'Failed to upload file' });
   }
 };
@@ -110,13 +110,13 @@ export const uploadAvatar = async (req: Request, res: Response) => {
         Bucket: bucketName,
         Key: oldKey,
       })).catch(err => {
-        logger.error({ err, oldKey }, 'Failed to delete old avatar from R2');
+        logger.error({ err, oldKey }, `Failed to delete old avatar from R2: ${errMsg(err)}`);
       });
     }
 
     res.status(200).json({ url: newAvatarUrl, user: updatedUser });
   } catch (error: any) {
-    logger.error({ err: error }, 'Error uploading avatar to R2');
+    logger.error({ err: error }, `Error uploading avatar to R2: ${error?.name}: ${errMsg(error)}`);
     res.status(500).json({ error: error.message || 'Failed to upload avatar' });
   }
 };

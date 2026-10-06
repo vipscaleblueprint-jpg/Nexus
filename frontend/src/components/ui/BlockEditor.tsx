@@ -127,7 +127,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap',
+        class: 'prose dark:prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-900 dark:text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap inline-block min-w-[2px]',
       },
       // Task 2: Preserve all data-* attributes on mention spans during paste.
       transformPastedHTML(html: string) {
@@ -321,7 +321,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
     <div className="w-full relative" ref={editorContainerRef}>
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
-          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999, appendTo: typeof document !== 'undefined' ? document.body : undefined, popperOptions: { strategy: 'absolute', modifiers: [{ name: 'preventOverflow', enabled: false }, { name: 'flip', enabled: false }, { name: 'hide', enabled: true }] } }} className="flex flex-wrap items-center gap-0.5 bg-[#1a1a1a] p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
+          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999, appendTo: typeof document !== 'undefined' ? document.body : undefined, popperOptions: { strategy: 'absolute', modifiers: [{ name: 'preventOverflow', enabled: false }, { name: 'flip', enabled: false }, { name: 'hide', enabled: true }] } }} className="flex flex-wrap items-center gap-0.5 bg-card p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
             
             {/* Headings */}
             <button
@@ -443,7 +443,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
               </button>
 
               <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:block z-99999" onMouseDown={e => e.preventDefault()}>
-                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
+                <div className="bg-card border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
                   {colors.map((color) => (
                     <button
                       key={`text-${color}`}
@@ -467,7 +467,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
               </button>
 
               <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/highlight:block z-99999" onMouseDown={e => e.preventDefault()}>
-                <div className="bg-[#1a1a1a] border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
+                <div className="bg-card border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
                   {colors.map((color) => (
                     <button
                       key={`bg-${color}`}
@@ -491,7 +491,10 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       <div
         className="flex-1 min-w-0 cursor-text"
         onMouseDown={(e) => {
-          if (!editor.isFocused) {
+          if (e.target === e.currentTarget) {
+            e.preventDefault();
+            editor.commands.focus('end');
+          } else if (!editor.isFocused) {
             editor.commands.focus();
           }
         }}

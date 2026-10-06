@@ -17,7 +17,7 @@ export function ToastContainer() {
     <div className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none sm:max-w-md">
       {toasts.map((item) => {
         let borderClass = 'border-zinc-800';
-        let bgClass = 'bg-zinc-950/90 text-zinc-100';
+        let bgClass = 'bg-card/90 text-zinc-100';
         let icon = <Info className="w-4 h-4 text-blue-400 shrink-0" />;
 
         if (item.type === 'success') {

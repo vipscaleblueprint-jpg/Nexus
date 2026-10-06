@@ -46,8 +46,8 @@ export function RenameModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-[#18181b] rounded-xl shadow-2xl border border-zinc-800/60 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60 bg-[#121214]">
+      <div className="w-full max-w-md bg-card rounded-xl shadow-2xl border border-zinc-800/60 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60 bg-background">
           <h2 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
             <Pencil className="w-4 h-4 text-zinc-400" />
             {title}
@@ -73,7 +73,7 @@ export function RenameModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Enter new name..."
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                className="w-full px-3 py-2 bg-secondary border border-zinc-800 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                 disabled={isRenaming}
               />
             </div>

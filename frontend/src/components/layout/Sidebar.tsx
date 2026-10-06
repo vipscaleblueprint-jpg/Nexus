@@ -91,6 +91,7 @@ import {
   Eye,
   HardDrive,
   Moon,
+  Sun,
   LogOut,
   LayoutGrid,
   Code,
@@ -219,7 +220,7 @@ function SortableWrapper({ id, children, disabled = false }: { id: string; child
       style={style} 
       {...attributes} 
       {...listeners} 
-      className={isDragging ? "relative z-50 opacity-50 ring-2 ring-indigo-500/50 rounded-md bg-[hsl(240,3.7%,15.9%)]" : ""}
+      className={isDragging ? "relative z-50 opacity-50 ring-2 ring-indigo-500/50 rounded-md bg-zinc-800" : ""}
     >
       {children}
     </div>
@@ -265,21 +266,21 @@ function ActiveDragItem({ id, spaces }: { id: string; spaces: Space[] }) {
   if (!item) return null;
 
   return (
-    <div className="bg-[hsl(240,5.9%,10%)] rounded-md shadow-2xl border border-[hsl(240,3.7%,25.9%)] scale-105 cursor-grabbing pointer-events-none ring-1 ring-white/10 w-full overflow-hidden">
+    <div className="bg-card rounded-md shadow-2xl border border-[hsl(240,3.7%,25.9%)] scale-105 cursor-grabbing pointer-events-none ring-1 ring-white/10 w-full overflow-hidden">
       {itemType === 'folder' && (
-        <div className="flex items-center gap-2 px-2 py-1.5 text-sm bg-[hsl(240,3.7%,15.9%)]">
+        <div className="flex items-center gap-2 px-2 py-1.5 text-sm bg-zinc-800">
           <FolderIcon className="size-3.5 text-amber-400 shrink-0" />
-          <span className="truncate text-xs text-[hsl(240,4.8%,95.9%)]">{item.name}</span>
+          <span className="truncate text-xs text-zinc-100">{item.name}</span>
         </div>
       )}
       {itemType === 'list' && (
-        <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-[hsl(240,4.8%,95.9%)] bg-[hsl(240,3.7%,15.9%)]">
+        <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-zinc-100 bg-zinc-800">
           <ListIcon className="size-3.5 text-blue-400 shrink-0" />
           <span className="truncate">{item.name}</span>
         </div>
       )}
       {itemType === 'doc' && (
-        <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-[hsl(240,4.8%,95.9%)] bg-[hsl(240,3.7%,15.9%)]">
+        <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-zinc-100 bg-zinc-800">
           <FileText className="size-3.5 text-zinc-400 shrink-0" />
           <span className="truncate">{item.title}</span>
         </div>
@@ -300,7 +301,7 @@ function VipRow({ icon: Icon, iconClass, label, labelClass, children, collapsed 
     <li className="list-none">
       <button
         onClick={() => { if (!collapsed) setOpen(!open); }}
-        className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] hover:text-[hsl(240,4.8%,95.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full' : 'w-full gap-2 p-2 text-left text-sm'}`}
+        className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-accent hover:text-accent-foreground hover:text-zinc-100 text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full' : 'w-full gap-2 p-2 text-left text-sm'}`}
         title={collapsed ? label : undefined}
       >
         <Icon className={`size-4 shrink-0 ${iconClass}`} />
@@ -318,7 +319,7 @@ function VipRow({ icon: Icon, iconClass, label, labelClass, children, collapsed 
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="ml-4 border-l border-[hsl(240,3.7%,15.9%)] pl-2 mt-0.5 space-y-px overflow-hidden"
+            className="ml-4 border-l border-zinc-800 pl-2 mt-0.5 space-y-px overflow-hidden"
           >
             {children}
           </motion.ul>
@@ -335,7 +336,7 @@ function VipItem({ url, icon: Icon, iconClass, title }: { url: string; icon: Luc
         href={`${VIPSCALE_BASE}${url}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-sm text-[hsl(240,4.8%,95.9%)] outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)]"
+        className="flex items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-sm text-zinc-100 outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
       >
         <Icon className={`size-4 shrink-0 ${iconClass}`} />
         <span className="truncate">{title}</span>
@@ -352,7 +353,7 @@ function VipFlatItem({ url, icon: Icon, iconClass, title, collapsed }: { url: st
         target="_blank"
         rel="noopener noreferrer"
         title={collapsed ? title : undefined}
-        className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full' : 'w-full gap-2 p-2 text-sm'}`}
+        className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full' : 'w-full gap-2 p-2 text-sm'}`}
       >
         <Icon className={`size-4 shrink-0 ${iconClass}`} />
         {!collapsed && <span className="truncate">{title}</span>}
@@ -364,7 +365,7 @@ function VipFlatItem({ url, icon: Icon, iconClass, title, collapsed }: { url: st
 function GroupLabel({ children, collapsed }: { children: React.ReactNode; collapsed: boolean; }) {
   if (collapsed) return null;
   return (
-    <div className="flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-[hsl(0,0%,63.9%)] outline-none ring-sidebar-ring transition-[margin,opacity] duration-200 ease-linear">
+    <div className="flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-zinc-600 dark:text-zinc-400 outline-none ring-sidebar-ring transition-[margin,opacity] duration-200 ease-linear">
       {children}
     </div>
   );
@@ -374,6 +375,30 @@ function GroupLabel({ children, collapsed }: { children: React.ReactNode; collap
 
 export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: SidebarProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [isLightMode, setIsLightMode] = useState(false);
+
+  useEffect(() => {
+    const storedTheme = localStorage.getItem('nexus-theme');
+    if (storedTheme === 'light') {
+      setIsLightMode(true);
+      document.documentElement.classList.add('theme-light');
+    } else {
+      setIsLightMode(false);
+      document.documentElement.classList.remove('theme-light');
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    const newMode = !isLightMode;
+    setIsLightMode(newMode);
+    if (newMode) {
+      document.documentElement.classList.add('theme-light');
+      localStorage.setItem('nexus-theme', 'light');
+    } else {
+      document.documentElement.classList.remove('theme-light');
+      localStorage.setItem('nexus-theme', 'dark');
+    }
+  };
   
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(String(event.active.id));
@@ -612,10 +637,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
         className="relative h-full flex-col flex overflow-hidden bg-black"
       >
         {/* Sidebar inner — mimics shadcn sidebar-container */}
-        <div className="h-full w-full bg-[hsl(240,5.9%,10%)] border-r border-[hsl(240,3.7%,15.9%)] flex flex-col text-[hsl(240,4.8%,95.9%)]">
+        <div className="h-full w-full bg-card border-r border-zinc-800 flex flex-col text-zinc-100">
 
           {/* Header */}
-          <div className="flex h-[60px] items-center px-2 shrink-0 border-b border-[hsl(240,3.7%,15.9%)]">
+          <div className="flex h-[60px] items-center px-2 shrink-0 border-b border-zinc-800">
             <a
               href={`${VIPSCALE_BASE}/protected`}
               target="_blank"
@@ -703,25 +728,29 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               target="_blank"
               rel="noopener noreferrer"
               title={collapsed ? 'DM Agent' : undefined}
-              className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}
+              className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:hover:bg-accent hover:text-accent-foreground/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}
             >
               <Bot className="size-4 shrink-0 text-fuchsia-500" style={{ fill: 'currentColor' }} />
               {!collapsed && <span>DM Agent</span>}
             </a>
             <div
               title={collapsed ? 'Nexus' : undefined}
-              className={`flex items-center overflow-hidden rounded-md outline-none font-medium bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}
+              className={`flex items-center overflow-hidden rounded-md outline-none font-medium bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}
             >
               <div className="size-4 shrink-0 rounded bg-indigo-500 flex items-center justify-center">
                 <span className="text-[10px] font-bold text-white leading-none">N</span>
               </div>
               {!collapsed && <span className="flex-1 truncate">Nexus</span>}
             </div>
-            <button title={collapsed ? 'Toggle Theme' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
-              <Moon className="size-4 shrink-0 text-purple-400" />
+            <button onClick={toggleTheme} title={collapsed ? 'Toggle Theme' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:hover:bg-accent hover:text-accent-foreground/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
+              {isLightMode ? (
+                <Sun className="size-4 shrink-0 text-yellow-500" />
+              ) : (
+                <Moon className="size-4 shrink-0 text-purple-400" />
+              )}
               {!collapsed && <span>Toggle Theme</span>}
             </button>
-            <button title={collapsed ? 'Sign Out' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)] ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
+            <button title={collapsed ? 'Sign Out' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:hover:bg-accent hover:text-accent-foreground/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
               <LogOut className="size-4 shrink-0 text-red-500" />
               {!collapsed && <span>Sign Out</span>}
             </button>
@@ -731,9 +760,9 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
 
       {/* ── SECONDARY Nexus Sub-Sidebar ───────────────────────── */}
-      <div className="h-full w-56 bg-[hsl(240,5.9%,10%)] border-r border-[hsl(240,3.7%,15.9%)] flex flex-col text-[hsl(240,4.8%,95.9%)] shrink-0 transition-all duration-300 ease-in-out">
+      <div className="h-full w-56 bg-card border-r border-zinc-800 flex flex-col text-zinc-100 shrink-0 transition-all duration-300 ease-in-out">
           {/* Nexus header */}
-          <div className="flex h-[60px] items-center px-3 shrink-0 border-b border-[hsl(240,3.7%,15.9%)] gap-2">
+          <div className="flex h-[60px] items-center px-3 shrink-0 border-b border-zinc-800 gap-2">
             <div className="size-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
               <span className="text-[9px] font-bold text-white">N</span>
             </div>
@@ -749,8 +778,8 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                   window.dispatchEvent(new CustomEvent('clear_activity_task'));
                 }
               }}
-              className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${
-                pathname === '/activity' ? 'bg-[hsl(240,3.7%,15.9%)] text-white font-medium' : 'text-[hsl(240,4.8%,95.9%)]'
+              className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground ${
+                pathname === '/activity' ? 'bg-accent text-accent-foreground font-medium' : 'text-zinc-100'
               }`}
             >
               <Activity className="size-4 shrink-0 text-zinc-400" />
@@ -764,8 +793,8 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
             <div className="space-y-px">
               <Link
                 href="/activity/priorities"
-                className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-[hsl(240,3.7%,15.9%)] ${
-                  pathname.startsWith('/activity/priorities') ? 'bg-[hsl(240,3.7%,15.9%)] text-white font-medium' : 'text-[hsl(240,4.8%,95.9%)]'
+                className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground ${
+                  pathname.startsWith('/activity/priorities') ? 'bg-accent text-accent-foreground font-medium' : 'text-zinc-100'
                 }`}
               >
                 <Target className="size-4 shrink-0 text-rose-500" />
@@ -778,8 +807,8 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={handleDragCancel}>
               <div className="pt-2 space-y-px">
               <div className="flex items-center justify-between mb-1 px-2 pt-1">
-                <span className="text-[10px] font-semibold text-[hsl(0,0%,63.9%)] uppercase tracking-wide">Spaces</span>
-                <button onClick={() => setIsCreateSpaceOpen(true)} className="text-[hsl(0,0%,63.9%)] hover:text-white transition-colors cursor-pointer" title="New Space">
+                <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Spaces</span>
+                <button onClick={() => setIsCreateSpaceOpen(true)} className="text-zinc-600 dark:text-zinc-400 hover:text-white transition-colors cursor-pointer" title="New Space">
                   <Plus className="size-3.5" />
                 </button>
               </div>
@@ -789,8 +818,8 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 href="/"
                 className={`flex items-center gap-2 px-2 py-1.5 rounded-md font-medium text-xs transition-colors group cursor-pointer mb-1 ${
                   isAllTasksActive
-                    ? 'bg-[hsl(240,3.7%,15.9%)] text-cyan-300 font-semibold'
-                    : 'text-zinc-300 hover:bg-[hsl(240,3.7%,15.9%)] hover:text-white'
+                    ? 'bg-accent text-accent-foreground font-semibold'
+                    : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
                 }`}
               >
                 <Sparkles className="size-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
@@ -835,7 +864,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                   />
                 );
               })}
-              <button onClick={() => setIsCreateSpaceOpen(true)} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-[hsl(0,0%,63.9%)] hover:text-white hover:bg-[hsl(240,3.7%,15.9%)] transition-colors cursor-pointer">
+              <button onClick={() => setIsCreateSpaceOpen(true)} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:text-white hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer">
                 <Plus className="size-3.5" />
                 <span>New Space</span>
               </button>
@@ -848,10 +877,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
           </div>
 
           {/* Nexus footer */}
-          <div className="border-t border-[hsl(240,3.7%,15.9%)] px-2 py-2 shrink-0">
+          <div className="border-t border-zinc-800 px-2 py-2 shrink-0">
             <button
               onClick={() => { if (currentUser?.systemRole === 'ADMIN') setIsAddInvitationOpen(true); else setIsInviteOpen(true); }}
-              className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-sm outline-none transition-colors hover:bg-[hsl(240,3.7%,15.9%)]"
+              className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
             >
               <UserPlus className="size-4 shrink-0 text-green-500" />
               <span>Invite</span>
@@ -894,12 +923,12 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
 
   return (
     <div className="space-y-px text-xs">
-      <div className="group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-[hsl(240,3.7%,15.9%)] cursor-pointer transition-colors">
+      <div className="group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors">
         <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 truncate flex-1 cursor-pointer">
           <div className="relative size-4 flex items-center justify-center shrink-0">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }} className="flex">
-                <ChevronRight className="size-3.5 text-[hsl(0,0%,63.9%)]" />
+                <ChevronRight className="size-3.5 text-zinc-600 dark:text-zinc-400" />
               </motion.div>
             </div>
             <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
@@ -930,7 +959,7 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="pl-4 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px overflow-hidden"
+            className="pl-4 border-l border-zinc-800 ml-3 space-y-px overflow-hidden"
           >
             <SortableContext items={combinedItems.map(i => `space-${space.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
               {combinedItems.map((item) => {
@@ -989,12 +1018,12 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
 
   return (
     <div className="space-y-px">
-      <div className="group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-[hsl(240,3.7%,15.9%)] cursor-pointer transition-colors">
+      <div className="group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors">
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={() => setIsOpen(!isOpen)} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }} className="flex">
-                <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />
+                <ChevronRight className="size-3 text-zinc-600 dark:text-zinc-400" />
               </motion.div>
             </div>
             <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
@@ -1014,7 +1043,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
             />
           ) : (
             <div className="flex items-center group/edit flex-1 min-w-0 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
-              <span className="truncate text-xs text-[hsl(240,4.8%,95.9%)] block">{folder.name}</span>
+              <span className="truncate text-xs text-zinc-100 block">{folder.name}</span>
             </div>
           )}
         </div>
@@ -1037,7 +1066,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px overflow-hidden"
+            className="pl-3 border-l border-zinc-800 ml-3 space-y-px overflow-hidden"
           >
             <SortableContext items={combinedItems.map(i => `folder-${folder.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
               {combinedItems.map((item) => {
@@ -1093,15 +1122,15 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
     <div className="space-y-px">
       <div className={`group flex items-center justify-between rounded-md px-2 py-1 text-xs cursor-pointer transition-colors ${
         isActive 
-          ? 'bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]' 
-          : 'text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)]'
+          ? 'bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100' 
+          : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-black/5 dark:hover:bg-accent hover:text-accent-foreground/50'
       }`}>
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={(e) => { if (hasPages) { e.preventDefault(); setIsOpen(!isOpen); } }} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
             {hasPages && (
               <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                 <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }} className="flex">
-                  <ChevronRight className="size-3 text-[hsl(0,0%,63.9%)]" />
+                  <ChevronRight className="size-3 text-zinc-600 dark:text-zinc-400" />
                 </motion.div>
               </div>
             )}
@@ -1138,7 +1167,7 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-3 space-y-px mt-0.5 overflow-hidden"
+            className="pl-3 border-l border-zinc-800 ml-3 space-y-px mt-0.5 overflow-hidden"
           >
             {doc.pages?.map((page) => <PageTreeItem key={page.id} page={page} onAction={onAction} />)}
           </motion.div>
@@ -1180,8 +1209,8 @@ function PageTreeItem({ page, onAction }: {
     <div className="space-y-px">
       <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className={`group flex items-center justify-between rounded-md px-2 py-0.5 text-xs cursor-pointer transition-colors ${
         isActive
-          ? 'bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]'
-          : 'text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)]'
+          ? 'bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100'
+          : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-black/5 dark:hover:bg-accent hover:text-accent-foreground/50'
       }`}>
         <div className="flex items-center gap-2 truncate flex-1">
           <FileText className="size-3 text-zinc-400 shrink-0 opacity-80" />
@@ -1210,7 +1239,7 @@ function PageTreeItem({ page, onAction }: {
         </div>
       </div>
       {isOpen && hasSubpages && (
-        <div className="pl-3 border-l border-[hsl(240,3.7%,15.9%)] ml-2 space-y-px mt-0.5">
+        <div className="pl-3 border-l border-zinc-800 ml-2 space-y-px mt-0.5">
           {page.subpages?.map((sub) => <PageTreeItem key={sub.id} page={sub} onAction={onAction} />)}
         </div>
       )}
@@ -1246,8 +1275,8 @@ function ListTreeItem({ list, onAction }: {
   return (
     <div className={`group flex items-center justify-between rounded-md px-2 py-1 text-xs transition-colors ${
       isActive
-        ? 'bg-[hsl(240,3.7%,15.9%)] text-[hsl(240,4.8%,95.9%)]'
-        : 'text-[hsl(0,0%,63.9%)] hover:text-[hsl(240,4.8%,95.9%)] hover:bg-[hsl(240,3.7%,15.9%)]'
+        ? 'bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100'
+        : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-black/5 dark:hover:bg-accent hover:text-accent-foreground/50'
     }`}>
       <div className="flex items-center gap-2 truncate flex-1">
         <ListIcon className="size-3.5 text-blue-400 shrink-0" />

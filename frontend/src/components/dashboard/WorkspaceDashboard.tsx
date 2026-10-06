@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import React, {
   useState,
   useEffect,
   useMemo,
@@ -9,6 +9,7 @@ import {
   Suspense,
 } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   List as ListIcon,
@@ -46,6 +47,7 @@ import {
 } from "@/components/ui/Skeleton";
 import { useAppStore } from "@/lib/store";
 import { tasksApi } from "@/api";
+import { clickUpApi } from "@/api/clickup";
 import { io, Socket } from "socket.io-client";
 import { API_BASE_URL } from "@/api/client";
 import { TaskDetailModal } from "@/components/modals/TaskDetailModal";
@@ -126,11 +128,65 @@ const STATUS_STYLES: Record<
     dot: "bg-[#059669]",
     border: "border-[#059669]",
   },
-  COMPLETED: {
-    label: "COMPLETED",
-    pill: "bg-[#059669] text-white",
-    dot: "bg-[#059669]",
-    border: "border-[#059669]",
+  REVISION: {
+    label: "REVISION",
+    pill: "bg-[#5B6BD6] text-white",
+    dot: "bg-[#5B6BD6]",
+    border: "border-[#5B6BD6]",
+  },
+  "PIN BOARD": {
+    label: "PIN BOARD",
+    pill: "bg-[#1F8A6E] text-white",
+    dot: "bg-[#1F8A6E]",
+    border: "border-[#1F8A6E]",
+  },
+  WEEKLY: {
+    label: "WEEKLY",
+    pill: "bg-[#2F7BD0] text-white",
+    dot: "bg-[#2F7BD0]",
+    border: "border-[#2F7BD0]",
+  },
+  MONTHLY: {
+    label: "MONTHLY",
+    pill: "bg-[#2F7BD0] text-white",
+    dot: "bg-[#2F7BD0]",
+    border: "border-[#2F7BD0]",
+  },
+  CRM: {
+    label: "CRM",
+    pill: "bg-[#22A3AE] text-white",
+    dot: "bg-[#22A3AE]",
+    border: "border-[#22A3AE]",
+  },
+  WAITING: {
+    label: "WAITING",
+    pill: "bg-[#D9534F] text-white",
+    dot: "bg-[#D9534F]",
+    border: "border-[#D9534F]",
+  },
+  "IN REVIEW": {
+    label: "IN REVIEW",
+    pill: "bg-[#D97B3A] text-white",
+    dot: "bg-[#D97B3A]",
+    border: "border-[#D97B3A]",
+  },
+  CHECKING: {
+    label: "CHECKING",
+    pill: "bg-[#A35DB8] text-white",
+    dot: "bg-[#A35DB8]",
+    border: "border-[#A35DB8]",
+  },
+  CLOSED: {
+    label: "CLOSED",
+    pill: "bg-[#2FA37A] text-white",
+    dot: "bg-[#2FA37A]",
+    border: "border-[#2FA37A]",
+  },
+  "ON-HOLD": {
+    label: "ON-HOLD",
+    pill: "bg-[#8A8F98] text-white",
+    dot: "bg-[#8A8F98]",
+    border: "border-[#8A8F98]",
   },
 };
 
@@ -207,6 +263,155 @@ const PRIORITY_FLAGS: Record<
   },
 };
 
+// ── Custom dropdown to replace native <select> (supports hover bg + cursor) ──
+function FilterDropdown({
+  value,
+  onChange,
+  options,
+  icon: Icon,
+  isActive,
+  onClear,
+  align = "left",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  icon?: React.ElementType;
+  isActive: boolean;
+  onClear?: () => void;
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number; maxHeight: number } | null>(null);
+  const selected = options.find((o) => o.value === value);
+
+  const PANEL_WIDTH = 220;
+
+  // Position the portal panel relative to the trigger; flip to right-aligned near the viewport edge
+  const updatePosition = useCallback(() => {
+    const btn = triggerRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const top = r.bottom + 6;
+    const maxHeight = Math.max(160, window.innerHeight - top - 16);
+    if (align === "right" || r.left + PANEL_WIDTH > vw - 12) {
+      setPos({ top, right: Math.max(12, vw - r.right), maxHeight });
+    } else {
+      setPos({ top, left: r.left, maxHeight });
+    }
+  }, [align]);
+
+  // Close on outside click; keep position synced on scroll/resize
+  useEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (ref.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onScroll = (e: Event) => {
+      if (panelRef.current && panelRef.current.contains(e.target as Node)) return;
+      updatePosition();
+    };
+    document.addEventListener("mousedown", handler);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open, updatePosition]);
+
+  // Reset search query when dropdown opens
+  useEffect(() => {
+    if (open) setSearchQuery("");
+  }, [open]);
+
+  const filteredOptions = options.filter((opt) => 
+    opt.label.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div ref={ref} className="relative flex items-center group">
+      {/* Trigger button */}
+      <button
+        ref={triggerRef}
+        onClick={() => setOpen((p) => !p)}
+        className={`flex items-center gap-1.5 h-8 pl-2.5 pr-2.5 text-xs font-medium rounded-lg border transition-all cursor-pointer select-none whitespace-nowrap ${
+          isActive
+            ? "border-indigo-500/60 text-indigo-300 bg-indigo-500/10"
+            : "border-border hover:border-border-hover text-muted-foreground bg-card hover:bg-accent/60"
+        }`}
+      >
+        {Icon && <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+        <span>{selected?.label ?? options[0]?.label}</span>
+        <ChevronDown className={`w-3 h-3 text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {/* Clear button when active */}
+      {isActive && onClear && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onClear(); }}
+          className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-muted border border-border rounded-full flex items-center justify-center hover:bg-red-600 hover:border-red-500 text-muted-foreground hover:text-white transition-colors z-20 cursor-pointer"
+        >
+          <X className="w-2 h-2" />
+        </button>
+      )}
+
+      {/* Dropdown panel (portaled so it's never clipped/overlapped by the scroll container) */}
+      {open && pos && typeof document !== "undefined" && createPortal(
+        <div
+          ref={panelRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, right: pos.right, width: PANEL_WIDTH, maxHeight: Math.min(320, pos.maxHeight) }}
+          className="z-[1000] bg-popover text-popover-foreground border border-border rounded-lg shadow-[0_10px_30px_rgba(0,0,0,0.18)] overflow-hidden flex flex-col"
+        >
+          {options.length > 5 && (
+            <div className="p-2 border-b border-border/80 shrink-0 relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-card border border-border rounded-md py-1.5 pl-8 pr-2 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-indigo-500/50"
+                autoFocus
+              />
+            </div>
+          )}
+          <div className="py-1 flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/50">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => { onChange(opt.value); setOpen(false); }}
+                  className={`w-full text-left px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer truncate ${
+                    value === opt.value
+                      ? "bg-indigo-500/15 text-indigo-300"
+                      : "text-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                  title={opt.label}
+                >
+                  {opt.label}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-3 text-xs text-zinc-500 text-center">No results found</div>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
 function WorkspaceDashboardContent({
   activeView = "all",
   spaces = [],
@@ -215,7 +420,7 @@ function WorkspaceDashboardContent({
 }: WorkspaceDashboardProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache } = useAppStore();
+  const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache, workspaceUsers, loadUsers, hasLoadedUsers } = useAppStore();
 
   const [searchQuery, setSearchQuery] = useState("");
   // All Tasks Filters & Sort
@@ -229,6 +434,7 @@ function WorkspaceDashboardContent({
   const [currentTab, setCurrentTab] = useState<"all" | "my" | "clients" | "priorities">(
     searchParams?.get("filter") === "my" || activeView === "my" ? "my" : "all",
   );
+  const [isSyncingClickUp, setIsSyncingClickUp] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [socket, setSocket] = useState<Socket | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -290,6 +496,7 @@ function WorkspaceDashboardContent({
   useEffect(() => {
     hydrateTasksFromCache();
     loadTasks();
+    if (!hasLoadedUsers) loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -407,7 +614,7 @@ function WorkspaceDashboardContent({
 
     if (filterStatus !== "all") {
       result = result.filter(
-        (t) => (t.status || "TODO").toUpperCase() === filterStatus,
+        (t) => (t.status || "TODO").toLowerCase() === filterStatus.toLowerCase(),
       );
     }
 
@@ -470,7 +677,7 @@ function WorkspaceDashboardContent({
 
     if (filterStatus !== "all") {
       result = result.filter(
-        (t) => (t.status || "TODO").toUpperCase() === filterStatus,
+        (t) => (t.status || "TODO").toLowerCase() === filterStatus.toLowerCase(),
       );
     }
 
@@ -510,18 +717,29 @@ function WorkspaceDashboardContent({
 
   const groupedAllTasksByStatus = useMemo(() => {
     const groups: Record<string, Task[]> = {};
+    // Real ordering from DB ListStatus table (order field)
     const priorityOrder = [
+      "KYC",
+      "PIN BOARD",
+      "DAILY",
+      "WEEKLY",
+      "MONTHLY",
+      "PENDING",
       "IN PROGRESS",
       "IN_PROGRESS",
-      "PENDING",
-      "DAILY",
-      "KYC",
+      "REVISION",
+      "WAITING",
+      "IN REVIEW",
+      "CHECKING",
+      "CRM",
+      "CLOSED",
+      "ON-HOLD",
       "TODO",
-      "REVIEW",
-      "COMPLETED",
       "COMPLETE",
+      "COMPLETED",
     ];
     filteredAllTasks.forEach((t) => {
+      // Normalize status key for grouping (upper-case, trimmed)
       const s = (t.status || "TODO").trim().toUpperCase();
       if (!groups[s]) groups[s] = [];
       groups[s].push(t);
@@ -559,15 +777,24 @@ function WorkspaceDashboardContent({
     });
 
     const statusOrder = [
+      "KYC",
+      "PIN BOARD",
+      "DAILY",
+      "WEEKLY",
+      "MONTHLY",
+      "PENDING",
       "IN PROGRESS",
       "IN_PROGRESS",
-      "PENDING",
-      "DAILY",
-      "KYC",
+      "REVISION",
+      "WAITING",
+      "IN REVIEW",
+      "CHECKING",
+      "CRM",
+      "CLOSED",
+      "ON-HOLD",
       "TODO",
-      "REVIEW",
-      "COMPLETED",
       "COMPLETE",
+      "COMPLETED",
     ];
 
     const allGroupKeys = Object.keys(priorityGroups);
@@ -627,15 +854,24 @@ function WorkspaceDashboardContent({
     });
 
     const priorityOrder = [
+      "KYC",
+      "PIN BOARD",
+      "DAILY",
+      "WEEKLY",
+      "MONTHLY",
+      "PENDING",
       "IN PROGRESS",
       "IN_PROGRESS",
-      "PENDING",
-      "DAILY",
-      "KYC",
+      "REVISION",
+      "WAITING",
+      "IN REVIEW",
+      "CHECKING",
+      "CRM",
+      "CLOSED",
+      "ON-HOLD",
       "TODO",
-      "REVIEW",
-      "COMPLETED",
       "COMPLETE",
+      "COMPLETED",
     ];
 
     const allClientKeys = Object.keys(clientGroups);
@@ -676,15 +912,24 @@ function WorkspaceDashboardContent({
 
     // Standard ordering priority
     const priorityOrder = [
+      "KYC",
+      "PIN BOARD",
+      "DAILY",
+      "WEEKLY",
+      "MONTHLY",
+      "PENDING",
       "IN PROGRESS",
       "IN_PROGRESS",
-      "PENDING",
-      "DAILY",
-      "KYC",
+      "REVISION",
+      "WAITING",
+      "IN REVIEW",
+      "CHECKING",
+      "CRM",
+      "CLOSED",
+      "ON-HOLD",
       "TODO",
-      "REVIEW",
-      "COMPLETED",
       "COMPLETE",
+      "COMPLETED",
     ];
 
     // Group active tasks
@@ -842,7 +1087,7 @@ function WorkspaceDashboardContent({
             placeholder="Search tasks, lists, statuses…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-9 py-2.5 bg-[#18181c] border border-zinc-800 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 transition-all"
+            className="w-full pl-9 pr-9 py-2.5 bg-card border border-zinc-800 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 transition-all"
           />
           {searchQuery && (
             <button
@@ -858,7 +1103,7 @@ function WorkspaceDashboardContent({
         <div className="flex items-center justify-between gap-3 flex-wrap">
 
           {/* Tabs */}
-          <div className="flex items-center gap-1 bg-[#18181c] p-1 rounded-lg border border-zinc-800 shrink-0">
+          <div className="flex items-center gap-1 bg-card p-1 rounded-lg border border-zinc-800 shrink-0">
             <button
               onClick={() => handleTabChange("all")}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
@@ -879,7 +1124,7 @@ function WorkspaceDashboardContent({
             >
               <span>My Tasks</span>
               {myTasks.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-[10px] text-indigo-200 font-mono font-bold">
+                <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] text-white font-mono font-bold">
                   {myTasks.length}
                 </span>
               )}
@@ -910,122 +1155,79 @@ function WorkspaceDashboardContent({
           <div className="flex items-center gap-2 flex-wrap">
 
             {/* Sort */}
-            <div className="relative flex items-center group">
-              <Menu className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
-                  sortBy !== "recent" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
-                }`}
-              >
-                <option value="recent">Recent</option>
-                <option value="status">Status</option>
-              </select>
-              {sortBy !== "recent" && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setSortBy("recent"); }}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 bg-zinc-800 border border-zinc-700 rounded-[3px] shadow-sm items-center justify-center hidden group-hover:flex hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors z-10"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
-              )}
-              <ChevronDown className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500 ${sortBy !== "recent" ? "group-hover:hidden" : ""}`} />
-            </div>
+            <FilterDropdown
+              value={sortBy}
+              onChange={(v) => setSortBy(v as any)}
+              options={[
+                { value: "recent", label: "Recent" },
+                { value: "status", label: "By Status" },
+              ]}
+              icon={Menu}
+              isActive={sortBy !== "recent"}
+              onClear={() => setSortBy("recent")}
+            />
 
             <div className="w-px h-5 bg-zinc-800 shrink-0" />
 
             {/* Filter: Assignee (Only on All Tasks) */}
             {currentTab === "all" && (
-              <div className="relative flex items-center group">
-                <UserIcon className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-                <select
-                  value={filterAssignee}
-                  onChange={(e) => setFilterAssignee(e.target.value)}
-                  className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
-                    filterAssignee !== "all" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
-                  }`}
-                >
-                  <option value="all">Assignee</option>
-                  {Array.from(
-                    new Map(
-                      tasks
-                        .flatMap((t) => [t.assignee, ...(t.assignees || [])])
-                        .filter(Boolean)
-                        .map((a: any) => [a.id, a])
-                    ).values()
-                  ).map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-                {filterAssignee !== "all" && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setFilterAssignee("all"); }}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 bg-zinc-800 border border-zinc-700 rounded-[3px] shadow-sm items-center justify-center hidden group-hover:flex hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors z-10"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                )}
-                <ChevronDown className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500 ${filterAssignee !== "all" ? "group-hover:hidden" : ""}`} />
-              </div>
+              <FilterDropdown
+                value={filterAssignee}
+                onChange={setFilterAssignee}
+                options={[
+                  { value: "all", label: "Assignee" },
+                  ...workspaceUsers.map((u: any) => ({ value: u.id, label: u.name })),
+                ]}
+                icon={UserIcon}
+                isActive={filterAssignee !== "all"}
+                onClear={() => setFilterAssignee("all")}
+              />
             )}
 
             {/* Filter: Priority */}
-            <div className="relative flex items-center group">
-              <Flag className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-              <select
-                value={filterPriority}
-                onChange={(e) => setFilterPriority(e.target.value)}
-                className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
-                  filterPriority !== "all" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
-                }`}
-              >
-                <option value="all">Priority</option>
-                <option value="URGENT">Urgent</option>
-                <option value="HIGH">High</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="LOW">Low</option>
-              </select>
-              {filterPriority !== "all" && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setFilterPriority("all"); }}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 bg-zinc-800 border border-zinc-700 rounded-[3px] shadow-sm items-center justify-center hidden group-hover:flex hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors z-10"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
-              )}
-              <ChevronDown className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500 ${filterPriority !== "all" ? "group-hover:hidden" : ""}`} />
-            </div>
+            <FilterDropdown
+              value={filterPriority}
+              onChange={setFilterPriority}
+              options={[
+                { value: "all", label: "Priority" },
+                { value: "URGENT", label: "Urgent" },
+                { value: "HIGH", label: "High" },
+                { value: "MEDIUM", label: "Medium" },
+                { value: "LOW", label: "Low" },
+              ]}
+              icon={Flag}
+              isActive={filterPriority !== "all"}
+              onClear={() => setFilterPriority("all")}
+            />
 
             {/* Filter: Status */}
-            <div className="relative flex items-center group">
-              <CheckSquare className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className={`appearance-none h-8 pl-7 pr-7 bg-[#18181c] border text-xs font-medium rounded-lg focus:outline-none focus:border-indigo-500/70 transition-all cursor-pointer ${
-                  filterStatus !== "all" ? "border-indigo-500/60 text-indigo-300" : "border-zinc-800 hover:border-zinc-700 text-zinc-300"
-                }`}
-              >
-                <option value="all">Status</option>
-                <option value="TODO">To Do</option>
-                <option value="IN PROGRESS">In Progress</option>
-                <option value="DAILY">Daily</option>
-                <option value="KYC">KYC</option>
-                <option value="PENDING">Pending</option>
-                <option value="REVIEW">Review</option>
-                <option value="COMPLETED">Completed</option>
-              </select>
-              {filterStatus !== "all" && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setFilterStatus("all"); }}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 bg-zinc-800 border border-zinc-700 rounded-[3px] shadow-sm items-center justify-center hidden group-hover:flex hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors z-10"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
-              )}
-              <ChevronDown className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500 ${filterStatus !== "all" ? "group-hover:hidden" : ""}`} />
-            </div>
+            <FilterDropdown
+              value={filterStatus}
+              onChange={setFilterStatus}
+              align="right"
+              options={[
+                { value: "all", label: "Status" },
+                { value: "KYC", label: "KYC" },
+                { value: "PIN BOARD", label: "Pin Board" },
+                { value: "DAILY", label: "Daily" },
+                { value: "WEEKLY", label: "Weekly" },
+                { value: "MONTHLY", label: "Monthly" },
+                { value: "PENDING", label: "Pending" },
+                { value: "IN PROGRESS", label: "In Progress" },
+                { value: "REVISION", label: "Revision" },
+                { value: "WAITING", label: "Waiting" },
+                { value: "IN REVIEW", label: "In Review" },
+                { value: "CHECKING", label: "Checking" },
+                { value: "CRM", label: "CRM" },
+                { value: "CLOSED", label: "Closed" },
+                { value: "ON-HOLD", label: "On-Hold" },
+                { value: "TODO", label: "To Do" },
+                { value: "COMPLETED", label: "Completed" },
+              ]}
+              icon={CheckSquare}
+              isActive={filterStatus !== "all"}
+              onClear={() => setFilterStatus("all")}
+            />
           </div>
         </div>
       </div>
@@ -1045,14 +1247,14 @@ function WorkspaceDashboardContent({
             </div>
 
             {loadingTasks ? (
-              <div className="p-12 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-3">
+              <div className="p-12 rounded-xl bg-card border border-zinc-800/80 text-center space-y-3">
                 <div className="animate-spin size-7 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto" />
                 <p className="text-xs text-zinc-400 font-medium">
                   Loading tasks...
                 </p>
               </div>
             ) : activeGroups.length === 0 ? (
-              <div className="p-16 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-4 shadow-xl">
+              <div className="p-16 rounded-xl bg-card border border-zinc-800/80 text-center space-y-4 shadow-xl">
                 <CheckSquare className="w-12 h-12 text-zinc-600 mx-auto opacity-40" />
                 <h3 className="text-base font-semibold text-zinc-200">
                   {searchQuery ? "No matching tasks found" : "No tasks yet"}
@@ -1129,7 +1331,7 @@ function WorkspaceDashboardContent({
                                         </div>
                                       ))}
                                       {taskAssignees.length === 0 && (
-                                        <div className="w-6 h-6 rounded-full bg-[#18181c] border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer">
+                                        <div className="w-6 h-6 rounded-full bg-card border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer">
                                           <Plus className="w-3.5 h-3.5" />
                                         </div>
                                       )}
@@ -1239,14 +1441,14 @@ function WorkspaceDashboardContent({
       {currentTab === "my" && (
         <div className="space-y-6">
           {loadingTasks ? (
-            <div className="p-12 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-3">
+            <div className="p-12 rounded-xl bg-card border border-zinc-800/80 text-center space-y-3">
               <div className="animate-spin size-7 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto" />
               <p className="text-xs text-zinc-400 font-medium">
                 Syncing tasks in real-time...
               </p>
             </div>
           ) : filteredMyTasks.length === 0 ? (
-            <div className="p-16 rounded-xl bg-[#18181c] border border-zinc-800/80 text-center space-y-4 shadow-xl">
+            <div className="p-16 rounded-xl bg-card border border-zinc-800/80 text-center space-y-4 shadow-xl">
               <CheckSquare className="w-12 h-12 text-zinc-600 mx-auto opacity-40" />
               <h3 className="text-base font-semibold text-zinc-200">
                 {searchQuery
@@ -1404,7 +1606,7 @@ function WorkspaceDashboardContent({
                                       </div>
                                     ))}
                                     {taskAssignees.length === 0 && (
-                                      <div className="w-5 h-5 rounded-full border border-dashed border-zinc-700 flex items-center justify-center text-[10px] text-zinc-500 bg-[#18181c] shadow-sm shrink-0">
+                                      <div className="w-5 h-5 rounded-full border border-dashed border-zinc-700 flex items-center justify-center text-[10px] text-zinc-500 bg-card shadow-sm shrink-0">
                                         <UserIcon className="w-3 h-3" />
                                       </div>
                                     )}
@@ -1428,7 +1630,7 @@ function WorkspaceDashboardContent({
 
                           {/* Inline Task Creation Form for this Status Group */}
                           {addingStatus === status ? (
-                            <div className="p-2 border-b border-zinc-800/40 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-[#18181c]">
+                            <div className="p-2 border-b border-zinc-800/40 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-card">
                               <input
                                 type="text"
                                 autoFocus

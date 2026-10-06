@@ -310,7 +310,7 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
         {menuOpen && (
           <div
             ref={menuRef}
-            className="absolute left-full ml-1 top-0 bg-[#1c1c1e] border border-zinc-800 rounded-lg shadow-xl z-[99999] py-1 w-40"
+            className="absolute left-full ml-1 top-0 bg-card border border-zinc-800 rounded-lg shadow-xl z-[99999] py-1 w-40"
           >
             <button
               className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2"

@@ -14,7 +14,7 @@ import { canUserEditTask } from '@/lib/permissions';
 
 
 const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400',
+  LOW: 'text-zinc-500 dark:text-zinc-500 dark:text-zinc-400',
   MEDIUM: 'text-blue-400',
   HIGH: 'text-orange-400',
   URGENT: 'text-red-400',
@@ -208,10 +208,13 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     return task.description.replace(/<[^>]*>?/gm, '').trim();
   }, [task.description]);
 
-  let checklistTotal = 0;
+    let checklistTotal = 0;
   let checklistCompleted = 0;
   if ('checklists' in task && task.checklists) {
     task.checklists.forEach((c: any) => {
+      if (isSubtask && c.subtaskId !== task.id) return;
+      if (!isSubtask && c.subtaskId) return;
+      
       checklistTotal += c.items?.length || 0;
       checklistCompleted += c.items?.filter((i: any) => i.completed).length || 0;
     });
@@ -222,24 +225,24 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
   const isClosed = statusStr.toUpperCase() === 'CLOSED' || ('completed' in task && task.completed);
 
   // Field hover class
-  const fieldHoverClass = "flex items-center gap-2 text-[11px] hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors";
+  const fieldHoverClass = "flex items-center gap-2 text-[11px] hover:bg-black/5 dark:hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors";
 
   return (
     <div className="flex flex-col w-full text-left">
       <div className="flex items-start justify-between gap-2">
-        <h4 className="text-[13px] font-semibold text-zinc-200 leading-tight">
+        <h4 className="text-[13px] font-semibold text-foreground leading-tight">
           {task.title}
         </h4>
       </div>
 
       {!isSubtask && breadcrumbs && (
-        <div className="text-[11px] text-zinc-500 truncate mt-1">
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 truncate mt-1">
           {breadcrumbs}
         </div>
       )}
 
       {isSubtask && breadcrumbs && (
-        <div className="text-[11px] text-zinc-500 truncate mt-1">
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 truncate mt-1">
           {breadcrumbs}
         </div>
       )}
@@ -248,7 +251,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
       <div className="mt-2 relative inline-flex">
         <div
           ref={descTriggerRef}
-          className={`flex items-center ${plainTextDescription ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-600 hover:text-zinc-400'} hover:bg-zinc-700/50 p-1 -ml-1 rounded cursor-pointer transition-colors`}
+          className={`flex items-center ${plainTextDescription ? 'text-zinc-500 dark:text-zinc-500 hover:text-zinc-300' : 'text-zinc-600 hover:text-zinc-500 dark:text-zinc-500 dark:text-zinc-400'} hover:bg-black/5 dark:hover:bg-zinc-700/50 p-1 -ml-1 rounded cursor-pointer transition-colors`}
           onClick={(e) => { e.stopPropagation(); setIsDescOpen(!isDescOpen); }}
           title={plainTextDescription ? 'View Description' : 'No description'}
         >
@@ -259,7 +262,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             <div className="w-64 p-3">
               <div className="font-semibold mb-1.5 text-xs text-zinc-100">Deliverables:</div>
               <div className="line-clamp-6 leading-relaxed text-zinc-300 text-[11px]">
-                {plainTextDescription || <span className="italic text-zinc-500">No description provided.</span>}
+                {plainTextDescription || <span className="italic text-zinc-500 dark:text-zinc-500">No description provided.</span>}
               </div>
             </div>
           </PortalDropdown>
@@ -306,7 +309,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                 'ON-HOLD': 'text-[#8A8F98]',
               };
 
-              const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusStr] || 'text-zinc-500');
+              const statusIconColorClass = statusHexColor ? '' : (STATUS_COLORS[statusStr] || 'text-zinc-500 dark:text-zinc-500');
               const statusIconStyle = statusHexColor ? { color: statusHexColor } : {};
 
               return isClosed ? (
@@ -321,8 +324,8 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           </div>
           {openDropdown === 'status' && (
             <PortalDropdown triggerRef={statusTriggerRef} onClose={closeDropdown}>
-              <div className="w-48 max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pb-1.5 px-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl">
-                <div className="px-2 pt-2 pb-1 text-[10px] text-zinc-500 font-bold tracking-wider uppercase sticky top-0 bg-[#121212] z-10 mb-0.5">Change Status</div>
+              <div className="w-48 max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pb-1.5 px-1.5 bg-background border border-zinc-800 rounded-md shadow-xl">
+                <div className="px-2 pt-2 pb-1 text-[10px] text-zinc-500 dark:text-zinc-500 font-bold tracking-wider uppercase sticky top-0 bg-background z-10 mb-0.5">Change Status</div>
                 {orderedListStatuses.length > 0 ? (
                   orderedListStatuses.map(s => {
                     const statusName = s.name || s.status || s.title;
@@ -359,7 +362,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                       <div
                         key={s.id || statusName}
                         onClick={() => handleStatusChange(statusName)}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${statusStr === statusName ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${statusStr === statusName ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
                       >
                         {(() => {
                           if (customObj?.color) {
@@ -370,9 +373,9 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                           }
                           
                           if ((statusName || '').toUpperCase() === 'KYC') {
-                            return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500'}`} />;
+                            return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500 dark:text-zinc-500'}`} />;
                           }
-                          return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500'}`} />;
+                          return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500 dark:text-zinc-500'}`} />;
                         })()}
                         <span className="uppercase">{statusName}</span>
                         {statusName === statusStr && <Check className="w-3 h-3 ml-auto opacity-70" />}
@@ -381,7 +384,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                   })
                 ) : (
                   ['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
-                    <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium uppercase" onClick={() => handleStatusChange(s)}>
+                    <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium uppercase" onClick={() => handleStatusChange(s)}>
                       {s}
                     </div>
                   ))
@@ -393,7 +396,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
         {/* Checklists */}
         {checklistTotal > 0 && (
-          <div className={`${fieldHoverClass} text-zinc-400`}>
+          <div className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}>
             <CheckSquare className="w-3.5 h-3.5" />
             <span>{checklistCompleted}/{checklistTotal}</span>
           </div>
@@ -403,7 +406,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
         <div className="relative flex items-center group/assignee">
           <div
             ref={assigneeTriggerRef}
-            className={`${fieldHoverClass} text-zinc-400 max-w-[150px]`}
+            className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 max-w-[150px]`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
           >
             <User className="w-3.5 h-3.5 shrink-0" />
@@ -442,14 +445,14 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           {openDropdown === 'assignee' && (
             <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
               <div className="w-48 max-h-64 overflow-y-auto custom-scrollbar">
-                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800">Assign To</div>
+                <div className="px-2 py-1.5 text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800">Assign To</div>
                 {assignableUsers.length > 0 ? (
                   assignableUsers.map(user => {
                     const isAssigned = assignees.some((a: any) => a.id === user.id);
                     return (
                       <div
                         key={user.id}
-                        className="px-2 py-1.5 flex items-center gap-2 hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
+                        className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
                         onClick={() => handleAssigneeToggle(user)}
                       >
                         {user.avatarUrl ? (
@@ -467,7 +470,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                     );
                   })
                 ) : (
-                  <div className="px-2 py-2 text-xs text-zinc-400 italic">Loading assignees...</div>
+                  <div className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 italic">Loading assignees...</div>
                 )}
               </div>
             </PortalDropdown>
@@ -478,7 +481,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
         <div className="relative">
           <div
             ref={dateTriggerRef}
-            className={`${fieldHoverClass} text-zinc-400`}
+            className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
           >
             <Calendar className="w-3.5 h-3.5" />
@@ -489,8 +492,8 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           {openDropdown === 'date' && (
             <PortalDropdown triggerRef={dateTriggerRef} onClose={closeDropdown}>
               <div className="w-48 p-2">
-                <div className="text-[11px] text-zinc-500 font-semibold uppercase mb-2">Set Due Date</div>
-                <div className="text-xs text-zinc-400 italic">Date picker would appear here...</div>
+                <div className="text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase mb-2">Set Due Date</div>
+                <div className="text-xs text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 italic">Date picker would appear here...</div>
               </div>
             </PortalDropdown>
           )}
@@ -500,7 +503,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
         <div className="relative">
           <div
             ref={priorityTriggerRef}
-            className={`${fieldHoverClass} text-zinc-400`}
+            className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           >
             <Flag className="w-3.5 h-3.5" />
@@ -509,13 +512,13 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           {openDropdown === 'priority' && (
             <PortalDropdown triggerRef={priorityTriggerRef} onClose={closeDropdown}>
               <div className="w-32">
-                <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase">Set Priority</div>
+                <div className="px-2 py-1.5 text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase">Set Priority</div>
                 {Object.keys(PRIORITY_COLORS).map(p => (
-                  <div key={p} className={`px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={() => handlePriorityChange(p)}>
+                  <div key={p} className={`px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={() => handlePriorityChange(p)}>
                     {p}
                   </div>
                 ))}
-                <div className="px-2 py-1.5 text-xs hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-400" onClick={() => handlePriorityChange(null)}>
+                <div className="px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-500 dark:text-zinc-500 dark:text-zinc-400" onClick={() => handlePriorityChange(null)}>
                   CLEAR
                 </div>
               </div>
@@ -566,7 +569,8 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
     if (subtasksCount === 0) return null;
     return (
       <div
-        className="flex items-center gap-2 text-[11px] text-zinc-400 hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
+        className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 hover:bg-black/5 dark:hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); setIsSubtasksExpanded(prev => !prev); }}
       >
         {!isSubtasksExpanded && (
@@ -626,7 +630,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
         }}
         className={isDragging
           ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3"
-          : `bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
+          : `bg-card hover:bg-card/90 border border-border hover:border-zinc-400 dark:hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
           } ${isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
           } ${hasOpenDropdown ? 'z-50' : 'z-10'}`}
       >
@@ -717,7 +721,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
                     setIsAddingSubtask(false);
                     setNewSubtaskTitle('');
                   }}
-                  className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
+                  className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-500 dark:text-zinc-500"
                 />
               </div>
             </div>
@@ -733,7 +737,7 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
               />
               <button
                 onClick={() => setIsAddingSubtask(true)}
-                className="ml-3 mt-1.5 flex items-center gap-2 text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 hover:bg-zinc-800/30 rounded text-xs font-medium"
+                className="ml-3 mt-1.5 flex items-center gap-2 text-zinc-500 dark:text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 hover:bg-zinc-800/30 rounded text-xs font-medium"
               >
                 <Plus className="w-3 h-3" /> Add Subtask
               </button>
@@ -744,4 +748,5 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
     </div>
   );
 });
+
 

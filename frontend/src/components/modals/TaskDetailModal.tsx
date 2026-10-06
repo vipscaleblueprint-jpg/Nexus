@@ -24,13 +24,13 @@ import { CommentEditor } from '../ui/CommentEditor';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 export const CustomCircleDotted = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="9" strokeDasharray="3 4" />
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+    <circle cx="12" cy="12" r="9" strokeDasharray="1 6" />
   </svg>
 );
 
 export const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
     <circle cx="12" cy="12" r="9" />
     <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
   </svg>
@@ -39,7 +39,7 @@ export const CustomCircleDot = ({ className, style }: { className?: string, styl
 const CommentSkeleton = () => (
   <div className="space-y-4 animate-pulse mt-4">
     {[1, 2, 3].map(i => (
-      <div key={i} className="flex flex-col gap-3 p-4 rounded-xl border border-zinc-800/40 bg-[#202024]">
+      <div key={i} className="flex flex-col gap-3 p-4 rounded-xl border border-zinc-800/40 bg-card">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-zinc-800 shrink-0" />
           <div className="flex-1 flex flex-col gap-2 mt-1">
@@ -69,10 +69,10 @@ interface Props {
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400 bg-zinc-500/20',
-  MEDIUM: 'text-blue-400 bg-blue-500/20',
-  HIGH: 'text-orange-400 bg-orange-500/20',
-  URGENT: 'text-red-400 bg-red-500/20',
+  LOW: 'text-zinc-400',
+  MEDIUM: 'text-blue-400',
+  HIGH: 'text-orange-400',
+  URGENT: 'text-red-400',
 };
 
 export const ALL_STATUSES = [
@@ -131,7 +131,7 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
   if (!loaded) {
     return (
       <span
-        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
+        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-secondary border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -139,7 +139,7 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
         }}
       >
         <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
-        <span className="absolute inset-0 bg-zinc-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+        <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
           <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
         </span>
       </span>
@@ -157,7 +157,7 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
         alt={alt}
         className="max-w-[200px] max-h-[150px] object-cover rounded-lg"
       />
-      <span className="absolute inset-0 bg-zinc-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg pointer-events-none">
+      <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg pointer-events-none">
         <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
       </span>
     </span>
@@ -170,7 +170,7 @@ function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: s
   if (!loaded) {
     return (
       <span
-        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
+        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-secondary border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -178,7 +178,7 @@ function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: s
         }}
       >
         <File className="w-10 h-10 text-zinc-500 opacity-50" />
-        <span className="absolute inset-0 bg-zinc-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+        <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
           <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load video</span>
         </span>
       </span>
@@ -222,6 +222,7 @@ export function TaskDetailModalContent({
   mode = 'modal',
 }: Props) {
   const router = useRouter();
+  const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(true);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -860,26 +861,42 @@ export function TaskDetailModalContent({
   const [copiedLink, setCopiedLink] = useState(false);
   const [showApiSettings, setShowApiSettings] = useState(false);
   const editorRef = useRef<any>(null);
+  const activityPanelRef = useRef<HTMLDivElement>(null);
 
   // Focus trap and esc handler activity panel
-  const [activityWidth, setActivityWidth] = useState(450);
+  const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 300);
   const isResizing = useRef(false);
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(300);
+  const subtaskActivityPanelRef = useRef<HTMLDivElement>(null);
 
   const startResizing = React.useCallback((e: React.MouseEvent) => {
     isResizing.current = true;
+    resizeStartX.current = e.clientX;
+    resizeStartWidth.current = activityWidth;
     document.body.style.cursor = 'col-resize';
-  }, []);
+    e.preventDefault();
+  }, [activityWidth]);
 
-  const stopResizing = React.useCallback(() => {
+    const stopResizing = React.useCallback(() => {
+    if (isResizing.current && activityPanelRef.current) {
+      const currentWidth = parseInt(activityPanelRef.current.style.width, 10);
+      if (!isNaN(currentWidth)) {
+        setActivityWidth(currentWidth);
+      }
+    }
     isResizing.current = false;
     document.body.style.cursor = 'default';
   }, []);
 
-  const resize = React.useCallback((e: MouseEvent) => {
+    const resize = React.useCallback((e: MouseEvent) => {
     if (isResizing.current) {
-      const newWidth = document.body.clientWidth - e.clientX;
-      if (newWidth > 300 && newWidth < 800) {
-        setActivityWidth(newWidth);
+      const delta = resizeStartX.current - e.clientX;
+      const newWidth = resizeStartWidth.current + delta;
+      if (newWidth > 240 && newWidth < 700) {
+        if (activityPanelRef.current) {
+          activityPanelRef.current.style.width = newWidth + 'px';
+        }
       }
     }
   }, []);
@@ -1269,6 +1286,7 @@ export function TaskDetailModalContent({
         onClose={() => setActiveSubtask(null)}
         currentUser={currentUser}
         socket={socket}
+        mode={mode}
         workspaceUsers={workspaceUsers}
         onUpdateTask={onUpdateTask}
         setActiveSubtask={setActiveSubtask}
@@ -1282,10 +1300,10 @@ export function TaskDetailModalContent({
   return (
     <>
       <div
-        className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
+        className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-[#18181b]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-card">
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
@@ -1408,17 +1426,18 @@ export function TaskDetailModalContent({
                     type="text"
                     value={localTitle}
                     onChange={(e) => setLocalTitle(e.target.value)}
+                    onFocus={(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
                     onBlur={() => {
                       setIsEditingTitle(false);
                       handleTitleBlur();
                     }}
                     onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                    className="text-2xl font-bold bg-[#18181b] border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
+                    className="text-2xl font-bold bg-card border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] sm:w-[600px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
                   />
                 ) : (
                   <h1
                     onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
-                    className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit ${(task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE') ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
+                    className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit pr-16 ${(task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE') ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                   >
                     {localTitle}
                     <Pencil className="w-4 h-4 ml-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
@@ -1434,7 +1453,7 @@ export function TaskDetailModalContent({
                   <div className="flex items-center gap-2 w-28 shrink-0">
                     {(() => {
                       const isClosed = task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE';
-                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
+                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
                     })()}
                     <span className="text-[12px] text-zinc-500">Status</span>
                   </div>
@@ -1464,7 +1483,7 @@ export function TaskDetailModalContent({
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map(s => (
                                     <div
@@ -1473,7 +1492,7 @@ export function TaskDetailModalContent({
                                         handleStatusChangeAction(s);
                                         setIsStatusOpen(false);
                                       }}
-                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${task.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${task.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
                                     >
                                       {(() => {
                                         const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
@@ -1578,7 +1597,7 @@ export function TaskDetailModalContent({
                         )}
                       </Popover.Trigger>
                       <Popover.Portal>
-                        <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                        <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                             {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -1613,7 +1632,7 @@ export function TaskDetailModalContent({
                                       className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
                                     >
                                       {hasRoles && (
-                                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-popover'}`}>
                                           {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
                                           {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
                                         </div>
@@ -1728,7 +1747,7 @@ export function TaskDetailModalContent({
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
-                          className="z-[9999] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                          className="z-[100000] w-72 p-0 bg-background border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                           align="start"
                           sideOffset={4}
                         >
@@ -1757,30 +1776,30 @@ export function TaskDetailModalContent({
 
                               {assignableUsers.map((u) => {
                                 const assigned = isUserAssigned(u.id);
+                                const initials = (u.name || 'U').substring(0, 2).toUpperCase();
+                                const role = u.roles?.[0] || '';
+                                const avatarColors = ['bg-violet-600','bg-blue-600','bg-emerald-600','bg-rose-600','bg-amber-600','bg-cyan-600','bg-fuchsia-600'];
+                                const avatarBg = avatarColors[(u.name || '').charCodeAt(0) % avatarColors.length];
                                 return (
                                   <Command.Item
                                     key={u.id}
-                                    value={`${u.name} ${u.email}`}
+                                    value={`${u.name} ${u.email} ${role}`}
                                     onSelect={() => handleToggleAssignee(u)}
-                                    className="relative flex cursor-pointer select-none items-center justify-between rounded-sm px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300"
+                                    className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
                                   >
-                                    <div className="flex items-center gap-2 truncate min-w-0">
-                                      {u.avatarUrl ? (
-                                        <img src={u.avatarUrl} alt={u.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
-                                      ) : (
-                                        <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold shrink-0">
-                                          {(u.name || 'U').substring(0, 2).toUpperCase()}
-                                        </div>
-                                      )}
-                                      <div className="flex flex-col truncate">
-                                        <span className="truncate text-xs font-medium text-zinc-200">{u.name}</span>
-                                        <span className="truncate text-[10px] text-zinc-500">{u.roles?.[0] || u.email}</span>
+                                    {u.avatarUrl ? (
+                                      <img src={u.avatarUrl} alt={u.name} className="w-7 h-7 rounded-full object-cover shrink-0" />
+                                    ) : (
+                                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0 ${avatarBg}`}>
+                                        {initials}
                                       </div>
+                                    )}
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                      <span className="truncate text-[13px] font-medium text-zinc-200">{u.name}</span>
+                                      <span className="truncate text-[11px] text-zinc-500">{role || u.email}</span>
                                     </div>
                                     {assigned && (
-                                      <div className="w-5 h-5 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0 ml-2">
-                                        <Check className="w-3.5 h-3.5" />
-                                      </div>
+                                      <Check className="w-4 h-4 text-indigo-400 shrink-0 ml-2" />
                                     )}
                                   </Command.Item>
                                 );
@@ -1818,7 +1837,7 @@ export function TaskDetailModalContent({
                     <Popover.Trigger asChild>
                       <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
                         {(() => {
-                          const priorityColor = task.priority ? (PRIORITY_COLORS[task.priority]?.split(' ')[0] ?? 'text-zinc-400') : 'text-zinc-500';
+                          const priorityColor = task.priority ? (PRIORITY_COLORS[task.priority] ?? 'text-zinc-400') : 'text-zinc-500';
                           return (
                             <span className={`capitalize ${priorityColor}`}>
                               {task.priority?.toLowerCase() || 'Empty'}
@@ -1828,7 +1847,7 @@ export function TaskDetailModalContent({
                       </div>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-[#0f0f0f] border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
+                      <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-popover border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
                         <div className="flex flex-col gap-0.5">
                           <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
                           {(['URGENT', 'HIGH', 'MEDIUM', 'LOW'] as Priority[]).map(p => (
@@ -1837,7 +1856,7 @@ export function TaskDetailModalContent({
                               onClick={() => { handlePriorityChange(p); setIsPriorityOpen(false); }}
                               className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${task.priority === p ? 'text-zinc-100 bg-zinc-800/50' : 'text-zinc-300 hover:text-zinc-100'}`}
                             >
-                              <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p]?.split(' ')[0] ?? 'text-zinc-400'}`} />
+                              <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p] ?? 'text-zinc-400'}`} />
                               <span className="capitalize">{p.toLowerCase()}</span>
                               {task.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
                             </button>
@@ -1919,12 +1938,12 @@ export function TaskDetailModalContent({
                     )}
                     
                     {!editingUser && isDescOverflowing && !isDescExpanded && (
-                      <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] via-[#121212]/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+                      <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-background via-background/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
                         <button 
                           onClick={(e) => { e.stopPropagation(); setIsDescExpanded(true); }}
                           onMouseDown={(e) => e.preventDefault()}
                           onFocus={(e) => e.stopPropagation()}
-                          className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-[#1e1e20] hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
+                          className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-popover hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
                         >
                           <ChevronDown className="w-3 h-3" />
                           Expand
@@ -1953,12 +1972,31 @@ export function TaskDetailModalContent({
 
               </div>
 
-              <div className="flex items-center justify-between mb-2 mt-6">
-                <span className="font-semibold text-zinc-100 flex items-center gap-2">
-                  <ListTodo className="w-4 h-4 text-zinc-400" />
-                  Subtasks
-                </span>
+              <div className="flex items-center justify-between mb-2 mt-6 cursor-pointer group" onClick={() => setIsSubtasksExpanded(!isSubtasksExpanded)}>
+                <div className="flex items-center gap-2">
+                  {isSubtasksExpanded ? (
+                    <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0 group-hover:text-zinc-200 transition-colors" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0 group-hover:text-zinc-200 transition-colors" />
+                  )}
+                  <span className="font-semibold text-zinc-100 flex items-center gap-2 group-hover:text-white transition-colors">
+                    <ListTodo className="w-4 h-4 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
+                    Subtasks
+                  </span>
+                  {task.subtasks && task.subtasks.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium ml-2">{task.subtasks.length}</span>
+                  )}
+                </div>
               </div>
+
+              {isSubtasksExpanded && (
+                <>
+
+
+
+
+
+
 
               <SubtasksSection
                 task={task}
@@ -1981,6 +2019,8 @@ export function TaskDetailModalContent({
                     <Plus className="w-4 h-4 shrink-0" /> Add subtask
                   </button>
                 </div>
+              )}
+              </>
               )}
 
               {/* Action Buttons (Notes, Attachments, etc) */}
@@ -2028,7 +2068,7 @@ export function TaskDetailModalContent({
           />
 
           {/* Right Panel: Activity */}
-          <div style={{ width: activityWidth }} className="flex-shrink-0 bg-[#18181b] flex flex-col border-l border-zinc-800/60">
+          <div ref={activityPanelRef} style={{ width: activityWidth }} className="flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60">
             <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
               <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
               <div className="flex gap-3">
@@ -2068,7 +2108,7 @@ export function TaskDetailModalContent({
                       if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
                     });
                     return (
-                      <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-[#1a1a1e]' : ''}`}>
+                      <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-muted' : ''}`}>
                         <div className="flex items-center gap-3 w-full">
                           {comment.user?.avatarUrl ? (
                             <img src={comment.user.avatarUrl} alt={comment.user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
@@ -2090,7 +2130,7 @@ export function TaskDetailModalContent({
                                   </button>
                                 </Popover.Trigger>
                                 <Popover.Portal>
-                                  <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[9999]" align="end">
+                                  <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
                                     <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
                                       <Pencil className="w-3.5 h-3.5" /> Edit
                                     </button>
@@ -2154,7 +2194,7 @@ export function TaskDetailModalContent({
                               <SmilePlus className="w-3.5 h-3.5" />
                             </button>
                             {showEmojiPickerFor === comment.id && (
-                              <div className="absolute bottom-8 left-0 bg-[#202024] border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
+                              <div className="absolute bottom-8 left-0 bg-card border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
                                 {QUICK_EMOJIS.map(e => (
                                   <button key={e} onClick={() => handleToggleReaction(comment.id, e)} className="text-lg hover:scale-125 cursor-pointer transition-transform p-0.5">
                                     {e}
@@ -2394,7 +2434,7 @@ export function TaskDetailModalContent({
             </div>
 
             {/* Comment Input */}
-            <div className="p-5 border-t border-zinc-800/60 shrink-0 bg-[#18181b] flex flex-col gap-2">
+            <div className="p-5 border-t border-zinc-800/60 shrink-0 bg-card flex flex-col gap-2">
               {stagedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-3 mb-1">
                   {stagedFiles.map((file, idx) => {
@@ -2423,7 +2463,7 @@ export function TaskDetailModalContent({
               )}
               <div className="relative">
                 {showMentionMenu && (
-                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[9999]">
+                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-card border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100000]">
                     <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
                       People
                     </div>
@@ -2549,7 +2589,7 @@ export function TaskDetailModalContent({
 }
 
 // ─── Subtask Detail View (Replaces Parent View) ─────────────────────────────
-function SubtaskDetailView({
+export function SubtaskDetailView({
   subtask,
   parentTask,
   onClose,
@@ -2561,6 +2601,7 @@ function SubtaskDetailView({
   permission,
   listStatuses,
   workspaceTeams = [],
+  mode = 'modal',
 }: {
   subtask: any;
   parentTask: any;
@@ -2573,8 +2614,35 @@ function SubtaskDetailView({
   permission?: { allowed: boolean; reason?: string };
   listStatuses?: any[];
   workspaceTeams?: any[];
+  workspaceRoles?: any[];
+  mode?: 'modal' | 'full';
 }) {
   const router = useRouter();
+
+  const subtaskAssignableUsers = React.useMemo(() => {
+    const wsUsers = workspaceUsers || [];
+    const wsTeams = workspaceTeams || [];
+    if (!subtask?.assigneeRoleRestrictions || subtask.assigneeRoleRestrictions.length === 0) {
+      return wsUsers;
+    }
+    const teamRoleToTeamId = new Map<string, string>();
+    wsTeams.forEach((team: any) => {
+      (team.teamRoles || []).forEach((tr: any) => {
+        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
+      });
+    });
+
+    return wsUsers.filter((u) => {
+      const userRoles = (u.roles || []) as string[];
+      return (subtask.assigneeRoleRestrictions || []).some((role: string) => {
+        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
+        const teamId = teamRoleToTeamId.get(role.toLowerCase());
+        if (teamId && (u as any).teamId === teamId) return true;
+        return false;
+      });
+    });
+  }, [subtask?.assigneeRoleRestrictions, workspaceUsers, workspaceTeams]);
+
   const [richComments, setRichComments] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [comment, setComment] = useState('');
@@ -2664,6 +2732,7 @@ function SubtaskDetailView({
     }
   }), []);
   const editorRef = useRef<any>(null);
+  const activityPanelRef = useRef<HTMLDivElement>(null);
   // Task edits are open to all
   const canEditTask = true;
   // Subtasks bypass column role restrictions for assignment
@@ -2702,8 +2771,11 @@ function SubtaskDetailView({
     }
   };
 
-  const [activityWidth, setActivityWidth] = useState(380);
-  const [isResizing, setIsResizing] = useState(false);
+  const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 300);
+  const isResizingRef = useRef(false);
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(300);
+  const subtaskActivityPanelRef = useRef<HTMLDivElement>(null);
   const [isCheckLocked, setIsCheckLocked] = useState(false);
 
   const handleStatusChangeAction = async (newStatus: string) => {
@@ -2741,28 +2813,39 @@ function SubtaskDetailView({
   };
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      const newWidth = document.body.clientWidth - e.clientX;
-      if (newWidth > 250 && newWidth < 800) {
-        setActivityWidth(newWidth);
+        const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const delta = resizeStartX.current - e.clientX;
+      const newWidth = resizeStartWidth.current + delta;
+      if (newWidth > 240 && newWidth < 700) {
+        if (subtaskActivityPanelRef.current) {
+          subtaskActivityPanelRef.current.style.width = `${newWidth}px`;
+        }
       }
     };
-    const handleMouseUp = () => setIsResizing(false);
+        const handleMouseUp = () => {
+      if (subtaskActivityPanelRef.current) {
+        const currentWidth = parseInt(subtaskActivityPanelRef.current.style.width, 10);
+        if (!isNaN(currentWidth)) {
+          setActivityWidth(currentWidth);
+        }
+      }
+      isResizingRef.current = false;
+    };
 
-    if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing]);
+  }, []);
 
   const startResizing = (e: React.MouseEvent) => {
     e.preventDefault();
-    setIsResizing(true);
+    resizeStartX.current = e.clientX;
+    resizeStartWidth.current = activityWidth;
+    isResizingRef.current = true; document.body.style.cursor = 'col-resize';
   };
 
   useEffect(() => {
@@ -3054,10 +3137,10 @@ function SubtaskDetailView({
 
   return (
     <div
-      className="w-full h-full bg-[#121212] flex flex-col overflow-hidden cursor-default"
+      className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 bg-[#18181b] shrink-0">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 bg-card shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setActiveSubtask && setActiveSubtask(null)}
@@ -3140,6 +3223,16 @@ function SubtaskDetailView({
             Share
           </button>
           <button
+            onClick={() => {
+              onClose();
+              router.push(`/tasks/${subtask.id}`);
+            }}
+            className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
+            title="Open subtask in full page"
+          >
+            <ExternalLink className="w-4 h-4" />
+          </button>
+          <button
             onClick={onClose}
             className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
           >
@@ -3172,17 +3265,18 @@ function SubtaskDetailView({
                   type="text"
                   value={localTitle}
                   onChange={(e) => setLocalTitle(e.target.value)}
+                  onFocus={(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
                   onBlur={() => {
                     setIsEditingTitle(false);
                     handleTitleBlur();
                   }}
                   onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                  className="text-2xl font-bold bg-[#18181b] border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
+                  className="text-2xl font-bold bg-card border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] sm:w-[600px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
                 />
               ) : (
                 <h1
                   onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
-                  className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit ${(subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.completed) ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
+                  className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit pr-16 ${(subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.completed) ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                 >
                   {localTitle}
                   <Pencil className="w-4 h-4 ml-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
@@ -3198,7 +3292,7 @@ function SubtaskDetailView({
                 <div className="flex items-center gap-2 w-28 shrink-0">
                   {(() => {
                     const isClosed = subtask.completed || subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.status === 'DONE';
-                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-zinc-500" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-zinc-500" />);
+                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
                   })()}
                   <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
@@ -3239,7 +3333,7 @@ function SubtaskDetailView({
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-[#121212] border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {orderedStatuses.map((s: string) => (
                                     <div
@@ -3265,7 +3359,7 @@ function SubtaskDetailView({
                                         }
                                         setIsStatusOpen(false);
                                       }}
-                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'}`}
+                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
                                     >
                                       {(() => {
                                         const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
@@ -3389,7 +3483,7 @@ function SubtaskDetailView({
                       )}
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[9999] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-[#121212] border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                      <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                         <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                           <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                           {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -3424,10 +3518,10 @@ function SubtaskDetailView({
                                       }
                                       tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
                                     }}
-                                    className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                                    className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-accent/30 ${hasRoles ? 'cursor-pointer hover:bg-accent/50 hover:text-foreground transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-muted-foreground'}`}
                                   >
                                     {hasRoles && (
-                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-[#1a1a20]'}`}>
+                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-border bg-popover'}`}>
                                         {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
                                         {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
                                       </div>
@@ -3437,10 +3531,10 @@ function SubtaskDetailView({
                                 );
                               })()}
                               {(!team.teamRoles || team.teamRoles.length === 0) && (
-                                <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+                                <div className="px-2 py-1 text-[10px] text-muted-foreground italic">No roles</div>
                               )}
                               {team.teamRoles && team.teamRoles.length > 0 && (
-                                <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                                <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-border/50 mt-1 mb-1 relative">
                                   {team.teamRoles.map((role: any) => {
                                     const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
                                     return (
@@ -3469,9 +3563,9 @@ function SubtaskDetailView({
                                               console.error("Failed to update subtask role restriction", err);
                                             });
                                         }}
-                                        className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
+                                        className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors rounded-md"
                                       >
-                                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-border bg-card'}`}>
                                           {selected && <Check className="w-2.5 h-2.5 text-white" />}
                                         </div>
                                         {role.name}
@@ -3551,7 +3645,7 @@ function SubtaskDetailView({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content
-                        className="z-[9999] w-72 p-0 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                        className="z-[100000] w-72 p-0 bg-background border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                         align="start"
                         sideOffset={4}
                       >
@@ -3578,32 +3672,32 @@ function SubtaskDetailView({
                               </Command.Item>
                             )}
 
-                            {(workspaceUsers || []).map((u) => {
+                            {subtaskAssignableUsers.map((u: any) => {
                               const assigned = isUserAssigned(u.id);
+                              const initials = (u.name || 'U').substring(0, 2).toUpperCase();
+                              const role = u.roles?.[0] || '';
+                              const avatarColors = ['bg-violet-600','bg-blue-600','bg-emerald-600','bg-rose-600','bg-amber-600','bg-cyan-600','bg-fuchsia-600'];
+                              const avatarBg = avatarColors[(u.name || '').charCodeAt(0) % avatarColors.length];
                               return (
                                 <Command.Item
                                   key={u.id}
-                                  value={`${u.name} ${u.email}`}
+                                  value={`${u.name} ${u.email} ${role}`}
                                   onSelect={() => handleToggleAssignee(u)}
-                                  className="relative flex cursor-pointer select-none items-center justify-between rounded-sm px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300"
+                                  className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
                                 >
-                                  <div className="flex items-center gap-2 truncate min-w-0">
-                                    {u.avatarUrl ? (
-                                      <img src={u.avatarUrl} alt={u.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
-                                    ) : (
-                                      <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold shrink-0">
-                                        {(u.name || 'U').substring(0, 2).toUpperCase()}
-                                      </div>
-                                    )}
-                                    <div className="flex flex-col truncate">
-                                      <span className="truncate text-xs font-medium text-zinc-200">{u.name}</span>
-                                      <span className="truncate text-[10px] text-zinc-500">{u.roles?.[0] || u.email}</span>
+                                  {u.avatarUrl ? (
+                                    <img src={u.avatarUrl} alt={u.name} className="w-7 h-7 rounded-full object-cover shrink-0" />
+                                  ) : (
+                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0 ${avatarBg}`}>
+                                      {initials}
                                     </div>
+                                  )}
+                                  <div className="flex flex-col min-w-0 flex-1">
+                                    <span className="truncate text-[13px] font-medium text-zinc-200">{u.name}</span>
+                                    <span className="truncate text-[11px] text-zinc-500">{role || u.email}</span>
                                   </div>
                                   {assigned && (
-                                    <div className="w-5 h-5 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0 ml-2">
-                                      <Check className="w-3.5 h-3.5" />
-                                    </div>
+                                    <Check className="w-4 h-4 text-indigo-400 shrink-0 ml-2" />
                                   )}
                                 </Command.Item>
                               );
@@ -3633,37 +3727,45 @@ function SubtaskDetailView({
                 </div>
                 <Popover.Root open={isPriorityOpen && canEditTask} onOpenChange={setIsPriorityOpen}>
                   <Popover.Trigger asChild>
-                    <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
-                      {(() => {
-                        const priorityColor = subtask.priority ? (PRIORITY_COLORS[subtask.priority]?.split(' ')[0] ?? 'text-zinc-400') : 'text-zinc-500';
-                        return (
-                          <span className={`capitalize ${priorityColor}`}>
-                            {subtask.priority?.toLowerCase() || 'Empty'}
-                          </span>
-                        );
-                      })()}
+                    <div
+                      title={subtask.completed ? 'Locked' : (subtask.priority ? subtask.priority.toLowerCase() : 'No priority')}
+                      className={`inline-flex items-center h-7 px-2.5 rounded-md text-[11px] font-semibold tracking-wide select-none w-fit transition-all ${
+                        subtask.completed
+                          ? 'bg-zinc-800/40 cursor-not-allowed opacity-60'
+                          : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50'
+                      }`}
+                    >
+                      <span className={`capitalize ${subtask.priority ? (PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400') : 'text-zinc-500'}`}>
+                        {subtask.priority?.toLowerCase() || 'Empty'}
+                      </span>
                     </div>
                   </Popover.Trigger>
                   <Popover.Portal>
-                    <Popover.Content className="z-[9999] w-36 p-1 bg-[#121212] border border-zinc-800 rounded-md shadow-2xl outline-none" align="start" sideOffset={4}>
+                    <Popover.Content className="z-[100000] w-36 p-1.5 bg-popover border border-zinc-800 rounded-xl shadow-2xl outline-none" align="start" sideOffset={4}>
                       <div className="flex flex-col gap-0.5">
-                        <div
-                          onClick={() => handleUpdatePriority(null)}
-                          className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors ${!subtask.priority ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}`}
-                        >
-                          <span className="w-2 h-2 rounded-full bg-zinc-600" />
-                          Empty
-                        </div>
-                        {['LOW', 'MEDIUM', 'HIGH', 'URGENT'].map((p) => (
-                          <div
+                        <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
+                        {(['URGENT', 'HIGH', 'MEDIUM', 'LOW'] as Priority[]).map((p) => (
+                          <button
                             key={p}
-                            onClick={() => handleUpdatePriority(p)}
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors ${subtask.priority === p ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}`}
+                            onClick={() => { handleUpdatePriority(p); setIsPriorityOpen(false); }}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer"
                           >
-                            <span className={`w-2 h-2 rounded-full ${PRIORITY_COLORS[p]?.split(' ')[1]}`} />
+                            <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p] ?? 'text-zinc-400'}`} />
                             <span className="capitalize">{p.toLowerCase()}</span>
-                          </div>
+                            {subtask.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
+                          </button>
                         ))}
+                        {subtask.priority && (
+                          <div className="border-t border-zinc-800/60 mt-1 pt-1">
+                            <button
+                              className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                              onClick={() => { handleUpdatePriority(null); setIsPriorityOpen(false); }}
+                            >
+                              <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                              <span>Clear Priority</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </Popover.Content>
                   </Popover.Portal>
@@ -3762,12 +3864,12 @@ function SubtaskDetailView({
                   )}
 
                   {!editingUser && isDescOverflowing && !isDescExpanded && (
-                    <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#121212] via-[#121212]/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+                    <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-background via-background/90 to-transparent flex items-end justify-center pb-1 pointer-events-none">
                       <button 
                         onClick={(e) => { e.stopPropagation(); setIsDescExpanded(true); }}
                         onMouseDown={(e) => e.preventDefault()}
                         onFocus={(e) => e.stopPropagation()}
-                        className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-[#1e1e20] hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
+                        className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-popover hover:bg-zinc-800 border border-zinc-700/50 rounded-md text-[10px] text-zinc-300 font-medium transition-colors shadow-sm cursor-pointer"
                       >
                         <ChevronDown className="w-3 h-3" />
                         Expand
@@ -3849,7 +3951,7 @@ function SubtaskDetailView({
         </div >
 
         {/* Right Panel: Activity Log */}
-        < div className="w-[380px] bg-[#18181b] flex flex-col border-l border-zinc-800/60 shrink-0 z-10" >
+        < div className="w-[380px] bg-card flex flex-col border-l border-zinc-800/60 shrink-0 z-10" >
           <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
             <div className="flex gap-3">
@@ -3892,7 +3994,7 @@ function SubtaskDetailView({
                   });
 
                   return (
-                    <div key={c.id} className="flex flex-col gap-2 text-sm w-full bg-[#202024] p-4 rounded-xl border border-zinc-800/60 shadow-sm mt-2">
+                    <div key={c.id} className="flex flex-col gap-2 text-sm w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm mt-2">
                       <div className="flex items-center gap-3 w-full">
                         {c.user?.avatarUrl ? (
                           <img src={c.user.avatarUrl} alt={c.user?.name} className="w-8 h-8 rounded-full shrink-0 object-cover" />
@@ -3914,7 +4016,7 @@ function SubtaskDetailView({
                                 </button>
                               </Popover.Trigger>
                               <Popover.Portal>
-                                <Popover.Content className="w-32 bg-[#1a1a1e] border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[9999]" align="end">
+                                <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
                                   <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
                                     <Pencil className="w-3.5 h-3.5" /> Edit
                                   </button>
@@ -4179,7 +4281,7 @@ function SubtaskDetailView({
             </div>
           </div>
 
-          <div className="p-4 bg-[#18181b] border-t border-zinc-800/60 shrink-0">
+          <div className="p-4 bg-card border-t border-zinc-800/60 shrink-0">
             <div className="relative">
               {stagedFiles.length > 0 && (
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -4195,7 +4297,7 @@ function SubtaskDetailView({
                 </div>
               )}
               {showMentionMenu && (
-                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#202024] border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[9999]">
+                <div className="absolute bottom-full left-0 mb-2 w-64 bg-card border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100000]">
                   <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
                     People
                   </div>
@@ -4316,43 +4418,47 @@ function SubtaskDetailView({
 }
 
 export function TaskDetailModal(props: Props) {
-  const [fullTask, setFullTask] = useState<Task | null>(props.task);
-  const [isLoading, setIsLoading] = useState(false);
+  const [fullTask, setFullTask] = useState<Task | null>(props.task ?? null);
+  const lastTaskIdRef = useRef<string | null>(null);
 
+  // Show modal instantly with prop data; then silently refresh in background
   useEffect(() => {
     if (props.isOpen && props.task?.id) {
-      setFullTask(props.task);
+      // If it's a new task, seed with prop immediately so modal renders without waiting
+      if (lastTaskIdRef.current !== props.task.id) {
+        lastTaskIdRef.current = props.task.id;
+        setFullTask(props.task);
+      }
+      // Background refresh — don't block the modal with a loading state
       const loadFull = async () => {
-        setIsLoading(true);
         try {
           const res = await tasksApi.getTask(props.task!.id);
           if (res?.task) {
             setFullTask(prev => {
               if (!prev) return res.task;
+              // Merge: keep local optimistic state (assignees, roles) but refresh deep data
               return { ...res.task, ...prev };
             });
           }
         } catch (err) {
           console.error(err);
-        } finally {
-          setIsLoading(false);
         }
       };
       loadFull();
     } else if (!props.isOpen) {
+      lastTaskIdRef.current = null;
       setFullTask(null);
     }
   }, [props.isOpen, props.task?.id]);
+
+  // Sync prop changes (e.g. socket updates) without clobbering local optimistic state
   useEffect(() => {
     if (props.isOpen && props.task && fullTask && props.task.id === fullTask.id) {
-      // Merge incoming prop changes, but let our local (optimistic) state take priority
-      // so that user's role/assignee changes aren't reverted by socket task:updated events
       setFullTask(prev => {
         const merged = { ...prev!, ...props.task! };
         if (!props.task!.subtasks && prev!.subtasks) merged.subtasks = prev!.subtasks;
         if (!props.task!.checklists && prev!.checklists) merged.checklists = prev!.checklists;
         if (!props.task!.comments && prev!.comments) merged.comments = prev!.comments;
-        
         return merged;
       });
     }
@@ -4379,11 +4485,6 @@ export function TaskDetailModal(props: Props) {
     if (props.onUpdateTask) props.onUpdateTask(updatedTask);
   };
 
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  
-  if (!mounted) return null;
-
   const content = (
     <AnimatePresence>
       {props.isOpen && fullTask && (
@@ -4394,7 +4495,7 @@ export function TaskDetailModal(props: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 1 }}
             transition={{ duration: 0 }}
-            className="absolute inset-0 z-[100] bg-[#121212] flex flex-col cursor-default"
+            className="absolute inset-0 z-[100] bg-background flex flex-col cursor-default"
           >
             <TaskDetailModalContent
               {...props}
@@ -4406,7 +4507,7 @@ export function TaskDetailModal(props: Props) {
           // Backdrop appears instantly; only the modal card animates
           <div
             key="modal-backdrop"
-            className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+            className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
             onPointerDown={(e) => {
               if (e.target === e.currentTarget) {
                 props.onClose();

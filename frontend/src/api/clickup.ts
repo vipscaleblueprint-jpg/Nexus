@@ -89,4 +89,9 @@ export const clickUpApi = {
   async getClickUpTask(taskId: string): Promise<{ task: any }> {
     return apiClient(`/api/clickup/tasks/${taskId}`);
   },
+
+  /** Fetch all latest data from ClickUp and pull it (sync mappings) */
+  async syncAll(): Promise<{ ok: boolean }> {
+    return apiClient('/api/clickup/sync-all', { method: 'POST' });
+  },
 };

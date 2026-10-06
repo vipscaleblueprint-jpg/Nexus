@@ -68,7 +68,7 @@ export function CreatePageModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 font-sans">
-      <div className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200">
+      <div className="w-full max-w-md bg-card border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200">
         <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-emerald-400">
             <FileCode className="w-5 h-5" />
@@ -98,7 +98,7 @@ export function CreatePageModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Getting Started, Overview..."
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
             />
           </div>
 
@@ -108,7 +108,7 @@ export function CreatePageModal({
               required
               value={docId}
               onChange={(e) => setDocId(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
             >
               <option value="">-- Select Document Container --</option>
               {allDocs.map((d) => (

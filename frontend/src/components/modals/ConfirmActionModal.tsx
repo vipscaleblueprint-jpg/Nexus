@@ -50,7 +50,7 @@ export function ConfirmActionModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className={`w-full max-w-md bg-[#18181b] rounded-xl shadow-2xl border flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 ${isDestructive ? 'border-red-900/50' : 'border-indigo-900/50'}`}>
+      <div className={`w-full max-w-md bg-card rounded-xl shadow-2xl border flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 ${isDestructive ? 'border-red-900/50' : 'border-indigo-900/50'}`}>
         <div className={`flex items-center justify-between px-4 py-3 border-b ${headerColors}`}>
           <h2 className="text-sm font-bold flex items-center gap-2">
             <Icon className="w-4 h-4" />
@@ -68,7 +68,7 @@ export function ConfirmActionModal({
           {message}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-800/60 bg-[#121214]">
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-800/60 bg-background">
           <button
             onClick={onClose}
             disabled={isProcessing}

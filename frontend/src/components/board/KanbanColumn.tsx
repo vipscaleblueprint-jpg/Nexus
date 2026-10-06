@@ -69,29 +69,29 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export const THEMES: Record<string, { badge: string; bg: string; text: string; scrollThumb: string }> = {
-  cyan: { badge: 'bg-cyan-500 text-black', bg: 'bg-cyan-500/10', text: 'text-cyan-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-cyan-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-cyan-500/50' },
-  blue: { badge: 'bg-blue-500 text-white', bg: 'bg-blue-500/10', text: 'text-blue-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-blue-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-blue-500/50' },
-  indigo: { badge: 'bg-indigo-500 text-white', bg: 'bg-indigo-500/10', text: 'text-indigo-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-indigo-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-indigo-500/50' },
-  violet: { badge: 'bg-violet-500 text-white', bg: 'bg-violet-500/10', text: 'text-violet-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-violet-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-violet-500/50' },
-  purple: { badge: 'bg-purple-500 text-white', bg: 'bg-purple-500/10', text: 'text-purple-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-purple-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-purple-500/50' },
-  teal: { badge: 'bg-[#00a884] text-black', bg: 'bg-teal-500/10', text: 'text-teal-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-teal-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-teal-500/50' },
-  emerald: { badge: 'bg-emerald-500 text-white', bg: 'bg-emerald-500/10', text: 'text-emerald-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-emerald-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-emerald-500/50' },
-  amber: { badge: 'bg-amber-500 text-black', bg: 'bg-amber-500/10', text: 'text-amber-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-amber-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-amber-500/50' },
-  orange: { badge: 'bg-orange-500 text-white', bg: 'bg-orange-500/10', text: 'text-orange-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-orange-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-orange-500/50' },
-  rose: { badge: 'bg-rose-500 text-white', bg: 'bg-rose-500/10', text: 'text-rose-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-rose-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-rose-500/50' },
-  zinc: { badge: 'bg-zinc-500 text-white', bg: 'bg-zinc-500/10', text: 'text-zinc-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-zinc-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-zinc-500/50' },
-  '#3A8F55': { badge: 'bg-[#3A8F55] text-white', bg: 'bg-[#3A8F55]/10', text: 'text-[#3A8F55]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#3A8F55]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#3A8F55]/50' },
-  '#1F8A6E': { badge: 'bg-[#1F8A6E] text-white', bg: 'bg-[#1F8A6E]/10', text: 'text-[#1F8A6E]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#1F8A6E]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#1F8A6E]/50' },
-  '#2F7BD0': { badge: 'bg-[#2F7BD0] text-white', bg: 'bg-[#2F7BD0]/10', text: 'text-[#2F7BD0]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#2F7BD0]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#2F7BD0]/50' },
-  '#D29A2A': { badge: 'bg-[#D29A2A] text-black', bg: 'bg-[#D29A2A]/10', text: 'text-[#D29A2A]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D29A2A]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#D29A2A]/50' },
-  '#D04A7C': { badge: 'bg-[#D04A7C] text-white', bg: 'bg-[#D04A7C]/10', text: 'text-[#D04A7C]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D04A7C]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#D04A7C]/50' },
-  '#5B6BD6': { badge: 'bg-[#5B6BD6] text-white', bg: 'bg-[#5B6BD6]/10', text: 'text-[#5B6BD6]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#5B6BD6]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#5B6BD6]/50' },
-  '#D9534F': { badge: 'bg-[#D9534F] text-white', bg: 'bg-[#D9534F]/10', text: 'text-[#D9534F]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D9534F]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#D9534F]/50' },
-  '#D97B3A': { badge: 'bg-[#D97B3A] text-white', bg: 'bg-[#D97B3A]/10', text: 'text-[#D97B3A]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D97B3A]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#D97B3A]/50' },
-  '#A35DB8': { badge: 'bg-[#A35DB8] text-white', bg: 'bg-[#A35DB8]/10', text: 'text-[#A35DB8]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#A35DB8]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#A35DB8]/50' },
-  '#22A3AE': { badge: 'bg-[#22A3AE] text-black', bg: 'bg-[#22A3AE]/10', text: 'text-[#22A3AE]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#22A3AE]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#22A3AE]/50' },
-  '#2FA37A': { badge: 'bg-[#2FA37A] text-white', bg: 'bg-[#2FA37A]/10', text: 'text-[#2FA37A]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#2FA37A]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#2FA37A]/50' },
-  '#8A8F98': { badge: 'bg-[#8A8F98] text-white', bg: 'bg-[#8A8F98]/10', text: 'text-[#8A8F98]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#8A8F98]/30 hover:[&::-webkit-scrollbar-thumb]:bg-[#8A8F98]/50' },
+  cyan: { badge: 'bg-cyan-500 text-white', bg: 'bg-transparent dark:bg-cyan-500/10', text: 'text-cyan-600 dark:text-cyan-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-cyan-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-cyan-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-cyan-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-cyan-500/50' },
+  blue: { badge: 'bg-blue-500 text-white', bg: 'bg-transparent dark:bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-blue-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-blue-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-blue-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-blue-500/50' },
+  indigo: { badge: 'bg-indigo-500 text-white', bg: 'bg-transparent dark:bg-indigo-500/10', text: 'text-indigo-600 dark:text-indigo-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-indigo-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-indigo-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-indigo-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-indigo-500/50' },
+  violet: { badge: 'bg-violet-500 text-white', bg: 'bg-transparent dark:bg-violet-500/10', text: 'text-violet-600 dark:text-violet-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-violet-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-violet-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-violet-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-violet-500/50' },
+  purple: { badge: 'bg-purple-500 text-white', bg: 'bg-transparent dark:bg-purple-500/10', text: 'text-purple-600 dark:text-purple-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-purple-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-purple-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-purple-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-purple-500/50' },
+  teal: { badge: 'bg-[#00a884] text-white', bg: 'bg-transparent dark:bg-teal-500/10', text: 'text-teal-600 dark:text-teal-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-teal-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-teal-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-teal-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-teal-500/50' },
+  emerald: { badge: 'bg-emerald-500 text-white', bg: 'bg-transparent dark:bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-emerald-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-emerald-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-emerald-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-emerald-500/50' },
+  amber: { badge: 'bg-amber-500 text-black', bg: 'bg-transparent dark:bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-amber-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-amber-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-amber-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-amber-500/50' },
+  orange: { badge: 'bg-orange-500 text-white', bg: 'bg-transparent dark:bg-orange-500/10', text: 'text-orange-600 dark:text-orange-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-orange-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-orange-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-orange-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-orange-500/50' },
+  rose: { badge: 'bg-rose-500 text-white', bg: 'bg-transparent dark:bg-rose-500/10', text: 'text-rose-600 dark:text-rose-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-rose-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-rose-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-rose-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-rose-500/50' },
+  zinc: { badge: 'bg-zinc-500 text-white', bg: 'bg-transparent dark:bg-zinc-500/10', text: 'text-zinc-600 dark:text-zinc-400', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-zinc-500/20 hover:[&::-webkit-scrollbar-thumb]:bg-zinc-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-500/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-zinc-500/50' },
+  '#3A8F55': { badge: 'bg-[#3A8F55] text-white', bg: 'bg-transparent dark:bg-[#3A8F55]/10', text: 'text-[#3A8F55]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#3A8F55]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#3A8F55]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#3A8F55]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#3A8F55]/50' },
+  '#1F8A6E': { badge: 'bg-[#1F8A6E] text-white', bg: 'bg-transparent dark:bg-[#1F8A6E]/10', text: 'text-[#1F8A6E]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#1F8A6E]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#1F8A6E]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#1F8A6E]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#1F8A6E]/50' },
+  '#2F7BD0': { badge: 'bg-[#2F7BD0] text-white', bg: 'bg-transparent dark:bg-[#2F7BD0]/10', text: 'text-[#2F7BD0]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#2F7BD0]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#2F7BD0]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#2F7BD0]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#2F7BD0]/50' },
+  '#D29A2A': { badge: 'bg-[#D29A2A] text-black', bg: 'bg-transparent dark:bg-[#D29A2A]/10', text: 'text-[#D29A2A]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D29A2A]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#D29A2A]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#D29A2A]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#D29A2A]/50' },
+  '#D04A7C': { badge: 'bg-[#D04A7C] text-white', bg: 'bg-transparent dark:bg-[#D04A7C]/10', text: 'text-[#D04A7C]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D04A7C]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#D04A7C]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#D04A7C]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#D04A7C]/50' },
+  '#5B6BD6': { badge: 'bg-[#5B6BD6] text-white', bg: 'bg-transparent dark:bg-[#5B6BD6]/10', text: 'text-[#5B6BD6]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#5B6BD6]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#5B6BD6]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#5B6BD6]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#5B6BD6]/50' },
+  '#D9534F': { badge: 'bg-[#D9534F] text-white', bg: 'bg-transparent dark:bg-[#D9534F]/10', text: 'text-[#D9534F]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D9534F]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#D9534F]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#D9534F]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#D9534F]/50' },
+  '#D97B3A': { badge: 'bg-[#D97B3A] text-white', bg: 'bg-transparent dark:bg-[#D97B3A]/10', text: 'text-[#D97B3A]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#D97B3A]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#D97B3A]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#D97B3A]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#D97B3A]/50' },
+  '#A35DB8': { badge: 'bg-[#A35DB8] text-white', bg: 'bg-transparent dark:bg-[#A35DB8]/10', text: 'text-[#A35DB8]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#A35DB8]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#A35DB8]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#A35DB8]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#A35DB8]/50' },
+  '#22A3AE': { badge: 'bg-[#22A3AE] text-black', bg: 'bg-transparent dark:bg-[#22A3AE]/10', text: 'text-[#22A3AE]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#22A3AE]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#22A3AE]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#22A3AE]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#22A3AE]/50' },
+  '#2FA37A': { badge: 'bg-[#2FA37A] text-white', bg: 'bg-transparent dark:bg-[#2FA37A]/10', text: 'text-[#2FA37A]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#2FA37A]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#2FA37A]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#2FA37A]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#2FA37A]/50' },
+  '#8A8F98': { badge: 'bg-[#8A8F98] text-white', bg: 'bg-transparent dark:bg-[#8A8F98]/10', text: 'text-[#8A8F98]', scrollThumb: '[&::-webkit-scrollbar-thumb]:bg-[#8A8F98]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#8A8F98]/40 dark:[&::-webkit-scrollbar-thumb]:bg-[#8A8F98]/30 dark:hover:[&::-webkit-scrollbar-thumb]:bg-[#8A8F98]/50' },
 };
 
 const DEFAULT_STATUS_THEMES: Record<string, string> = {
@@ -251,8 +251,8 @@ export const KanbanColumn = memo(function KanbanColumn({
     <div 
       className={`flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out relative hover:z-50 focus-within:z-50 overflow-hidden ${
         isCollapsed 
-          ? `w-11 h-full bg-[#141418] rounded-2xl border border-zinc-800/50` 
-          : `w-[350px] ${isOverlay ? 'h-fit max-h-[80vh]' : 'max-h-full'} rounded-2xl ${colors.bg} border border-zinc-800/50`
+          ? `w-11 h-full bg-transparent dark:bg-card rounded-2xl border-transparent dark:border-zinc-800/50` 
+          : `w-[350px] ${isOverlay ? 'h-fit max-h-[80vh]' : 'max-h-full'} rounded-2xl ${colors.bg} border-transparent dark:border-zinc-800/50`
       }`}
       style={{
         animation: isShaking ? 'kanban-shake 0.4s cubic-bezier(.36,.07,.19,.97) both' : 'none',
@@ -314,7 +314,7 @@ export const KanbanColumn = memo(function KanbanColumn({
                     if (e.key === 'Enter') handleRenameSubmit();
                     if (e.key === 'Escape') { setIsEditing(false); setLocalName(label); }
                   }}
-                  className={`bg-zinc-800 text-xs text-white px-2 py-0.5 rounded outline-none w-32 border ${colors.badge}`}
+                  className={`text-xs px-2 py-0.5 rounded outline-none w-32 border ${colors.badge}`}
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                 />
@@ -398,10 +398,10 @@ export const KanbanColumn = memo(function KanbanColumn({
           
           <button 
             onClick={() => onAddTaskClick?.(status)}
-            className="flex items-center gap-2 text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1.5 hover:bg-zinc-800/30 rounded mt-1 group"
+            className={`flex items-center gap-2 transition-colors px-2 py-1.5 rounded mt-1 group font-semibold ${colors.text} hover:bg-black/5 dark:hover:bg-white/5`}
           >
-            <Plus className="w-4 h-4 opacity-70 group-hover:opacity-100" />
-            <span className="text-xs font-medium">Add Task</span>
+            <Plus className="w-4 h-4" />
+            <span className="text-xs">Add Task</span>
           </button>
         </div>
       </div>

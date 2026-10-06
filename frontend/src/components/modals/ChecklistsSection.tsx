@@ -19,7 +19,14 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
   const [newItemText, setNewItemText] = useState('');
   const [creatingChecklist, setCreatingChecklist] = useState(false);
 
-  const standardChecklists = checklists.filter(c => !c.name.toLowerCase().includes('audit'));
+  const standardChecklists = checklists.filter(c => {
+    if (c.name.toLowerCase().includes('audit')) return false;
+    if (subtaskId) {
+      return c.subtaskId === subtaskId;
+    } else {
+      return !c.subtaskId;
+    }
+  });
 
   const completedCount = standardChecklists.reduce((acc, list) => {
     return acc + (list.items?.every(i => i.completed) && list.items.length > 0 ? 1 : 0);
@@ -149,10 +156,10 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
       {isExpanded && (
         <div className="flex flex-col gap-4">
           {standardChecklists.map((checklist, index) => (
-            <div key={checklist.id} className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800/60 rounded-xl">
+            <div key={checklist.id} className="bg-secondary/50 border border-zinc-800/60 rounded-xl">
               {/* Checklist Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-800/60">
-                <div className="font-medium text-sm text-zinc-900 dark:text-zinc-100">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60">
+                <div className="font-medium text-sm text-zinc-100">
                   {checklist.name} <span className="text-zinc-400 font-normal text-xs ml-2">{index + 1} of {standardChecklists.length}</span>
                 </div>
                 <Popover.Root>
@@ -162,7 +169,7 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                     </button>
                   </Popover.Trigger>
                   <Popover.Portal>
-                    <Popover.Content className="z-[9999] w-48 rounded-lg bg-zinc-900 border border-zinc-800 p-1 shadow-xl outline-none" align="end" sideOffset={5}>
+                    <Popover.Content className="z-[100000] w-48 rounded-lg bg-secondary border border-zinc-800 p-1 shadow-xl outline-none" align="end" sideOffset={5}>
                       <button 
                         className="w-full text-left px-2 py-1.5 text-sm text-red-400 hover:bg-zinc-800 rounded flex items-center gap-2 cursor-pointer"
                         onClick={() => handleDeleteChecklist(checklist.id)}
@@ -224,7 +231,7 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                           </button>
                         </Popover.Trigger>
                         <Popover.Portal>
-                          <Popover.Content className="z-[9999] w-56 rounded-lg bg-zinc-900 border border-zinc-800 p-2 shadow-xl outline-none" align="end" sideOffset={5}>
+                          <Popover.Content className="z-[100000] w-56 rounded-lg bg-secondary border border-zinc-800 p-2 shadow-xl outline-none" align="end" sideOffset={5}>
                             <div className="text-xs font-medium text-zinc-500 mb-2 px-1">Assign to</div>
                             <div className="max-h-60 overflow-y-auto">
                               <button 

@@ -1,10 +1,33 @@
 @import "tailwindcss";
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
 @plugin "../../node_modules/@tailwindcss/typography";
 
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+
 
 :root {
   --background: #131316;
@@ -29,13 +52,69 @@
   --radius: 0.375rem;
 }
 
+:root.theme-light, .theme-light {
+  --color-zinc-950: #FFFFFF;
+  --color-zinc-900: #F9F9F9;
+  --color-zinc-800: #E8E8E8;
+  --color-zinc-700: #BBBBBB;
+  --color-zinc-600: #8D8D8D;
+  --color-zinc-500: #8D8D8D;
+  --color-zinc-400: #595959;
+  --color-zinc-300: #595959;
+  --color-zinc-200: #202020;
+  --color-zinc-100: #202020;
+  --color-zinc-50:  #202020;
+
+  --color-white: #202020;
+  --color-black: #FFFFFF;
+
+  --background: #FFFFFF;
+  --foreground: #202020;
+  --card: #F9F9F9;
+  --card-foreground: #202020;
+  --popover: #FFFFFF;
+  --popover-foreground: #202020;
+  --primary: #202020;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F9F9F9;
+  --secondary-foreground: #595959;
+  --muted: #F9F9F9;
+  --muted-foreground: #8D8D8D;
+  --accent: #EAEAEA;
+  --accent-foreground: #202020;
+  --destructive: #ef4444;
+  --destructive-foreground: #FFFFFF;
+  --border: #E8E8E8;
+  --input: #E8E8E8;
+  --ring: #BBBBBB;
+
+  /* Pale indigo text (used for selected/active states on dark) → readable on light */
+  --color-indigo-100: #3730a3;
+  --color-indigo-200: #4338ca;
+  --color-indigo-300: #4f46e5;
+}
+
+/* Light mode remaps --color-white to dark text. On solid accent fills
+   (checkboxes, primary buttons, status pills) text/icons must stay truly white. */
+.theme-light :is(
+  .bg-indigo-500, .bg-indigo-600, .bg-indigo-700,
+  .bg-emerald-500, .bg-emerald-600, .bg-green-500, .bg-green-600,
+  .bg-blue-500, .bg-blue-600, .bg-sky-500, .bg-sky-600,
+  .bg-violet-500, .bg-violet-600, .bg-purple-500, .bg-purple-600,
+  .bg-rose-500, .bg-rose-600, .bg-red-500, .bg-red-600,
+  .bg-pink-500, .bg-pink-600, .bg-amber-500, .bg-orange-500, .bg-teal-500,
+  [class*="bg-[#"]:not([class*="]/"])
+) {
+  --color-white: #FFFFFF;
+}
+
 * {
-  border-color: #242429;
+  border-color: var(--border);
 }
 
 body {
-  background-color: #131316;
-  color: #e4e4e7;
+  background-color: var(--background);
+  color: var(--foreground);
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -92,15 +171,31 @@ input:disabled,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272e;
+  background: var(--border);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: var(--ring);
+}
+
+/* Light mode: --border is near-white, so give thumbs real contrast
+   (also overrides the faint tinted thumbs on Kanban columns / board) */
+.theme-light ::-webkit-scrollbar-thumb {
+  background-color: #999999;
+  border-radius: 6px;
+}
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background-color: #666666;
 }
 
 /* Notion-style Rich Text Editor overrides */
+/* Ensure text alignment works by expanding inline-block to full width */
+.ProseMirror:has([style*="text-align: center"]),
+.ProseMirror:has([style*="text-align: right"]) {
+  display: block !important;
+  width: 100% !important;
+}
 .ProseMirror {
   outline: none;
 }
@@ -281,3 +376,4 @@ input:disabled,
   cursor: default !important;
   pointer-events: none !important;
 }
+

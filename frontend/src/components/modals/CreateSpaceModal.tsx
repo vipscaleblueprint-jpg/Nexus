@@ -62,7 +62,7 @@ export function CreateSpaceModal({ isOpen, onClose, onSuccess }: CreateSpaceModa
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
-            className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
+            className="w-full max-w-md bg-card border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
           >
             <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-indigo-400">
@@ -93,7 +93,7 @@ export function CreateSpaceModal({ isOpen, onClose, onSuccess }: CreateSpaceModa
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Engineering, Marketing..."
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
 
@@ -104,9 +104,9 @@ export function CreateSpaceModal({ isOpen, onClose, onSuccess }: CreateSpaceModa
                 type="color"
                 value={color}
                 onChange={(e) => setColor(e.target.value)}
-                className="w-10 h-10 bg-zinc-900 border border-zinc-700 rounded-lg cursor-pointer p-1"
+                className="w-10 h-10 bg-secondary border border-zinc-700 rounded-lg cursor-pointer p-1"
               />
-              <span className="text-xs font-mono text-zinc-400 bg-zinc-900 px-2.5 py-1.5 rounded-md border border-zinc-800">
+              <span className="text-xs font-mono text-zinc-400 bg-secondary px-2.5 py-1.5 rounded-md border border-zinc-800">
                 {color}
               </span>
             </div>

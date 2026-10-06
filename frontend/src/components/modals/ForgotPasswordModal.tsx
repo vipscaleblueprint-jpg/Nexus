@@ -98,11 +98,11 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fadeIn font-sans text-zinc-100">
-      <div className="w-full max-w-sm bg-[#18181c] border border-zinc-800/80 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-5">
+      <div className="w-full max-w-sm bg-card border border-zinc-800/80 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-emerald-400">
+            <div className="p-2 rounded-lg bg-secondary border border-zinc-800 text-emerald-400">
               <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
@@ -144,7 +144,7 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="zybryxmontinola.edu@gmail.com"
                   required
-                  className="w-full bg-[#131316] border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
+                  className="w-full bg-background border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
                 />
               </div>
             </div>
@@ -172,7 +172,7 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
         {/* Step 2: Enter OTP & New Password */}
         {step === 2 && (
           <form onSubmit={handleResetPassword} className="space-y-3.5 text-xs">
-            <div className="p-2.5 bg-zinc-900/60 border border-zinc-800 rounded-xl text-[11px] text-zinc-300">
+            <div className="p-2.5 bg-secondary/60 border border-zinc-800 rounded-xl text-[11px] text-zinc-300">
               OTP verification code sent to <strong>{email}</strong> (valid for 10 mins).
             </div>
 
@@ -189,7 +189,7 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
                   onChange={(e) => setOtp(e.target.value)}
                   placeholder="123456"
                   required
-                  className="w-full bg-[#131316] border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs font-mono font-bold tracking-widest text-emerald-300 placeholder-zinc-600 outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-background border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs font-mono font-bold tracking-widest text-emerald-300 placeholder-zinc-600 outline-none focus:border-emerald-500 transition-colors"
                 />
               </div>
             </div>
@@ -206,7 +206,7 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Enter new password"
                   required
-                  className="w-full bg-[#131316] border border-zinc-800 rounded-xl pl-9 pr-10 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
+                  className="w-full bg-background border border-zinc-800 rounded-xl pl-9 pr-10 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
                 />
                 <button
                   type="button"
@@ -230,7 +230,7 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm new password"
                   required
-                  className="w-full bg-[#131316] border border-zinc-800 rounded-xl pl-9 pr-10 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
+                  className="w-full bg-background border border-zinc-800 rounded-xl pl-9 pr-10 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
                 />
                 <button
                   type="button"

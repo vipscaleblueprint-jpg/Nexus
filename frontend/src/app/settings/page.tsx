@@ -237,9 +237,9 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="flex w-full h-full bg-[#0a0a0a] overflow-hidden">
+    <div className="flex w-full h-full bg-background overflow-hidden">
       {/* Settings Sidebar (Scrollspy) */}
-      <div className="w-64 shrink-0 bg-[#121212] border-r border-zinc-800 flex flex-col">
+      <div className="w-64 shrink-0 bg-background border-r border-zinc-800 flex flex-col">
         <div className="p-4 border-b border-zinc-800">
           <h1 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
             <Settings className="w-4 h-4 text-zinc-400" />
@@ -298,7 +298,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-[#0a0a0a]">
+      <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-background">
         <div className="max-w-[700px] mx-auto py-10 px-8 pb-32 space-y-12">
           
           <div className="mb-4">
@@ -310,8 +310,8 @@ export default function SettingsPage() {
 
           {/* PROFILE SECTION */}
           <section id="profile" ref={profileRef} className="scroll-mt-8 space-y-6">
-            <div className="bg-[#121214] border border-zinc-800 rounded-xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-zinc-800 bg-[#151518]">
+            <div className="bg-background border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800 bg-card">
                 <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
                   <UserIcon className="w-4 h-4 text-zinc-400" />
                   Account Profile
@@ -319,7 +319,7 @@ export default function SettingsPage() {
               </div>
               <div className="p-6">
                 {/* Read Only Stats */}
-                <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800 mb-6 space-y-3">
+                <div className="bg-secondary/50 rounded-lg p-4 border border-zinc-800 mb-6 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-zinc-500">Email</span>
                     <span className="text-sm text-zinc-300">{currentUser?.email}</span>
@@ -383,7 +383,7 @@ export default function SettingsPage() {
                         value={name}
                         onChange={e => setName(e.target.value)}
                         maxLength={100}
-                        className="w-full bg-[#18181b] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
+                        className="w-full bg-card border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
                       />
                       <div className="flex justify-between items-start mt-1.5 px-1">
                         <span className="text-[11px] text-zinc-500">This name will be displayed across your workspace.</span>
@@ -398,7 +398,7 @@ export default function SettingsPage() {
                       type="text"
                       value={dailySheetUrl}
                       onChange={e => setDailySheetUrl(e.target.value)}
-                      className="w-full bg-[#18181b] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
+                      className="w-full bg-card border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
                     />
                   </div>
 
@@ -418,8 +418,8 @@ export default function SettingsPage() {
 
           {/* PASSWORD SECTION */}
           <section id="password" ref={passwordRef} className="scroll-mt-8 space-y-6">
-            <div className="bg-[#121214] border border-zinc-800 rounded-xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-zinc-800 bg-[#151518]">
+            <div className="bg-background border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800 bg-card">
                 <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
                   <Lock className="w-4 h-4 text-zinc-400" />
                   Password
@@ -435,7 +435,7 @@ export default function SettingsPage() {
                       value={currentPassword}
                       onChange={e => setCurrentPassword(e.target.value)}
                       placeholder="Enter current password"
-                      className="w-full bg-[#18181b] border border-zinc-800 rounded-lg pl-9 pr-10 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
+                      className="w-full bg-card border border-zinc-800 rounded-lg pl-9 pr-10 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
                     />
                     <button
                       type="button"
@@ -458,7 +458,7 @@ export default function SettingsPage() {
                       value={newPassword}
                       onChange={e => setNewPassword(e.target.value)}
                       placeholder="Enter new password"
-                      className="w-full bg-[#18181b] border border-zinc-800 rounded-lg pl-9 pr-10 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
+                      className="w-full bg-card border border-zinc-800 rounded-lg pl-9 pr-10 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
                     />
                     <button
                       type="button"
@@ -485,8 +485,8 @@ export default function SettingsPage() {
 
           {/* API INTEGRATIONS SECTION */}
           <section id="api" ref={apiRef} className="scroll-mt-8 space-y-6">
-            <div className="bg-[#121214] border border-zinc-800 rounded-xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-zinc-800 bg-[#151518]">
+            <div className="bg-background border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800 bg-card">
                 <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
                   <Code className="w-4 h-4 text-zinc-400" />
                   API Integrations

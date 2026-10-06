@@ -48,7 +48,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#131316] text-[#e4e4e7] flex flex-col justify-between relative overflow-hidden font-sans selection:bg-zinc-800 selection:text-white">
+    <div className="min-h-screen bg-background text-foreground flex flex-col justify-between relative overflow-hidden font-sans selection:bg-zinc-800 selection:text-white">
       {/* Soft Ambient Background Gradient Blur */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[400px] bg-gradient-to-b from-zinc-800/20 via-zinc-900/10 to-transparent blur-3xl pointer-events-none rounded-full" />
 
@@ -71,7 +71,7 @@ export default function LoginPage() {
 
       {/* Main Authentication Card */}
       <main className="relative z-10 flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-sm bg-[#18181c] border border-zinc-800/80 backdrop-blur-xl rounded-2xl p-7 shadow-2xl space-y-6">
+        <div className="w-full max-w-sm bg-card border border-zinc-800/80 backdrop-blur-xl rounded-2xl p-7 shadow-2xl space-y-6">
           {/* Header Title */}
           <div className="text-center space-y-2">
             <h1 className="text-xl font-extrabold tracking-tight text-zinc-100">
@@ -93,7 +93,7 @@ export default function LoginPage() {
           <div className="space-y-3">
             <button
               onClick={handleGoogleLogin}
-              className="w-full flex items-center justify-center gap-3 bg-[#131316] hover:bg-zinc-800 text-zinc-100 font-medium py-2.5 px-4 rounded-xl border border-zinc-800 hover:border-zinc-700 transition-all text-xs shadow-md group"
+              className="w-full flex items-center justify-center gap-3 bg-background hover:bg-zinc-800 text-zinc-100 font-medium py-2.5 px-4 rounded-xl border border-zinc-800 hover:border-zinc-700 transition-all text-xs shadow-md group"
             >
               {/* Google Official SVG Icon */}
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
@@ -122,7 +122,7 @@ export default function LoginPage() {
           {/* Subtle Divider */}
           <div className="relative flex items-center justify-center my-4">
             <div className="border-t border-zinc-800/80 w-full" />
-            <span className="bg-[#18181c] px-3 text-[10px] uppercase tracking-wider text-zinc-500 font-mono absolute">
+            <span className="bg-card px-3 text-[10px] uppercase tracking-wider text-zinc-500 font-mono absolute">
               Or email login
             </span>
           </div>
@@ -141,7 +141,7 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="zybryxmontinola.edu@gmail.com"
                   required
-                  className="w-full bg-[#131316] border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
+                  className="w-full bg-background border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
                 />
               </div>
             </div>
@@ -158,7 +158,7 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full bg-[#131316] border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
+                  className="w-full bg-background border border-zinc-800 rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-700 transition-colors"
                 />
               </div>
             </div>

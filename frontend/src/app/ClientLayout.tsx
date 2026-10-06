@@ -90,13 +90,13 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen bg-[#131316] text-[#e4e4e7] overflow-hidden font-sans">
-      <Suspense fallback={<div className="w-[260px] h-full bg-[#0a0a0b]" />}>
+    <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
+      <Suspense fallback={<div className="w-[260px] h-full bg-background" />}>
         <Sidebar spaces={spaces} />
       </Suspense>
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#131316]">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-background">
         <Header />
-        <main id="main-scroll-container" className="flex-1 overflow-y-auto bg-[#131316]">
+        <main id="main-scroll-container" className="flex-1 overflow-y-auto bg-background">
           {children}
         </main>
       </div>

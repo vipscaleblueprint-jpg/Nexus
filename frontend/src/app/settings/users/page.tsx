@@ -109,7 +109,7 @@ function MemberCard({
   return (
     <div
       onClick={() => onEdit(user)}
-      className="bg-[#18181c] border border-zinc-800/80 rounded-2xl p-4 space-y-3 hover:border-zinc-600 cursor-pointer transition-all shadow-lg relative group"
+      className="bg-card border border-zinc-800/80 rounded-2xl p-4 space-y-3 hover:border-zinc-600 cursor-pointer transition-all shadow-lg relative group"
     >
       {/* Action Menu overlay */}
       <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
@@ -455,7 +455,7 @@ export default function UsersSettingsPage() {
                 <select
                   value={roleFilter}
                   onChange={(e) => setRoleFilter(e.target.value)}
-                  className="pl-4 pr-9 py-2 bg-[#18181c] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1e1e24] rounded-xl text-[11px] text-zinc-300 focus:outline-none focus:border-purple-600/50 appearance-none cursor-pointer transition-colors font-medium shadow-sm w-full sm:w-auto"
+                  className="pl-4 pr-9 py-2 bg-card border border-zinc-800 hover:border-zinc-700 hover:bg-popover rounded-xl text-[11px] text-zinc-300 focus:outline-none focus:border-purple-600/50 appearance-none cursor-pointer transition-colors font-medium shadow-sm w-full sm:w-auto"
                 >
                   <option value="ALL">All Roles</option>
                   {Object.keys(ROLE_COLORS).map(r => <option key={r} value={r}>{r}</option>)}
@@ -467,7 +467,7 @@ export default function UsersSettingsPage() {
                 <select
                   value={employmentFilter}
                   onChange={(e) => setEmploymentFilter(e.target.value)}
-                  className="pl-4 pr-9 py-2 bg-[#18181c] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1e1e24] rounded-xl text-[11px] text-zinc-300 focus:outline-none focus:border-purple-600/50 appearance-none cursor-pointer transition-colors font-medium shadow-sm w-full sm:w-auto"
+                  className="pl-4 pr-9 py-2 bg-card border border-zinc-800 hover:border-zinc-700 hover:bg-popover rounded-xl text-[11px] text-zinc-300 focus:outline-none focus:border-purple-600/50 appearance-none cursor-pointer transition-colors font-medium shadow-sm w-full sm:w-auto"
                 >
                   <option value="ALL">All Employment Types</option>
                   {Object.keys(EMPLOYMENT_LABEL).map(e => <option key={e} value={e}>{EMPLOYMENT_LABEL[e]}</option>)}
@@ -485,7 +485,7 @@ export default function UsersSettingsPage() {
                 onChange={(e) => setSearch(e.target.value)}
                 onFocus={() => setIsSearchFocused(true)}
                 onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-                className={`pl-10 pr-4 py-2 bg-[#18181c] border hover:bg-[#1e1e24] focus:bg-[#18181c] text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none w-full transition-colors shadow-sm ${
+                className={`pl-10 pr-4 py-2 bg-card border hover:bg-popover focus:bg-card text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none w-full transition-colors shadow-sm ${
                   isSearchFocused && search.length > 0 
                     ? 'rounded-t-xl rounded-b-none border-purple-600/50 border-b-zinc-800/50' 
                     : 'rounded-xl border-zinc-800 hover:border-zinc-700 focus:border-purple-600/50'
@@ -494,7 +494,7 @@ export default function UsersSettingsPage() {
               
               {/* Autocomplete Dropdown */}
               {isSearchFocused && search.length > 0 && (
-                <div className="absolute top-full left-0 sm:right-0 sm:w-auto w-full bg-[#18181c] border border-t-0 border-purple-600/50 rounded-b-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto">
+                <div className="absolute top-full left-0 sm:right-0 sm:w-auto w-full bg-card border border-t-0 border-purple-600/50 rounded-b-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto">
                   {filteredUsers.length === 0 ? (
                     <div className="p-4 text-xs text-zinc-600 text-center">No members found.</div>
                   ) : (
@@ -534,16 +534,16 @@ export default function UsersSettingsPage() {
           <motion.div 
             layout 
             transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="bg-[#18181c] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+            className="bg-card border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
           >
             <div className="overflow-auto max-h-[60vh]">
               <table className="w-full text-left text-xs border-collapse relative table-fixed">
                 <motion.thead 
                   layout 
                   transition={{ duration: 0.2, ease: "easeInOut" }}
-                  className="sticky top-0 z-10 bg-[#18181c] shadow-[0_1px_0_rgba(39,39,42,0.8)]"
+                  className="sticky top-0 z-10 bg-card shadow-[0_1px_0_rgba(39,39,42,0.8)]"
                 >
-                  <tr className="text-zinc-400 font-semibold text-[11px] bg-zinc-900/90 backdrop-blur-md">
+                  <tr className="text-zinc-400 font-semibold text-[11px] bg-secondary/90 backdrop-blur-md">
                     <th className="w-[30%] px-6 py-3.5 font-medium cursor-pointer group" onClick={() => handleSort('name')}>
                       <div className="flex items-center gap-1.5">User {renderSortIcon('name')}</div>
                     </th>
@@ -697,7 +697,7 @@ export default function UsersSettingsPage() {
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
-              <div className="px-6 py-4 border-t border-zinc-800/80 bg-[#18181c] flex items-center justify-between">
+              <div className="px-6 py-4 border-t border-zinc-800/80 bg-card flex items-center justify-between">
                 <div className="text-[11px] font-medium text-zinc-500">
                   <span className="text-zinc-300">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, sortedUsers.length)}</span> of <span className="text-zinc-300">{sortedUsers.length}</span>
                 </div>
@@ -746,9 +746,9 @@ export default function UsersSettingsPage() {
           </motion.div>
 
       {/* Bottom Section: Invitations Card */}
-      <div className="bg-[#18181c] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl mt-8">
+      <div className="bg-card border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl mt-8">
         {/* Card Header */}
-        <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-950/30 flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-zinc-800/80 bg-card/30 flex items-center justify-between">
           <div>
             <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
               <Mail className="w-4 h-4 text-zinc-400" />
@@ -771,7 +771,7 @@ export default function UsersSettingsPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-zinc-800/80 text-zinc-400 font-semibold text-[11px] bg-zinc-900/20">
+              <tr className="border-b border-zinc-800/80 text-zinc-400 font-semibold text-[11px] bg-secondary/20">
                 <th className="px-6 py-3.5 font-medium">Email</th>
                 <th className="px-6 py-3.5 font-medium">Role</th>
                 <th className="px-6 py-3.5 font-medium">Status</th>
@@ -862,7 +862,7 @@ export default function UsersSettingsPage() {
 
         {/* Card Footer: See all */}
         {invitations.length > 5 && (
-          <div className="px-6 py-4 border-t border-zinc-800/80 flex items-center justify-between bg-zinc-950/30">
+          <div className="px-6 py-4 border-t border-zinc-800/80 flex items-center justify-between bg-card/30">
             <button
               onClick={() => setShowAllInvites(!showAllInvites)}
               className="text-xs text-zinc-400 hover:text-white font-medium transition-colors cursor-pointer"

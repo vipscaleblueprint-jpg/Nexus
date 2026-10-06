@@ -15,7 +15,7 @@ export function AttachmentBlockNode(props: any) {
 
   return (
     <NodeViewWrapper className="attachment-node my-4" draggable="true" data-drag-handle>
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden relative group">
+      <div className="rounded-lg border border-zinc-800 bg-secondary overflow-hidden relative group">
         {!isPreviewMode && (
           <div className="flex items-center gap-3 p-3">
             <div className="flex-1 flex items-center gap-3 min-w-0">

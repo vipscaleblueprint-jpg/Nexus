@@ -138,8 +138,8 @@ export function ApiDocsSection({ innerRef }: { innerRef: React.RefObject<HTMLDiv
 
   return (
     <section id="docs" ref={innerRef} className="scroll-mt-8 space-y-6">
-      <div className="bg-[#121214] border border-zinc-800 rounded-xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-zinc-800 bg-[#151518]">
+      <div className="bg-background border border-zinc-800 rounded-xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-zinc-800 bg-card">
           <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
             <Book className="w-4 h-4 text-zinc-400" />
             API Documentation
@@ -160,15 +160,15 @@ export function ApiDocsSection({ innerRef }: { innerRef: React.RefObject<HTMLDiv
             {ENDPOINTS.map((endpoint) => (
               <div 
                 key={endpoint.id} 
-                className="bg-[#151518] border border-zinc-800/80 rounded-xl overflow-hidden"
+                className="bg-card border border-zinc-800/80 rounded-xl overflow-hidden"
               >
                 {/* Endpoint Header */}
-                <div className="px-5 py-3 border-b border-zinc-800 bg-[#18181b] flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="px-5 py-3 border-b border-zinc-800 bg-card flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex items-center gap-2.5">
                     <endpoint.icon className="w-4 h-4 text-zinc-500" />
                     <h2 className="text-sm font-semibold text-zinc-100">{endpoint.title}</h2>
                   </div>
-                  <div className="flex items-center gap-2 bg-[#0a0a0a] border border-zinc-800 px-2 py-1 rounded">
+                  <div className="flex items-center gap-2 bg-background border border-zinc-800 px-2 py-1 rounded">
                     <span className={`text-[10px] font-bold ${getMethodColor(endpoint.method).split(' ')[0]}`}>
                       {endpoint.method}
                     </span>
@@ -186,7 +186,7 @@ export function ApiDocsSection({ innerRef }: { innerRef: React.RefObject<HTMLDiv
                       <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
                         <CornerDownRight className="w-3 h-3" /> Request
                       </h3>
-                      <div className="bg-[#0a0a0a] border border-zinc-800/80 rounded-md p-3 font-mono text-[11px] overflow-x-auto text-indigo-200">
+                      <div className="bg-background border border-zinc-800/80 rounded-md p-3 font-mono text-[11px] overflow-x-auto text-indigo-200">
                         <pre>{JSON.stringify(endpoint.request, null, 2)}</pre>
                       </div>
                     </div>
@@ -197,7 +197,7 @@ export function ApiDocsSection({ innerRef }: { innerRef: React.RefObject<HTMLDiv
                         <h3 className="text-[10px] font-bold text-emerald-500/70 uppercase tracking-wider flex items-center gap-1.5">
                           <CheckCircle className="w-3 h-3" /> Response
                         </h3>
-                        <div className="bg-[#0a0a0a] border border-zinc-800/80 rounded-md p-3 font-mono text-[11px] overflow-x-auto text-emerald-200/80">
+                        <div className="bg-background border border-zinc-800/80 rounded-md p-3 font-mono text-[11px] overflow-x-auto text-emerald-200/80">
                           <pre>{JSON.stringify(endpoint.response, null, 2)}</pre>
                         </div>
                       </div>

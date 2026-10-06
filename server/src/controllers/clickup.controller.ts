@@ -218,3 +218,22 @@ export async function getRecentSyncedActivity(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/clickup/sync-all
+// Pulls all latest data from ClickUp for mapped lists.
+// (Stub implementation for now)
+// ---------------------------------------------------------------------------
+export async function syncAllClickUp(req: Request, res: Response) {
+  try {
+    // A complete sync would involve:
+    // 1. Fetching all mapped lists
+    // 2. Fetching tasks for each list from ClickUp
+    // 3. Updating/Creating tasks in Nexus database based on ClickUp data
+    // For now, we simulate a delay and return success.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    return res.json({ ok: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}

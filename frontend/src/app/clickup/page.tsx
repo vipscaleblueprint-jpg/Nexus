@@ -106,7 +106,7 @@ export default function ClickUpPage() {
   ] as const;
 
   return (
-    <div className="min-h-screen bg-[#0c0c0e] text-zinc-100 p-6">
+    <div className="min-h-screen bg-background text-zinc-100 p-6">
       {/* ---- Page Header ---- */}
       <div className="flex items-start justify-between mb-8">
         <div className="flex items-center gap-4">
@@ -128,7 +128,7 @@ export default function ClickUpPage() {
               ? "bg-emerald-950/40 border-emerald-800/40 text-emerald-300"
               : connected === false
               ? "bg-rose-950/30 border-rose-800/30 text-rose-300"
-              : "bg-zinc-900 border-zinc-800 text-zinc-500"
+              : "bg-secondary border-zinc-800 text-zinc-500"
           }`}>
             {connected === true ? (
               <><CheckCircle2 className="w-3.5 h-3.5" /> Connected as {cuUser?.username || "user"}</>
@@ -142,7 +142,7 @@ export default function ClickUpPage() {
           <button
             onClick={fetchAll}
             disabled={refreshing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary border border-zinc-800 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
             Refresh
@@ -167,7 +167,7 @@ export default function ClickUpPage() {
           { label: "Synced Tasks", value: activity.length, icon: Zap, color: "text-emerald-400", bg: "bg-emerald-500/10" },
           { label: "API Status", value: connected === true ? "Online" : connected === false ? "Offline" : "—", icon: connected === true ? Wifi : WifiOff, color: connected === true ? "text-emerald-400" : "text-rose-400", bg: connected === true ? "bg-emerald-500/10" : "bg-rose-500/10" },
         ].map((stat) => (
-          <div key={stat.label} className="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4 flex items-center gap-4">
+          <div key={stat.label} className="bg-card border border-zinc-800/60 rounded-xl p-4 flex items-center gap-4">
             <div className={`w-10 h-10 rounded-xl ${stat.bg} flex items-center justify-center shrink-0`}>
               <stat.icon className={`w-5 h-5 ${stat.color}`} />
             </div>
@@ -180,7 +180,7 @@ export default function ClickUpPage() {
       </div>
 
       {/* ---- Tabs ---- */}
-      <div className="flex gap-1 mb-6 bg-zinc-950 border border-zinc-800/60 rounded-xl p-1 w-fit">
+      <div className="flex gap-1 mb-6 bg-card border border-zinc-800/60 rounded-xl p-1 w-fit">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -224,7 +224,7 @@ function StatusTab({ connected, cuUser, loading }: { connected: boolean | null; 
   return (
     <div className="grid grid-cols-2 gap-4">
       {/* Connection card */}
-      <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl p-5">
+      <div className="bg-card border border-zinc-800/60 rounded-xl p-5">
         <div className="flex items-center gap-2 mb-4">
           <div className="w-1 h-4 bg-[#7B68EE] rounded-full" />
           <h2 className="text-sm font-bold text-zinc-200">Connection Details</h2>
@@ -261,14 +261,14 @@ function StatusTab({ connected, cuUser, loading }: { connected: boolean | null; 
             <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
             <div>
               <div className="text-xs font-bold text-rose-300">Not Connected</div>
-              <div className="text-[11px] text-zinc-500 mt-0.5">Check that <code className="bg-zinc-900 px-1 rounded">Clickup_API_KEY</code> is set in server/.env</div>
+              <div className="text-[11px] text-zinc-500 mt-0.5">Check that <code className="bg-secondary px-1 rounded">Clickup_API_KEY</code> is set in server/.env</div>
             </div>
           </div>
         )}
       </div>
 
       {/* How sync works */}
-      <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl p-5">
+      <div className="bg-card border border-zinc-800/60 rounded-xl p-5">
         <div className="flex items-center gap-2 mb-4">
           <div className="w-1 h-4 bg-[#7B68EE] rounded-full" />
           <h2 className="text-sm font-bold text-zinc-200">How Sync Works</h2>
@@ -291,7 +291,7 @@ function StatusTab({ connected, cuUser, loading }: { connected: boolean | null; 
             </div>
           ))}
         </div>
-        <div className="mt-4 p-3 bg-zinc-900 rounded-lg border border-zinc-800/60 text-[11px] text-zinc-500 leading-relaxed">
+        <div className="mt-4 p-3 bg-secondary rounded-lg border border-zinc-800/60 text-[11px] text-zinc-500 leading-relaxed">
           All ClickUp calls are <span className="text-zinc-300 font-semibold">fire-and-forget</span> — they never delay Nexus API responses. A ClickUp outage does not affect Nexus users.
         </div>
       </div>
@@ -308,7 +308,7 @@ function ActivityTab({ tasks, loading }: { tasks: any[]; loading: boolean }) {
 
   if (tasks.length === 0) {
     return (
-      <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl flex flex-col items-center justify-center py-20 text-center">
+      <div className="bg-card border border-zinc-800/60 rounded-xl flex flex-col items-center justify-center py-20 text-center">
         <Link2 className="w-10 h-10 text-zinc-700 mb-3" />
         <p className="text-sm font-semibold text-zinc-500">No synced tasks yet</p>
         <p className="text-xs text-zinc-600 mt-1">Map a Nexus list to a ClickUp list to start syncing tasks.</p>
@@ -317,7 +317,7 @@ function ActivityTab({ tasks, loading }: { tasks: any[]; loading: boolean }) {
   }
 
   return (
-    <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl overflow-hidden">
+    <div className="bg-card border border-zinc-800/60 rounded-xl overflow-hidden">
       <div className="px-5 py-3 border-b border-zinc-800/60 flex items-center justify-between">
         <span className="text-sm font-bold text-zinc-200">Recently Synced Tasks</span>
         <span className="text-xs text-zinc-500">{tasks.length} tasks</span>
@@ -330,7 +330,7 @@ function ActivityTab({ tasks, loading }: { tasks: any[]; loading: boolean }) {
           const shortId = externalId ? (isUrl ? externalId.split("/").pop() : externalId)?.slice(-8) : null;
 
           return (
-            <div key={task.id} className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-zinc-900/40 transition-colors group">
+            <div key={task.id} className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-secondary/40 transition-colors group">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-zinc-200 truncate">{task.title}</span>
@@ -401,10 +401,10 @@ function MappingsTab({ mappings, onRefresh }: { mappings: ClickUpMapping[]; onRe
   return (
     <div className="space-y-4">
       {/* Add mapping */}
-      <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl overflow-hidden">
+      <div className="bg-card border border-zinc-800/60 rounded-xl overflow-hidden">
         <button
           onClick={() => setShowAdd(v => !v)}
-          className="w-full flex items-center justify-between px-5 py-3.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-900/50 transition-colors cursor-pointer"
+          className="w-full flex items-center justify-between px-5 py-3.5 text-sm font-semibold text-zinc-200 hover:bg-secondary/50 transition-colors cursor-pointer"
         >
           <span className="flex items-center gap-2"><Plus className="w-4 h-4 text-[#7B68EE]" /> Add List Mapping</span>
           <motion.div animate={{ rotate: showAdd ? 180 : 0 }} transition={{ duration: 0.2 }}>
@@ -429,7 +429,7 @@ function MappingsTab({ mappings, onRefresh }: { mappings: ClickUpMapping[]; onRe
                       value={nexusListId}
                       onChange={e => setNexusListId(e.target.value)}
                       placeholder="e.g. 88673873-cd72-426f-..."
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-[#7B68EE]/50 font-mono"
+                      className="w-full bg-secondary border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-[#7B68EE]/50 font-mono"
                     />
                     <p className="text-[10px] text-zinc-600 mt-1">Copy from the Nexus list URL or DB</p>
                   </div>
@@ -440,7 +440,7 @@ function MappingsTab({ mappings, onRefresh }: { mappings: ClickUpMapping[]; onRe
                       value={clickUpListId}
                       onChange={e => setClickUpListId(e.target.value)}
                       placeholder="e.g. 901234567"
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-[#7B68EE]/50 font-mono"
+                      className="w-full bg-secondary border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-[#7B68EE]/50 font-mono"
                     />
                     <p className="text-[10px] text-zinc-600 mt-1">Use the Browse tab to find list IDs →</p>
                   </div>
@@ -457,7 +457,7 @@ function MappingsTab({ mappings, onRefresh }: { mappings: ClickUpMapping[]; onRe
                   </button>
                   <button
                     onClick={() => setShowAdd(false)}
-                    className="px-4 py-2 bg-zinc-900 border border-zinc-800 text-zinc-400 rounded-lg text-xs font-semibold hover:bg-zinc-800 transition-colors cursor-pointer"
+                    className="px-4 py-2 bg-secondary border border-zinc-800 text-zinc-400 rounded-lg text-xs font-semibold hover:bg-zinc-800 transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -470,19 +470,19 @@ function MappingsTab({ mappings, onRefresh }: { mappings: ClickUpMapping[]; onRe
 
       {/* Mappings list */}
       {mappings.length === 0 ? (
-        <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl flex flex-col items-center justify-center py-16 text-center">
+        <div className="bg-card border border-zinc-800/60 rounded-xl flex flex-col items-center justify-center py-16 text-center">
           <Settings className="w-10 h-10 text-zinc-700 mb-3" />
           <p className="text-sm font-semibold text-zinc-500">No mappings yet</p>
           <p className="text-xs text-zinc-600 mt-1">Add a mapping above to start syncing tasks between Nexus and ClickUp.</p>
         </div>
       ) : (
-        <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl overflow-hidden">
+        <div className="bg-card border border-zinc-800/60 rounded-xl overflow-hidden">
           <div className="px-5 py-3 border-b border-zinc-800/60">
             <span className="text-sm font-bold text-zinc-200">{mappings.length} Active Mapping{mappings.length !== 1 ? "s" : ""}</span>
           </div>
           <div className="divide-y divide-zinc-800/40">
             {mappings.map((m) => (
-              <div key={m.nexusListId} className="px-5 py-4 flex items-center justify-between gap-4 hover:bg-zinc-900/30 transition-colors">
+              <div key={m.nexusListId} className="px-5 py-4 flex items-center justify-between gap-4 hover:bg-secondary/30 transition-colors">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <List className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
@@ -574,7 +574,7 @@ function BrowserTab() {
     return (
       <div key={item.id}>
         <div
-          className="flex items-center gap-2 py-2 px-4 hover:bg-zinc-900/50 transition-colors group cursor-pointer"
+          className="flex items-center gap-2 py-2 px-4 hover:bg-secondary/50 transition-colors group cursor-pointer"
           style={{ paddingLeft }}
           onClick={() => hasChildren && toggle(item._type, item.id)}
         >
@@ -597,7 +597,7 @@ function BrowserTab() {
             )}
             <button
               onClick={(e) => { e.stopPropagation(); copyId(item.id); }}
-              className="text-[10px] font-mono text-zinc-600 hover:text-[#7B68EE] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 transition-colors"
+              className="text-[10px] font-mono text-zinc-600 hover:text-[#7B68EE] px-1.5 py-0.5 rounded bg-secondary border border-zinc-800 transition-colors"
               title="Copy ID"
             >
               {item.id}
@@ -610,7 +610,7 @@ function BrowserTab() {
   };
 
   return (
-    <div className="bg-zinc-950 border border-zinc-800/60 rounded-xl overflow-hidden">
+    <div className="bg-card border border-zinc-800/60 rounded-xl overflow-hidden">
       <div className="px-5 py-3 border-b border-zinc-800/60 flex items-center justify-between">
         <span className="text-sm font-bold text-zinc-200">ClickUp Workspace Browser</span>
         <span className="text-[11px] text-zinc-500">Click an ID to copy it for mapping</span>

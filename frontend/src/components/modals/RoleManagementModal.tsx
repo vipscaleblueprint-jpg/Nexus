@@ -28,9 +28,9 @@ export function RoleManagementModal({ isOpen, onClose }: RoleManagementModalProp
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 flex flex-col no-scrollbar cursor-default"
+            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-card border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 flex flex-col no-scrollbar cursor-default"
           >
-        <div className="sticky top-0 z-10 px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/90 backdrop-blur">
+        <div className="sticky top-0 z-10 px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-card/90 backdrop-blur">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-zinc-800/80 border border-zinc-700">
               <Shield className="w-4 h-4 text-indigo-400" />

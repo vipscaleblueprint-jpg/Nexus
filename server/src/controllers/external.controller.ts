@@ -183,8 +183,15 @@ export async function getTasks(req: Request, res: Response) {
     // Returns the same shape as the list response so callers can handle both uniformly.
     if (externalId || title) {
       const findWhere: any = {};
-      if (externalId) findWhere.externalId = String(externalId);
-      if (title) findWhere.title = { contains: String(title), mode: 'insensitive' };
+      if (externalId && title) {
+        findWhere.OR = [
+          { externalId: { contains: String(externalId) } },
+          { title: { contains: String(title), mode: 'insensitive' } }
+        ];
+      } else {
+        if (externalId) findWhere.externalId = { contains: String(externalId) };
+        if (title) findWhere.title = { contains: String(title), mode: 'insensitive' };
+      }
 
       const task = await prisma.task.findFirst({
         where: findWhere,

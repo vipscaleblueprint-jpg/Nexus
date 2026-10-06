@@ -45,7 +45,7 @@ export function Header() {
 
   if (!currentUser) {
     return (
-      <header className="bg-zinc-950/90 border-b border-zinc-800/60 px-6 py-3 backdrop-blur-md relative z-[150]">
+      <header className="bg-card/90 border-b border-zinc-800/60 px-6 py-3 backdrop-blur-md relative z-[150]">
         <div className="flex items-center gap-3">
           <button
             onClick={toggleSidebar}
@@ -62,7 +62,7 @@ export function Header() {
   const activeUser: User = currentUser;
 
   return (
-    <header className="bg-zinc-950/90 border-b border-zinc-800/60 text-zinc-100 backdrop-blur-md relative z-[150]">
+    <header className="bg-card/90 border-b border-zinc-800/60 text-zinc-100 backdrop-blur-md relative z-[150]">
       <div className="px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
@@ -76,13 +76,10 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2">
-          {Array.isArray((activeUser as any).roles) && (activeUser as any).roles.includes('DEV') && (
-            <ClickUpStatusPanel />
-          )}
         <div className="relative text-xs">
           <button
             onClick={() => setIsProfileOpen(!isProfileOpen)}
-            className="flex items-center gap-2 p-1 pr-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800/80 transition-all cursor-pointer group"
+            className="flex items-center gap-2 p-1 pr-2 rounded-full bg-secondary/90 hover:bg-zinc-800 border border-zinc-800/80 transition-all cursor-pointer group"
           >
             <div className="relative">
               {activeUser.imageUrl || activeUser.avatarUrl ? (
@@ -115,7 +112,7 @@ export function Header() {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -10 }}
                 transition={{ duration: 0.15, ease: "easeOut" }}
-                className="absolute right-0 mt-2 w-64 bg-[#18181c] border border-zinc-800/80 rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3 origin-top-right"
+                className="absolute right-0 mt-2 w-64 bg-card border border-zinc-800/80 rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3 origin-top-right"
               >
                 <div className="flex items-center gap-3 pb-3 border-b border-zinc-800/60">
                 <div className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 text-white font-bold flex items-center justify-center text-xs shrink-0">
@@ -146,7 +143,7 @@ export function Header() {
 
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-400">Employment:</span>
-                  <span className="font-mono text-[10px] text-zinc-300 bg-zinc-900 px-1.5 py-0.5 rounded">
+                  <span className="font-mono text-[10px] text-zinc-300 bg-secondary px-1.5 py-0.5 rounded">
                     {activeUser.employmentType}
                   </span>
                 </div>
@@ -157,7 +154,7 @@ export function Header() {
                       href={activeUser.dailySheetUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="w-full flex items-center justify-between p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-semibold transition-colors"
+                      className="w-full flex items-center justify-between p-2 rounded-lg bg-secondary hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-semibold transition-colors"
                     >
                       <span>Google Daily Sheet</span>
                       <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
@@ -200,9 +197,15 @@ export function Header() {
                   </button>
                 )}
 
+                {Array.isArray((activeUser as any).roles) && (activeUser as any).roles.includes('DEV') && (
+                  <div className="w-full">
+                    <ClickUpStatusPanel isDropdownItem={true} />
+                  </div>
+                )}
+
                 <button
                   onClick={handleLogout}
-                  className="w-full flex items-center justify-center gap-2 p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-900/50 font-semibold transition-colors text-xs cursor-pointer mt-2"
+                  className="w-full flex items-center justify-center gap-2 p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400 hover:bg-rose-500/20 dark:hover:bg-rose-500/30 font-semibold transition-colors text-xs cursor-pointer mt-2"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>Sign Out</span>

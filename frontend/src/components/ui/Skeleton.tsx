@@ -10,7 +10,7 @@ export function Skeleton({ className = '' }: { className?: string }) {
 
 export function CardSkeleton() {
   return (
-    <div className="p-4 rounded-xl bg-[#18181c] border border-zinc-800/80 space-y-3 shadow-lg">
+    <div className="p-4 rounded-xl bg-card border border-zinc-800/80 space-y-3 shadow-lg">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Skeleton className="w-8 h-8 rounded-lg" />
@@ -65,8 +65,8 @@ export function ListSkeleton() {
       </div>
 
       {/* Table Rows Skeleton */}
-      <div className="border border-zinc-800 rounded-lg overflow-hidden bg-zinc-900/30 space-y-1">
-        <div className="grid grid-cols-[1fr_140px_120px_100px] bg-zinc-900/80 px-4 py-2.5">
+      <div className="border border-zinc-800 rounded-lg overflow-hidden bg-secondary/30 space-y-1">
+        <div className="grid grid-cols-[1fr_140px_120px_100px] bg-secondary/80 px-4 py-2.5">
           <Skeleton className="w-16 h-3" />
           <Skeleton className="w-16 h-3" />
           <Skeleton className="w-16 h-3" />
@@ -82,9 +82,9 @@ export function ListSkeleton() {
 
 export function DocSkeleton() {
   return (
-    <div className="flex h-full w-full bg-[#0d0d0d] overflow-hidden font-sans select-none">
+    <div className="flex h-full w-full bg-background overflow-hidden font-sans select-none">
       {/* Sub-Sidebar Skeleton */}
-      <aside className="w-60 shrink-0 bg-[#141414] border-r border-zinc-800/60 p-4 flex flex-col h-full space-y-4">
+      <aside className="w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full space-y-4">
         <div className="pb-3 border-b border-zinc-800/60 space-y-2">
           <Skeleton className="w-16 h-3" />
           <Skeleton className="w-36 h-5" />
@@ -104,7 +104,7 @@ export function DocSkeleton() {
       </aside>
 
       {/* Main Viewport Skeleton */}
-      <main className="flex-1 overflow-y-auto bg-[#0d0d0d] p-8">
+      <main className="flex-1 overflow-y-auto bg-background p-8">
         <div className="max-w-4xl mx-auto space-y-6">
           {/* Top Actions Bar */}
           <div className="flex justify-between items-center pb-3 border-b border-zinc-800/40">
@@ -171,7 +171,7 @@ export function BoardSkeleton() {
   return (
     <div className="flex gap-4 overflow-x-auto p-6">
       {[1, 2, 3, 4].map((col) => (
-        <div key={col} className="w-72 shrink-0 bg-zinc-900/50 border border-zinc-800 rounded-xl p-3 space-y-3">
+        <div key={col} className="w-72 shrink-0 bg-secondary/50 border border-zinc-800 rounded-xl p-3 space-y-3">
           <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
             <Skeleton className="w-28 h-4" />
             <Skeleton className="w-6 h-6 rounded-full" />
@@ -207,7 +207,7 @@ export function DashboardSkeleton() {
       {/* Metrics Row Skeleton */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="p-4 rounded-xl bg-[#18181c] border border-zinc-800/80 space-y-2">
+          <div key={i} className="p-4 rounded-xl bg-card border border-zinc-800/80 space-y-2">
             <Skeleton className="w-20 h-3" />
             <Skeleton className="w-12 h-6" />
           </div>
@@ -226,7 +226,7 @@ export function DashboardSkeleton() {
 
 export function MemberSkeleton() {
   return (
-    <div className="p-4 rounded-xl bg-[#18181c] border border-zinc-800/80 space-y-3 flex flex-col items-center text-center">
+    <div className="p-4 rounded-xl bg-card border border-zinc-800/80 space-y-3 flex flex-col items-center text-center">
       <Skeleton className="w-14 h-14 rounded-full" />
       <Skeleton className="w-28 h-4 mt-1" />
       <Skeleton className="w-36 h-3" />
@@ -242,7 +242,7 @@ export function SettingsSkeleton() {
         <Skeleton className="w-44 h-7" />
         <Skeleton className="w-72 h-4" />
       </div>
-      <div className="p-6 rounded-xl bg-[#18181c] border border-zinc-800/80 space-y-6">
+      <div className="p-6 rounded-xl bg-card border border-zinc-800/80 space-y-6">
         <div className="flex items-center gap-4">
           <Skeleton className="w-16 h-16 rounded-full" />
           <div className="space-y-2">

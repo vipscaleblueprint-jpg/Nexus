@@ -154,8 +154,8 @@ export function RolesTab() {
         </div>
       </div>
 
-      <div className="bg-[#111111] rounded-xl border border-zinc-800/60 overflow-hidden shadow-xl">
-        <div className="p-4 border-b border-zinc-800/60 bg-[#161616]">
+      <div className="bg-background rounded-xl border border-zinc-800/60 overflow-hidden shadow-xl">
+        <div className="p-4 border-b border-zinc-800/60 bg-card">
           <form onSubmit={handleCreateTeam} className="flex gap-3">
             <div className="relative flex-1">
               <Users className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -164,7 +164,7 @@ export function RolesTab() {
                 placeholder="Enter new team name (e.g. Design Team)"
                 value={newTeamName}
                 onChange={(e) => setNewTeamName(e.target.value)}
-                className="w-full bg-[#0a0a0a] border border-zinc-800 rounded-lg pl-9 pr-4 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500/50 transition-colors"
+                className="w-full bg-background border border-zinc-800 rounded-lg pl-9 pr-4 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500/50 transition-colors"
               />
             </div>
             <button

@@ -983,14 +983,19 @@ export function KanbanBoard({ tasks, onTaskMove,
                       >
                         {/* Inner container with overflow-hidden to clip contents during animation */}
                         <div
-                          className="rounded-2xl border bg-[#18181c] h-full p-4 pt-3 overflow-hidden flex flex-col shadow-sm shadow-black/20"
-                          style={{ borderColor: category.borderColor }}
+                          className={`rounded-2xl h-full p-4 pt-3 overflow-hidden flex flex-col transition-all ${
+                            category.isCatchAll 
+                              ? 'bg-transparent border-transparent shadow-none' 
+                              : 'border bg-card shadow-sm shadow-black/5 dark:shadow-black/20'
+                          }`}
+                          style={{ borderColor: category.isCatchAll ? 'transparent' : category.borderColor }}
                         >
                           {/* Group Header */}
-                          <div
-                            className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing"
-                            onMouseDown={!category.id.startsWith('group_') ? handleHeaderMouseDown : undefined}
-                            onMouseLeave={!category.id.startsWith('group_') ? handleHeaderMouseLeave : undefined}
+                          {!category.isCatchAll && (
+                            <div
+                              className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing"
+                              onMouseDown={!category.id.startsWith('group_') ? handleHeaderMouseDown : undefined}
+                              onMouseLeave={!category.id.startsWith('group_') ? handleHeaderMouseLeave : undefined}
                             onMouseUp={!category.id.startsWith('group_') ? handleHeaderMouseUp : undefined}
                             onMouseMove={!category.id.startsWith('group_') ? handleHeaderMouseMove : undefined}
                             {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.listeners : {})}
@@ -1077,7 +1082,7 @@ export function KanbanBoard({ tasks, onTaskMove,
 
                               {openGroupMenu === category.title && openGroupMenuRect && typeof window !== 'undefined' && createPortal(
                                 <div
-                                  className="fixed w-40 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl z-[9999] py-1 animate-in fade-in zoom-in-95 duration-100"
+                                  className="fixed w-40 bg-secondary border border-zinc-700/50 rounded-lg shadow-xl z-[9999] py-1 animate-in fade-in zoom-in-95 duration-100"
                                   style={{
                                     top: openGroupMenuRect.bottom + 4,
                                     left: openGroupMenuRect.right - 160 // 160px is w-40
@@ -1130,6 +1135,7 @@ export function KanbanBoard({ tasks, onTaskMove,
                               )}
                             </div>
                           </div>
+                          )}
 
                           {/* Columns inside the group */}
                           <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max">
@@ -1226,6 +1232,16 @@ export function KanbanBoard({ tasks, onTaskMove,
                                 </div>
                               </div>
                             )}
+                            {category.isCatchAll && addingStatusToGroup !== category.title && (
+                              <div className="flex-shrink-0 ml-4 pt-1 w-32">
+                                <button
+                                  onClick={() => setAddingStatusToGroup(category.title)}
+                                  className="flex items-center gap-1.5 text-sm font-semibold text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors cursor-pointer"
+                                >
+                                  <Plus className="w-4 h-4" /> Add Column
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1250,11 +1266,11 @@ export function KanbanBoard({ tasks, onTaskMove,
                 <div className="flex flex-col gap-2">
                   <button
                     onClick={() => setIsAddingGroup(false)}
-                    className="flex items-center gap-1 text-base font-semibold text-zinc-500 hover:text-zinc-300 transition-colors mb-1 cursor-pointer"
+                    className="flex items-center gap-1 text-base font-semibold text-zinc-500 hover:text-foreground transition-colors mb-1 cursor-pointer"
                   >
                     <Plus className="w-5 h-5" /> Add group
                   </button>
-                  <div className="flex items-center gap-2 p-1.5 border border-zinc-700 bg-[#18181c] rounded-lg shadow-sm">
+                  <div className="flex items-center gap-2 p-1.5 border border-border bg-card rounded-lg shadow-sm">
                     <div className="w-4 h-4 rounded bg-amber-500 ml-1 shrink-0" />
                     <input
                       type="text"
@@ -1263,7 +1279,7 @@ export function KanbanBoard({ tasks, onTaskMove,
                       onChange={(e) => setNewGroup(e.target.value)}
                       onKeyDown={handleAddGroup}
                       autoFocus
-                      className="bg-transparent border-none text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none w-full"
+                      className="bg-transparent border-none text-sm text-foreground placeholder-muted-foreground focus:outline-none w-full"
                     />
                   </div>
                 </div>
@@ -1295,7 +1311,7 @@ export function KanbanBoard({ tasks, onTaskMove,
         })() : null}
         {activeGroup ? (
           <div className="flex-shrink-0 snap-start self-stretch flex items-stretch h-[500px] z-50 relative cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
-            <div className="rounded-2xl border bg-[#18181c] w-[320px] h-full p-4 pt-3 flex flex-col shadow-2xl" style={{ borderColor: activeGroup.borderColor }}>
+            <div className="rounded-2xl border bg-card w-[320px] h-full p-4 pt-3 flex flex-col shadow-2xl" style={{ borderColor: activeGroup.borderColor }}>
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg mb-3">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">{activeGroup.title}</span>
               </div>
@@ -1313,7 +1329,7 @@ export function KanbanBoard({ tasks, onTaskMove,
 
       {pendingAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-[#18181b] border border-zinc-800/80 rounded-2xl p-6 w-[440px] shadow-2xl shadow-black/50 flex flex-col relative">
+          <div className="bg-card border border-zinc-800/80 rounded-2xl p-6 w-[440px] shadow-2xl shadow-black/50 flex flex-col relative">
             <div>
               <h3 className="text-xl font-bold text-white tracking-tight mb-2">Apply This {pendingAction.type === 'status' ? 'Status' : 'Group'}</h3>
               <p className="text-[14px] text-zinc-400 leading-relaxed">

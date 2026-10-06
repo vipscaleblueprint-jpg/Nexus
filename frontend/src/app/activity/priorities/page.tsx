@@ -7,8 +7,9 @@ import DocPage from '@/app/docs/[id]/page';
 
 export default function PrioritiesPage() {
   const { allDocs, loadSpaces, loadingSpaces, hasLoadedSpaces, hydrateFromCache } = useAppStore();
-  const priorityDoc = allDocs.find((d: any) => d.doc.isDailyRollover === true);
-
+  const priorityDoc = allDocs
+    .filter((d: any) => d.doc.isDailyRollover === true)
+    .sort((a: any, b: any) => new Date(b.doc.createdAt || 0).getTime() - new Date(a.doc.createdAt || 0).getTime())[0];
   useEffect(() => {
     hydrateFromCache();
     loadSpaces();
@@ -17,7 +18,7 @@ export default function PrioritiesPage() {
   if (!priorityDoc) {
     if (!hasLoadedSpaces || loadingSpaces) {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-[#0E0E10] text-zinc-400">
+        <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-background text-zinc-400">
           <Loader2 className="w-6 h-6 animate-spin mb-4 text-indigo-500" />
           <p className="text-sm">Loading your journal...</p>
         </div>
@@ -25,7 +26,7 @@ export default function PrioritiesPage() {
     }
 
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-[#0E0E10] text-zinc-400">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-background text-zinc-400">
         <Loader2 className="w-6 h-6 animate-spin mb-4" />
         <p>Waiting for daily rollover worker to initialize priorities...</p>
       </div>

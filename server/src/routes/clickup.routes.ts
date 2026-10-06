@@ -11,6 +11,7 @@ import {
   deleteMapping,
   getClickUpTaskProxy,
   getRecentSyncedActivity,
+  syncAllClickUp,
 } from '../controllers/clickup.controller';
 
 const router = Router();
@@ -35,5 +36,8 @@ router.get('/tasks/:taskId', getClickUpTaskProxy);
 
 // Recent synced activity (for the header panel)
 router.get('/recent-activity', getRecentSyncedActivity);
+
+// Sync all data
+router.post('/sync-all', syncAllClickUp);
 
 export default router;

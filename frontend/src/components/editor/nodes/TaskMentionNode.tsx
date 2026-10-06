@@ -4,9 +4,10 @@ import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi, spacesApi } from '@/api';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { toast } from '@/lib/toast';
-import { Flag, User as UserIcon, CheckCircle2, CircleDashed, AlignLeft, Shield, Check, Users2 } from 'lucide-react';
+import { Flag, User as UserIcon, CheckCircle2, CircleDashed, AlignLeft, Shield, Check, Users2, X } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Command } from 'cmdk';
 
 
 
@@ -44,7 +45,7 @@ const getStatusColor = (status: string) => {
 };
 
 export const TaskMentionNode = (props: NodeViewProps) => {
-  const { node, updateAttributes } = props;
+  const { node, updateAttributes, getPos, editor } = props;
   const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData, taskListName } = node.attrs;
 
   const currentUser = useAppStore(s => s.currentUser);
@@ -76,6 +77,31 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   const dbUsers = workspaceUsers;
   const dbTeams = workspaceTeams;
+
+  const assignableUsers = React.useMemo(() => {
+    if (!taskData?.assigneeRoleRestrictions || taskData.assigneeRoleRestrictions.length === 0) {
+      return workspaceUsers;
+    }
+    // Build a map of TeamRole name -> teamId for fast lookup
+    const teamRoleToTeamId = new Map<string, string>();
+    workspaceTeams.forEach((team: any) => {
+      (team.teamRoles || []).forEach((tr: any) => {
+        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
+      });
+    });
+
+    return workspaceUsers.filter((u) => {
+      const userRoles = (u.roles || []) as string[];
+      return taskData.assigneeRoleRestrictions.some((role: string) => {
+        // Check generic role match
+        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
+        // Check TeamRole match
+        const teamId = teamRoleToTeamId.get(role.toLowerCase());
+        if (teamId && (u as any).teamId === teamId) return true;
+        return false;
+      });
+    });
+  }, [taskData?.assigneeRoleRestrictions, workspaceUsers, workspaceTeams]);
   
   const listStatuses = React.useMemo(() => {
     if (fallbackListStatuses.length > 0) return fallbackListStatuses;
@@ -223,13 +249,29 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     };
 
     return (
-      <NodeViewWrapper as="span" className="inline-block align-middle mx-1 cursor-pointer hover:opacity-90 transition-opacity" data-drag-handle>
+      <NodeViewWrapper 
+        as="span" 
+        data-drag-handle 
+        contentEditable={false}
+        onMouseDown={(e: React.MouseEvent) => {
+          // If they click a dropdown or button inside, let it handle its own click,
+          // but for selection, we want to route the cursor to the right.
+          // We don't preventDefault here so that onClick still fires for buttons,
+          // but we do set the selection. Actually, ProseMirror also listens to mousedown.
+          // By calling setTextSelection and focus, we override it.
+          if (typeof getPos === 'function') {
+            editor.commands.setTextSelection(getPos() + node.nodeSize);
+            editor.commands.focus();
+          }
+        }}
+      >
         <span 
-          className="inline-flex items-center pl-2 pr-2 py-0.5 rounded-sm uppercase font-bold text-[10px] tracking-wide"
+          className="inline-flex items-center justify-center px-1.5 py-[2px] leading-none rounded-sm uppercase font-bold text-[10px] tracking-wide align-middle hover:opacity-90 transition-opacity"
           style={gradientStyle}
         >
           {statusName}
         </span>
+        <span className="inline-block w-1 cursor-text">&#8203;</span>
       </NodeViewWrapper>
     );
   }
@@ -328,6 +370,25 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     }
   };
 
+  const handleClearAllAssignees = async () => {
+    if (!currentUser) return;
+    try { updateAttributes({ taskAssignees: JSON.stringify([]) }); } catch (e) {}
+    setLocalAssignees(JSON.stringify([]));
+    if (taskData) {
+      updateTaskStore({ ...taskData, assignees: [], assigneeIds: [] });
+    }
+    try {
+      if (mentionType === 'subtask') {
+        await tasksApi.updateSubtask(taskData?.taskId, id, { assigneeIds: [] });
+      } else {
+        await tasksApi.updateTask(id, { assigneeIds: [], userId: currentUser.id });
+      }
+    } catch (e) {
+      toast.error('Failed to clear assignees');
+    }
+    setOpenDropdown(null);
+  };
+
   const handleTeamChange = async (selectedTeam: any) => {
     if (!currentUser) return;
     const teamStr = selectedTeam ? JSON.stringify(selectedTeam) : '';
@@ -353,13 +414,24 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
   return (
-    <NodeViewWrapper as="span" className="inline mx-1 group leading-[1.8]" data-drag-handle>
-      <motion.span layout className="inline px-1 py-0.5 rounded-md hover:bg-zinc-500/10 transition-all duration-300 box-decoration-clone">
+    <NodeViewWrapper 
+      as="span" 
+      data-drag-handle 
+      contentEditable={false}
+      onMouseDown={(e: React.MouseEvent) => {
+        if (typeof getPos === 'function') {
+          // Put the cursor immediately after this node when ANY part of the block is clicked
+          editor.commands.setTextSelection(getPos() + node.nodeSize);
+          editor.commands.focus();
+        }
+      }}
+    >
+      <motion.span layout className="inline-flex items-center align-middle px-1.5 py-[2px] rounded-md hover:bg-zinc-500/10 transition-all duration-300 box-decoration-clone">
         
         <span 
           className="inline-flex items-center justify-center shrink-0 cursor-pointer mr-1.5 align-middle transition-transform duration-300 group-hover:scale-110" 
           title="Open Task Detail"
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id, task: taskData } }));
           }}
@@ -399,7 +471,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         {parsedStatusName && (
           <span 
             ref={statusRef}
-            className="px-1.5 py-[1px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 inline-flex align-middle"
+            className="px-2 py-[3px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 inline-flex items-center align-middle leading-none"
             style={{ backgroundColor: parsedStatusColor }}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >
@@ -504,11 +576,12 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           </AnimatePresence>
         </motion.span>
       </motion.span>
+      <span className="inline-block w-1 cursor-text">&#8203;</span>
 
       {openDropdown === 'status' && (
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
-          <div className="w-48 py-1">
-            <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Change Status</div>
+          <div className="z-[9999] w-48 p-1.5 bg-popover border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl outline-none flex flex-col gap-0.5">
+            <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Change Status</div>
             {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
               const isActive = statusName === parsedStatusName;
               const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
@@ -517,17 +590,17 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                 <button
                   key={statusName}
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(statusName); }}
-                  className={`w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${
-                    isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'
+                  className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg cursor-pointer transition-colors ${
+                    isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'
                   }`}
                 >
                   {(statusName || '').toUpperCase() === 'KYC' ? (
-                    <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: colorHex }} />
+                    <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
                   ) : (
-                    <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: colorHex }} />
+                    <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
                   )}
                   <span style={{ color: colorHex }}>{statusName}</span>
-                  {isActive && <CheckCircle2 className="w-3 h-3 ml-auto opacity-70" />}
+                  {isActive && <Check className="w-4 h-4 ml-auto text-blue-500 opacity-70" />}
                 </button>
               );
             })}
@@ -535,29 +608,33 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         </PortalDropdown>
       )}
 
+
       {openDropdown === 'priority' && (
         <PortalDropdown triggerRef={priorityRef} onClose={() => setOpenDropdown(null)}>
-          <div className="w-40 p-1">
-            <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Priority</div>
-            {[
-              { id: 'URGENT', label: 'Urgent', color: 'text-red-400' },
-              { id: 'HIGH', label: 'High', color: 'text-orange-400' },
-              { id: 'MEDIUM', label: 'Medium', color: 'text-blue-400' },
-              { id: 'LOW', label: 'Low', color: 'text-zinc-400' },
-              { id: null, label: 'Clear Priority', color: 'text-zinc-500' }
-            ].map(p => (
+          <div className="z-[9999] w-36 p-1.5 bg-popover border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl outline-none flex flex-col gap-0.5">
+            <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Priority</div>
+            {['URGENT', 'HIGH', 'MEDIUM', 'LOW'].map((p) => (
               <button
-                key={p.id || 'clear'}
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handlePriorityChange(p.id); }}
-                className={`w-full text-left px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors flex items-center gap-2 group ${
-                  p.id === localPriority ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'
-                }`}
+                key={p}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handlePriorityChange(p); }}
+                className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors cursor-pointer ${localPriority === p ? 'bg-accent text-accent-foreground' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
               >
-                <Flag className={`w-3.5 h-3.5 ${p.color}`} />
-                <span>{p.label}</span>
-                {p.id === localPriority && <CheckCircle2 className="w-3 h-3 ml-auto opacity-70" />}
+                <Flag className={`w-3.5 h-3.5 shrink-0 ${p === 'URGENT' ? 'text-red-500 fill-red-500/20' : p === 'HIGH' ? 'text-orange-500 fill-orange-500/20' : 'text-zinc-400 dark:text-zinc-500'}`} />
+                <span className="capitalize">{p.toLowerCase()}</span>
+                {localPriority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
               </button>
             ))}
+            {localPriority && (
+              <div className="border-t border-zinc-200 dark:border-zinc-800/60 mt-1 pt-1">
+                <button
+                  className="w-full text-left flex items-center gap-2.5 px-2.5 py-2 hover:bg-accent hover:text-accent-foreground rounded-lg text-sm text-zinc-500 dark:text-zinc-400 transition-colors cursor-pointer"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handlePriorityChange(null); }}
+                >
+                  <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500 dark:text-zinc-400" />
+                  <span>Clear Priority</span>
+                </button>
+              </div>
+            )}
           </div>
         </PortalDropdown>
       )}
@@ -576,35 +653,70 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
       {openDropdown === 'assignee' && (
         <PortalDropdown triggerRef={assigneesRef} onClose={() => setOpenDropdown(null)}>
-          <div className="w-48 py-1 max-h-60 overflow-y-auto custom-scrollbar">
-            <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Assignees</div>
-            {dbUsers.map(user => {
-              const isAssigned = assignees.some(a => a.id === user.id);
-              return (
-                <button
-                  key={user.id}
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleAssigneeToggle(user); }}
-                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700/50 flex items-center gap-2 group cursor-pointer transition-colors"
-                >
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
-                  ) : (
-                    <div className="w-5 h-5 rounded-full bg-zinc-700 flex items-center justify-center text-[9px] font-medium text-zinc-300">
-                      {user.name?.charAt(0).toUpperCase()}
+          <div className="bg-card border border-zinc-800/80 rounded-lg shadow-2xl w-[260px] overflow-hidden flex flex-col text-zinc-100 z-[100] animate-in fade-in zoom-in-95 duration-100">
+            <Command className="flex flex-col w-full bg-transparent">
+              <Command.Input 
+                autoFocus 
+                className="flex-1 w-full bg-transparent border-b border-zinc-800/80 px-3 py-2.5 text-sm outline-none placeholder:text-zinc-500" 
+                placeholder="Search assignee..." 
+              />
+              <Command.List className="max-h-[260px] overflow-y-auto p-1.5 custom-scrollbar">
+                <Command.Empty className="py-4 text-center text-sm text-zinc-500">
+                  No user found.
+                </Command.Empty>
+
+                {assignees.length > 0 && (
+                  <Command.Item
+                    value="clear all unassigned none"
+                    onSelect={() => handleClearAllAssignees()}
+                    className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-accent text-zinc-600 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-accent mb-1 border-b border-zinc-800/40"
+                  >
+                    <div className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 mr-2 shrink-0">
+                      <X className="w-3.5 h-3.5" />
                     </div>
-                  )}
-                  <span className="text-zinc-300 group-hover:text-white transition-colors truncate">{user.name}</span>
-                  {isAssigned && <CheckCircle2 className="w-3 h-3 text-blue-400 ml-auto shrink-0" />}
-                </button>
-              );
-            })}
+                    <span>Clear all assignees</span>
+                  </Command.Item>
+                )}
+
+                {assignableUsers.map(user => {
+                  const isAssigned = assignees.some(a => a.id === user.id);
+                  return (
+                    <Command.Item
+                      key={user.id}
+                      value={`${user.name} ${user.email}`}
+                      onSelect={() => handleAssigneeToggle(user)}
+                      className="relative flex cursor-pointer select-none items-center justify-between rounded-sm px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-accent hover:bg-accent text-zinc-700 dark:text-zinc-300 hover:text-accent-foreground"
+                    >
+                      <div className="flex items-center gap-2 truncate min-w-0">
+                        {user.avatarUrl ? (
+                          <img src={user.avatarUrl} alt={user.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold shrink-0">
+                            {(user.name || 'U').substring(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex flex-col truncate">
+                          <span className="truncate text-xs font-medium text-zinc-200">{user.name}</span>
+                          <span className="truncate text-[10px] text-zinc-500">{user.roles?.[0] || user.email}</span>
+                        </div>
+                      </div>
+                      {isAssigned && (
+                        <div className="w-5 h-5 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0 ml-2">
+                          <Check className="w-3.5 h-3.5" />
+                        </div>
+                      )}
+                    </Command.Item>
+                  );
+                })}
+              </Command.List>
+            </Command>
           </div>
         </PortalDropdown>
       )}
 
       {openDropdown === 'team' && (
         <PortalDropdown triggerRef={teamRef} onClose={() => setOpenDropdown(null)}>
-          <div className="bg-[#1c1c1e] border border-zinc-800/60 rounded-xl shadow-2xl w-64 p-2 z-[100] animate-in fade-in zoom-in-95 duration-100">
+          <div className="bg-card border border-zinc-800/60 rounded-xl shadow-2xl w-64 p-2 z-[100] animate-in fade-in zoom-in-95 duration-100">
             <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
               {dbTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
               <div className="flex flex-col gap-3 mt-1">
@@ -645,9 +757,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                           className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
                         >
                           {hasRoles && (
-                            <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${allSelected || someSelected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
-                              {allSelected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
-                              {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-zinc-300 rounded-full" />}
+                            <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${allSelected || someSelected ? 'bg-indigo-500 border-indigo-500' : 'border border-zinc-300 dark:border-zinc-700 bg-transparent'}`}>
+                              {allSelected && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+                              {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-white rounded-full" />}
                             </div>
                           )}
                           <span className="text-[11px] font-bold tracking-wide uppercase text-zinc-400">{t.name}</span>
@@ -685,8 +797,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                               }}
                               className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"
                             >
-                              <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-zinc-700' : 'bg-[#2a2a2c]'}`}>
-                                {selected && <Check className="w-2.5 h-2.5 text-zinc-300 stroke-[3]" />}
+                              <div className={`w-[14px] h-[14px] rounded-[3px] flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-500 border-indigo-500' : 'border border-zinc-300 dark:border-zinc-700 bg-transparent'}`}>
+                                {selected && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
                               </div>
                               {role.name}
                             </div>

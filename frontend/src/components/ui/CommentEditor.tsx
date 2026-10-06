@@ -99,14 +99,14 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       {editor && (
         <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
           <div className="pointer-events-auto">
-            <BubbleMenu pluginKey={`bubbleMenu-${id}`} editor={editor} tippyOptions={{ duration: 100, zIndex: 999999, placement: 'top' }} shouldShow={({ state }) => !state.selection.empty} className="flex items-center bg-[#1e1e20] border border-[#27272a] p-1 rounded-xl shadow-2xl mb-2 gap-0.5 text-zinc-300">
+            <BubbleMenu pluginKey={`bubbleMenu-${id}`} editor={editor} tippyOptions={{ duration: 100, zIndex: 999999, placement: 'top' }} shouldShow={({ state }) => !state.selection.empty} className="flex items-center bg-popover border border-[#27272a] p-1 rounded-xl shadow-2xl mb-2 gap-0.5 text-zinc-300">
               {/* Text Color / Highlight Dropdown */}
               <div className="relative group/color">
                 <button onMouseDown={e => e.preventDefault()} className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-center gap-1 text-sm font-medium" title="Text Color & Highlight">
                   <span className="w-5 h-5 flex items-center justify-center font-serif text-[15px] border border-zinc-600 rounded">A</span>
                 </button>
                 <div className="absolute bottom-full pb-2 left-0 hidden group-hover/color:flex flex-col z-[9999]" onMouseDown={e => e.preventDefault()}>
-                  <div className="bg-[#1e1e20] border border-zinc-800 p-3 rounded-xl shadow-2xl w-[260px] flex flex-col gap-3">
+                  <div className="bg-popover border border-zinc-800 p-3 rounded-xl shadow-2xl w-[260px] flex flex-col gap-3">
                     {/* Text Colors */}
                     <div className="flex flex-col gap-1.5">
                       <span className="text-xs font-medium text-zinc-500 px-1">Text colors</span>

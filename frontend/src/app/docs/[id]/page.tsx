@@ -106,7 +106,7 @@ function SidebarPageItem({
       <div
         onClick={() => onSelect(page)}
         className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors group ${isActive
-          ? 'bg-[#27272a] text-white shadow-sm font-semibold'
+          ? 'bg-secondary text-white shadow-sm font-semibold'
           : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
           }`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
@@ -308,28 +308,23 @@ const DocBlockRow = memo(({
               >
                 <div className="px-2 py-1 text-xs text-zinc-400 font-medium">Options</div>
                 <div className="flex flex-col">
-                  <div className="group/turninto relative">
-                    <button className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center justify-between cursor-default">
-                      <div className="flex items-center gap-2">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 12 20 22 4 22 4 2 12 2"></polyline><polyline points="10 2 10 10 2 10"></polyline></svg>
-                        Turn into
-                      </div>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                    <div className="absolute left-full top-0 ml-1 hidden group-hover/turninto:flex flex-col w-40 p-1 bg-zinc-800 border border-zinc-700/80 rounded-lg shadow-xl z-[9999]">
+                  <div className="flex flex-col gap-1">
+                    <Popover.Close asChild>
                       <button 
-                        onClick={(e) => { e.stopPropagation(); handleTurnInto && handleTurnInto(block.id, 'collapsible'); }}
+                        onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'collapsible'); }}
                         className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
                         <ChevronDown className="w-3.5 h-3.5" />
-                        Collapsible
+                        Turn into Collapsible
                       </button>
+                    </Popover.Close>
+                    <Popover.Close asChild>
                       <button 
-                        onClick={(e) => { e.stopPropagation(); handleTurnInto && handleTurnInto(block.id, 'subtask'); }}
+                        onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'subtask'); }}
                         className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
                         <CheckSquare className="w-3.5 h-3.5" />
-                        Subtask L
+                        Turn into Subtask L
                       </button>
-                    </div>
+                    </Popover.Close>
                   </div>
                 </div>
               </Popover.Content>
@@ -364,7 +359,7 @@ const DocBlockRow = memo(({
         {block.type === 'collapsible' && (
           <button
             onClick={(e) => { e.stopPropagation(); handleToggleCollapse && handleToggleCollapse(block.id); }}
-            className="flex items-center justify-center w-[22px] h-[22px] bg-[#27272a]/60 hover:bg-[#27272a] rounded-[4px] text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer self-start mt-0.5"
+            className="flex items-center justify-center w-[22px] h-[22px] bg-secondary/60 hover:bg-secondary rounded-[4px] text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer self-start mt-0.5"
             title={block.isCollapsed ? 'Expand' : 'Collapse'}
           >
             {block.isCollapsed
@@ -433,7 +428,7 @@ const DocBlockRow = memo(({
         </div>
       )}
 
-      <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-[#0d0d0d] px-1 py-1 rounded-md shadow-sm border border-zinc-800 opacity-0 hover:opacity-100`}>
+      <div className={`transition-opacity flex items-center gap-1 absolute right-2 bottom-1 bg-background px-1 py-1 rounded-md shadow-sm border border-zinc-800 opacity-0 hover:opacity-100`}>
         {isLockedBySomeoneElse && (
           <div className="px-1.5 py-1 text-red-500 flex items-center gap-1 bg-red-950/40 rounded shadow-sm border border-red-900/50" title={`Locked by ${block.lockedByName || 'another user'}`}>
             <Lock className="w-3 h-3" />
@@ -712,7 +707,18 @@ export default function DocPage({ docId }: { docId?: string }) {
       const docRes = await spacesApi.getDoc(id as string);
       setDoc(docRes.doc);
       if (docRes.doc?.pages?.length > 0 && !activePageRef.current) {
-        const firstPage = docRes.doc.pages[0];
+        let firstPage = docRes.doc.pages[0];
+        
+        if (docRes.doc.isDailyRollover) {
+          const sortedPages = [...docRes.doc.pages].sort((a, b) => {
+            const timeA = new Date(a.title || '').getTime();
+            const timeB = new Date(b.title || '').getTime();
+            if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+            return 0;
+          });
+          firstPage = sortedPages[0];
+        }
+
         setActivePage(firstPage);
         setPageTitle(firstPage.title || 'Untitled Page');
         setBlocks(markdownToBlocks(firstPage.content));
@@ -2068,8 +2074,8 @@ export default function DocPage({ docId }: { docId?: string }) {
   if (error) return <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>;
 
   return (
-    <div className="flex h-full w-full bg-[#0d0d0d] text-[#e4e4e7] overflow-hidden font-sans">
-      <aside className="w-60 shrink-0 bg-[#141414] border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none">
+    <div className="flex h-full w-full bg-background text-foreground overflow-hidden font-sans">
+      <aside className="w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none">
         <div
           onClick={() => setActivePage(null)}
           className="mb-5 pb-3 border-b border-zinc-800/60 cursor-pointer group hover:opacity-90 transition-all"
@@ -2129,7 +2135,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar bg-[#0d0d0d]">
+      <main className="flex-1 overflow-y-auto custom-scrollbar bg-background">
         <style>{`
           .is-selected-block .tiptap p,
           .is-selected-block .tiptap h1,
@@ -2167,24 +2173,24 @@ export default function DocPage({ docId }: { docId?: string }) {
                 onChange={(e) => setPageTitle(e.target.value)}
                 onBlur={() => handleSavePage()}
                 placeholder="Page Title..."
-                className="w-full bg-transparent border-none text-4xl font-extrabold text-zinc-100 placeholder-zinc-700 focus:outline-none tracking-tight"
+                className="w-full bg-transparent border-none text-4xl font-extrabold text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-700 focus:outline-none tracking-tight"
               />
 
-              <div className="flex items-center gap-2 text-xs text-zinc-400 flex-wrap">
+              <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400 flex-wrap">
                 <div className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center font-bold text-[10px] shadow-sm">
                   {currentUser?.name ? currentUser.name[0] : 'H'}
                 </div>
-                <span className="font-semibold text-zinc-300">{currentUser?.name || 'Hannah'}</span>
-                <span className="text-zinc-600">•</span>
-                <span className="text-zinc-400">Last updated today</span>
+                <span className="font-semibold text-zinc-700 dark:text-zinc-300">{currentUser?.name || 'Hannah'}</span>
+                <span className="text-zinc-400 dark:text-zinc-600">•</span>
+                <span className="text-zinc-500 dark:text-zinc-400">Last updated today</span>
                 <button 
                   onClick={() => setShowVersionHistory(true)}
-                  className="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors ml-1"
+                  className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 underline underline-offset-2 transition-colors ml-1"
                 >
                   Version History
                 </button>
 
-                {savingPage && <span className="text-purple-400 text-[10px] italic ml-2">Saving...</span>}
+                {savingPage && <span className="text-purple-500 dark:text-purple-400 text-[10px] italic ml-2">Saving...</span>}
               </div>
             </div>
 
@@ -2224,7 +2230,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                     <div className="flex justify-center mt-3">
                       <button
                         onClick={() => setSubpageLimit(prev => prev + 10)}
-                        className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/60 hover:border-zinc-700 rounded-full transition-all cursor-pointer shadow-sm"
+                        className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold text-zinc-400 hover:text-zinc-100 bg-secondary/50 hover:bg-zinc-800 border border-zinc-800/60 hover:border-zinc-700 rounded-full transition-all cursor-pointer shadow-sm"
                       >
                         <span>See More</span>
                         <span className="text-[10px] font-mono bg-zinc-800/80 px-1.5 py-0.5 rounded-md">
@@ -2314,6 +2320,17 @@ export default function DocPage({ docId }: { docId?: string }) {
                         onDragOverWrapper={(e: any) => handleDragOver(e, index)}
                         onDropWrapper={(e: any) => handleDrop(e, index)}
                         onMouseDownCaptureWrapper={(e: any) => {
+                          const target = e.target as Element;
+                          const isInteractive = target.closest('.ProseMirror') || target.closest('button') || target.closest('[draggable="true"]') || target.closest('[role="dialog"]') || target.closest('[data-radix-popper-content-wrapper]');
+                          if (!isInteractive) {
+                            // Prevent native browser caret placement which causes left-flashing
+                            e.preventDefault();
+                            // Immediately and synchronously force focus to the end
+                            const editor = editorRegistryRef.current[block.id];
+                            if (editor) {
+                              editor.commands.focus('end');
+                            }
+                          }
                           // Allow triggering block selection mode from anywhere (including text)
                           if (!e.shiftKey) {
                             dragSelectionStartBlockIndexRef.current = index;
@@ -2345,7 +2362,6 @@ export default function DocPage({ docId }: { docId?: string }) {
                           }
                         }}
                         onClickWrapper={(e: any) => {
-                          // Click to select/deselect if not clicking the editor itself
                           const isProseMirror = (e.target as Element).closest('.ProseMirror');
                           if (!isProseMirror) {
                             if (e.shiftKey) {
@@ -2357,10 +2373,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                             } else {
                               setSelectedBlockIds(new Set());
                               handleFocusBlock(block.id);
-                              setTimeout(() => {
-                                const editor = editorRegistryRef.current[block.id];
-                                if (editor) editor.commands.focus('end');
-                              }, 10);
+                              // Focus is now handled synchronously in onMouseDownCaptureWrapper
                             }
                           }
                         }}
@@ -2403,7 +2416,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         ) : (
           /* Document Overview State */
           <div className="max-w-4xl mx-auto p-10 space-y-6">
-            <div className="p-12 rounded-2xl bg-[#141414] border border-zinc-800/80 text-center space-y-3">
+            <div className="p-12 rounded-2xl bg-card border border-zinc-800/80 text-center space-y-3">
               <FileText className="w-12 h-12 text-purple-400 mx-auto opacity-50" />
               <h2 className="text-xl font-bold text-zinc-100">{doc?.title}</h2>
               <p className="text-xs text-zinc-500">Select a page from the left sub-sidebar to open your clean board.</p>
@@ -2422,7 +2435,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       {/* ── Link Task Picker Modal ── */}
       {isLinkModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#18181b] border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-4 space-y-4">
+          <div className="bg-card border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-4 space-y-4">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2 text-white font-bold text-sm">
                 <LinkIcon className="w-4 h-4 text-purple-400" />
@@ -2443,7 +2456,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                 value={taskSearchQuery}
                 onChange={(e) => setTaskSearchQuery(e.target.value)}
                 placeholder="Search tasks..."
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500"
+                className="w-full bg-secondary border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500"
               />
             </div>
 
@@ -2497,7 +2510,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           className="fixed z-99999"
           style={{ left: Math.min(hoverCardPos.x, window.innerWidth - 330), top: Math.min(hoverCardPos.y, window.innerHeight - 250) }}
         >
-          <div className="w-[320px] bg-white dark:bg-[#1a1a1a] border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl overflow-hidden flex flex-col text-sm text-zinc-900 dark:text-zinc-100">
+          <div className="w-[320px] bg-card border border-border rounded-lg shadow-xl overflow-hidden flex flex-col text-sm text-foreground">
             <div className="p-3 border-b border-zinc-200 dark:border-zinc-700">
               <h3 className="font-semibold text-base truncate">{hoverCardData.label}</h3>
               <div className="flex items-center text-xs text-zinc-500 dark:text-zinc-400 mt-1">
@@ -2632,7 +2645,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       {showVersionHistory && (
         <div className="fixed inset-0 z-[100] flex justify-end bg-black/20 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowVersionHistory(false)}>
           <div 
-            className="w-80 h-full bg-[#111111] border-l border-zinc-800 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300"
+            className="w-80 h-full bg-background border-l border-zinc-800 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-4 border-b border-zinc-800">
@@ -2650,7 +2663,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                 <div className="text-zinc-500 text-sm text-center py-10">No version history available</div>
               ) : (
                 pageVersions.map((version, i) => (
-                  <div key={version.id || i} className="flex flex-col gap-2 p-3 rounded-md bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 transition-colors">
+                  <div key={version.id || i} className="flex flex-col gap-2 p-3 rounded-md bg-secondary/50 border border-zinc-800 hover:border-zinc-700 transition-colors">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-zinc-300">
                         {new Date(version.createdAt).toLocaleString(undefined, { 

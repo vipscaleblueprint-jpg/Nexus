@@ -8,3 +8,4 @@ export * from './roles';
 export * from './upload';
 export * from './notifications';
 export * from './clickup';
+export * from './activity';

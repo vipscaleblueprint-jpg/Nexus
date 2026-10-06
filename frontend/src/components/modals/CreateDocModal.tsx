@@ -95,7 +95,7 @@ export function CreateDocModal({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
-            className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
+            className="w-full max-w-md bg-card border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
           >
             <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-purple-400">
@@ -126,7 +126,7 @@ export function CreateDocModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Product Knowledge Base, API Specs..."
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
             />
           </div>
 
@@ -139,7 +139,7 @@ export function CreateDocModal({
                 setSpaceId(e.target.value);
                 setFolderId(''); // Clear folder if space selected
               }}
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-purple-500"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-purple-500"
             >
               <option value="">-- No Space / Root Workspace --</option>
               {spaces.map((s) => (
@@ -160,7 +160,7 @@ export function CreateDocModal({
                   setFolderId(e.target.value);
                   if (e.target.value) setSpaceId(''); // Clear space if folder selected
                 }}
-                className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-purple-500"
+                className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-purple-500"
               >
                 <option value="">-- No Folder (Root Level) --</option>
                 {allFolders.map((f) => (

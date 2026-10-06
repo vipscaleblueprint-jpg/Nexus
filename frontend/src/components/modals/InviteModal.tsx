@@ -52,9 +52,9 @@ export function InviteModal({ isOpen, onClose }: InviteModalProps) {
         aria-modal="true"
         aria-labelledby="invite-title"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-[#18181c] border border-zinc-800/80 rounded-2xl shadow-2xl text-zinc-100 overflow-hidden"
+        className="w-full max-w-md bg-card border border-zinc-800/80 rounded-2xl shadow-2xl text-zinc-100 overflow-hidden"
       >
-        <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/40">
+        <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-card/40">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-zinc-800/80 border border-zinc-700">
               <UserPlus className="w-4 h-4 text-indigo-400" />
@@ -87,7 +87,7 @@ export function InviteModal({ isOpen, onClose }: InviteModalProps) {
                 value={inviteUrl}
                 readOnly
                 onFocus={(e) => e.currentTarget.select()}
-                className="flex-1 bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 outline-none focus:border-zinc-700 font-mono"
+                className="flex-1 bg-background border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 outline-none focus:border-zinc-700 font-mono"
               />
               <button
                 onClick={handleCopy}

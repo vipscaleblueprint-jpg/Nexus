@@ -93,7 +93,7 @@ export function CreateFolderModal({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
-            className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
+            className="w-full max-w-md bg-card border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
           >
             <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-amber-400">
@@ -124,7 +124,7 @@ export function CreateFolderModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Q3 Projects, Design Assets..."
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 transition-colors"
             />
           </div>
 
@@ -137,7 +137,7 @@ export function CreateFolderModal({
                 setSpaceId(e.target.value);
                 setParentFolderId(''); // Clear folder parent if space changes
               }}
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-amber-500"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-amber-500"
             >
               <option value="">-- No Space / Root Workspace --</option>
               {spaces.map((s) => (
@@ -158,7 +158,7 @@ export function CreateFolderModal({
                   setParentFolderId(e.target.value);
                   if (e.target.value) setSpaceId(''); // Clear space if parent folder selected
                 }}
-                className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-amber-500"
+                className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-amber-500"
               >
                 <option value="">-- No Parent Folder (Root Level) --</option>
                 {allFolders.map((f) => (

@@ -125,14 +125,14 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
   const hasNoResults = flatItems.length === 0;
 
   return (
-    <div className="bg-[#131315] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden w-[400px] z-[99999] flex flex-col font-sans">
+    <div className="bg-background border border-border rounded-xl shadow-2xl overflow-hidden w-[400px] z-[99999] flex flex-col font-sans">
       
       {/* ── Search Header ───────────────────────────────────────── */}
-      <div className="flex flex-col border-b border-zinc-800/80 bg-[#18181b]">
+      <div className="flex flex-col border-b border-border/80 bg-card">
         <div className="flex items-center px-3 py-2.5 cursor-text">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <Search className="w-4 h-4 text-teal-400 shrink-0" />
-            <div className="text-[13px] text-zinc-300 flex-1 flex items-center gap-1.5 min-w-0">
+            <div className="text-[13px] text-zinc-700 dark:text-zinc-300 flex-1 flex items-center gap-1.5 min-w-0">
               {selectedListId && (
                 <div className="flex items-center gap-1 bg-teal-500/10 text-teal-400 px-1.5 py-0.5 rounded text-[11px] font-medium border border-teal-500/20 shrink-0">
                   <span>{boards.find(b => b.id === selectedListId)?.name}</span>
@@ -144,13 +144,13 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
               <div className="flex flex-row items-baseline flex-1 min-w-0 pt-[1px] relative">
                 {props.query ? (
                   <>
-                    <span className="text-zinc-100 truncate">{props.query}</span>
+                    <span className="text-zinc-900 dark:text-zinc-100 truncate">{props.query}</span>
                     <span className="inline-block w-[1.5px] h-[15px] bg-teal-400 ml-[1px] shrink-0 animate-[blink_1s_step-end_infinite] relative top-[2px]" />
                   </>
                 ) : (
                   <>
                     <span className="inline-block w-[1.5px] h-[15px] bg-teal-400 mr-[1px] shrink-0 animate-[blink_1s_step-end_infinite] relative top-[2px]" />
-                    <span className="text-zinc-500 italic truncate">Search for a task...</span>
+                    <span className="text-zinc-500 dark:text-zinc-400 italic truncate">Search for a task...</span>
                   </>
                 )}
               </div>
@@ -164,14 +164,14 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('board'); }}
-              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'board' || filter === 'all' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 border-transparent hover:text-zinc-400'}`}
+              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'board' || filter === 'all' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 dark:text-zinc-400 border-transparent hover:text-zinc-600 dark:text-zinc-400'}`}
             >
               <Folder className="w-3 h-3" /> Clients
             </button>
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('task'); }}
-              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'task' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 border-transparent hover:text-zinc-400'}`}
+              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'task' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 dark:text-zinc-400 border-transparent hover:text-zinc-600 dark:text-zinc-400'}`}
             >
               <ListTodo className="w-3 h-3" /> Tasks
             </button>
@@ -183,10 +183,10 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
       <div className="max-h-[320px] overflow-y-auto custom-scrollbar p-1.5">
         {hasNoResults ? (
           <div className="px-3 py-6 flex flex-col items-center justify-center text-center gap-2">
-            <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center border border-zinc-800">
-              <Search className="w-4 h-4 text-zinc-500" />
+            <div className="w-10 h-10 rounded-full bg-zinc-800/50 flex items-center justify-center border border-border">
+              <Search className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
             </div>
-            <div className="text-sm font-medium text-zinc-400">No results found</div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-400">No results found</div>
             <div className="text-xs text-zinc-600">Try a different search term or filter</div>
           </div>
         ) : (
@@ -203,7 +203,7 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                       onMouseEnter={() => setSelectedIndex(idx)}
                       onClick={() => selectItem(board)}
                       className={`w-full flex items-center justify-between px-2 py-2 rounded-lg transition-all cursor-pointer group ${
-                        isSelected ? 'bg-indigo-500/10' : 'hover:bg-zinc-800/50'
+                        isSelected ? 'bg-indigo-500/10 dark:bg-indigo-500/20' : 'hover:bg-accent/50 dark:hover:bg-accent/80'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 flex-1 min-w-0">
@@ -213,18 +213,18 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                         >
                           <Hash className="w-3 h-3 text-white/90" />
                         </div>
-                        <span className={`text-[13px] font-medium truncate ${isSelected ? 'text-indigo-300' : 'text-zinc-200'}`}>
+                        <span className={`text-[13px] font-medium truncate ${isSelected ? 'text-indigo-300' : 'text-zinc-800 dark:text-zinc-200'}`}>
                           {board.name}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
                           onClick={(e) => { e.stopPropagation(); selectItem(board, true); }}
-                          className="px-2 py-1 rounded bg-zinc-800 text-[10px] font-medium text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors"
+                          className="px-2 py-1 rounded bg-zinc-800 text-[10px] font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors"
                         >
                           Insert
                         </button>
-                        <ChevronRight className="w-4 h-4 text-zinc-500" />
+                        <ChevronRight className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
                       </div>
                     </div>
                   );
@@ -244,16 +244,16 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                       onMouseEnter={() => setSelectedIndex(idx)}
                       onClick={() => selectItem(task)}
                       className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg transition-all text-left group ${
-                        isSelected ? 'bg-zinc-800/80' : 'hover:bg-zinc-800/40'
+                        isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50 dark:hover:bg-accent/80'
                       }`}
                     >
                       <div className="flex flex-col flex-1 min-w-0 gap-0.5">
                         <div className="flex items-center justify-between gap-2">
-                          <span className={`text-[13px] font-medium truncate ${isSelected ? 'text-zinc-100' : 'text-zinc-300'}`}>
+                          <span className={`text-[13px] font-medium truncate ${isSelected ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-700 dark:text-zinc-300'}`}>
                             {task.name}
                           </span>
                           {task.frequencyLabel && (
-                            <span className="text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 shrink-0 border border-zinc-700/50">
+                            <span className="text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-600 dark:text-zinc-400 shrink-0 border border-zinc-700/50">
                               {task.frequencyLabel}
                             </span>
                           )}
@@ -272,7 +272,7 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                                   style={{ color: task.statusColor }}
                                 />
                               )}
-                              <span className="text-[10px] font-medium text-zinc-500">
+                              <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
                                 {task.status}
                               </span>
                             </div>
@@ -280,7 +280,7 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                           {!selectedListId && task.listName && (
                             <>
                               <span className="text-zinc-700 text-[10px]">•</span>
-                              <span className="text-[10px] font-medium text-zinc-500 truncate">
+                              <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 truncate">
                                 {task.listName}
                               </span>
                             </>
@@ -299,7 +299,7 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                               {u.avatarUrl ? (
                                 <img src={u.avatarUrl} alt={u.name} className="w-full h-full object-cover" />
                               ) : (
-                                <span className="text-[9px] font-bold text-zinc-400">
+                                <span className="text-[9px] font-bold text-zinc-600 dark:text-zinc-400">
                                   {u.name.charAt(0).toUpperCase()}
                                 </span>
                               )}

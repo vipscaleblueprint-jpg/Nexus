@@ -92,10 +92,10 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
             aria-modal="true"
             aria-labelledby="add-invite-title"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 overflow-hidden cursor-default"
+            className="w-full max-w-md bg-card border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100 overflow-hidden cursor-default"
           >
         {/* Modal Header */}
-        <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/40">
+        <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between bg-card/40">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-zinc-800/80 border border-zinc-700">
               <Mail className="w-4 h-4 text-emerald-400" />
@@ -143,7 +143,7 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="e.g. member@company.com"
-              className="w-full bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+              className="w-full bg-background border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
             />
           </div>
 
@@ -159,7 +159,7 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
                 className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
                   role === 'MEMBER'
                     ? 'bg-zinc-800/80 border-zinc-500 text-white shadow-sm'
-                    : 'bg-[#131316] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                    : 'bg-background border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
                 }`}
               >
                 <span className="font-semibold text-xs flex items-center gap-1.5">
@@ -176,7 +176,7 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
                 className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
                   role === 'ADMIN'
                     ? 'bg-yellow-500/10 border-yellow-500/50 text-yellow-200 shadow-sm'
-                    : 'bg-[#131316] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                    : 'bg-background border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
                 }`}
               >
                 <span className="font-semibold text-xs flex items-center gap-1.5 text-yellow-400">
@@ -208,7 +208,7 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
                   className={`py-2 px-2.5 rounded-xl border text-center font-medium text-xs transition-all ${
                     employmentType === type
                       ? 'bg-zinc-200 text-zinc-950 border-zinc-200 font-semibold shadow'
-                      : 'bg-[#131316] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                      : 'bg-background border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
                   }`}
                 >
                   {label}
@@ -225,7 +225,7 @@ export function AddInvitationModal({ isOpen, onClose, onSuccess }: AddInvitation
             <select
               value={expiresInDays}
               onChange={(e) => setExpiresInDays(Number(e.target.value))}
-              className="w-full bg-[#131316] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500"
+              className="w-full bg-background border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500"
             >
               <option value={3}>3 days</option>
               <option value={7}>7 days (Default)</option>

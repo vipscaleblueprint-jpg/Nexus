@@ -35,7 +35,7 @@ export function TeamRosterView({ users, isLoading = false }: TeamRosterViewProps
   });
 
   return (
-    <div className="flex-1 bg-[#131316] text-[#e4e4e7] flex flex-col p-6 overflow-y-auto">
+    <div className="flex-1 bg-background text-foreground flex flex-col p-6 overflow-y-auto">
       {/* Header Bar */}
       <div className="flex items-start justify-between gap-4 mb-6 border-b border-zinc-800/60 pb-4 flex-wrap">
         <div>
@@ -54,7 +54,7 @@ export function TeamRosterView({ users, isLoading = false }: TeamRosterViewProps
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-[#18181c] border border-zinc-800/80 px-3 py-1.5 rounded-lg text-xs">
+          <div className="flex items-center gap-2 bg-card border border-zinc-800/80 px-3 py-1.5 rounded-lg text-xs">
             <Search className="w-3.5 h-3.5 text-zinc-400" />
             <input
               type="text"
@@ -72,7 +72,7 @@ export function TeamRosterView({ users, isLoading = false }: TeamRosterViewProps
             onChange={(e) => setRoleFilter(e.target.value)}
             disabled={isLoading}
             aria-label="Filter members by role"
-            className="bg-[#18181c] border border-zinc-800/80 text-zinc-200 rounded-lg px-3 py-1.5 text-xs outline-none disabled:opacity-50"
+            className="bg-card border border-zinc-800/80 text-zinc-200 rounded-lg px-3 py-1.5 text-xs outline-none disabled:opacity-50"
           >
             {ROLE_FILTERS.map(({ value, label }) => (
               <option key={value} value={value}>
@@ -114,7 +114,7 @@ function MemberCardGrid({ children }: { children: React.ReactNode }) {
 
 function MemberCard({ user }: { user: User }) {
   return (
-    <article className="bg-[#18181c] border border-zinc-800/60 rounded-xl p-4 shadow-lg flex flex-col gap-3 hover:border-zinc-700/80 transition-colors">
+    <article className="bg-card border border-zinc-800/60 rounded-xl p-4 shadow-lg flex flex-col gap-3 hover:border-zinc-700/80 transition-colors">
       {/* Identity */}
       <div className="flex items-center gap-3 min-w-0">
         {user.imageUrl || user.avatarUrl ? (
@@ -166,7 +166,7 @@ function MemberCard({ user }: { user: User }) {
       <dl className="text-[11px] space-y-1.5 border-t border-zinc-800/60 pt-3 mt-auto">
         <div className="flex items-center justify-between gap-2">
           <dt className="text-zinc-400">Employment</dt>
-          <dd className="font-mono text-[10px] text-zinc-300 bg-zinc-900 px-1.5 py-0.5 rounded">
+          <dd className="font-mono text-[10px] text-zinc-300 bg-secondary px-1.5 py-0.5 rounded">
             {user.employmentType}
           </dd>
         </div>
@@ -207,7 +207,7 @@ function MemberCardSkeleton() {
   return (
     <div
       aria-hidden="true"
-      className="bg-[#18181c] border border-zinc-800/60 rounded-xl p-4 shadow-lg flex flex-col gap-3 animate-pulse"
+      className="bg-card border border-zinc-800/60 rounded-xl p-4 shadow-lg flex flex-col gap-3 animate-pulse"
     >
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-zinc-800 shrink-0" />

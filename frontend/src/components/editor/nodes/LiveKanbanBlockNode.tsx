@@ -140,7 +140,7 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
 
   return (
     <div key={currentTask.id} className="py-0.5">
-      <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 dark:hover:bg-[#1f1f1f] transition-colors duration-200 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 group">
+      <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 dark:hover:bg-popover transition-colors duration-200 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 group">
 
         <span
           className="font-medium text-sm text-zinc-700 dark:text-zinc-200 max-w-[200px] truncate cursor-pointer hover:opacity-70 transition-opacity"
@@ -401,7 +401,7 @@ export const LiveKanbanBlockNode = (props: NodeViewProps) => {
     <NodeViewWrapper
       className={blockType === 'plain-list' || blockType === 'daily-report'
         ? "live-kanban-block-plain"
-        : "kanban-live-block my-4 p-4 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50/50 dark:bg-zinc-900/50"}
+        : "kanban-live-block my-4 p-4 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50/50 dark:bg-secondary/50"}
       data-drag-handle
     >
       {blockType !== 'plain-list' && blockType !== 'daily-report' && (

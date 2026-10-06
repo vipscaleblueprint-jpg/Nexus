@@ -40,7 +40,14 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   const [isExpanded, setIsExpanded] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const auditChecklist = checklists.find(c => c.name.toLowerCase() === 'audit');
+  const auditChecklist = checklists.find(c => {
+    if (c.name.toLowerCase() !== 'audit') return false;
+    if (subtaskId) {
+      return c.subtaskId === subtaskId;
+    } else {
+      return !c.subtaskId;
+    }
+  });
 
   // Roles suggested by the auditor: from the specific "--Audit" subtask when one is targeted,
   // otherwise from every "--Audit" subtask attached to this task.
@@ -185,10 +192,10 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
       {/* Checklists List */}
       {isExpanded && (
         <div className="flex flex-col gap-4">
-          <div className="bg-white dark:bg-[#18181b] border border-emerald-900/30 rounded-xl overflow-hidden">
+          <div className="bg-secondary/50 border border-emerald-900/30 rounded-xl overflow-hidden">
             {/* Checklist Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-800/60 bg-emerald-500/5">
-              <div className="font-medium text-sm text-zinc-900 dark:text-zinc-100">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-emerald-900/30 bg-emerald-500/5">
+              <div className="font-medium text-sm text-zinc-100">
                 Audit Items
               </div>
             </div>
@@ -219,10 +226,10 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                 }
 
                 return (
-                  <div key={idx} className="flex items-center justify-between py-1.5 px-2 group/item hover:bg-zinc-800/30 rounded-lg">
+                  <div key={idx} className="flex items-center justify-between py-1.5 px-2 group/item hover:bg-accent/30 rounded-lg">
                     <div className="flex items-center gap-3">
                       <button 
-                        className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${!canCheck || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isCompleted ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-zinc-600 hover:border-zinc-400'}`}
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${!canCheck || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isCompleted ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-border hover:border-border-hover'}`}
                         onClick={() => {
                           if (canCheck) {
                             handleToggleItem(text, item);
@@ -233,7 +240,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                       >
                         {isCompleted && <Check className="w-2.5 h-2.5" />}
                       </button>
-                      <span className={`text-sm ${isCompleted ? 'text-zinc-500 line-through' : 'text-zinc-200'}`}>
+                      <span className={`text-sm ${isCompleted ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
                         {text}
                       </span>
                     </div>
@@ -242,7 +249,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                       {/* Assignee */}
                       <Popover.Root>
                         <Popover.Trigger asChild>
-                          <button className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 cursor-pointer" disabled={isProcessing}>
+                          <button className="w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover cursor-pointer" disabled={isProcessing}>
                             {assigneeId ? (
                               <div className="w-full h-full rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-medium border border-emerald-500/30">
                                 {users.find(u => u.id === assigneeId)?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
@@ -253,14 +260,14 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                           </button>
                         </Popover.Trigger>
                         <Popover.Portal>
-                          <Popover.Content className="z-[100] w-56 rounded-lg bg-zinc-900 border border-zinc-800 p-2 shadow-xl outline-none" align="end" sideOffset={5}>
-                            <div className="text-xs font-medium text-zinc-500 mb-2 px-1">Assign to</div>
+                          <Popover.Content className="z-[100] w-56 rounded-lg bg-popover border border-border p-2 shadow-xl outline-none" align="end" sideOffset={5}>
+                            <div className="text-xs font-medium text-muted-foreground mb-2 px-1">Assign to</div>
                             <div className="max-h-60 overflow-y-auto">
                               <button 
-                                className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2 mb-1 cursor-pointer"
+                                className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 mb-1 cursor-pointer"
                                 onClick={() => handleUpdateAssignee(text, item, '')}
                               >
-                                <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center"><User className="w-3 h-3 text-zinc-400" /></div>
+                                <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center"><User className="w-3 h-3 text-muted-foreground" /></div>
                                 Unassigned
                               </button>
                               {users.filter(u => {
@@ -272,7 +279,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                               }).map(u => (
                                 <button 
                                   key={u.id}
-                                  className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2 cursor-pointer"
+                                  className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 cursor-pointer"
                                   onClick={() => handleUpdateAssignee(text, item, u.id)}
                                 >
                                   {u.avatarUrl ? (

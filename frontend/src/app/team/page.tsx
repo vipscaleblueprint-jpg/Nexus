@@ -46,7 +46,7 @@ function MemberCard({ user }: { user: User }) {
   const roles = user.roles || [];
 
   return (
-    <div className="bg-[#18181c] border border-zinc-800/80 rounded-2xl p-4 space-y-3 hover:border-zinc-700/80 transition-all shadow-lg">
+    <div className="bg-card border border-zinc-800/80 rounded-2xl p-4 space-y-3 hover:border-zinc-700/80 transition-all shadow-lg">
       {/* Header */}
       <div className="flex items-start gap-3">
         {user.avatarUrl ? (

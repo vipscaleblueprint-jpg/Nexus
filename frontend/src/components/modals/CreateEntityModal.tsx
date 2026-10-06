@@ -118,7 +118,7 @@ export function CreateEntityModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 font-sans">
-      <div className="w-full max-w-md bg-[#18181c] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden text-zinc-200">
+      <div className="w-full max-w-md bg-card border border-zinc-800 rounded-xl shadow-2xl overflow-hidden text-zinc-200">
         <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Plus className="w-5 h-5 text-indigo-400" />
@@ -133,7 +133,7 @@ export function CreateEntityModal({
         </div>
 
         {/* Entity Type Selector */}
-        <div className="flex border-b border-zinc-800 bg-zinc-900/60 p-1 text-xs">
+        <div className="flex border-b border-zinc-800 bg-secondary/60 p-1 text-xs">
           <button
             type="button"
             onClick={() => setType('SPACE')}
@@ -203,7 +203,7 @@ export function CreateEntityModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder={`Enter ${type.toLowerCase()} name...`}
-              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
 
@@ -217,7 +217,7 @@ export function CreateEntityModal({
                     type="color"
                     value={color}
                     onChange={(e) => setColor(e.target.value)}
-                    className="w-9 h-9 bg-zinc-900 border border-zinc-700 rounded cursor-pointer"
+                    className="w-9 h-9 bg-secondary border border-zinc-700 rounded cursor-pointer"
                   />
                   <span className="text-xs font-mono text-zinc-400">{color}</span>
                 </div>
@@ -232,7 +232,7 @@ export function CreateEntityModal({
               <select
                 value={selectedSpaceId}
                 onChange={(e) => setSelectedSpaceId(e.target.value)}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+                className="w-full px-3 py-2 bg-secondary border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="">-- Select Space --</option>
                 {spaces.map((s) => (
@@ -251,7 +251,7 @@ export function CreateEntityModal({
               <select
                 value={selectedDocId}
                 onChange={(e) => setSelectedDocId(e.target.value)}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+                className="w-full px-3 py-2 bg-secondary border border-zinc-700 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="">-- Select Document --</option>
                 {allDocs.map((d) => (

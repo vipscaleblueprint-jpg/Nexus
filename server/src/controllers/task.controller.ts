@@ -2010,10 +2010,16 @@ export async function deleteChecklist(req: Request, res: Response) {
           // If we don't have it in memory, try looking it up in ClickUp by name
           let parentExternalId = null;
           if (cl.subtaskId) {
-            const st = await prisma.subtask.findUnique({ where: { id: cl.subtaskId }, select: { externalId: true } });
+            const st = await prisma.subtask.findUnique({ where: { id: cl.subtaskId }, select: { title: true, externalId: true } });
             parentExternalId = st?.externalId;
-          }
-          if (!parentExternalId) {
+            if (!parentExternalId) {
+               const parent = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
+               if (st && parent?.externalId) {
+                 const { findClickUpSubtaskByName } = require('../services/clickupService');
+                 parentExternalId = await findClickUpSubtaskByName(parent.externalId, st.title);
+               }
+            }
+          } else {
             const task = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
             parentExternalId = task?.externalId;
           }
@@ -2063,10 +2069,16 @@ export async function createChecklistItem(req: Request, res: Response) {
         if (!cuChecklistId && cl) {
           let parentExternalId = null;
           if (cl.subtaskId) {
-            const st = await prisma.subtask.findUnique({ where: { id: cl.subtaskId }, select: { externalId: true } });
+            const st = await prisma.subtask.findUnique({ where: { id: cl.subtaskId }, select: { title: true, externalId: true } });
             parentExternalId = st?.externalId;
-          }
-          if (!parentExternalId) {
+            if (!parentExternalId) {
+               const parent = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
+               if (st && parent?.externalId) {
+                 const { findClickUpSubtaskByName } = require('../services/clickupService');
+                 parentExternalId = await findClickUpSubtaskByName(parent.externalId, st.title);
+               }
+            }
+          } else {
             const parentTask = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
             parentExternalId = parentTask?.externalId;
           }

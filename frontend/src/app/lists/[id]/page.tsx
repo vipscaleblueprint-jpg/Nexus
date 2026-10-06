@@ -40,14 +40,25 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: 'text-red-400 bg-red-500/20',
 };
 
+function getListCache(id: string) {
+  try { const r = localStorage.getItem(`nexus_list_cache_${id}`); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+function setListCache(id: string, data: any) {
+  try { localStorage.setItem(`nexus_list_cache_${id}`, JSON.stringify(data)); } catch {}
+}
+
 export default function BoardPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const router = useRouter();
   const { currentUser, setCurrentUser } = useAppStore();
-  const [list, setList] = useState<any>(null);
-  const [customGroups, setCustomGroups] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  // Instantly hydrate list from localStorage cache so navigating back shows content immediately
+  const cachedList = typeof window !== 'undefined' ? getListCache(id) : null;
+
+  const [list, setList] = useState<any>(cachedList);
+  const [customGroups, setCustomGroups] = useState<string[]>(cachedList?.customGroups || []);
+  const [loading, setLoading] = useState(!cachedList);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'list' | 'board'>('board');
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -79,7 +90,8 @@ export default function BoardPage() {
           setCurrentUser(userResult.user);
         }
 
-        if (!cancelled) {
+        if (!cancelled && listRes.list) {
+          setListCache(id, listRes.list);
           setList(listRes.list);
           if (listRes.list?.customGroups) {
             setCustomGroups(listRes.list.customGroups);
@@ -466,13 +478,13 @@ export default function BoardPage() {
                 <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
                   {list?.space && (
                     <>
-                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.space.name}</button>
+                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 transition-colors cursor-pointer">{list.space.name}</button>
                       <span className="text-zinc-600">/</span>
                     </>
                   )}
                   {list?.folder && (
                     <>
-                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 hover:underline transition-colors cursor-pointer">{list.folder.name}</button>
+                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 transition-colors cursor-pointer">{list.folder.name}</button>
                       <span className="text-zinc-600">/</span>
                     </>
                   )}
@@ -511,7 +523,7 @@ export default function BoardPage() {
                       }
                     }}
                     autoFocus
-                    className="text-xl font-semibold text-zinc-100 bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5 outline-none focus:border-indigo-500"
+                    className="text-xl font-semibold text-zinc-100 bg-secondary border border-zinc-700 rounded px-2 py-0.5 outline-none focus:border-indigo-500"
                   />
                 ) : (
                   <div className="group flex items-center gap-2">
@@ -775,7 +787,7 @@ export default function BoardPage() {
                   {/* Task table */}
                   <div className="border border-zinc-800 rounded-lg overflow-hidden">
                     {/* Column headers */}
-                    <div className="grid grid-cols-[1fr_140px_120px_100px] bg-zinc-900/60 border-b border-zinc-800 px-4 py-2 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">
+                    <div className="grid grid-cols-[1fr_140px_120px_100px] bg-secondary/60 border-b border-zinc-800 px-4 py-2 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">
                       <span>Name</span>
                       <span>Assignee</span>
                       <span>Due Date</span>

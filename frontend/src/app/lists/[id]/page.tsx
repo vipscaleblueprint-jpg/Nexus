@@ -564,6 +564,7 @@ export default function BoardPage() {
           {activeTab === 'board' ? (
             <div className="flex-1 min-h-0">
               <KanbanBoard
+                listId={id}
                 tasks={list?.tasks || []}
                 onTaskMove={handleTaskMove}
                 onTaskMovePreview={handleTaskMovePreview}

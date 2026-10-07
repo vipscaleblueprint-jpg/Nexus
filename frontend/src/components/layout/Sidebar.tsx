@@ -390,13 +390,22 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
   const toggleTheme = () => {
     const newMode = !isLightMode;
-    setIsLightMode(newMode);
-    if (newMode) {
-      document.documentElement.classList.add('theme-light');
-      localStorage.setItem('nexus-theme', 'light');
+    
+    const applyTheme = () => {
+      setIsLightMode(newMode);
+      if (newMode) {
+        document.documentElement.classList.add('theme-light');
+        localStorage.setItem('nexus-theme', 'light');
+      } else {
+        document.documentElement.classList.remove('theme-light');
+        localStorage.setItem('nexus-theme', 'dark');
+      }
+    };
+
+    if (document.startViewTransition) {
+      document.startViewTransition(applyTheme);
     } else {
-      document.documentElement.classList.remove('theme-light');
-      localStorage.setItem('nexus-theme', 'dark');
+      applyTheme();
     }
   };
   

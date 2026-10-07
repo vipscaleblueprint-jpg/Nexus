@@ -33,6 +33,9 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) =>
   const t = taskTitle.toLowerCase();
   const audits = new Set<string>();
 
+  // Every task must pass an Instructions Audit globally
+  audits.add('Instructions Audit');
+
   // Whatever auditor role was actually assigned determines the required audit item directly,
   // regardless of what the task title says.
   (auditorRoles || []).forEach((role) => {

@@ -123,6 +123,18 @@ body {
   -webkit-user-select: none;
 }
 
+.theme-light {
+  font-weight: 500;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 400ms;
+  animation-timing-function: ease-in-out;
+}
+
 /* Ensure typing cursor only on actually typable fields */
 input[type="text"],
 input[type="email"],

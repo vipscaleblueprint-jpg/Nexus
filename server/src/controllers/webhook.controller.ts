@@ -122,7 +122,7 @@ export const syncClients = async (req: Request, res: Response) => {
       if (!list) {
         // Fallback to check if it exists by name (for existing lists before externalId was added)
         list = await prisma.list.findFirst({
-          where: { name: client.name, folderId: folder.id }
+          where: { name: { equals: client.name.trim(), mode: 'insensitive' }, folderId: folder.id, externalId: null }
         });
 
         if (list) {

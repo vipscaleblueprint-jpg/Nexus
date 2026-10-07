@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { timingSafeEqual } from 'crypto';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 
@@ -37,6 +38,15 @@ async function authenticateApiKey(req: Request, res: Response) {
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
+
+  // VIPScale Tools authenticates every Nexus call (webhooks and this API) with the
+  // one shared VIPSCALE_API_KEY secret, acting as the VIPSCALE system user.
+  const sharedKey = process.env.VIPSCALE_API_KEY?.trim();
+  if (sharedKey && token.length === sharedKey.length && timingSafeEqual(Buffer.from(token), Buffer.from(sharedKey))) {
+    const user = await getOrCreateVipScaleUser();
+    return { id: null, userId: user.id, user };
+  }
+
   const apiKey = await (prisma as any).apiKey.findUnique({
     where: { key: token },
     include: { user: true }
@@ -65,7 +75,7 @@ export async function createExternalList(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { name, spaceId, folderId, statuses } = req.body;
+    const { name, spaceId, folderId, statuses, externalId } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: 'name is required' });
@@ -87,27 +97,42 @@ export async function createExternalList(req: Request, res: Response) {
       ? Array.from(new Set(statuses.map((s: any) => s.groupName).filter(Boolean))) as string[]
       : ['Client Details', 'Recurring', 'Workflow & Progress'];
 
-    let list = await prisma.list.findFirst({
-      where: {
-        name,
-        folderId: targetFolderId || null,
-        spaceId: targetSpaceId || null
-      }
-    });
+    // /webhooks/sync-clients usually creates the client's list moments before this call,
+    // so match it by VIPScale client id first, then by name within the folder (ignoring
+    // case/whitespace and space), instead of creating a second list next to it.
+    let list = externalId
+      ? await prisma.list.findUnique({ where: { externalId: String(externalId) } })
+      : null;
 
     if (!list) {
-      list = await prisma.list.create({
-        data: {
-          name,
-          spaceId: targetSpaceId || null,
+      list = await prisma.list.findFirst({
+        where: {
+          name: { equals: String(name).trim(), mode: 'insensitive' },
           folderId: targetFolderId || null,
-          customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+          ...(targetFolderId ? {} : { spaceId: targetSpaceId || null }),
         }
       });
-    } else {
-      // Return early if the list already exists (to avoid duplicate status seeding)
-      return res.status(200).json({ list });
+      if (list && externalId && !list.externalId) {
+        list = await prisma.list.update({ where: { id: list.id }, data: { externalId: String(externalId) } });
+      }
     }
+
+    if (list) {
+      // Return early if the list already exists (to avoid duplicate status seeding).
+      // existingTaskTitles lets callers that seed tasks skip the ones already there.
+      const existingTasks = await prisma.task.findMany({ where: { listId: list.id }, select: { title: true } });
+      return res.status(200).json({ list, created: false, existingTaskTitles: existingTasks.map(t => t.title) });
+    }
+
+    list = await prisma.list.create({
+      data: {
+        name,
+        spaceId: targetSpaceId || null,
+        folderId: targetFolderId || null,
+        externalId: externalId ? String(externalId) : null,
+        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+      }
+    });
 
     // We will use standard DEFAULT_STATUSES but NEVER rename KYC to list.name
     // (As requested: "instead of names of the boards it should be kyc")
@@ -162,7 +187,9 @@ export async function createExternalList(req: Request, res: Response) {
 
     await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
 
-    return res.status(201).json({ list });
+    io.emit('spaces_updated');
+
+    return res.status(201).json({ list, created: true, existingTaskTitles: [] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

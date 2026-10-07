@@ -204,7 +204,7 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
           {assignees.length > 0 ? (
             <>
               {assignees.slice(0, 3).map((user: any) => (
-                <span key={user.id} className="w-5 h-5 rounded-full overflow-hidden border-2 border-white dark:border-[#1a1a1a] z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center">
+                <span key={user.id} className="w-5 h-5 rounded-full overflow-hidden border-2 border-white dark:border-zinc-900 z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center">
                   {user.avatarUrl ? (
                     <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover rounded-full" />
                   ) : (
@@ -215,7 +215,7 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
                 </span>
               ))}
               {assignees.length > 3 && (
-                <span className="w-5 h-5 rounded-full border-2 border-white dark:border-[#1a1a1a] bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-[9px] font-medium z-10 shrink-0">
+                <span className="w-5 h-5 rounded-full border-2 border-white dark:border-zinc-900 bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-[9px] font-medium z-10 shrink-0">
                   +{assignees.length - 3}
                 </span>
               )}

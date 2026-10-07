@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* The app is dark-first: light mode (.theme-light below) inverts the palette instead of
+   using Tailwind's dark: variant. By default dark: follows the OS theme, so components
+   written with dark: classes broke whenever the OS and app themes differed. Always apply
+   dark: and let .theme-light invert it like every other dark-styled class. */
+@custom-variant dark (&:where(*));
+
 @theme {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

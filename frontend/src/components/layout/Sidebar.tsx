@@ -1129,7 +1129,7 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
 
   return (
     <div className="space-y-px">
-      <div className={`group flex items-center justify-between rounded-md px-2 py-1 text-xs cursor-pointer transition-colors ${
+      <div className={`group flex items-center justify-between rounded-md px-2 text-xs cursor-pointer transition-colors ${
         isActive 
           ? 'bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100' 
           : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-black/5 dark:hover:bg-accent hover:text-accent-foreground/50'
@@ -1158,7 +1158,7 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
             />
           ) : (
             <div className="flex items-center group/edit flex-1 min-w-0">
-              <Link href={`/docs/${doc.id}`} className="truncate flex-1 min-w-0"><span className="truncate block">{doc.title}</span></Link>
+              <Link href={`/docs/${doc.id}`} className="truncate flex-1 min-w-0 py-1"><span className="truncate block">{doc.title}</span></Link>
             </div>
           )}
         </div>
@@ -1216,7 +1216,7 @@ function PageTreeItem({ page, onAction }: {
 
   return (
     <div className="space-y-px">
-      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className={`group flex items-center justify-between rounded-md px-2 py-0.5 text-xs cursor-pointer transition-colors ${
+      <div onClick={() => hasSubpages && setIsOpen(!isOpen)} className={`group flex items-center justify-between rounded-md px-2 text-xs cursor-pointer transition-colors ${
         isActive
           ? 'bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100'
           : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-black/5 dark:hover:bg-accent hover:text-accent-foreground/50'
@@ -1236,7 +1236,7 @@ function PageTreeItem({ page, onAction }: {
             />
           ) : (
             <div className="flex items-center group/edit flex-1 min-w-0">
-              <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1 min-w-0"><span className="truncate block">{page.title}</span></Link>
+              <Link href={`/docs/${page.docId}?page=${page.id}`} className="truncate flex-1 min-w-0 py-0.5"><span className="truncate block">{page.title}</span></Link>
             </div>
           )}
         </div>
@@ -1282,14 +1282,14 @@ function ListTreeItem({ list, onAction }: {
   };
 
   return (
-    <div className={`group flex items-center justify-between rounded-md px-2 py-1 text-xs transition-colors ${
+    <div className={`group flex items-center justify-between rounded-md text-xs transition-colors ${
       isActive
         ? 'bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100'
         : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-black/5 dark:hover:bg-accent hover:text-accent-foreground/50'
     }`}>
-      <div className="flex items-center gap-2 truncate flex-1">
-        <ListIcon className="size-3.5 text-blue-400 shrink-0" />
-        {isEditing ? (
+      {isEditing ? (
+        <div className="flex items-center gap-2 flex-1 min-w-0 px-2 py-1">
+          <ListIcon className="size-3.5 text-blue-400 shrink-0" />
           <input
             type="text"
             autoFocus
@@ -1300,13 +1300,15 @@ function ListTreeItem({ list, onAction }: {
             className="bg-zinc-800 text-xs text-white px-1 py-0.5 rounded outline-none w-full"
             onClick={(e) => e.stopPropagation()}
           />
-        ) : (
-          <div className="flex items-center group/edit flex-1 min-w-0">
-            <Link href={`/lists/${list.id}`} className="truncate flex-1 min-w-0"><span className="truncate block">{list.name}</span></Link>
-          </div>
-        )}
-      </div>
-      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0" onClick={(e) => e.stopPropagation()}>
+        </div>
+      ) : (
+        // The Link spans the whole row (icon + padding), not just the text, so clicks anywhere on the highlighted row navigate
+        <Link href={`/lists/${list.id}`} className="flex items-center gap-2 flex-1 min-w-0 px-2 py-1">
+          <ListIcon className="size-3.5 text-blue-400 shrink-0" />
+          <span className="truncate block">{list.name}</span>
+        </Link>
+      )}
+      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0 pr-2" onClick={(e) => e.stopPropagation()}>
         <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
           <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
           <button onClick={() => onAction('delete', 'list', list.id, list.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>

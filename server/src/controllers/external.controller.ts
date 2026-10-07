@@ -453,7 +453,7 @@ export async function createTask(req: Request, res: Response) {
           });
           if (clientHeaderIndex === -1) {
             blocks.push({
-              id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
+              id: `blk-h-${Date.now()}-${clientName.replace(/\\s+/g, '')}`,
               type: 'text',
               content: `<h2>${clientName}</h2>`
             });
@@ -486,10 +486,10 @@ export async function createTask(req: Request, res: Response) {
           if (insertClientIndex + 1 < blocks.length) {
             const nextBlock = blocks[insertClientIndex + 1];
             if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
-              blocks.splice(insertClientIndex + 1, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+              blocks.splice(insertClientIndex + 1, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\\s+/g, '')}`, type: 'text', content: '<p></p>' });
             }
           } else if (insertClientIndex === blocks.length - 1) {
-            blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+            blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\\s+/g, '')}`, type: 'text', content: '<p></p>' });
           }
 
           // 2. Insert into New Tasks section
@@ -527,6 +527,14 @@ export async function createTask(req: Request, res: Response) {
     } catch (error) {
       console.error('Failed to inject task into Priorities Journal:', error);
     }
+
+    // --- REALTIME WEBSOCKET AND CACHE INVALIDATION ---
+    // Emit task:created so KanbanBoard live-updates without refresh!
+    io.to(`list:${listId}`).emit('task:created', task);
+    io.emit('task:created', task); // Global broadcast fallback if needed
+    
+    // Invalidate Redis caches so manual refresh shows the new tasks
+    await invalidateCache('lists:all', 'dashboard:all');
 
     return res.status(201).json({ message: 'Task created successfully', task });
   } catch (err: any) {

@@ -68,6 +68,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task_activity'));
     });
 
+    s.on('task:comment_added', () => {
+      window.dispatchEvent(new CustomEvent('task:comment_added'));
+    });
+
     s.on('task:created', (task) => {
       window.dispatchEvent(new CustomEvent('task:created', { detail: { task } }));
     });

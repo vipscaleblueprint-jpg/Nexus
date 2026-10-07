@@ -8,13 +8,33 @@ export const dailyRolloverWorker = new Worker(
   async (job) => {
     logger.info('Running DailyRollover job (Dynamic Generation)...');
 
-    // Get all active tasks for static generation
+    // Custom status priority order (lower index = higher priority in the list)
+    const STATUS_ORDER: Record<string, number> = {
+      'KYC':          1,
+      'Pin Board':    2,
+      'Daily':        3,
+      'Weekly':       4,
+      'Monthly':      5,
+      'Pending':      6,
+      'In Progress':  7,
+      'Revision':     8,
+      'Closed':       9,
+      'On-Hold':      10,
+      'Waiting':      11,
+      'In Review':    12,
+      'Checking':     13,
+      'CRM':          14,
+    };
+
+    const getStatusOrder = (status: string) => STATUS_ORDER[status] ?? 99;
+
     const activeTasks = await prisma.task.findMany({
       where: { status: { not: 'Closed' } },
       include: {
         list: { select: { id: true, name: true } },
         subtasks: { orderBy: { createdAt: 'asc' } },
       },
+      // Fetch newest first so new tasks appear at the top of their status group
       orderBy: { createdAt: 'desc' }
     });
 
@@ -24,6 +44,16 @@ export const dailyRolloverWorker = new Worker(
         if (!clients[task.list.name]) clients[task.list.name] = [];
         clients[task.list.name].push(task);
       }
+    }
+
+    // Sort each client's tasks by status order, then newest first within same status
+    for (const clientName of Object.keys(clients)) {
+      clients[clientName].sort((a, b) => {
+        const statusDiff = getStatusOrder(a.status) - getStatusOrder(b.status);
+        if (statusDiff !== 0) return statusDiff;
+        // Same status: newest first
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
     }
 
     const sortedClientNames = Object.keys(clients).sort();

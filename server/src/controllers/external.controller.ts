@@ -456,12 +456,23 @@ export async function createTask(req: Request, res: Response) {
           let insertClientIndex = clientHeaderIndex + 1;
           while (insertClientIndex < blocks.length) {
             const nextBlock = blocks[insertClientIndex];
-            // Stop at the next heading or an empty paragraph spacer
-            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3') || nextBlock.content === '<p></p>')) {
+            // Stop at the next heading
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
               break;
             }
             insertClientIndex++;
           }
+          
+          // Backtrack to skip over trailing empty spaces so we insert BEFORE the gap
+          while (insertClientIndex > clientHeaderIndex + 1) {
+            const prevBlock = blocks[insertClientIndex - 1];
+            if (prevBlock.type === 'text' && (prevBlock.content === '<p></p>' || prevBlock.content === '<p><br></p>' || prevBlock.content.trim() === '')) {
+              insertClientIndex--;
+            } else {
+              break;
+            }
+          }
+          
           blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
           
           // Ensure a trailing spacer if we created a new client section
@@ -588,11 +599,22 @@ export async function updateTask(req: Request, res: Response) {
               let insertClientIndex = clientHeaderIndex + 1;
               while (insertClientIndex < blocks.length) {
                 const nextBlock = blocks[insertClientIndex];
-                if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3') || nextBlock.content === '<p></p>')) {
+                if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
                   break;
                 }
                 insertClientIndex++;
               }
+              
+              // Backtrack to skip over trailing empty spaces so we insert BEFORE the gap
+              while (insertClientIndex > clientHeaderIndex + 1) {
+                const prevBlock = blocks[insertClientIndex - 1];
+                if (prevBlock.type === 'text' && (prevBlock.content === '<p></p>' || prevBlock.content === '<p><br></p>' || prevBlock.content.trim() === '')) {
+                  insertClientIndex--;
+                } else {
+                  break;
+                }
+              }
+              
               blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
               
               if (insertClientIndex === blocks.length - 1) {

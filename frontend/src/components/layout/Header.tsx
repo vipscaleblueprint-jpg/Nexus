@@ -8,6 +8,7 @@ import { authApi } from "@/api";
 import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
 import { ClickUpStatusPanel } from "./ClickUpStatusPanel";
 import { motion, AnimatePresence } from "framer-motion";
+import { NotificationBell } from "./NotificationBell";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Nexus Workspace",
@@ -76,6 +77,7 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2">
+        <NotificationBell />
         <div className="relative text-xs">
           <button
             onClick={() => setIsProfileOpen(!isProfileOpen)}

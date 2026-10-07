@@ -1307,7 +1307,7 @@ function WorkspaceDashboardContent({
                             <div
                               key={task.id}
                               onClick={() => setSelectedTask(task)}
-                              className="group relative flex items-center justify-between px-2 py-2.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                              className="group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
                             >
                               <div className="flex items-center gap-3 min-w-0 flex-1 pl-4 pr-4">
                                 <div className="w-4 h-4 rounded-[4px] border border-zinc-700 shrink-0 flex items-center justify-center transition-colors shadow-sm group-hover:border-zinc-500" />
@@ -1364,11 +1364,11 @@ function WorkspaceDashboardContent({
 
                     return (
                     <div key={key} className="space-y-0.5">
-                      <div 
-                        className="flex items-center justify-between px-1 pb-2 pt-2 cursor-pointer select-none group"
-                        onClick={() => toggleGroup(key)}
-                      >
-                        <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-between px-1 pb-2 pt-2 group">
+                        <div 
+                          className="flex items-center gap-2 cursor-pointer select-none hover:bg-accent/50 rounded-md transition-colors px-1.5 py-1 -ml-1.5"
+                          onClick={() => toggleGroup(key)}
+                        >
                           <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                           <span
                             className={`text-[11px] font-bold px-2 py-1 rounded-md uppercase tracking-wide ${pillClass} shadow-sm`}
@@ -1395,11 +1395,11 @@ function WorkspaceDashboardContent({
                               const isSgCollapsed = collapsedGroups.has(sgKey);
                               return (
                                 <div key={sgKey} className="space-y-0.5">
-                                  <div 
-                                    className="flex items-center justify-between px-1 pb-2 pt-1 cursor-pointer select-none group"
-                                    onClick={() => toggleGroup(sgKey)}
-                                  >
-                                    <div className="flex items-center gap-2">
+                                  <div className="flex items-center justify-between px-1 pb-2 pt-1 group">
+                                    <div 
+                                      className="flex items-center gap-2 cursor-pointer select-none hover:bg-accent/50 rounded-md transition-colors px-1.5 py-1 -ml-1.5"
+                                      onClick={() => toggleGroup(sgKey)}
+                                    >
                                       <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isSgCollapsed ? "-rotate-90" : ""}`} />
                                       <div className={`w-2 h-2 rounded-full ${sg.config.dot}`} style={(sg.config as any).customColor ? { backgroundColor: (sg.config as any).customColor } : {}} />
                                       <span className="text-[13px] font-bold text-zinc-200">
@@ -1479,11 +1479,11 @@ function WorkspaceDashboardContent({
                   return (
                   <div key={status} className="space-y-0.5">
                     {/* Status Group Header Bar */}
-                    <div 
-                      className="flex items-center justify-between px-1 pb-2 cursor-pointer select-none group"
-                      onClick={() => toggleGroup(status)}
-                    >
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between px-1 pb-2 pt-2 group">
+                      <div 
+                        className="flex items-center gap-2 cursor-pointer select-none hover:bg-accent/50 rounded-md transition-colors px-1.5 py-1 -ml-1.5"
+                        onClick={() => toggleGroup(status)}
+                      >
                         {/* Status Pill Badge */}
                         <span
                           className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1 transition-transform`}
@@ -1532,7 +1532,7 @@ function WorkspaceDashboardContent({
                               <div
                                 key={task.id}
                                 onClick={() => setSelectedTask(task)}
-                                className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-zinc-800/30 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                                className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
                               >
                                 {/* Left: Check/Status dot + Title + Context Breadcrumb */}
                                 <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">

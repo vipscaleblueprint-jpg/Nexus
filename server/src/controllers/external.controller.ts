@@ -378,23 +378,34 @@ export async function createTask(req: Request, res: Response) {
       }
     });
 
-    if (checklists && Array.isArray(checklists)) {
-      for (const cl of checklists) {
-        const checklist = await prisma.checklist.create({
-          data: {
-            name: cl.name,
-            taskId: task.id
-          }
-        });
-        if (cl.items && Array.isArray(cl.items)) {
-          await prisma.checklistItem.createMany({
-            data: cl.items.map((itemText: string) => ({
-              text: itemText,
-              completed: false,
-              checklistId: checklist.id
-            }))
-          });
+    let finalChecklists = checklists && Array.isArray(checklists) ? [...checklists] : [];
+    
+    // Auto-inject Instructions Audit to satisfy getRequiredAudits for external tasks
+    let auditChecklist = finalChecklists.find(c => c.name && c.name.toLowerCase().includes('audit'));
+    if (!auditChecklist) {
+      auditChecklist = { name: 'Task Audit', items: [] };
+      finalChecklists.push(auditChecklist);
+    }
+    if (!auditChecklist.items) auditChecklist.items = [];
+    if (!auditChecklist.items.includes('Instructions Audit')) {
+      auditChecklist.items.push('Instructions Audit');
+    }
+
+    for (const cl of finalChecklists) {
+      const checklist = await prisma.checklist.create({
+        data: {
+          name: cl.name,
+          taskId: task.id
         }
+      });
+      if (cl.items && Array.isArray(cl.items)) {
+        await prisma.checklistItem.createMany({
+          data: cl.items.map((itemText: string) => ({
+            text: itemText,
+            completed: false,
+            checklistId: checklist.id
+          }))
+        });
       }
     }
 

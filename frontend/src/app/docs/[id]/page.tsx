@@ -106,8 +106,8 @@ function SidebarPageItem({
       <div
         onClick={() => onSelect(page)}
         className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors group ${isActive
-          ? 'bg-secondary text-white shadow-sm font-semibold'
-          : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
+          ? 'bg-accent text-accent-foreground shadow-sm font-semibold'
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
           }`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >

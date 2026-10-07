@@ -20,7 +20,7 @@ const VIEW_OPTIONS: { value: ViewMode; label: string; icon: any; description: st
 
 const formatActivityMessage = (log: any) => {
   const { action, entity, entityTitle, details } = log;
-  const isSubtask = details?.subtaskTitle || entity === 'Subtask';
+  const isSubtask = details?.subtaskTitle || entity?.toLowerCase() === 'subtask';
   const targetTitle = details?.subtaskTitle || entityTitle;
   const targetName = isSubtask ? `subtask "${targetTitle}"` : `task "${targetTitle}"`;
   let message = '';
@@ -30,6 +30,12 @@ const formatActivityMessage = (log: any) => {
       break;
     case 'PRIORITY_CHANGE':
       message = `changed priority ${details?.oldPriority ? `from ${details.oldPriority} ` : ''}to ${details?.newPriority}`;
+      break;
+    case 'ASSIGNMENT':
+      if (details?.assigneeName === 'Unassigned') {
+        return `removed all assignees from ${targetName}`;
+      }
+      message = `updated assignment to ${details?.assigneeName || 'someone'}`;
       break;
     case 'TASK_CREATED': message = 'created this task'; break;
     case 'SUBTASK_CREATED': message = 'created a subtask'; break;
@@ -44,6 +50,7 @@ const formatActivityMessage = (log: any) => {
 
 export default function ActivityPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('for_me');
+  const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
@@ -161,18 +168,31 @@ export default function ActivityPage() {
     return groups;
   };
 
-  const isShowAll = viewMode === 'show_all';
+  const isGlobalLogView = viewMode === 'show_all' || viewMode === 'status';
 
   const filteredNotifications = notifications.filter(n => {
     if (viewMode === 'for_me') return true;
     if (viewMode === 'comments') return n.type === 'MENTION' || n.type === 'COMMENT';
-    if (viewMode === 'status') return n.type === 'STATUS_CHANGE';
     if (viewMode === 'assigned') return n.type === 'ASSIGNMENT';
     return false;
   });
 
-  const activeItems = isShowAll ? auditLogs : filteredNotifications;
-  const grouped = groupByDate(activeItems);
+  const activeItems = isGlobalLogView 
+    ? (viewMode === 'status' ? auditLogs.filter(l => l.action === 'STATUS_CHANGE') : auditLogs) 
+    : filteredNotifications;
+
+  let filteredByTime = activeItems;
+  if (isGlobalLogView) {
+    if (timeFilter === 'today') {
+      filteredByTime = activeItems.filter(item => isToday(new Date(item.createdAt)));
+    } else if (timeFilter === 'last7') {
+      filteredByTime = activeItems.filter(item => differenceInDays(new Date(), new Date(item.createdAt)) <= 7);
+    } else if (timeFilter === 'last30') {
+      filteredByTime = activeItems.filter(item => differenceInDays(new Date(), new Date(item.createdAt)) <= 30);
+    }
+  }
+
+  const grouped = groupByDate(filteredByTime);
   const currentView = VIEW_OPTIONS.find(v => v.value === viewMode)!;
   const CurrentIcon = currentView.icon;
 
@@ -182,7 +202,36 @@ export default function ActivityPage() {
         <h1 className="text-2xl font-semibold">Activity</h1>
 
         <div className="flex items-center gap-3">
-          {!isShowAll && (
+          {isGlobalLogView && (
+            <div className="flex items-center gap-1 bg-zinc-800/50 p-1 rounded-md border border-zinc-800 mr-2 hidden sm:flex">
+              <button 
+                onClick={() => setTimeFilter('all')} 
+                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'all' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              >
+                All time
+              </button>
+              <button 
+                onClick={() => setTimeFilter('today')} 
+                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'today' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              >
+                Today
+              </button>
+              <button 
+                onClick={() => setTimeFilter('last7')} 
+                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last7' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              >
+                Last 7 days
+              </button>
+              <button 
+                onClick={() => setTimeFilter('last30')} 
+                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last30' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              >
+                Last 30 days
+              </button>
+            </div>
+          )}
+
+          {!isGlobalLogView && (
             <>
               <button
                 onClick={handleMarkAllAsRead}
@@ -245,102 +294,197 @@ export default function ActivityPage() {
         ) : activeItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-zinc-500">
             <MailOpen className="size-10 mb-3 opacity-20" />
-            <p>{isShowAll ? 'No activity logs found' : "You are all caught up!"}</p>
+            <p>{isGlobalLogView ? 'No activity logs found' : "You are all caught up!"}</p>
           </div>
-        ) : isShowAll ? (
-          Object.entries(grouped).map(([groupName, items]) => (
-            <div key={groupName}>
-              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">{groupName}</h3>
-              <div className="bg-card rounded-lg border border-white/5 overflow-hidden">
-                {items.map((log: any, i: number) => (
-                  <div
-                    key={log.id}
-                    className={`flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.04] ${i !== items.length - 1 ? 'border-b border-white/5' : ''}`}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-2 overflow-hidden">
-                          {log.user?.avatarUrl ? (
-                            <img src={log.user.avatarUrl} alt="" className="size-5 rounded-full object-cover shrink-0" />
-                          ) : (
-                            <div className="size-5 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[9px] font-bold shrink-0">
+        ) : isGlobalLogView ? (
+          <div className="space-y-8 pb-10">
+            {Object.entries(grouped).map(([groupName, items]) => (
+              <div key={groupName} className="relative">
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur py-2 mb-4">
+                  <h3 className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">{groupName}</h3>
+                </div>
+                <div className="space-y-4">
+                  {items.map((log: any, i: number) => {
+                    const isAssignment = log.action === 'ASSIGNMENT';
+                    const isStatus = log.action === 'STATUS_CHANGE';
+                    const isComment = log.action === 'COMMENT_ADDED';
+                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : Globe;
+                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : 'text-zinc-400';
+                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : 'bg-zinc-500/10';
+
+                    return (
+                      <div
+                        key={log.id}
+                        onClick={() => {
+                          if (log.entity?.toLowerCase() === 'task' || log.entity?.toLowerCase() === 'subtask') {
+                            handleOpenTask(log.entityId);
+                          }
+                        }}
+                        className="group flex gap-4 cursor-pointer relative"
+                      >
+                        {/* Timeline line */}
+                        {i !== items.length - 1 && (
+                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-zinc-800/50" />
+                        )}
+
+                        <div className="shrink-0 relative">
+                          <div className="relative z-10">
+                            {log.user?.avatarUrl ? (
+                              <img 
+                                src={log.user.avatarUrl} 
+                                alt="" 
+                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm" 
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  if (e.currentTarget.nextElementSibling) {
+                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display = 'flex';
+                                  }
+                                }}
+                              />
+                            ) : null}
+                            <div 
+                              className="size-10 rounded-full bg-[#5f5ce6]/10 text-[#5f5ce6] flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm"
+                              style={{ display: log.user?.avatarUrl ? 'none' : 'flex' }}
+                            >
                               {log.user?.name?.substring(0, 2).toUpperCase() || '?'}
                             </div>
-                          )}
-                          <span className="font-medium text-sm text-zinc-200 shrink-0">{log.user?.name || 'Someone'}</span>
-                          <span className="text-sm text-zinc-300">{formatActivityMessage(log)}</span>
+                            
+                            <div className={`absolute -bottom-1 -right-1 size-4 rounded-full ${iconBg} ${iconColor} flex items-center justify-center ring-2 ring-background`}>
+                              <IconToUse className="size-2.5" />
+                            </div>
+                          </div>
                         </div>
-                        <span className="text-xs text-zinc-500 flex items-center gap-1 shrink-0">
-                          <Clock className="size-3" />
-                          {format(new Date(log.createdAt), 'MMM d, h:mm a')}
-                        </span>
+
+                        <div className="flex-1 min-w-0 bg-white/[0.02] border border-white/5 rounded-xl p-4 transition-all group-hover:bg-white/[0.04] group-hover:border-white/10 group-hover:-translate-y-0.5 group-hover:shadow-lg">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="font-semibold text-sm text-zinc-100">{log.user?.name || 'Someone'}</span>
+                            <span className="text-sm text-zinc-400">{formatActivityMessage(log)}</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-3 mt-3">
+                            <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1.5">
+                              <Clock className="size-3.5" />
+                              {format(new Date(log.createdAt), 'h:mm a')}
+                            </span>
+                            {(log.entity?.toLowerCase() === 'task' || log.entity?.toLowerCase() === 'subtask') && (
+                              <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-medium text-zinc-300">
+                                {log.entity}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         ) : (
-          Object.entries(grouped).map(([groupName, items]) => (
-            <div key={groupName}>
-              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">{groupName}</h3>
-              <div className="bg-card rounded-lg border border-white/5 overflow-hidden">
-                {(items as TaskNotification[]).map((n, i) => (
-                  <div
-                    key={n.id}
-                    onClick={() => handleOpenTask(n)}
-                    className={`group flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.04] cursor-pointer ${i !== items.length - 1 ? 'border-b border-white/5' : ''} ${!n.isRead ? 'bg-[#5f5ce6]/5' : ''}`}
-                  >
-                    <div className="shrink-0 pt-0.5">
-                      <div className="size-2 rounded-full mt-1.5" style={{ backgroundColor: !n.isRead ? '#5f5ce6' : 'transparent' }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-4 mb-1">
-                        <div className="flex items-center gap-2 overflow-hidden">
-                          {n.actor?.imageUrl || n.actor?.avatarUrl ? (
-                            <img src={n.actor.imageUrl || n.actor.avatarUrl || ''} alt="" className="size-5 rounded-full object-cover shrink-0" />
-                          ) : (
-                            <div className="size-5 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[9px] font-bold shrink-0">
+          <div className="space-y-8 pb-10">
+            {Object.entries(grouped).map(([groupName, items]) => (
+              <div key={groupName} className="relative">
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur py-2 mb-4">
+                  <h3 className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">{groupName}</h3>
+                </div>
+                <div className="space-y-4">
+                  {(items as TaskNotification[]).map((n, i) => {
+                    const isAssignment = n.type === 'ASSIGNMENT';
+                    const isStatus = n.type === 'STATUS_CHANGE';
+                    const isComment = n.type === 'COMMENT' || n.type === 'MENTION';
+                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : Globe;
+                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : 'text-zinc-400';
+                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : 'bg-zinc-500/10';
+
+                    return (
+                      <div
+                        key={n.id}
+                        onClick={() => handleOpenTask(n)}
+                        className={`group flex gap-4 cursor-pointer relative ${!n.isRead ? 'opacity-100' : 'opacity-80 hover:opacity-100'}`}
+                      >
+                        {/* Timeline line */}
+                        {i !== items.length - 1 && (
+                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-zinc-800/50" />
+                        )}
+
+                        <div className="shrink-0 relative">
+                          <div className="relative z-10">
+                            {n.actor?.imageUrl || n.actor?.avatarUrl ? (
+                              <img 
+                                src={n.actor.imageUrl || n.actor.avatarUrl || ''} 
+                                alt="" 
+                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm" 
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  if (e.currentTarget.nextElementSibling) {
+                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display = 'flex';
+                                  }
+                                }}
+                              />
+                            ) : null}
+                            <div 
+                              className="size-10 rounded-full bg-[#5f5ce6]/10 text-[#5f5ce6] flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm"
+                              style={{ display: (n.actor?.imageUrl || n.actor?.avatarUrl) ? 'none' : 'flex' }}
+                            >
                               {n.actor?.name?.substring(0, 2).toUpperCase() || '?'}
                             </div>
+                            
+                            <div className={`absolute -bottom-1 -right-1 size-4 rounded-full ${iconBg} ${iconColor} flex items-center justify-center ring-2 ring-background`}>
+                              <IconToUse className="size-2.5" />
+                            </div>
+
+                            {/* Unread indicator */}
+                            {!n.isRead && (
+                              <div className="absolute -top-1 -left-1 size-3 rounded-full bg-[#5f5ce6] ring-2 ring-background" />
+                            )}
+                          </div>
+                        </div>
+
+                        <div className={`flex-1 min-w-0 bg-white/[0.02] border border-white/5 rounded-xl p-4 transition-all group-hover:bg-white/[0.04] group-hover:border-white/10 group-hover:-translate-y-0.5 group-hover:shadow-lg ${!n.isRead ? 'bg-[#5f5ce6]/[0.04] border-[#5f5ce6]/30' : ''}`}>
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="font-semibold text-sm text-zinc-100">{n.actor?.name || 'Someone'}</span>
+                            <span className="text-sm text-zinc-400">{n.title.replace(n.actor?.name || 'Someone', '').trim()}</span>
+                          </div>
+                          
+                          {n.content && (
+                            <div
+                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0 prose-a:text-indigo-400"
+                              dangerouslySetInnerHTML={{ __html: n.content }}
+                            />
                           )}
-                          <span className="font-medium text-sm text-zinc-200 shrink-0">{n.actor?.name || 'Someone'}</span>
-                          <span className="text-sm text-zinc-400 truncate">{n.title.replace(n.actor?.name || 'Someone', '')}</span>
+
+                          <div className="flex items-center justify-between gap-4 mt-3">
+                            <div className="flex items-center gap-3">
+                              <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1.5">
+                                <Clock className="size-3.5" />
+                                {format(new Date(n.createdAt), 'h:mm a')}
+                              </span>
+                              {n.task && (
+                                <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-medium text-zinc-300">
+                                  {n.task.title}
+                                </span>
+                              )}
+                            </div>
+
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleClear(n.id); }}
+                              className="opacity-0 group-hover:opacity-100 px-3 py-1.5 text-[10px] font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5 transition-all"
+                            >
+                              <Check className="size-3" />
+                              Clear
+                            </button>
+                          </div>
                         </div>
-                        <span className="text-xs text-zinc-500 flex items-center gap-1 shrink-0">
-                          <Clock className="size-3" />
-                          {format(new Date(n.createdAt), 'MMM d, h:mm a')}
-                        </span>
                       </div>
-                      {n.content && (
-                        <div
-                          className="mt-2 text-sm text-zinc-300 bg-white/5 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0 prose-a:text-indigo-400"
-                          dangerouslySetInnerHTML={{ __html: n.content }}
-                        />
-                      )}
-                      {n.task && (
-                        <div className="mt-3">
-                          <span className="text-xs font-medium text-[#5f5ce6]">{n.task.title}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleClear(n.id); }}
-                        className="px-3 py-1.5 text-xs font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5"
-                      >
-                        <Check className="size-3.5" />
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
+
 
       <TaskDetailModal
         isOpen={!!selectedTask}

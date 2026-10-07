@@ -299,7 +299,13 @@ export async function createTask(req: Request, res: Response) {
           content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}">@${escapedTitle}</span></p>`
         });
 
-        if (insertClientIndex === blocks.length - 1) {
+        // Ensure a trailing spacer below the new task if there isn't one
+        if (insertClientIndex + 1 < blocks.length) {
+          const nextBlock = blocks[insertClientIndex + 1];
+          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+            blocks.splice(insertClientIndex + 1, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+          }
+        } else if (insertClientIndex === blocks.length - 1) {
            blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
         }
 

@@ -381,14 +381,16 @@ export async function createTask(req: Request, res: Response) {
     let finalChecklists = checklists && Array.isArray(checklists) ? [...checklists] : [];
     
     // Auto-inject Instructions Audit to satisfy getRequiredAudits for external tasks
-    let auditChecklist = finalChecklists.find(c => c.name && c.name.toLowerCase().includes('audit'));
-    if (!auditChecklist) {
-      auditChecklist = { name: 'Task Audit', items: [] };
-      finalChecklists.push(auditChecklist);
-    }
-    if (!auditChecklist.items) auditChecklist.items = [];
-    if (!auditChecklist.items.includes('Instructions Audit')) {
-      auditChecklist.items.push('Instructions Audit');
+    if (!req.body.skipAutoAudit) {
+      let auditChecklist = finalChecklists.find(c => c.name && c.name.toLowerCase().includes('audit'));
+      if (!auditChecklist) {
+        auditChecklist = { name: 'Task Audit', items: [] };
+        finalChecklists.push(auditChecklist);
+      }
+      if (!auditChecklist.items) auditChecklist.items = [];
+      if (!auditChecklist.items.includes('Instructions Audit')) {
+        auditChecklist.items.push('Instructions Audit');
+      }
     }
 
     for (const cl of finalChecklists) {

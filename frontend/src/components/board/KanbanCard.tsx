@@ -4,7 +4,7 @@ import { memo, useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
+import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield } from 'lucide-react';
 import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -426,33 +426,40 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           <div className="relative flex items-center group/teamrole">
             <div
               ref={teamRoleTriggerRef}
-              className={`flex items-center gap-2 text-[11px] bg-zinc-800/80 border border-zinc-700/50 hover:bg-zinc-800 hover:border-zinc-600 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-zinc-400 max-w-[150px]`}
+              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 max-w-[150px]`}
               onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'teamRole' ? null : 'teamRole'); }}
             >
-              <Users className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{('teamAssignAccessRole' in task && task.teamAssignAccessRole) ? task.teamAssignAccessRole : '-'}</span>
+              <Shield className="w-4 h-4 shrink-0" />
+              {('teamAssignAccessRole' in task && task.teamAssignAccessRole) && (
+                <span className="truncate">{task.teamAssignAccessRole}</span>
+              )}
             </div>
             {openDropdown === 'teamRole' && (
               <PortalDropdown triggerRef={teamRoleTriggerRef} onClose={closeDropdown}>
-                <div className="w-48 max-h-64 overflow-y-auto custom-scrollbar">
-                  <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase sticky top-0 bg-background z-10">Assign Role</div>
-                  {workspaceRoles?.map(role => (
-                    <div
-                      key={role.id}
-                      className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
-                      onClick={() => handleTeamRoleChange(role.name)}
-                    >
-                      <span className="text-xs truncate flex-1 text-zinc-300">
-                        {role.name}
-                      </span>
-                      {('teamAssignAccessRole' in task && task.teamAssignAccessRole === role.name) && <CheckSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
-                    </div>
-                  ))}
+                <div className="w-52 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
+                  <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-[#18181b] z-10">Assign Role</div>
+                  {workspaceRoles?.map(role => {
+                    const isSelected = ('teamAssignAccessRole' in task && task.teamAssignAccessRole === role.name);
+                    return (
+                      <div
+                        key={role.id}
+                        className={`px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors ${
+                          isSelected ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
+                        }`}
+                        onClick={() => handleTeamRoleChange(role.name)}
+                      >
+                        <span className="text-xs truncate flex-1">
+                          {role.name}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                      </div>
+                    );
+                  })}
                   <div
-                    className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors mt-1 border-t border-zinc-800/50"
+                    className="px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors mt-1 border-t border-zinc-800/50 hover:bg-red-500/10 text-red-400/80 hover:text-red-400"
                     onClick={() => handleTeamRoleChange(null)}
                   >
-                    <span className="text-xs truncate flex-1 text-zinc-500 italic">Clear Role</span>
+                    <span className="text-xs truncate flex-1">Clear Role</span>
                   </div>
                 </div>
               </PortalDropdown>
@@ -466,7 +473,6 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
               className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 max-w-[150px]`}
               onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
             >
-              <User className="w-3.5 h-3.5 shrink-0" />
               {assignees.length > 0 ? (
                 <div className="flex items-center -space-x-1 overflow-hidden">
                   {assignees.slice(0, 2).map((a: any) => (
@@ -487,7 +493,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                   )}
                 </div>
               ) : (
-                <span>-</span>
+                <Users className="w-4 h-4 shrink-0" />
               )}
             </div>
             {assignees.length > 0 && (
@@ -501,28 +507,30 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             )}
             {openDropdown === 'assignee' && (
               <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
-                <div className="w-48 max-h-64 overflow-y-auto custom-scrollbar">
-                  <div className="px-2 py-1.5 text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800 z-10">Assign To</div>
+                <div className="w-52 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
+                  <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-[#18181b] z-10">Assign To</div>
                   {assignableUsers.length > 0 ? (
                     assignableUsers.map(user => {
                       const isAssigned = assignees.some((a: any) => a.id === user.id);
                       return (
                         <div
                           key={user.id}
-                          className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
+                          className={`px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors ${
+                            isAssigned ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
+                          }`}
                           onClick={() => handleAssigneeToggle(user)}
                         >
                           {user.avatarUrl ? (
-                            <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
+                            <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
                           ) : (
-                            <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
+                            <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
                               {(user.name || 'U').charAt(0).toUpperCase()}
                             </div>
                           )}
-                          <span className={`text-xs truncate flex-1 ${isAssigned ? 'text-indigo-400 font-semibold' : 'text-zinc-300'}`}>
+                          <span className="text-xs truncate flex-1">
                             {user.name}
                           </span>
-                          {isAssigned && <CheckSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                          {isAssigned && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                         </div>
                       );
                     })
@@ -561,23 +569,41 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
         <div className="relative">
           <div
             ref={priorityTriggerRef}
-            className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
+            className={`${fieldHoverClass} max-w-[150px]`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           >
-            <Flag className="w-3.5 h-3.5" />
-            <span>{('priority' in task && task.priority) ? task.priority : '-'}</span>
+            <Flag className={`w-3.5 h-3.5 shrink-0 ${('priority' in task && task.priority) ? (PRIORITY_COLORS[task.priority] ?? 'text-zinc-500') : 'text-zinc-500'}`} />
+            <span className={`truncate ${('priority' in task && task.priority) ? (PRIORITY_COLORS[task.priority] ?? 'text-zinc-500') : 'text-zinc-500'}`}>
+              {('priority' in task && task.priority) ? task.priority.toLowerCase() : '-'}
+            </span>
           </div>
           {openDropdown === 'priority' && (
             <PortalDropdown triggerRef={priorityTriggerRef} onClose={closeDropdown}>
-              <div className="w-32">
-                <div className="px-2 py-1.5 text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase">Set Priority</div>
-                {Object.keys(PRIORITY_COLORS).map(p => (
-                  <div key={p} className={`px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium ${PRIORITY_COLORS[p]}`} onClick={() => handlePriorityChange(p)}>
-                    {p}
-                  </div>
-                ))}
-                <div className="px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium text-zinc-500 dark:text-zinc-500 dark:text-zinc-400" onClick={() => handlePriorityChange(null)}>
-                  CLEAR
+              <div className="w-44 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
+                <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-[#18181b] z-10">Priority</div>
+                {(['URGENT', 'HIGH', 'MEDIUM', 'LOW']).map(p => {
+                  const isSelected = ('priority' in task && task.priority === p);
+                  return (
+                    <div
+                      key={p}
+                      className={`px-2.5 py-2 flex items-center gap-2.5 rounded-md cursor-pointer transition-colors ${
+                        isSelected ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
+                      }`}
+                      onClick={() => handlePriorityChange(p)}
+                    >
+                      <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p] ?? 'text-zinc-400'}`} />
+                      <span className="text-xs capitalize flex-1">
+                        {p.toLowerCase()}
+                      </span>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                    </div>
+                  );
+                })}
+                <div
+                  className="px-2.5 py-2 flex items-center gap-2.5 hover:bg-red-500/10 text-red-400/80 hover:text-red-400 rounded-md cursor-pointer transition-colors mt-1 border-t border-zinc-800/50"
+                  onClick={() => handlePriorityChange(null)}
+                >
+                  <span className="text-xs capitalize flex-1">Clear priority</span>
                 </div>
               </div>
             </PortalDropdown>

@@ -272,11 +272,22 @@ export async function createTask(req: Request, res: Response) {
         let insertClientIndex = clientHeaderIndex + 1;
         while (insertClientIndex < blocks.length) {
           const nextBlock = blocks[insertClientIndex];
-          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3') || nextBlock.content === '<p></p>')) {
+          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
             break;
           }
           insertClientIndex++;
         }
+
+        // Backtrack to skip over trailing empty spaces so we insert BEFORE the gap
+        while (insertClientIndex > clientHeaderIndex + 1) {
+          const prevBlock = blocks[insertClientIndex - 1];
+          if (prevBlock.type === 'text' && (prevBlock.content === '<p></p>' || prevBlock.content === '<p><br></p>' || prevBlock.content.trim() === '')) {
+            insertClientIndex--;
+          } else {
+            break;
+          }
+        }
+
                 const escapedTitle = task.title.replace(/"/g, '&quot;');
         const statusColor = '#3b82f6';
         const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');

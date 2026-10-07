@@ -3,19 +3,25 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
 import { notificationsApi, TaskNotification } from '@/api/notifications';
+import { useRouter } from 'next/navigation';
 import { Check, MailOpen, Clock, ChevronDown, Users, MessageSquare, Activity, Globe } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { tasksApi } from '@/api/tasks';
 
-type ViewMode = 'for_me' | 'comments' | 'status' | 'assigned' | 'show_all';
+type ViewMode = 'for_me' | 'show_all';
+type Category = 'all' | 'status' | 'assigned' | 'comments';
 
-const VIEW_OPTIONS: { value: ViewMode; label: string; icon: any; description: string }[] = [
-  { value: 'for_me',   label: 'For Me',         icon: Activity,      description: 'All your notifications' },
-  { value: 'comments', label: 'Comments',        icon: MessageSquare, description: 'Comment & mention notifications' },
-  { value: 'status',   label: 'Status Updates',  icon: Clock,         description: 'Task status changes' },
-  { value: 'assigned', label: 'Assigned to Me',  icon: Users,         description: 'Assignment notifications' },
-  { value: 'show_all', label: 'Show All',        icon: Globe,         description: 'All workspace activity' },
+const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = [
+  { value: 'for_me',   label: 'For Me',   description: 'All your notifications' },
+  { value: 'show_all', label: 'Show All', description: 'All workspace activity' },
+];
+
+const CATEGORIES: { value: Category; label: string; icon: any }[] = [
+  { value: 'all', label: 'All', icon: Activity },
+  { value: 'status', label: 'Status Updates', icon: Clock },
+  { value: 'assigned', label: 'Assigned to Me', icon: Users },
+  { value: 'comments', label: 'Comments', icon: MessageSquare },
 ];
 
 const formatActivityMessage = (log: any) => {
@@ -24,7 +30,7 @@ const formatActivityMessage = (log: any) => {
   const targetTitle = details?.subtaskTitle || entityTitle;
   const targetName = isSubtask ? `subtask "${targetTitle}"` : `task "${targetTitle}"`;
   let message = '';
-  switch (action) {
+  switch (action?.toUpperCase()) {
     case 'STATUS_CHANGE':
       message = `changed status ${details?.oldStatus ? `from ${details.oldStatus} ` : ''}to ${details?.newStatus}`;
       break;
@@ -42,6 +48,8 @@ const formatActivityMessage = (log: any) => {
     case 'ASSIGNEE_ADDED': message = 'added an assignee'; break;
     case 'ASSIGNEE_REMOVED': message = 'removed an assignee'; break;
     case 'COMMENT_ADDED': message = 'added a comment'; break;
+    case 'COMMENT': message = 'added a comment'; break;
+    case 'REPLY': message = 'replied to a comment'; break;
     default:
       message = action ? `performed ${action.replace(/_/g, ' ').toLowerCase()}` : 'performed an action';
   }
@@ -49,7 +57,9 @@ const formatActivityMessage = (log: any) => {
 };
 
 export default function ActivityPage() {
+  const router = useRouter();
   const [viewMode, setViewMode] = useState<ViewMode>('for_me');
+  const [category, setCategory] = useState<Category>('all');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
@@ -57,7 +67,7 @@ export default function ActivityPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { decrementUnreadNotifications, workspaceRoles } = useAppStore();
+  const { decrementUnreadNotifications, workspaceRoles, currentUser } = useAppStore();
 
   const fetchData = async () => {
     setLoading(true);
@@ -75,20 +85,19 @@ export default function ActivityPage() {
     }
   };
 
-  const handleOpenTask = async (n: TaskNotification | string) => {
-    const taskId = typeof n === 'string' ? n : n.task?.id;
-    if (typeof n !== 'string' && !n.isRead) handleMarkAsRead(n.id);
-    if (!taskId) return;
-    try {
-      const res = await tasksApi.getTask(taskId);
-      setSelectedTask(res.task);
-      const url = new URL(window.location.href);
-      url.searchParams.set('task', taskId);
-      window.history.pushState({}, '', url.toString());
-    } catch (err) {
-      console.error('Failed to fetch task:', err);
-      if (typeof n !== 'string' && n.task) setSelectedTask(n.task);
+  const handleOpenTask = async (n: any) => {
+    // Resolve the task ID from multiple possible shapes:
+    //   - TaskNotification: n.task.id
+    //   - Audit-merged item: n.entityId or n.taskId (set by backend)
+    //   - Plain string (URL param)
+    const taskId = typeof n === 'string'
+      ? n
+      : (n.task?.id || (n as any).taskId || (n as any).entityId);
+    if (typeof n !== 'string' && !n.isRead && n.id && !(n as any).isAudit) {
+      handleMarkAsRead(n.id);
     }
+    if (!taskId) return;
+    router.push(`/tasks/${taskId}`);
   };
 
   useEffect(() => {
@@ -104,9 +113,13 @@ export default function ActivityPage() {
       window.history.pushState({}, '', u.toString());
     };
     window.addEventListener('notification_received', onNew);
+    window.addEventListener('task_activity', onNew);
+    window.addEventListener('task:comment_added', onNew);
     window.addEventListener('clear_activity_task', onClear);
     return () => {
       window.removeEventListener('notification_received', onNew);
+      window.removeEventListener('task_activity', onNew);
+      window.removeEventListener('task:comment_added', onNew);
       window.removeEventListener('clear_activity_task', onClear);
     };
   }, []);
@@ -168,21 +181,60 @@ export default function ActivityPage() {
     return groups;
   };
 
-  const isGlobalLogView = viewMode === 'show_all' || viewMode === 'status';
+  const isGlobalLogView = viewMode === 'show_all';
 
-  const filteredNotifications = notifications.filter(n => {
-    if (viewMode === 'for_me') return true;
-    if (viewMode === 'comments') return n.type === 'MENTION' || n.type === 'COMMENT';
-    if (viewMode === 'assigned') return n.type === 'ASSIGNMENT';
+  const matchesCategoryNotif = (n: any, cat: Category) => {
+    if (cat === 'all') return true;
+    const type = n.type?.toUpperCase();
+    if (cat === 'status') return type === 'STATUS_CHANGE';
+    if (cat === 'assigned') return type === 'ASSIGNMENT';
+    if (cat === 'comments') return type === 'MENTION' || type === 'COMMENT';
     return false;
-  });
+  };
+
+  const matchesCategoryLog = (log: any, cat: Category) => {
+    if (cat === 'all') return true;
+    const action = log.action?.toUpperCase();
+    if (cat === 'status') return action === 'STATUS_CHANGE';
+    if (cat === 'assigned') return action === 'ASSIGNMENT';
+    if (cat === 'comments') return action === 'COMMENT' || action === 'REPLY' || action === 'COMMENT_ADDED';
+    return false;
+  };
+
+  const filteredNotifications = notifications.filter(n => matchesCategoryNotif(n, category));
+  const filteredLogs = auditLogs.filter(l => matchesCategoryLog(l, category));
+
+  const myAuditLogs = auditLogs.filter(l => l.user?.email === currentUser?.email || l.userId === currentUser?.id);
+  const filteredMyLogs = myAuditLogs.filter(l => matchesCategoryLog(l, category));
+
+  const mergedForMe = [
+    ...filteredNotifications,
+    ...filteredMyLogs.map(log => {
+      const type = (log.action === 'COMMENT_ADDED' || log.action === 'REPLY') ? 'COMMENT' : log.action;
+      // taskId comes from backend enrichment (log.taskId) or falls back to entityId
+      const resolvedTaskId = log.taskId || log.entityId;
+      return {
+        id: 'audit_' + log.id,
+        type: type,
+        actor: log.user,
+        title: `${log.user?.name || 'Someone'} ${formatActivityMessage(log)}`,
+        content: log.details?.text || '',
+        createdAt: log.createdAt,
+        isRead: true,
+        task: { id: resolvedTaskId, title: log.details?.subtaskTitle || log.entityTitle || 'task' },
+        taskId: resolvedTaskId,
+        entityId: log.entityId,
+        isAudit: true
+      };
+    })
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const activeItems = isGlobalLogView 
-    ? (viewMode === 'status' ? auditLogs.filter(l => l.action === 'STATUS_CHANGE') : auditLogs) 
-    : filteredNotifications;
+    ? filteredLogs 
+    : mergedForMe;
 
   let filteredByTime = activeItems;
-  if (isGlobalLogView) {
+  if (isGlobalLogView || !isGlobalLogView) { // Time filters apply to both now for consistency
     if (timeFilter === 'today') {
       filteredByTime = activeItems.filter(item => isToday(new Date(item.createdAt)));
     } else if (timeFilter === 'last7') {
@@ -193,43 +245,38 @@ export default function ActivityPage() {
   }
 
   const grouped = groupByDate(filteredByTime);
-  const currentView = VIEW_OPTIONS.find(v => v.value === viewMode)!;
-  const CurrentIcon = currentView.icon;
-
   return (
-    <div className="flex flex-col h-full bg-background text-foreground p-8 relative">
-      <div className="flex items-center justify-between mb-6">
+    <div className="flex flex-col h-full bg-background text-foreground relative pt-8">
+      <div className="px-8 flex items-center justify-between mb-4">
         <h1 className="text-2xl font-semibold">Activity</h1>
 
         <div className="flex items-center gap-3">
-          {isGlobalLogView && (
-            <div className="flex items-center gap-1 bg-zinc-800/50 p-1 rounded-md border border-zinc-800 mr-2 hidden sm:flex">
-              <button 
-                onClick={() => setTimeFilter('all')} 
-                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'all' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
-              >
-                All time
-              </button>
-              <button 
-                onClick={() => setTimeFilter('today')} 
-                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'today' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
-              >
-                Today
-              </button>
-              <button 
-                onClick={() => setTimeFilter('last7')} 
-                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last7' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
-              >
-                Last 7 days
-              </button>
-              <button 
-                onClick={() => setTimeFilter('last30')} 
-                className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last30' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
-              >
-                Last 30 days
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-1 bg-zinc-800/50 p-1 rounded-md border border-zinc-800 mr-2 hidden sm:flex">
+            <button 
+              onClick={() => setTimeFilter('all')} 
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'all' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+            >
+              All time
+            </button>
+            <button 
+              onClick={() => setTimeFilter('today')} 
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'today' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+            >
+              Today
+            </button>
+            <button 
+              onClick={() => setTimeFilter('last7')} 
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last7' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+            >
+              Last 7 days
+            </button>
+            <button 
+              onClick={() => setTimeFilter('last30')} 
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last30' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+            >
+              Last 30 days
+            </button>
+          </div>
 
           {!isGlobalLogView && (
             <>
@@ -237,7 +284,7 @@ export default function ActivityPage() {
                 onClick={handleMarkAllAsRead}
                 className="px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-md shadow-sm transition-colors flex items-center gap-1.5"
               >
-                <MailOpen className="size-3.5" />
+                <Check className="size-3.5" />
                 Mark all as read
               </button>
               <button
@@ -255,15 +302,13 @@ export default function ActivityPage() {
               onClick={() => setDropdownOpen(prev => !prev)}
               className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-md transition-colors"
             >
-              <CurrentIcon className="size-3.5" />
-              {currentView.label}
+              {viewMode === 'for_me' ? 'For Me' : 'Show All'}
               <ChevronDown className={`size-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {dropdownOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-56 bg-secondary border border-zinc-700/60 rounded-lg shadow-xl z-50 overflow-hidden">
+              <div className="absolute right-0 top-full mt-1.5 w-48 bg-secondary border border-zinc-700/60 rounded-lg shadow-xl z-50 overflow-hidden">
                 {VIEW_OPTIONS.map(option => {
-                  const Icon = option.icon;
                   const isActive = viewMode === option.value;
                   return (
                     <button
@@ -271,7 +316,6 @@ export default function ActivityPage() {
                       onClick={() => { setViewMode(option.value); setDropdownOpen(false); }}
                       className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-zinc-800 ${isActive ? 'bg-indigo-500/10' : ''}`}
                     >
-                      <Icon className={`size-4 mt-0.5 shrink-0 ${isActive ? 'text-indigo-400' : 'text-zinc-400'}`} />
                       <div className="flex-1">
                         <p className={`text-xs font-medium ${isActive ? 'text-indigo-300' : 'text-zinc-200'}`}>{option.label}</p>
                         <p className="text-[10px] text-zinc-500 mt-0.5">{option.description}</p>
@@ -286,7 +330,45 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-8">
+      <div className="px-8 border-b border-zinc-800 mb-6 flex items-center gap-8">
+        {CATEGORIES.map((cat, idx) => {
+          const isActive = category === cat.value;
+          
+          let subtext = '';
+          if (viewMode === 'for_me') {
+             const unreadCount = notifications.filter(n => !n.isRead && matchesCategoryNotif(n, cat.value)).length;
+             subtext = unreadCount > 0 ? `${unreadCount} unread` : '';
+          } else {
+             const itemsCount = auditLogs.filter(l => matchesCategoryLog(l, cat.value)).length;
+             subtext = itemsCount > 0 ? `${itemsCount} updates` : '';
+          }
+
+          return (
+            <div key={cat.value} className="flex items-center">
+              <button
+                onClick={() => setCategory(cat.value)}
+                className={`flex items-start gap-3 pb-3 px-1 transition-colors ${
+                  isActive ? 'border-b-2 border-indigo-500 text-indigo-400' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <div className="text-left">
+                  <div className={`font-semibold text-sm ${isActive ? 'text-indigo-400' : 'text-zinc-300'}`}>{cat.label}</div>
+                  {(subtext && isActive) && (
+                    <div className="text-xs text-indigo-400/70">
+                      {subtext}
+                    </div>
+                  )}
+                </div>
+              </button>
+              {idx < CATEGORIES.length - 1 && (
+                <div className="w-[1px] h-10 bg-zinc-800 ml-8" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-8 pr-2 custom-scrollbar space-y-8">
         {loading ? (
           <div className="flex items-center justify-center h-40">
             <div className="w-6 h-6 border-2 border-[#5f5ce6] border-t-transparent rounded-full animate-spin"></div>
@@ -360,6 +442,13 @@ export default function ActivityPage() {
                             <span className="font-semibold text-sm text-zinc-100">{log.user?.name || 'Someone'}</span>
                             <span className="text-sm text-zinc-400">{formatActivityMessage(log)}</span>
                           </div>
+                          
+                          {(log.action === 'COMMENT' || log.action === 'REPLY' || log.action === 'COMMENT_ADDED') && log.details?.text && (
+                            <div
+                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0 prose-a:text-indigo-400"
+                              dangerouslySetInnerHTML={{ __html: log.details.text }}
+                            />
+                          )}
                           
                           <div className="flex items-center gap-3 mt-3">
                             <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1.5">

@@ -599,6 +599,20 @@ export const handleGalaxyStatus = async (req: Request, res: Response) => {
       data: { status: listStatus ? listStatus.name : new_status }
     });
 
+    if (task.status !== updatedTask.status) {
+      getOrCreateVipScaleUser().then((creator: any) => {
+        prisma.auditLog.create({
+          data: {
+            action: 'STATUS_CHANGE',
+            entity: 'TASK',
+            entityId: task.id,
+            userId: creator.id,
+            details: { oldStatus: task.status, newStatus: updatedTask.status }
+          }
+        }).catch(console.error);
+      }).catch(console.error);
+    }
+
     // We can emit to update clients
     // io.emit('task_updated', updatedTask);
 

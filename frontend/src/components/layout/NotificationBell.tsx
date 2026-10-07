@@ -188,9 +188,10 @@ export function NotificationBell() {
                 </div>
               ) : (
                 displayList.map((n) => {
-                  const isAssignment = n.type === 'ASSIGNMENT';
-                  const isStatus = n.type === 'STATUS_CHANGE';
-                  const isComment = n.type === 'COMMENT' || n.type === 'MENTION';
+                  const type = n.type?.toUpperCase();
+                  const isAssignment = type === 'ASSIGNMENT';
+                  const isStatus = type === 'STATUS_CHANGE';
+                  const isComment = type === 'COMMENT' || type === 'MENTION';
                   const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : Globe;
                   
                   // Color distinctions for both light and dark mode
@@ -211,7 +212,11 @@ export function NotificationBell() {
                       key={n.id}
                       onClick={() => {
                         setIsOpen(false);
-                        router.push('/activity');
+                        if (n.task?.id) {
+                          router.push(`/tasks/${n.task.id}`);
+                        } else {
+                          router.push('/activity');
+                        }
                       }}
                       className={`group relative flex items-start gap-3 p-3 rounded-lg transition-all cursor-pointer ${
                         !n.isRead 

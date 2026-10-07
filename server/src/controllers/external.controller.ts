@@ -372,7 +372,7 @@ export async function createTask(req: Request, res: Response) {
         listId,
         description: description || '',
         priority: priority || 'MEDIUM',
-        status: status || 'Pending',
+        status: status || 'PENDING',
         creatorId: vipScaleUser.id,
         assigneeId: assigneeId || undefined,
       }

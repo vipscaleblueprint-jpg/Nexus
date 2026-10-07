@@ -172,6 +172,9 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
     }
   };
 
+  // Tasks with nothing to audit (e.g. onboarding tasks created with skipAutoAudit) show no Audit section.
+  if (requiredAuditItems.length === 0) return null;
+
   return (
     <div className="w-full mb-4">
       {/* Header */}

@@ -439,11 +439,16 @@ export async function createTask(req: Request, res: Response) {
           const getNewTaskBlock = (suffix: string) => ({
             id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
             type: "text",
-            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
+            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span></p>`
           });
 
           // 1. Insert into Client section
-          let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === `<h2>${clientName}</h2>`);
+          let clientHeaderIndex = blocks.findIndex((b: any) => {
+            if (b.type !== 'text') return false;
+            // Match any h1-h6 that contains the clientName (ignoring HTML tags inside)
+            const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+            return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === clientName.toLowerCase();
+          });
           if (clientHeaderIndex === -1) {
             blocks.push({
               id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
@@ -486,7 +491,11 @@ export async function createTask(req: Request, res: Response) {
           }
 
           // 2. Insert into New Tasks section
-          let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentNewTasks);
+          let newTasksHeaderIndex = blocks.findIndex((b: any) => {
+            if (b.type !== 'text') return false;
+            const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+            return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === 'new tasks';
+          });
           if (newTasksHeaderIndex === -1) {
             blocks.push({
               id: `blk-h-${Date.now()}-NewTasks`,
@@ -587,11 +596,15 @@ export async function updateTask(req: Request, res: Response) {
               const getNewTaskBlock = (suffix: string) => ({
                 id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
                 type: "text",
-                content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
+                content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span></p>`
               });
 
               // 1. Insert into Client section
-              let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === `<h2>${clientName}</h2>`);
+              let clientHeaderIndex = blocks.findIndex((b: any) => {
+                if (b.type !== 'text') return false;
+                const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+                return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === clientName.toLowerCase();
+              });
               if (clientHeaderIndex === -1) {
                 blocks.push({
                   id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
@@ -633,7 +646,11 @@ export async function updateTask(req: Request, res: Response) {
               }
 
               // 2. Insert into New Tasks section
-              let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === headerContentNewTasks);
+              let newTasksHeaderIndex = blocks.findIndex((b: any) => {
+                if (b.type !== 'text') return false;
+                const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+                return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === 'new tasks';
+              });
               if (newTasksHeaderIndex === -1) {
                 blocks.push({
                   id: `blk-h-${Date.now()}-NewTasks`,

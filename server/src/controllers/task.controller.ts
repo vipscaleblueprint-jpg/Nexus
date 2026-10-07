@@ -259,7 +259,11 @@ export async function createTask(req: Request, res: Response) {
         } catch(e) {}
 
         let clientName = task.list?.name || 'Unknown Client';
-        let clientHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === `<h2>${clientName}</h2>`);
+        let clientHeaderIndex = blocks.findIndex((b: any) => {
+          if (b.type !== 'text') return false;
+          const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+          return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === clientName.toLowerCase();
+        });
         if (clientHeaderIndex === -1) {
           blocks.push({
             id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
@@ -296,7 +300,7 @@ export async function createTask(req: Request, res: Response) {
         blocks.splice(insertClientIndex, 0, {
           id: `blk-t-${Date.now()}-${task.id}`,
           type: 'text',
-          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}">@${escapedTitle}</span></p>`
+          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
         });
 
         // Ensure a trailing spacer below the new task if there isn't one
@@ -309,7 +313,11 @@ export async function createTask(req: Request, res: Response) {
            blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
         }
 
-        let newTasksHeaderIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content === '<h3>New Tasks</h3>');
+        let newTasksHeaderIndex = blocks.findIndex((b: any) => {
+          if (b.type !== 'text') return false;
+          const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+          return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === 'new tasks';
+        });
         if (newTasksHeaderIndex === -1) {
           blocks.push({
             id: `blk-h-${Date.now()}-NewTasks`,
@@ -331,7 +339,7 @@ export async function createTask(req: Request, res: Response) {
         blocks.splice(insertNewTasksIndex, 0, {
           id: `blk-t-${Date.now()}-${task.id}-n`,
           type: 'text',
-          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}">@${escapedTitle}</span></p>`
+          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
         });
         
         await prisma.page.update({

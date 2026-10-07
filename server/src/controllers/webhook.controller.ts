@@ -511,22 +511,105 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         });
 
         if (todayPage && todayPage.content) {
-          const blocks = JSON.parse(todayPage.content);
+          let blocks = [];
+          try {
+            blocks = JSON.parse(todayPage.content);
+          } catch(e) {}
           
-          const newTaskBlock = {
-            id: `blk-tk-${Date.now()}-${newTask.id}`,
+          const escapedTitle = newTask.title.replace(/"/g, '&quot;');
+          const statusColor = '#3b82f6';
+          const taskStatusStr = JSON.stringify({ name: fullyLoadedTask?.status || newTask.status, color: statusColor }).replace(/"/g, '&quot;');
+          const assigneesStr = JSON.stringify(fullyLoadedTask?.assignees || []).replace(/"/g, '&quot;');
+
+          const getNewTaskBlock = (suffix: string) => ({
+            id: `blk-tk-${Date.now()}-${newTask.id}-${suffix}`,
             type: "text",
-            content: `<p><span data-type="mention" data-id="${newTask.id}" data-label="${newTask.title}" data-mention-type="task">@${newTask.title}</span></p>`
-          };
+            content: `<p><span data-type="mention" data-id="${newTask.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
+          });
+
+          // 1. Insert into Client section
+          let clientHeaderIndex = blocks.findIndex((b: any) => {
+            if (b.type !== 'text') return false;
+            const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+            return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === clientName.toLowerCase();
+          });
+          if (clientHeaderIndex === -1) {
+            blocks.push({
+              id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
+              type: 'text',
+              content: `<h2>${clientName}</h2>`
+            });
+            clientHeaderIndex = blocks.length - 1;
+          }
+
+          let insertClientIndex = clientHeaderIndex + 1;
+          while (insertClientIndex < blocks.length) {
+            const nextBlock = blocks[insertClientIndex];
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+              break;
+            }
+            insertClientIndex++;
+          }
+
+          while (insertClientIndex > clientHeaderIndex + 1) {
+            const prevBlock = blocks[insertClientIndex - 1];
+            if (prevBlock.type === 'text' && (prevBlock.content === '<p></p>' || prevBlock.content === '<p><br></p>' || prevBlock.content.trim() === '')) {
+              insertClientIndex--;
+            } else {
+              break;
+            }
+          }
+
+          blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
           
           const newSubtaskBlock = {
-            id: `blk-st-${Date.now()}-${subtask.id}`,
+            id: `blk-st-${Date.now()}-${subtask.id}-c`,
             type: "text",
             content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
           };
+          blocks.splice(insertClientIndex + 1, 0, newSubtaskBlock);
+
+          if (insertClientIndex + 2 < blocks.length) {
+            const nextBlock = blocks[insertClientIndex + 2];
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+              blocks.splice(insertClientIndex + 2, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+            }
+          } else if (insertClientIndex + 1 === blocks.length - 1) {
+             blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+          }
+
+          // 2. Insert into New Tasks section
+          let newTasksHeaderIndex = blocks.findIndex((b: any) => {
+            if (b.type !== 'text') return false;
+            const stripped = b.content.replace(/<[^>]+>/g, '').trim();
+            return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === 'new tasks';
+          });
+          if (newTasksHeaderIndex === -1) {
+            blocks.push({
+              id: `blk-h-${Date.now()}-NewTasks`,
+              type: 'text',
+              content: '<h3>New Tasks</h3>'
+            });
+            newTasksHeaderIndex = blocks.length - 1;
+          }
+
+          let insertNewTasksIndex = newTasksHeaderIndex + 1;
+          while (insertNewTasksIndex < blocks.length) {
+            const nextBlock = blocks[insertNewTasksIndex];
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+              break;
+            }
+            insertNewTasksIndex++;
+          }
+
+          blocks.splice(insertNewTasksIndex, 0, getNewTaskBlock('n'));
           
-          blocks.push(newTaskBlock);
-          blocks.push(newSubtaskBlock);
+          const newSubtaskBlockN = {
+            id: `blk-st-${Date.now()}-${subtask.id}-n`,
+            type: "text",
+            content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
+          };
+          blocks.splice(insertNewTasksIndex + 1, 0, newSubtaskBlockN);
 
           await prisma.page.update({
             where: { id: todayPage.id },

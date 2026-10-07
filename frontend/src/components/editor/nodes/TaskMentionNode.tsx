@@ -456,14 +456,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           {label}
         </span>
         
-        {resolvedListName && (
-          <span 
-            className="inline-flex items-center justify-center px-1.5 py-[2px] rounded text-[9px] font-bold uppercase tracking-wider text-zinc-500 bg-zinc-200 dark:bg-zinc-800/80 dark:text-zinc-400 mr-1.5 align-middle border border-zinc-300 dark:border-zinc-700"
-            title="Client / List Name"
-          >
-            {resolvedListName}
-          </span>
-        )}
+
 
         <span
           ref={descTriggerRef}

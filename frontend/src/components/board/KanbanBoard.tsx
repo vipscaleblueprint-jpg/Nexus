@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -21,7 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
-import { Plus, ChevronDown, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { canUserMoveTask, canUserEditTask } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
@@ -29,6 +29,8 @@ import { toast } from '@/lib/toast';
 const EMPTY_ARRAY: any[] = [];
 
 interface Props {
+  /** Collapsed groups/columns are remembered per list (client board). */
+  listId?: string;
   tasks: Task[];
   onTaskMove: (taskId: string, newStatus: string) => void;
   onTaskMovePreview?: (taskId: string, newStatus: string) => void;
@@ -129,9 +131,6 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
       setCollapsedColumns((prev: any) => {
         const next = { ...prev };
         statusesInRun.forEach((s: string) => { next[s] = false; });
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next)); } catch { }
-        }
         return next;
       });
     } else {
@@ -219,7 +218,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   );
 });
 
-export function KanbanBoard({ tasks, onTaskMove,
+export function KanbanBoard({ listId, tasks, onTaskMove,
   onTaskMovePreview,
   onTaskReorder,
   onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete, onDeleteGroup, onRenameGroup, onStatusReorder }: Props) {
@@ -302,24 +301,30 @@ export function KanbanBoard({ tasks, onTaskMove,
       }
     }
   }, [tasks, listStatuses]);
-  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('nexus_board_collapsed_categories');
-        if (saved) return JSON.parse(saved);
-      } catch { }
-    }
-    return {};
-  });
-  const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('nexus_board_collapsed_columns');
-        if (saved) return JSON.parse(saved);
-      } catch { }
-    }
-    return {};
-  });
+  // Keyed by group name / status name (group ids are regenerated on every mount).
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+  const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>({});
+  const collapseStorageKey = `nexus_board_collapsed_${listId || 'default'}`;
+  const loadedCollapseKeyRef = useRef<string | null>(null);
+
+  // Restore this board's collapsed groups/columns before paint so there's no flash.
+  useLayoutEffect(() => {
+    let saved: { categories?: Record<string, boolean>; columns?: Record<string, boolean> } = {};
+    try {
+      saved = JSON.parse(localStorage.getItem(collapseStorageKey) || '{}');
+    } catch { }
+    setCollapsedCategories(saved.categories || {});
+    setCollapsedColumns(saved.columns || {});
+    loadedCollapseKeyRef.current = collapseStorageKey;
+  }, [collapseStorageKey]);
+
+  useEffect(() => {
+    if (loadedCollapseKeyRef.current !== collapseStorageKey) return;
+    try {
+      localStorage.setItem(collapseStorageKey, JSON.stringify({ categories: collapsedCategories, columns: collapsedColumns }));
+    } catch { }
+  }, [collapseStorageKey, collapsedCategories, collapsedColumns]);
+
   const [isAddingGroup, setIsAddingGroup] = useState(false);
   const [newGroup, setNewGroup] = useState('');
   const [addingStatusToGroup, setAddingStatusToGroup] = useState<string | null>(null);
@@ -344,30 +349,20 @@ export function KanbanBoard({ tasks, onTaskMove,
   }, [workspaceRoles]);
 
   const toggleCategory = (categoryId: string) => {
+    const cat = categorizedColumns.find(c => c.id === categoryId);
+    const key = cat?.title ?? categoryId;
     setCollapsedCategories((prev) => {
-      const isCurrentlyCollapsed = prev[categoryId];
-      const next = { ...prev, [categoryId]: !isCurrentlyCollapsed };
-
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('nexus_board_collapsed_categories', JSON.stringify(next));
-        } catch { }
-      }
+      const isCurrentlyCollapsed = prev[key];
+      const next = { ...prev, [key]: !isCurrentlyCollapsed };
 
       // If we are uncollapsing the category,ALSO uncollapse all columns inside it
       if (isCurrentlyCollapsed) {
-        const cat = categorizedColumns.find(c => c.id === categoryId);
         if (cat) {
           setCollapsedColumns(prevCols => {
             const nextCols = { ...prevCols };
             cat.statuses.forEach((status: string) => {
               nextCols[status] = false;
             });
-            if (typeof window !== 'undefined') {
-              try {
-                localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(nextCols));
-              } catch { }
-            }
             return nextCols;
           });
         }
@@ -497,11 +492,6 @@ export function KanbanBoard({ tasks, onTaskMove,
   const toggleColumnCollapse = (status: string, categoryId: string) => {
     setCollapsedColumns((prev) => {
       const next = { ...prev, [status]: !prev[status] };
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('nexus_board_collapsed_columns', JSON.stringify(next));
-        } catch { }
-      }
 
       // Check if newly collapsed column causes category to auto-collapse
       if (next[status]) {
@@ -510,12 +500,7 @@ export function KanbanBoard({ tasks, onTaskMove,
           const allCollapsed = cat.statuses.every((s: string) => next[s]);
           if (allCollapsed) {
             setCollapsedCategories((pc) => {
-              const pcNext = { ...pc, [categoryId]: true };
-              if (typeof window !== 'undefined') {
-                try {
-                  localStorage.setItem('nexus_board_collapsed_categories', JSON.stringify(pcNext));
-                } catch { }
-              }
+              const pcNext = { ...pc, [cat.title]: true };
               return pcNext;
             });
           }
@@ -944,7 +929,7 @@ export function KanbanBoard({ tasks, onTaskMove,
             strategy={horizontalListSortingStrategy}
           >
             {categorizedColumns.map((category) => {
-              const isCollapsed = Boolean(collapsedCategories[category.id]);
+              const isCollapsed = Boolean(collapsedCategories[category.title]);
               const totalCategoryTasks = category.statuses.reduce(
                 (sum: number, s: string) => sum + (tasksByStatus[s]?.length || 0),
                 0
@@ -1054,7 +1039,7 @@ export function KanbanBoard({ tasks, onTaskMove,
                                   <span className="whitespace-nowrap text-zinc-300">{category.title}</span>
                                   <span className="opacity-60 shrink-0 text-zinc-400">({totalCategoryTasks})</span>
                                   <div className="p-0.5 ml-1 rounded transition-all opacity-0 group-hover:opacity-100 hover:bg-zinc-700/50">
-                                    <ChevronDown className="w-3 h-3 shrink-0 text-zinc-400" />
+                                    <ChevronLeft className="w-3 h-3 shrink-0 text-zinc-400" />
                                   </div>
                                 </div>
                               )}

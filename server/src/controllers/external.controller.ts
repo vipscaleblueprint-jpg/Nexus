@@ -475,9 +475,14 @@ export async function createTask(req: Request, res: Response) {
           
           blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
           
-          // Ensure a trailing spacer if we created a new client section
-          if (insertClientIndex === blocks.length - 1) {
-             blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+          // Ensure a trailing spacer below the new task if there isn't one
+          if (insertClientIndex + 1 < blocks.length) {
+            const nextBlock = blocks[insertClientIndex + 1];
+            if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+              blocks.splice(insertClientIndex + 1, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+            }
+          } else if (insertClientIndex === blocks.length - 1) {
+            blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
           }
 
           // 2. Insert into New Tasks section
@@ -617,7 +622,13 @@ export async function updateTask(req: Request, res: Response) {
               
               blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
               
-              if (insertClientIndex === blocks.length - 1) {
+              // Ensure a trailing spacer below the new task if there isn't one
+              if (insertClientIndex + 1 < blocks.length) {
+                const nextBlock = blocks[insertClientIndex + 1];
+                if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
+                  blocks.splice(insertClientIndex + 1, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+                }
+              } else if (insertClientIndex === blocks.length - 1) {
                  blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
               }
 

@@ -4,7 +4,7 @@ import { memo, useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { Check, CheckSquare, Calendar, User, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
+import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X } from 'lucide-react';
 import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -38,9 +38,9 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
   }, [initialTask]);
 
   const [isDescOpen, setIsDescOpen] = useState(false);
-  const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'date' | 'priority' | null>(null);
+  const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'teamRole' | 'date' | 'priority' | null>(null);
 
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists } = useAppStore();
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles } = useAppStore();
 
   const orderedListStatuses = useMemo(() => {
     const sortedInternals = [...(listStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -193,9 +193,27 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
   };
   const statusTriggerRef = useRef<HTMLDivElement>(null);
   const assigneeTriggerRef = useRef<HTMLDivElement>(null);
+  const teamRoleTriggerRef = useRef<HTMLDivElement>(null);
   const dateTriggerRef = useRef<HTMLDivElement>(null);
   const priorityTriggerRef = useRef<HTMLDivElement>(null);
   const descTriggerRef = useRef<HTMLDivElement>(null);
+
+  const handleTeamRoleChange = async (roleName: string | null) => {
+    if (!currentUser) return;
+    setTask(prev => ({ ...prev, teamAssignAccessRole: roleName }));
+    closeDropdown();
+    try {
+      if (isSubtask) {
+        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { teamAssignAccessRole: roleName });
+      } else {
+        await tasksApi.updateTask(task.id, { teamAssignAccessRole: roleName });
+      }
+      toast.success(roleName ? `Team role assigned` : 'Team role cleared');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update team role');
+      setTask(initialTask);
+    }
+  };
 
   const closeDropdown = () => setOpenDropdown(null);
 
@@ -402,79 +420,119 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           </div>
         )}
 
-        {/* Assignees */}
-        <div className="relative flex items-center group/assignee">
-          <div
-            ref={assigneeTriggerRef}
-            className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 max-w-[150px]`}
-            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
-          >
-            <User className="w-3.5 h-3.5 shrink-0" />
-            {assignees.length > 0 ? (
-              <div className="flex items-center -space-x-1 overflow-hidden">
-                {assignees.slice(0, 2).map((a: any) => (
-                  <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
-                    {a.avatarUrl ? (
-                      <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
-                    ) : (
-                      <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
-                        {(a.name || 'U').charAt(0).toUpperCase()}
-                      </div>
-                    )}
+        {/* Team Role & Assignees */}
+        <div className="flex items-center gap-4">
+          {/* Team Role Assign */}
+          <div className="relative flex items-center group/teamrole">
+            <div
+              ref={teamRoleTriggerRef}
+              className={`flex items-center gap-2 text-[11px] bg-zinc-800/80 border border-zinc-700/50 hover:bg-zinc-800 hover:border-zinc-600 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-zinc-400 max-w-[150px]`}
+              onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'teamRole' ? null : 'teamRole'); }}
+            >
+              <Users className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{('teamAssignAccessRole' in task && task.teamAssignAccessRole) ? task.teamAssignAccessRole : '-'}</span>
+            </div>
+            {openDropdown === 'teamRole' && (
+              <PortalDropdown triggerRef={teamRoleTriggerRef} onClose={closeDropdown}>
+                <div className="w-48 max-h-64 overflow-y-auto custom-scrollbar">
+                  <div className="px-2 py-1.5 text-[11px] text-zinc-500 font-semibold uppercase sticky top-0 bg-background z-10">Assign Role</div>
+                  {workspaceRoles?.map(role => (
+                    <div
+                      key={role.id}
+                      className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
+                      onClick={() => handleTeamRoleChange(role.name)}
+                    >
+                      <span className="text-xs truncate flex-1 text-zinc-300">
+                        {role.name}
+                      </span>
+                      {('teamAssignAccessRole' in task && task.teamAssignAccessRole === role.name) && <CheckSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                    </div>
+                  ))}
+                  <div
+                    className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors mt-1 border-t border-zinc-800/50"
+                    onClick={() => handleTeamRoleChange(null)}
+                  >
+                    <span className="text-xs truncate flex-1 text-zinc-500 italic">Clear Role</span>
                   </div>
-                ))}
-                {assignees.length > 2 && (
-                  <div className="relative ring-1 ring-[#18181b] rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
-                    +{assignees.length - 2}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <span>-</span>
+                </div>
+              </PortalDropdown>
             )}
           </div>
-          {assignees.length > 0 && (
+
+          {/* Assignees */}
+          <div className="relative flex items-center group/assignee">
             <div
-              className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
-              onClick={(e) => { e.stopPropagation(); handleClearAssignees(); }}
-              title="Remove all assignees"
+              ref={assigneeTriggerRef}
+              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 max-w-[150px]`}
+              onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
             >
-              <X className="w-3 h-3" />
+              <User className="w-3.5 h-3.5 shrink-0" />
+              {assignees.length > 0 ? (
+                <div className="flex items-center -space-x-1 overflow-hidden">
+                  {assignees.slice(0, 2).map((a: any) => (
+                    <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
+                      {a.avatarUrl ? (
+                        <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
+                          {(a.name || 'U').charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {assignees.length > 2 && (
+                    <div className="relative ring-1 ring-[#18181b] rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
+                      +{assignees.length - 2}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <span>-</span>
+              )}
             </div>
-          )}
-          {openDropdown === 'assignee' && (
-            <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
-              <div className="w-48 max-h-64 overflow-y-auto custom-scrollbar">
-                <div className="px-2 py-1.5 text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800">Assign To</div>
-                {assignableUsers.length > 0 ? (
-                  assignableUsers.map(user => {
-                    const isAssigned = assignees.some((a: any) => a.id === user.id);
-                    return (
-                      <div
-                        key={user.id}
-                        className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
-                        onClick={() => handleAssigneeToggle(user)}
-                      >
-                        {user.avatarUrl ? (
-                          <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
-                        ) : (
-                          <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
-                            {(user.name || 'U').charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <span className={`text-xs truncate flex-1 ${isAssigned ? 'text-indigo-400 font-semibold' : 'text-zinc-300'}`}>
-                          {user.name}
-                        </span>
-                        {isAssigned && <CheckSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 italic">Loading assignees...</div>
-                )}
+            {assignees.length > 0 && (
+              <div
+                className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
+                onClick={(e) => { e.stopPropagation(); handleClearAssignees(); }}
+                title="Remove all assignees"
+              >
+                <X className="w-3 h-3" />
               </div>
-            </PortalDropdown>
-          )}
+            )}
+            {openDropdown === 'assignee' && (
+              <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
+                <div className="w-48 max-h-64 overflow-y-auto custom-scrollbar">
+                  <div className="px-2 py-1.5 text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase sticky top-0 bg-zinc-800 z-10">Assign To</div>
+                  {assignableUsers.length > 0 ? (
+                    assignableUsers.map(user => {
+                      const isAssigned = assignees.some((a: any) => a.id === user.id);
+                      return (
+                        <div
+                          key={user.id}
+                          className="px-2 py-1.5 flex items-center gap-2 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors"
+                          onClick={() => handleAssigneeToggle(user)}
+                        >
+                          {user.avatarUrl ? (
+                            <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
+                              {(user.name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <span className={`text-xs truncate flex-1 ${isAssigned ? 'text-indigo-400 font-semibold' : 'text-zinc-300'}`}>
+                            {user.name}
+                          </span>
+                          {isAssigned && <CheckSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 italic">Loading assignees...</div>
+                  )}
+                </div>
+              </PortalDropdown>
+            )}
+          </div>
         </div>
 
         {/* Due Date */}

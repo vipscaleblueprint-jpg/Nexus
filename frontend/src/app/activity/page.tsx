@@ -364,7 +364,7 @@ export default function ActivityPage() {
                           <div className="flex items-center gap-3 mt-3">
                             <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1.5">
                               <Clock className="size-3.5" />
-                              {format(new Date(log.createdAt), 'h:mm a')}
+                              {format(new Date(log.createdAt), 'MMM d, h:mm a')}
                             </span>
                             {(log.entity?.toLowerCase() === 'task' || log.entity?.toLowerCase() === 'subtask') && (
                               <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-medium text-zinc-300">
@@ -457,7 +457,7 @@ export default function ActivityPage() {
                             <div className="flex items-center gap-3">
                               <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1.5">
                                 <Clock className="size-3.5" />
-                                {format(new Date(n.createdAt), 'h:mm a')}
+                                {format(new Date(n.createdAt), 'MMM d, h:mm a')}
                               </span>
                               {n.task && (
                                 <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-medium text-zinc-300">

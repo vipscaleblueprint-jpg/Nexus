@@ -112,7 +112,7 @@ export function NotificationBell() {
         duration: 0.8,
         repeat: Infinity,
         repeatDelay: 3,
-        ease: "easeInOut"
+        ease: "easeInOut" as const
       }
     },
     still: {

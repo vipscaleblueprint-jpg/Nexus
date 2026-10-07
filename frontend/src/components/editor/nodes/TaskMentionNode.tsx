@@ -513,7 +513,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.5 }}
                     transition={{ duration: 0.2 }}
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 border-white dark:border-[#1a1a1a] ${i > 0 ? '-ml-2' : ''} shadow-sm relative ${bgColor}`}
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 border-white dark:border-zinc-900 ${i > 0 ? '-ml-2' : ''} shadow-sm relative ${bgColor}`}
                     style={{ zIndex: 10 - i }}
                     title={role}
                   >
@@ -551,7 +551,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.5 }}
                   transition={{ duration: 0.2 }}
-                  className="w-5 h-5 rounded-full overflow-hidden border-2 border-white dark:border-[#1a1a1a] z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center relative shadow-sm"
+                  className="w-5 h-5 rounded-full overflow-hidden border-2 border-white dark:border-zinc-900 z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center relative shadow-sm"
                   style={{ zIndex: 10 - i, marginLeft: i > 0 ? '-4px' : '0' }}
                 >
                   {user.avatarUrl ? (

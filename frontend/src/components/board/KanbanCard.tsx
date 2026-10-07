@@ -437,7 +437,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             {openDropdown === 'teamRole' && (
               <PortalDropdown triggerRef={teamRoleTriggerRef} onClose={closeDropdown}>
                 <div className="w-52 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
-                  <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-[#18181b] z-10">Assign Role</div>
+                  <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-zinc-900 z-10">Assign Role</div>
                   {workspaceRoles?.map(role => {
                     const isSelected = ('teamAssignAccessRole' in task && task.teamAssignAccessRole === role.name);
                     return (
@@ -508,7 +508,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             {openDropdown === 'assignee' && (
               <PortalDropdown triggerRef={assigneeTriggerRef} onClose={closeDropdown}>
                 <div className="w-52 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
-                  <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-[#18181b] z-10">Assign To</div>
+                  <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-zinc-900 z-10">Assign To</div>
                   {assignableUsers.length > 0 ? (
                     assignableUsers.map(user => {
                       const isAssigned = assignees.some((a: any) => a.id === user.id);
@@ -580,7 +580,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           {openDropdown === 'priority' && (
             <PortalDropdown triggerRef={priorityTriggerRef} onClose={closeDropdown}>
               <div className="w-44 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
-                <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-[#18181b] z-10">Priority</div>
+                <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-zinc-900 z-10">Priority</div>
                 {(['URGENT', 'HIGH', 'MEDIUM', 'LOW']).map(p => {
                   const isSelected = ('priority' in task && task.priority === p);
                   return (

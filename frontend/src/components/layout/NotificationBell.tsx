@@ -137,7 +137,7 @@ export function NotificationBell() {
           <motion.div 
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 border-2 border-white dark:border-[#09090b] flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
+            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 border-2 border-white dark:border-zinc-950 flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
           >
             {unreadCount > 99 ? '99+' : unreadCount}
           </motion.div>
@@ -151,7 +151,7 @@ export function NotificationBell() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
-            className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800/80 rounded-xl shadow-2xl z-[200] overflow-hidden origin-top-right flex flex-col max-h-[85vh]"
+            className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800/80 rounded-xl shadow-2xl z-[200] overflow-hidden origin-top-right flex flex-col max-h-[85vh]"
           >
             <div className="p-4 border-b border-zinc-100 dark:border-zinc-800/60 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-900/50">
               <div className="flex items-center gap-2">
@@ -173,7 +173,7 @@ export function NotificationBell() {
               )}
             </div>
 
-            <div className="overflow-y-auto overflow-x-hidden flex-1 p-2 space-y-1 bg-white dark:bg-[#18181b]">
+            <div className="overflow-y-auto overflow-x-hidden flex-1 p-2 space-y-1 bg-white dark:bg-zinc-900">
               {isLoading && notifications.length === 0 ? (
                 <div className="p-8 text-center text-zinc-500 dark:text-zinc-400 text-sm flex flex-col items-center gap-2">
                   <div className="w-5 h-5 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
@@ -233,7 +233,7 @@ export function NotificationBell() {
                           <img 
                             src={n.actor.imageUrl || n.actor.avatarUrl || ''} 
                             alt="" 
-                            className="w-9 h-9 rounded-full object-cover ring-2 ring-white dark:ring-[#18181b]" 
+                            className="w-9 h-9 rounded-full object-cover ring-2 ring-white dark:ring-zinc-900" 
                             onError={(e) => {
                               e.currentTarget.style.display = 'none';
                               if (e.currentTarget.nextElementSibling) {
@@ -243,13 +243,13 @@ export function NotificationBell() {
                           />
                         ) : null}
                         <div 
-                          className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xs font-bold ring-2 ring-white dark:ring-[#18181b]"
+                          className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xs font-bold ring-2 ring-white dark:ring-zinc-900"
                           style={{ display: (n.actor?.imageUrl || n.actor?.avatarUrl) ? 'none' : 'flex' }}
                         >
                           {n.actor?.name?.substring(0, 2).toUpperCase() || '?'}
                         </div>
                         
-                        <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full ${iconBg} ${iconColor} flex items-center justify-center ring-2 ring-white dark:ring-[#18181b]`}>
+                        <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full ${iconBg} ${iconColor} flex items-center justify-center ring-2 ring-white dark:ring-zinc-900`}>
                           <IconToUse className="w-2.5 h-2.5" />
                         </div>
                       </div>
@@ -313,7 +313,7 @@ export function NotificationBell() {
                   setIsOpen(false);
                   router.push('/activity');
                 }}
-                className="w-full py-2 px-4 rounded-lg bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-700 text-sm font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors shadow-sm"
+                className="w-full py-2 px-4 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-sm font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors shadow-sm"
               >
                 View All Activity
               </button>

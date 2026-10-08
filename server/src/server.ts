@@ -29,6 +29,8 @@ import activityRoutes from './routes/activity.routes';
 import './workers/task.worker';
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
 import './workers/dailyRollover.worker';
+import { toolsSyncQueue } from './queues/toolsSync.queue';
+import './workers/toolsSync.worker';
 
 const app = express();
 const server = http.createServer(app);
@@ -40,6 +42,12 @@ const server = http.createServer(app);
       pattern: '0 0 * * *', // Every day at midnight
       tz: 'Asia/Singapore'
     }
+  });
+
+  // Two-way user sync with the tools (VIPScale), every 10 minutes.
+  await toolsSyncQueue.add('reconcile', {}, {
+    repeat: { every: 10 * 60 * 1000 },
+    jobId: 'tools-sync-reconcile',
   });
 })();
 

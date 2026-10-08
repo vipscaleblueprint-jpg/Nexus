@@ -3,6 +3,7 @@ import { PrismaClient, Priority } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
+import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 
 const prisma = new PrismaClient();
 
@@ -182,84 +183,47 @@ export const syncClients = async (req: Request, res: Response) => {
   }
 };
 
-// VIPScale's assistant.employment_type has one more value ("regular") than Nexus's
-// EmploymentType enum, so it needs an explicit mapping rather than a direct cast.
-const EMPLOYMENT_TYPE_MAP: Record<string, 'FULL_TIME' | 'PART_TIME' | 'INTERN' | 'CONTRACTOR'> = {
-  'full-time': 'FULL_TIME',
-  'part-time': 'PART_TIME',
-  'intern': 'INTERN',
-  'regular': 'CONTRACTOR',
-};
-
-function toBigIntOrNull(value: unknown): bigint | null {
-  if (value === null || value === undefined || value === '') return null;
-  try {
-    return BigInt(Math.trunc(Number(value)));
-  } catch {
-    return null;
-  }
-}
-
+// Kept at this path because VIPScale and the dev-only button still call it; it now
+// runs the safe two-way reconcile instead of overwriting Nexus with the tools data.
 export const syncUsers = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
 
   try {
-    const isDev = process.env.NODE_ENV === 'development';
-    const toolsUrl = process.env.TOOLS_VIP_URL || (isDev ? 'http://localhost:3001' : 'https://tools.vipscaleph.com');
-    const response = await fetch(`${toolsUrl}/api/assistants`, {
-      headers: {
-        'x-api-key': process.env.VIPSCALE_API_KEY || ''
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch assistants from tools.vip: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    if (!data.success || !data.assistants) {
-      throw new Error('Invalid response format from tools.vip assistants API');
-    }
-
-    const createdUsers: string[] = [];
-    const updatedUsers: string[] = [];
-
-    for (const assistant of data.assistants) {
-      if (!assistant.email) continue;
-
-      const fields = {
-        name: assistant.name || assistant.email,
-        dailySheetUrl: assistant.daily_schedule_sheet ?? null,
-        starRating: assistant.star != null ? Math.round(Number(assistant.star)) : 1,
-        employmentType: EMPLOYMENT_TYPE_MAP[assistant.employment_type] || 'FULL_TIME',
-        isActive: assistant.is_active ?? true,
-        roles: Array.isArray(assistant.roles) ? assistant.roles : [],
-        credits: toBigIntOrNull(assistant.credits),
-      };
-
-      const existing = await prisma.user.findUnique({ where: { email: assistant.email } });
-
-      if (existing) {
-        await prisma.user.update({ where: { id: existing.id }, data: fields });
-        updatedUsers.push(assistant.email);
-      } else {
-        const password = await bcrypt.hash(Math.random().toString(36), 10);
-        await prisma.user.create({ data: { ...fields, email: assistant.email, password } });
-        createdUsers.push(assistant.email);
-      }
-    }
-
-    await invalidateCache('users:all');
-
+    const summary = await reconcileWithTools();
     return res.status(200).json({
       success: true,
       message: 'Users synced successfully',
-      syncedCount: data.assistants.length,
-      newUsersCreated: createdUsers,
-      updatedUsers
+      syncedCount: summary.total,
+      newUsersCreated: summary.created,
+      updatedUsers: summary.updated,
+      skippedPending: summary.skippedPending,
     });
   } catch (error: any) {
     console.error('Failed to sync users:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// Called by the Supabase trigger on public.assistant whenever a synced column
+// changes. Only the reported columns are applied, so an unrelated edit in the
+// tools can't overwrite a newer Nexus value.
+export const assistantChanged = async (req: Request, res: Response) => {
+  if (!requireApiKey(req, res)) return;
+
+  try {
+    const { record, changed, old_email } = req.body || {};
+    if (!record?.email) {
+      return res.status(400).json({ error: 'record.email is required' });
+    }
+
+    const fields = Array.isArray(changed)
+      ? SYNCED_ASSISTANT_FIELDS.filter((f) => changed.includes(f))
+      : SYNCED_ASSISTANT_FIELDS;
+
+    const result = await applyAssistantToNexus(record, fields, old_email);
+    return res.status(200).json({ success: true, result });
+  } catch (error: any) {
+    console.error('Failed to apply assistant change:', error);
     return res.status(500).json({ error: error.message });
   }
 };

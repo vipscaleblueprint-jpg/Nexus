@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   listTasks,
   getTask,
+  batchGetTasks,
   createTask,
   updateTask,
   deleteTask,
@@ -29,6 +30,7 @@ import {
 import { idParams, idAndSubtaskIdParams, idAndChecklistIdParams, idChecklistIdItemIdParams, idAndCommentIdParams, validate } from '../validation';
 import {
   attachmentUrlSchema,
+  batchGetTasksSchema,
   createTaskSchema,
   listTasksQuery,
   moveTaskSchema,
@@ -41,6 +43,7 @@ export const taskRouter = Router();
 taskRouter.get('/live-blocks', getLiveBlocksData);
 taskRouter.get('/', validate({ query: listTasksQuery }), listTasks);
 taskRouter.post('/', validate({ body: createTaskSchema }), createTask);
+taskRouter.post('/batch', validate({ body: batchGetTasksSchema }), batchGetTasks);
 
 // Specific paths before '/:id' so they are not swallowed by the param route.
 taskRouter.patch('/:id/move', optionalAuthenticateToken, validate({ params: idParams, body: moveTaskSchema }), moveTask);

@@ -29,6 +29,8 @@ import {
   DragStartEvent,
   DragOverlay,
   defaultDropAnimationSideEffects,
+  useDroppable,
+  useDndContext,
 } from '@dnd-kit/core';
 import {
   arrayMove,
@@ -38,6 +40,7 @@ import {
   useSortable
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { toast } from '@/lib/toast';
 
 import {
   Home,
@@ -225,6 +228,16 @@ function SortableWrapper({ id, children, disabled = false }: { id: string; child
       {children}
     </div>
   );
+}
+
+// Makes a folder/space header a drop target for moving boards (lists) and docs into it.
+// Only enabled while a list/doc is being dragged, so folder reordering is unaffected.
+function useHeaderDropTarget(dropId: string) {
+  const { active } = useDndContext();
+  const activeId = active ? String(active.id) : '';
+  const isMovable = activeId.includes('-list-') || activeId.includes('-doc-');
+  const { setNodeRef, isOver } = useDroppable({ id: dropId, disabled: !isMovable });
+  return { setNodeRef, isDropTarget: isMovable && isOver };
 }
 
 function ActiveDragItem({ id, spaces }: { id: string; spaces: Space[] }) {
@@ -446,6 +459,88 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     return { parentType, parentId, itemType, itemId, parentKey: `${parentType}-${parentId}` };
   };
 
+  // 'root-space' is a virtual space for items without a space — it maps to spaceId null in the DB
+  const toRealSpaceId = (spaceId: string | null) => (!spaceId || spaceId === 'root-space' ? null : spaceId);
+
+  const walkFolders = (folders: any[] | undefined, fn: (f: any) => void) => {
+    (folders || []).forEach(f => { fn(f); walkFolders(f.subfolders, fn); });
+  };
+
+  const findFolderWithSpace = (spacesArr: any[], folderId: string): { folder: any; spaceId: string | null } | null => {
+    for (const s of spacesArr) {
+      let found: any = null;
+      walkFolders(s.folders, f => { if (!found && f.id === folderId) found = f; });
+      if (found) return { folder: found, spaceId: toRealSpaceId(s.id) };
+    }
+    return null;
+  };
+
+  type DropTarget = { folderId: string | null; spaceId: string | null };
+
+  // Works out which folder/space a board or doc was dropped into
+  const resolveDropTarget = (overStr: string, activeParentKey: string): DropTarget | null => {
+    if (overStr.startsWith('folderdrop-')) {
+      const folderId = overStr.slice('folderdrop-'.length);
+      const found = findFolderWithSpace(spaces, folderId);
+      return found ? { folderId, spaceId: found.spaceId } : null;
+    }
+    if (overStr.startsWith('spacedrop-')) {
+      return { folderId: null, spaceId: toRealSpaceId(overStr.slice('spacedrop-'.length)) };
+    }
+    const over = parseSortableId(overStr);
+    if (!over.itemType) return null;
+    // Dropped onto a folder row in a different container → move inside that folder
+    if (over.itemType === 'folder' && over.parentKey !== activeParentKey) {
+      const found = findFolderWithSpace(spaces, over.itemId);
+      return found ? { folderId: over.itemId, spaceId: found.spaceId } : null;
+    }
+    // Dropped onto an item → move into that item's container
+    if (over.parentType === 'folder') {
+      const found = findFolderWithSpace(spaces, over.parentId);
+      return found ? { folderId: over.parentId, spaceId: found.spaceId } : null;
+    }
+    if (over.parentType === 'space') return { folderId: null, spaceId: toRealSpaceId(over.parentId) };
+    return null;
+  };
+
+  const moveItemToContainer = async (itemType: 'list' | 'doc', itemId: string, target: DropTarget) => {
+    const key = itemType === 'list' ? 'lists' : 'docs';
+    const newSpaces = JSON.parse(JSON.stringify(spaces));
+
+    // Optimistic update: pluck the item from wherever it is…
+    let moved: any = null;
+    const pluck = (container: any) => {
+      const idx = container?.[key]?.findIndex((x: any) => x.id === itemId) ?? -1;
+      if (idx !== -1) moved = container[key].splice(idx, 1)[0];
+    };
+    newSpaces.forEach((s: any) => { pluck(s); walkFolders(s.folders, pluck); });
+    if (!moved) return;
+
+    // …and append it to the end of the target container
+    const container = target.folderId
+      ? findFolderWithSpace(newSpaces, target.folderId)?.folder
+      : newSpaces.find((s: any) => s.id === (target.spaceId ?? 'root-space'));
+    const siblings = container
+      ? [...(container.subfolders || container.folders || []), ...(container.lists || []), ...(container.docs || [])]
+      : [];
+    const order = siblings.reduce((max: number, x: any) => Math.max(max, x.order || 0), -1) + 1;
+    if (container) {
+      container[key] = [...(container[key] || []), { ...moved, folderId: target.folderId, spaceId: target.spaceId, order }];
+    }
+    useAppStore.setState({ spaces: newSpaces });
+
+    try {
+      const payload = [{ id: itemId, order, folderId: target.folderId, spaceId: target.spaceId }];
+      if (itemType === 'list') await spacesApi.reorderLists(payload);
+      else await spacesApi.reorderDocs(payload);
+      setTimeout(() => { globalLoadSpaces(); }, 1500);
+    } catch (err) {
+      console.error('Failed to move item', err);
+      toast.error(`Failed to move ${itemType === 'list' ? 'board' : 'doc'}`);
+      globalLoadSpaces();
+    }
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveId(null);
     const { active, over } = event;
@@ -456,8 +551,24 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
     const activeStr = String(active.id);
     let overStr = String(over.id);
-    
+
     const activeParsed = parseSortableId(activeStr);
+
+    // Boards (lists) and docs can be moved into another folder/space
+    if (activeParsed.itemType === 'list' || activeParsed.itemType === 'doc') {
+      const target = resolveDropTarget(overStr, activeParsed.parentKey);
+      const currentFolderId = activeParsed.parentType === 'folder' ? activeParsed.parentId : null;
+      const currentSpaceId = activeParsed.parentType === 'space' ? toRealSpaceId(activeParsed.parentId) : null;
+      const isSameContainer = target && (currentFolderId
+        ? target.folderId === currentFolderId
+        : target.folderId === null && target.spaceId === currentSpaceId);
+      if (target && !isSameContainer) {
+        await moveItemToContainer(activeParsed.itemType, activeParsed.itemId, target);
+        return;
+      }
+    }
+    if (overStr.startsWith('folderdrop-') || overStr.startsWith('spacedrop-')) return;
+
     let overParsed = parseSortableId(overStr);
 
     if (activeParsed.parentKey !== overParsed.parentKey) {
@@ -929,10 +1040,11 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
     ...(space.lists?.filter(l => !l.folderId).map(l => ({ ...l, itemType: 'list' })) || []),
     ...(space.docs?.filter(d => !d.folderId && d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
   ].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`spacedrop-${space.id}`);
 
   return (
     <div className="space-y-px text-xs">
-      <div className="group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors">
+      <div ref={setDropRef} className={`group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors ${isDropTarget ? 'ring-2 ring-indigo-500/60 bg-indigo-500/10' : ''}`}>
         <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 truncate flex-1 cursor-pointer">
           <div className="relative size-4 flex items-center justify-center shrink-0">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1009,6 +1121,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
     ...(folder.lists?.map(l => ({ ...l, itemType: 'list' })) || []),
     ...(folder.docs?.filter(d => d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
   ].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`folderdrop-${folder.id}`);
 
   const handleRename = async () => {
     setIsEditing(false);
@@ -1027,7 +1140,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
 
   return (
     <div className="space-y-px">
-      <div className="group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors">
+      <div ref={setDropRef} className={`group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors ${isDropTarget ? 'ring-2 ring-indigo-500/60 bg-indigo-500/10' : ''}`}>
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={() => setIsOpen(!isOpen)} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">

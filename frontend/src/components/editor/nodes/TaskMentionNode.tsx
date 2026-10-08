@@ -1,7 +1,9 @@
 import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES } from '@/components/modals/TaskDetailModal';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
-import { tasksApi, usersApi, spacesApi } from '@/api';
+import { tasksApi, usersApi } from '@/api';
+import { fetchListStatuses } from '@/lib/listStatusCache';
+import { loadTask } from '@/lib/taskBatchLoader';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { toast } from '@/lib/toast';
 import { Flag, User as UserIcon, CheckCircle2, CircleDashed, AlignLeft, Shield, Check, Users2, X } from 'lucide-react';
@@ -21,7 +23,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 const STATUS_HEX_MAP: Record<string, string> = {
-  PENDING: '#D29A2A',
+  PENDING: '#D4A02A',
   'IN PROGRESS': '#D04A7C',
   DONE: '#22c55e', 
   REVISION: '#5B6BD6',
@@ -191,7 +193,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     if (globalTask) {
       handleTaskData(globalTask);
     } else {
-      tasksApi.getTask(id).then(({ task, subtask }) => {
+      loadTask(id).then(({ task, subtask }) => {
         if (subtask && mentionType === 'subtask') {
           handleTaskData(subtask);
         } else {
@@ -209,11 +211,13 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     const cached = entry?.list || entry;
     if (cached?.statuses?.length > 0) {
       setFallbackListStatuses(cached.statuses);
-    } else {
-      spacesApi.getList(taskData.listId).then(res => {
-        if (res?.list?.statuses) setFallbackListStatuses(res.list.statuses);
-      }).catch(console.error);
+      return;
     }
+    let cancelled = false;
+    fetchListStatuses(taskData.listId).then(statuses => {
+      if (!cancelled && statuses.length > 0) setFallbackListStatuses(statuses);
+    }).catch(console.error);
+    return () => { cancelled = true; };
   }, [taskData?.listId, allLists]);
 
   useEffect(() => {
@@ -413,6 +417,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   // Resolve board/list name: prefer live taskData, fallback to stored taskListName attr
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
+  const isSubtask = mentionType === 'subtask';
+
   return (
     <NodeViewWrapper 
       as="span" 
@@ -426,7 +432,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         }
       }}
     >
-      <motion.span layout className="inline-flex items-center align-middle px-1.5 py-[2px] rounded-md hover:bg-zinc-500/10 transition-all duration-300 box-decoration-clone">
+      <motion.span layout className={`inline align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 box-decoration-clone leading-relaxed ${isSubtask ? 'bg-[#111113] hover:bg-[#111113]/80' : 'bg-[#17171A] hover:bg-[#17171A]/80'}`}>
         
         <span 
           className="inline-flex items-center justify-center shrink-0 cursor-pointer mr-1.5 align-middle transition-transform duration-300 group-hover:scale-110" 
@@ -446,7 +452,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         </span>
 
         <span 
-          className="font-medium text-sm text-zinc-700 dark:text-zinc-200 cursor-pointer border-b border-zinc-300 dark:border-zinc-700/80 hover:border-zinc-500 dark:hover:border-zinc-400 group-hover:text-black dark:group-hover:text-white pb-[1px] transition-all duration-300 mr-1.5 align-middle"
+          className={`cursor-pointer border-b border-transparent hover:border-zinc-500 pb-[1px] transition-all duration-300 mr-1.5 align-middle ${
+            isSubtask ? 'text-[13px] font-normal text-[#A1A1AA]' : 'text-[15px] font-medium text-[#F4F4F5]'
+          }`}
           onClick={(e) => {
             e.stopPropagation();
             window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id, task: taskData } }));
@@ -473,7 +481,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         {parsedStatusName && (
           <span 
             ref={statusRef}
-            className="px-2 py-[3px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 inline-flex items-center align-middle leading-none"
+            className={`px-2 py-[3px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 inline-flex items-center align-middle leading-none ${isSubtask ? 'opacity-60' : ''}`}
             style={{ backgroundColor: parsedStatusColor }}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >

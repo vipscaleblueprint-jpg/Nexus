@@ -100,6 +100,16 @@
   --color-indigo-300: #4f46e5;
 }
 
+/* Fix Tailwind Typography hardcoded #fff in dark:prose-invert */
+.theme-light .prose, .theme-light .prose-invert {
+  --tw-prose-headings: var(--foreground) !important;
+  --tw-prose-body: var(--foreground) !important;
+  --tw-prose-bold: var(--foreground) !important;
+  --tw-prose-links: var(--foreground) !important;
+  --tw-prose-code: var(--foreground) !important;
+  --tw-prose-quotes: var(--foreground) !important;
+}
+
 /* Light mode remaps --color-white to dark text. On solid accent fills
    (checkboxes, primary buttons, status pills) text/icons must stay truly white. */
 .theme-light :is(

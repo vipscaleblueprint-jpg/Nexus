@@ -753,7 +753,7 @@ export async function reorderLists(req: Request, res: Response) {
         data: updateData
       });
     }));
-    await invalidateCache('spaces:all', 'dashboard:all');
+    await invalidateCache('spaces:all', 'dashboard:all', 'lists:all');
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

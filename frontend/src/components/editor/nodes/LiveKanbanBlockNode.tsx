@@ -2,7 +2,8 @@ import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted } from
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi } from '@/api/tasks';
-import { usersApi, spacesApi } from '@/api';
+import { usersApi } from '@/api';
+import { fetchListStatuses } from '@/lib/listStatusCache';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
@@ -45,12 +46,14 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
     const cached = entry?.list || entry;
     if (cached?.statuses?.length > 0) {
       setListStatuses(cached.statuses);
-    } else {
-      // Background fetch — only if not already in cache
-      spacesApi.getList(task.listId).then(res => {
-        if (res?.list?.statuses) setListStatuses(res.list.statuses);
-      }).catch(console.error);
+      return;
     }
+    // Background fetch — shared + de-duplicated across all rows for the same list
+    let cancelled = false;
+    fetchListStatuses(task.listId).then(statuses => {
+      if (!cancelled && statuses.length > 0) setListStatuses(statuses);
+    }).catch(console.error);
+    return () => { cancelled = true; };
   }, [task.listId, allLists]);
 
   const handleDescBlur = () => {

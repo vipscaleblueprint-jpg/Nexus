@@ -38,32 +38,36 @@ export async function listLists(req: Request, res: Response) {
 // GET /api/lists/:id
 export async function getList(req: Request, res: Response) {
   try {
+    const excludeTasks = req.query.excludeTasks === 'true';
+
     const list = await prisma.list.findUnique({
       where: { id: req.params.id },
       include: {
         space: { select: { id: true, name: true, color: true } },
         folder: { select: { id: true, name: true } },
         statuses: { orderBy: { order: 'asc' } },
-        tasks: {
-          orderBy: { createdAt: 'asc' },
-          include: {
-            assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
-            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
-            creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
-            subtasks: { 
-              include: { 
-                checklists: { include: { items: true } }
-              } 
-            },
-            checklists: { include: { items: true } },
-            _count: {
-              select: {
-                comments: true,
-                attachments: true,
+        ...(excludeTasks ? {} : {
+          tasks: {
+            orderBy: { createdAt: 'asc' },
+            include: {
+              assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+              assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+              creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
+              subtasks: { 
+                include: { 
+                  checklists: { include: { items: true } }
+                } 
+              },
+              checklists: { include: { items: true } },
+              _count: {
+                select: {
+                  comments: true,
+                  attachments: true,
+                }
               }
-            }
-          },
-        },
+            },
+          }
+        })
       },
     });
 

@@ -38,6 +38,20 @@ const formatActivityMessage = (log: any) => {
       message = `changed priority ${details?.oldPriority ? `from ${details.oldPriority} ` : ''}to ${details?.newPriority}`;
       break;
     case 'ASSIGNMENT':
+      if (Array.isArray(details?.added) || Array.isArray(details?.removed)) {
+        const added: string[] = details.added || [];
+        const removed: string[] = details.removed || [];
+        if (removed.length > 1 && added.length === 0 && details.assigneeName === 'Unassigned') {
+          return `removed all assignees from ${targetName}`;
+        }
+        const parts: string[] = [];
+        if (added.length > 0) parts.push(`assigned ${added.join(', ')}`);
+        if (removed.length > 0) parts.push(`${parts.length ? 'and removed' : 'removed'} ${removed.join(', ')}`);
+        if (parts.length > 0) {
+          message = parts.join(' ');
+          break;
+        }
+      }
       if (details?.assigneeName === 'Unassigned') {
         return `removed all assignees from ${targetName}`;
       }

@@ -53,13 +53,20 @@ export default function BoardPage() {
   const router = useRouter();
   const { currentUser, setCurrentUser } = useAppStore();
 
-  // Instantly hydrate list from localStorage cache so navigating back shows content immediately
-  const cachedList = typeof window !== 'undefined' ? getListCache(id) : null;
-
-  const [list, setList] = useState<any>(cachedList);
-  const [customGroups, setCustomGroups] = useState<string[]>(cachedList?.customGroups || []);
-  const [loading, setLoading] = useState(!cachedList);
+  const [list, setList] = useState<any>(null);
+  const [customGroups, setCustomGroups] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Instantly hydrate list from localStorage cache after mount to avoid hydration mismatch
+  useEffect(() => {
+    const cachedList = getListCache(id);
+    if (cachedList && loading) {
+      setList(cachedList);
+      setCustomGroups(cachedList.customGroups || []);
+      setLoading(false);
+    }
+  }, [id]);
   const [activeTab, setActiveTab] = useState<'list' | 'board'>('board');
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [taskModalStatus, setTaskModalStatus] = useState<string>('TODO');

@@ -78,7 +78,7 @@ export default function TaskFullPage() {
 
   if (loading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-background">
+      <div className="flex h-full w-full items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 text-zinc-500 animate-spin" />
       </div>
     );
@@ -86,7 +86,7 @@ export default function TaskFullPage() {
 
   if (!task) {
     return (
-      <div className="flex flex-col h-screen w-full items-center justify-center bg-background text-zinc-400 gap-4">
+      <div className="flex flex-col h-full w-full items-center justify-center bg-background text-zinc-400 gap-4">
         <div>Task not found</div>
         <button
           onClick={handleClose}
@@ -101,7 +101,7 @@ export default function TaskFullPage() {
   // Subtask full page view
   if (subtask) {
     return (
-      <div className="flex flex-col h-screen w-full bg-background overflow-hidden">
+      <div className="flex flex-col h-full w-full bg-background overflow-hidden">
         <SubtaskDetailView
           subtask={subtask}
           parentTask={task}
@@ -117,7 +117,7 @@ export default function TaskFullPage() {
 
   // Main task full page view
   return (
-    <div className="flex flex-col h-screen w-full bg-background overflow-hidden">
+    <div className="flex flex-col h-full w-full bg-background overflow-hidden">
       <div className="flex-1 overflow-hidden relative">
         <TaskDetailModalContent
           isOpen={true}

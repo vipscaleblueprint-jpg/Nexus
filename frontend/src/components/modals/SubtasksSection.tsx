@@ -25,6 +25,15 @@ const getHexColor = (color: string) => {
   };
   return colors[color] || color;
 };
+
+const sortStatusesWithClosedAtEnd = (statuses: string[]) => {
+  const moveToEnd = ['ON-HOLD', 'CLOSED'];
+  const nonEnd = statuses.filter(s => !moveToEnd.includes(s.toUpperCase()));
+  const ends = statuses.filter(s => moveToEnd.includes(s.toUpperCase())).sort((a, b) => {
+    return a.toUpperCase() === 'ON-HOLD' ? -1 : 1;
+  });
+  return [...nonEnd, ...ends];
+};
 interface SubtasksSectionProps {
   task: Task;
   onUpdateTask: (task: Task) => void;
@@ -593,7 +602,7 @@ function SubtaskRow({
                 <Popover.Portal>
                   <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                     <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                      {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                      {sortStatusesWithClosedAtEnd(((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES)).map((s: string) => (
                         <div
                           key={s}
                           onClick={(e) => {
@@ -768,7 +777,7 @@ function SubtaskRow({
               <Popover.Portal>
                 <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                   <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                    {((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES).map((s: string) => (
+                    {sortStatusesWithClosedAtEnd(((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES)).map((s: string) => (
                       <div
                         key={s}
                         onClick={(e) => {

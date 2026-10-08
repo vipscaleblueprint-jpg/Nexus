@@ -137,20 +137,20 @@ export async function createExternalList(req: Request, res: Response) {
     // We will use standard DEFAULT_STATUSES but NEVER rename KYC to list.name
     // (As requested: "instead of names of the boards it should be kyc")
     const DEFAULT_STATUSES = [
-      { name: 'KYC', color: 'cyan', groupName: 'Client Details' },
-      { name: 'PIN BOARD', color: 'blue', groupName: 'Client Details' },
-      { name: 'DAILY', color: 'purple', groupName: 'Recurring' },
-      { name: 'WEEKLY', color: 'indigo', groupName: 'Recurring' },
-      { name: 'MONTHLY', color: 'violet', groupName: 'Recurring' },
-      { name: 'PENDING', color: 'amber', groupName: 'Workflow & Progress' },
-      { name: 'IN PROGRESS', color: 'blue', groupName: 'Workflow & Progress' },
-      { name: 'REVISION', color: 'rose', groupName: 'Workflow & Progress' },
-      { name: 'ON-HOLD', color: 'zinc', groupName: 'Workflow & Progress' },
-      { name: 'CLOSED', color: 'emerald', groupName: 'Workflow & Progress' },
-      { name: 'WAITING', color: 'orange', groupName: 'Management' },
-      { name: 'IN REVIEW', color: 'purple', groupName: 'Management' },
-      { name: 'CHECKING', color: 'teal', groupName: 'Management' },
-      { name: 'CRM', color: 'emerald', groupName: 'Management' },
+      { name: 'KYC', color: '#3A8F55', groupName: 'Client Details' },
+      { name: 'PIN BOARD', color: '#1F8A6E', groupName: 'Client Details' },
+      { name: 'DAILY', color: '#2F7BD0', groupName: 'Recurring' },
+      { name: 'WEEKLY', color: '#2F7BD0', groupName: 'Recurring' },
+      { name: 'MONTHLY', color: '#2F7BD0', groupName: 'Recurring' },
+      { name: 'PENDING', color: '#D29A2A', groupName: 'Workflow & Progress' },
+      { name: 'IN PROGRESS', color: '#D04A7C', groupName: 'Workflow & Progress' },
+      { name: 'REVISION', color: '#5B6BD6', groupName: 'Workflow & Progress' },
+      { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress' },
+      { name: 'CLOSED', color: '#2FA37A', groupName: 'Workflow & Progress' },
+      { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
+      { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
+      { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
+      { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
     ];
 
     const statusesToCreate: any[] = [];
@@ -353,20 +353,20 @@ export async function createTask(req: Request, res: Response) {
     // Skip auto-seeding if statuses already exist to prevent duplicating/messing up createExternalList statuses
     if (list.statuses.length === 0) {
       const defaultGroupedStatuses = [
-        { name: 'KYC', color: 'cyan', groupName: 'Client Details', order: 0 },
-        { name: 'PIN BOARD', color: 'blue', groupName: 'Client Details', order: 1 },
-        { name: 'DAILY', color: 'purple', groupName: 'Recurring', order: 0 },
-        { name: 'WEEKLY', color: 'indigo', groupName: 'Recurring', order: 1 },
-        { name: 'MONTHLY', color: 'violet', groupName: 'Recurring', order: 2 },
-        { name: 'PENDING', color: 'amber', groupName: 'Workflow & Progress', order: 0 },
-        { name: 'IN PROGRESS', color: 'blue', groupName: 'Workflow & Progress', order: 1 },
-        { name: 'REVISION', color: 'rose', groupName: 'Workflow & Progress', order: 2 },
-        { name: 'ON-HOLD', color: 'zinc', groupName: 'Workflow & Progress', order: 3 },
-        { name: 'CLOSED', color: 'emerald', groupName: 'Workflow & Progress', order: 4 },
-        { name: 'WAITING', color: 'orange', groupName: 'Management', order: 0 },
-        { name: 'IN REVIEW', color: 'purple', groupName: 'Management', order: 1 },
-        { name: 'CHECKING', color: 'teal', groupName: 'Management', order: 2 },
-        { name: 'CRM', color: 'emerald', groupName: 'Management', order: 3 },
+        { name: 'KYC', color: '#3A8F55', groupName: 'Client Details', order: 0 },
+        { name: 'PIN BOARD', color: '#1F8A6E', groupName: 'Client Details', order: 1 },
+        { name: 'DAILY', color: '#2F7BD0', groupName: 'Recurring', order: 0 },
+        { name: 'WEEKLY', color: '#2F7BD0', groupName: 'Recurring', order: 1 },
+        { name: 'MONTHLY', color: '#2F7BD0', groupName: 'Recurring', order: 2 },
+        { name: 'PENDING', color: '#D29A2A', groupName: 'Workflow & Progress', order: 0 },
+        { name: 'IN PROGRESS', color: '#D04A7C', groupName: 'Workflow & Progress', order: 1 },
+        { name: 'REVISION', color: '#5B6BD6', groupName: 'Workflow & Progress', order: 2 },
+        { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress', order: 3 },
+        { name: 'CLOSED', color: '#2FA37A', groupName: 'Workflow & Progress', order: 4 },
+        { name: 'WAITING', color: '#D9534F', groupName: 'Management', order: 0 },
+        { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management', order: 1 },
+        { name: 'CHECKING', color: '#A35DB8', groupName: 'Management', order: 2 },
+        { name: 'CRM', color: '#22A3AE', groupName: 'Management', order: 3 },
       ];
 
       await prisma.list.update({

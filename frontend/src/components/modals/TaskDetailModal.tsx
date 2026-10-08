@@ -212,7 +212,16 @@ const getHexColor = (color: string) => {
 
 // Builds the text after the actor's name for assignee/follower activity entries, e.g. "removed assignee: Jen".
 const describeAssigneeActivity = (act: any, currentUserName?: string) => {
-  const toYou = (name: string) => (name === currentUserName ? 'You' : name);
+  const isActorMe = act.author === currentUserName;
+  const toYou = (name: string) => {
+    if (name === currentUserName) {
+      return isActorMe ? 'yourself' : 'You';
+    }
+    if (name === act.author) {
+      return 'themselves';
+    }
+    return name;
+  };
 
   if (act.type === 'unassignment') return `removed assignee: ${toYou(act.assigneeName)}`;
   if (act.type === 'add_follower') return `added follower: ${toYou(act.assigneeName)}`;
@@ -880,17 +889,28 @@ export function TaskDetailModalContent({
   const [internalListStatuses, setinternalListStatuses] = useState<any[]>(listStatuses || []);
 
   const orderedListStatuses = React.useMemo(() => {
+    const sortStatusesWithClosedAtEnd = (statuses: any[]) => {
+      const moveToEnd = ['ON-HOLD', 'CLOSED'];
+      const nonEnd = statuses.filter(s => !moveToEnd.includes((s.name || s.status || s.title || '').toUpperCase()));
+      const ends = statuses.filter(s => moveToEnd.includes((s.name || s.status || s.title || '').toUpperCase())).sort((a, b) => {
+        const aName = (a.name || a.status || a.title || '').toUpperCase();
+        return aName === 'ON-HOLD' ? -1 : 1;
+      });
+      return [...nonEnd, ...ends];
+    };
+
     const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
     const listObj = allLists.find((l: any) => l.list?.id === task?.listId || l.id === task?.listId);
     const list = listObj?.list || listObj;
 
     if (!list?.customGroups || list.customGroups.length === 0) {
       // Filter out legacy statuses that are just group headers
-      return sortedInternals.filter(s => {
+      const validStatuses = sortedInternals.filter(s => {
         if (!list?.customGroups) return true;
         const sName = (s.name || s.status || s.title || '').toUpperCase();
         return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
       });
+      return sortStatusesWithClosedAtEnd(validStatuses);
     }
 
     const finalStatuses: any[] = [];
@@ -916,7 +936,7 @@ export function TaskDetailModalContent({
       }
     });
 
-    return finalStatuses;
+    return sortStatusesWithClosedAtEnd(finalStatuses);
   }, [allLists, task?.listId, internalListStatuses]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showApiSettings, setShowApiSettings] = useState(false);
@@ -3028,7 +3048,29 @@ export function SubtaskDetailView({
       const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
       onUpdateTask({ ...parentTask, subtasks: newSubtasks });
     }
-    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: updatedIds, assignees: updatedAssignees } as any).catch(console.error);
+
+    const optimisticId = `optimistic-assign-${Date.now()}`;
+    const added = isAssigned ? [] : [u.name];
+    const removed = isAssigned ? [u.name] : [];
+    const names = updatedAssignees.length > 0 ? updatedAssignees.map((a: any) => a.name).join(', ') : 'Unassigned';
+    
+    const optimisticActivity = {
+      id: optimisticId,
+      type: 'assignment',
+      author: currentUser?.name || 'Someone',
+      assigneeName: names,
+      assignees: updatedAssignees.map((a: any) => a.name),
+      added,
+      removed,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticActivity]);
+
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: updatedIds, assignees: updatedAssignees } as any).catch((err) => {
+      console.error(err);
+      setActivities(prev => prev.filter(a => a.id !== optimisticId));
+    });
   };
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
@@ -3039,7 +3081,31 @@ export function SubtaskDetailView({
       const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
       onUpdateTask({ ...parentTask, subtasks: newSubtasks });
     }
-    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: [], assignees: [] } as any).catch(console.error);
+
+    const optimisticId = `optimistic-assign-${Date.now()}`;
+    const removed = currentAssignees.map((a: any) => a.name);
+    
+    if (removed.length > 0) {
+      const optimisticActivity = {
+        id: optimisticId,
+        type: 'assignment',
+        author: currentUser?.name || 'Someone',
+        assigneeName: 'Unassigned',
+        assignees: [],
+        added: [],
+        removed,
+        date: new Date(),
+        user: currentUser,
+      };
+      setActivities(prev => [...prev, optimisticActivity]);
+    }
+
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: [], assignees: [] } as any).catch((err) => {
+      console.error(err);
+      if (removed.length > 0) {
+        setActivities(prev => prev.filter(a => a.id !== optimisticId));
+      }
+    });
     setIsAssigneeOpen(false);
   };
 
@@ -3264,7 +3330,19 @@ export function SubtaskDetailView({
                 <span className="truncate max-w-[150px]">{parentTask.list.name}</span>
               </button>
               <span className="text-zinc-700">/</span>
-              <span className="truncate max-w-[150px] text-zinc-400">{parentTask.title || 'Untitled'}</span>
+              <button
+                onClick={() => {
+                  if (mode === 'modal' && setActiveSubtask) {
+                    setActiveSubtask(null);
+                  } else {
+                    onClose();
+                    router.push(`/tasks/${parentTask.id}`);
+                  }
+                }}
+                className="truncate max-w-[150px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+              >
+                {parentTask.title || 'Untitled'}
+              </button>
               <span className="text-zinc-700">/</span>
               <span className="truncate max-w-[150px] text-zinc-200">{subtask.title || 'Untitled'}</span>
             </div>
@@ -3301,17 +3379,19 @@ export function SubtaskDetailView({
             <Share2 className="w-3.5 h-3.5 text-zinc-400" />
             Share
           </button>
-          <button
-            onClick={() => {
-              onClose();
-              const fromPath = typeof window !== 'undefined' ? window.location.pathname : '';
-              router.push(`/tasks/${subtask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
-            }}
-            className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
-            title="Open subtask in full page"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </button>
+          {mode !== 'full' && (
+            <button
+              onClick={() => {
+                onClose();
+                const fromPath = typeof window !== 'undefined' ? window.location.pathname : '';
+                router.push(`/tasks/${subtask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
+              }}
+              className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
+              title="Open subtask in full page"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={onClose}
             className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"

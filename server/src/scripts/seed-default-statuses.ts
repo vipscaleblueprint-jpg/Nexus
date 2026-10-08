@@ -3,19 +3,19 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const DEFAULT_STATUSES: { name: string; color: string; groupName: string | null }[] = [
-  { name: 'KYC', color: 'cyan', groupName: 'Client Details' },
-  { name: 'Pin Board', color: 'blue', groupName: 'Client Details' },
-  { name: 'Daily', color: 'purple', groupName: 'Recurring' },
-  { name: 'Weekly', color: 'indigo', groupName: 'Recurring' },
-  { name: 'Monthly', color: 'violet', groupName: 'Recurring' },
-  { name: 'Pending', color: 'amber', groupName: 'Workflow & Progress' },
-  { name: 'In Progress', color: 'blue', groupName: 'Workflow & Progress' },
-  { name: 'Revision', color: 'rose', groupName: 'Workflow & Progress' },
-  { name: 'Waiting', color: 'orange', groupName: 'Workflow & Progress' },
-  { name: 'In Review', color: 'purple', groupName: 'Workflow & Progress' },
-  { name: 'Checking', color: 'teal', groupName: 'Workflow & Progress' },
-  { name: 'On-Hold', color: 'zinc', groupName: 'Workflow & Progress' },
-  { name: 'Closed', color: 'emerald', groupName: 'Workflow & Progress' },
+  { name: 'KYC', color: '#3A8F55', groupName: 'Client Details' },
+  { name: 'Pin Board', color: '#1F8A6E', groupName: 'Client Details' },
+  { name: 'Daily', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'Weekly', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'Monthly', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'Pending', color: '#D29A2A', groupName: 'Workflow & Progress' },
+  { name: 'In Progress', color: '#D04A7C', groupName: 'Workflow & Progress' },
+  { name: 'Revision', color: '#5B6BD6', groupName: 'Workflow & Progress' },
+  { name: 'Waiting', color: '#D9534F', groupName: 'Workflow & Progress' },
+  { name: 'In Review', color: '#D97B3A', groupName: 'Workflow & Progress' },
+  { name: 'Checking', color: '#A35DB8', groupName: 'Workflow & Progress' },
+  { name: 'On-Hold', color: '#8A8F98', groupName: 'Workflow & Progress' },
+  { name: 'Closed', color: '#2FA37A', groupName: 'Workflow & Progress' },
 ];
 
 async function main() {

@@ -16,6 +16,9 @@ interface AuditSectionProps {
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
   const audits = new Set<string>();
 
+  // Every task must pass an Instructions Audit globally
+  audits.add('Instructions Audit');
+
   // Title-based checks (requested by user)
   const title = taskTitle.toLowerCase();
   if (title.includes('design')) audits.add('Design Audit');
@@ -225,6 +228,8 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                   } else if (text === 'Funnel Audit') {
                     canCheck = roles.some(r => r.includes('funnel') || r.includes('backend'));
                     requiredRole = "Funnel/Backend";
+                  } else if (text === 'Instructions Audit') {
+                    canCheck = true;
                   }
                 }
 

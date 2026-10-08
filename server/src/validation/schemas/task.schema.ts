@@ -57,6 +57,10 @@ export const moveTaskSchema = z.object({
   userId: z.string().uuid().optional(),
 });
 
+export const batchGetTasksSchema = z.object({
+  ids: z.array(uuid).min(1).max(200),
+});
+
 export const attachmentUrlSchema = z.object({
   fileName: shortText('fileName', 255),
   fileType: z

@@ -72,6 +72,13 @@ export const dailyRolloverWorker = new Worker(
       });
 
       for (const task of clientTasks) {
+        // Add a little more space above each parent
+        tiptapNodes.push({
+          id: `blk-space-t-${Date.now()}-${task.id}`,
+          type: 'text',
+          content: `<p></p>`
+        });
+
         tiptapNodes.push({
           id: `blk-t-${Date.now()}-${task.id}`,
           type: 'text',
@@ -83,7 +90,7 @@ export const dailyRolloverWorker = new Worker(
             tiptapNodes.push({
               id: `blk-sub-${Date.now()}-${sub.id}`,
               type: 'text',
-              content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;└─ <span data-type="mention" data-id="${sub.id}" data-label="${sub.title}" data-mention-type="subtask">@${sub.title}</span></p>`
+              content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #2A2A2E;">└─ </span><span data-type="mention" data-id="${sub.id}" data-label="${sub.title}" data-mention-type="subtask">@${sub.title}</span></p>`
             });
           }
         }

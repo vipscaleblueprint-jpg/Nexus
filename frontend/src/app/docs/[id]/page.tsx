@@ -349,10 +349,10 @@ const DocBlockRow = memo(({
         {block.type === 'tags' && (
           <Tags className="w-4 h-4 text-zinc-500 shrink-0" />
         )}
-        {/* Subtask L connector — inside the row as a leading icon */}
+        {/* Subtask L connector — simple fixed SVG that perfectly points to the first line of the inline task node */}
         {block.type === 'subtask' && (
-          <svg width="14" height="18" viewBox="0 0 14 18" fill="none" className="shrink-0 self-start mt-1">
-            <path d="M2 0 L2 11 L12 11" stroke="#52525b" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <svg width="14" height="24" className="shrink-0 mr-1" viewBox="0 0 14 24">
+            <path d="M2 0 L2 13 L14 13" stroke="#52525b" strokeWidth="1.5" fill="none" />
           </svg>
         )}
         {/* Collapsible toggle — filled triangle like Notion */}
@@ -471,7 +471,7 @@ const DocBlockRow = memo(({
 export default function DocPage({ docId }: { docId?: string }) {
   const params = useParams<{ id: string }>();
   const id = docId || params?.id;
-  const { currentUser, setCurrentUser, tasks, tasksIndex, loadTasks, hydrateTasksFromCache, updateTask } = useAppStore();
+  const { currentUser, setCurrentUser, tasks, tasksIndex, loadTasks, hydrateTasksFromCache, updateTask, workspaceRoles } = useAppStore();
   const [doc, setDoc] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2501,6 +2501,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           setSelectedTaskForModal(updatedTask);
           updateTask(updatedTask);
         }}
+        workspaceRoles={workspaceRoles}
       />
 
       {/* Global Task Hover Card */}

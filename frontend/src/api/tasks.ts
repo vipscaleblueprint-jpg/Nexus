@@ -15,6 +15,13 @@ export const tasksApi = {
     });
   },
 
+  async batchGetTasks(ids: string[]): Promise<{ results: Record<string, { task: Task; subtask?: any }> }> {
+    return apiClient<{ results: Record<string, { task: Task; subtask?: any }> }>('/api/tasks/batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+  },
+
   async createTask(data: Partial<Task>): Promise<{ task: Task }> {
     return apiClient<{ task: Task }>('/api/tasks', {
       method: 'POST',

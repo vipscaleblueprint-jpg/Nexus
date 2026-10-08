@@ -15,7 +15,7 @@ import { useAppStore } from '@/lib/store';
 import { canUserMoveTask } from '@/lib/permissions';
 import { toast } from '@/lib/toast';
 import { usersApi, tasksApi } from '@/api';
-import { spacesApi } from '@/api/spaces';
+import { fetchListStatuses } from '@/lib/listStatusCache';
 import { SubtasksSection } from './SubtasksSection';
 import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
@@ -210,6 +210,30 @@ const getHexColor = (color: string) => {
   return colors[color] || color;
 };
 
+// Builds the text after the actor's name for assignee/follower activity entries, e.g. "removed assignee: Jen".
+const describeAssigneeActivity = (act: any, currentUserName?: string) => {
+  const toYou = (name: string) => (name === currentUserName ? 'You' : name);
+
+  if (act.type === 'unassignment') return `removed assignee: ${toYou(act.assigneeName)}`;
+  if (act.type === 'add_follower') return `added follower: ${toYou(act.assigneeName)}`;
+  if (act.type === 'remove_follower') return `removed follower: ${toYou(act.assigneeName)}`;
+
+  // Newer assignment entries carry an explicit added/removed diff
+  if (Array.isArray(act.added) || Array.isArray(act.removed)) {
+    const added: string[] = (act.added || []).map(toYou);
+    const removed: string[] = (act.removed || []).map(toYou);
+    if (removed.length > 1 && act.assigneeName === 'Unassigned' && added.length === 0) return 'removed all assignees';
+    const parts: string[] = [];
+    if (added.length > 0) parts.push(`assigned to: ${added.join(', ')}`);
+    if (removed.length > 0) parts.push(`${parts.length ? 'and removed' : 'removed assignee:'} ${removed.join(', ')}`);
+    if (parts.length > 0) return parts.join(' ');
+  }
+
+  // Legacy entries only stored the resulting assignee list
+  if (act.assigneeName === 'Unassigned') return 'removed all assignees';
+  return `assigned to: ${toYou(act.assigneeName)}`;
+};
+
 export function TaskDetailModalContent({
   isOpen,
   onClose,
@@ -231,6 +255,7 @@ export function TaskDetailModalContent({
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const commentEditorRef = useRef<any>(null);
@@ -337,6 +362,8 @@ export function TaskDetailModalContent({
   const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Assignees as they were before the current debounced batch of toggles (for the added/removed activity diff)
+  const assigneeBaselineRef = useRef<UserModel[] | null>(null);
 
   // Mentions
   const [showMentionMenu, setShowMentionMenu] = useState(false);
@@ -393,7 +420,7 @@ export function TaskDetailModalContent({
     }
   }), []);
 
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists } = useAppStore();
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists, workspaceRoles: storeWorkspaceRoles } = useAppStore();
 
   // Fetch real users from DB for assignee picker
   useEffect(() => {
@@ -425,8 +452,9 @@ export function TaskDetailModalContent({
   // Assignment is restricted by the column's role restrictions
   const canAssignTask = React.useMemo(() => {
     if ((task as any)?.parentTaskId) return true;
-    return canUserMoveTask(task, listStatuses, currentUser, workspaceRoles).allowed;
-  }, [task, currentUser, listStatuses, workspaceRoles]);
+    const effectiveRoles = workspaceRoles && workspaceRoles.length > 0 ? workspaceRoles : storeWorkspaceRoles || [];
+    return canUserMoveTask(task, listStatuses, currentUser, effectiveRoles).allowed;
+  }, [task, currentUser, listStatuses, workspaceRoles, storeWorkspaceRoles]);
 
   const assignableUsers = React.useMemo(() => {
     if (!task?.assigneeRoleRestrictions || task.assigneeRoleRestrictions.length === 0) {
@@ -440,7 +468,7 @@ export function TaskDetailModalContent({
       });
     });
 
-    return workspaceUsers.filter((u) => {
+    const filteredUsers = workspaceUsers.filter((u) => {
       const userRoles = (u.roles || []) as string[];
       return task.assigneeRoleRestrictions!.some((role) => {
         // Check generic role match (TECH, PM, AUDITOR...)
@@ -451,7 +479,17 @@ export function TaskDetailModalContent({
         return false;
       });
     });
-  }, [workspaceUsers, workspaceTeams, task?.assigneeRoleRestrictions]);
+
+    // Always allow the current user to assign themselves
+    if (currentUser && !filteredUsers.some(u => u.id === currentUser.id)) {
+      const me = workspaceUsers.find(u => u.id === currentUser.id);
+      if (me) {
+        filteredUsers.push(me);
+      }
+    }
+
+    return filteredUsers;
+  }, [workspaceUsers, workspaceTeams, task?.assigneeRoleRestrictions, currentUser]);
 
 
   // Fetch persistent activities and comments from DB
@@ -459,6 +497,7 @@ export function TaskDetailModalContent({
     if (!task?.id || !currentUser) return;
     try {
       if (!silent) setLoadingActivities(true);
+      setLoadError(null);
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
@@ -469,15 +508,38 @@ export function TaskDetailModalContent({
       ]);
       if (!isMountedRef.current) return;
       if (actRes?.activities) {
-        if (isSubtask) {
-          setActivities(actRes.activities.filter((a: any) => a.subtaskTitle === task.title));
-        } else {
-          setActivities(actRes.activities.filter((a: any) => !a.subtaskTitle));
-        }
+        const fetchedActivities = isSubtask
+          ? actRes.activities.filter((a: any) => a.subtaskTitle === task.title)
+          : actRes.activities.filter((a: any) => !a.subtaskTitle);
+
+        setActivities((prev) => {
+          const optimistic = prev.filter(
+            (a) => typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))
+          );
+          const fetchedIds = new Set(fetchedActivities.map((a: any) => a.id));
+          const recentReal = prev.filter(
+            (a) => !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) && !fetchedIds.has(a.id)
+          );
+
+          const merged = [...fetchedActivities, ...recentReal, ...optimistic];
+          return merged.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        });
       }
-      if (commentRes?.comments) setRichComments(commentRes.comments);
-    } catch (err) {
-      console.warn('Failed to load task data:', err);
+      if (commentRes?.comments) {
+        setRichComments((prev) => {
+          const fetchedIds = new Set(commentRes.comments.map((c: any) => c.id));
+          const optimistic = prev.filter((c) => typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-')));
+          const recentReal = prev.filter(
+            (c) => !(typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))) && !fetchedIds.has(c.id)
+          );
+          return [...commentRes.comments, ...recentReal, ...optimistic].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+        });
+      }
+    } catch (err: any) {
+      console.error('Failed to load task data:', err);
+      setLoadError(err?.message || String(err));
     } finally {
       if (isMountedRef.current) setLoadingActivities(false);
     }
@@ -614,10 +676,8 @@ export function TaskDetailModalContent({
       if (cachedList?.statuses) {
         setinternalListStatuses(cachedList.statuses);
       } else {
-        spacesApi.getList(task.listId).then((res: any) => {
-          if (res?.list?.statuses) {
-            setinternalListStatuses(res.list.statuses);
-          }
+        fetchListStatuses(task.listId).then(statuses => {
+          if (statuses.length > 0) setinternalListStatuses(statuses);
         }).catch((err: any) => console.warn(err));
       }
     } else if (listStatuses && listStatuses.length > 0) {
@@ -864,7 +924,7 @@ export function TaskDetailModalContent({
   const activityPanelRef = useRef<HTMLDivElement>(null);
 
   // Focus trap and esc handler activity panel
-  const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 300);
+  const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 380);
   const isResizing = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(300);
@@ -1000,16 +1060,21 @@ export function TaskDetailModalContent({
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
   const persistAssignees = useCallback(
-    async (taskToUpdate: Task, updatedIds: string[], primaryAssignee: UserModel | null, updatedAssignees: UserModel[]) => {
+    async (taskToUpdate: Task, updatedIds: string[], primaryAssignee: UserModel | null, updatedAssignees: UserModel[], previousAssignees: UserModel[]) => {
       // Optimistically append activity to local feed immediately
       const optimisticId = `optimistic-assign-${Date.now()}`;
       const names = updatedAssignees.length > 0 ? updatedAssignees.map(u => u.name).join(', ') : 'Unassigned';
+      const added = updatedAssignees.filter(u => !previousAssignees.some(p => p.id === u.id)).map(u => u.name);
+      const removed = previousAssignees.filter(p => !updatedAssignees.some(u => u.id === p.id)).map(p => p.name);
+      if (added.length === 0 && removed.length === 0) return; // toggled on and off again — nothing changed
       const optimisticActivity = {
         id: optimisticId,
         type: 'assignment',
         author: currentUser?.name || 'Someone',
         assigneeName: names,
         assignees: updatedAssignees.map(u => u.name),
+        added,
+        removed,
         date: new Date(),
         user: currentUser,
       };
@@ -1045,6 +1110,7 @@ export function TaskDetailModalContent({
 
     // Always read from the mutated task object to survive rapid clicks within the same render cycle
     const latestAssignees = task.assignees || (task.assignee ? [task.assignee] : []);
+    if (!assigneeBaselineRef.current) assigneeBaselineRef.current = latestAssignees;
 
     const isAssigned = latestAssignees.some(u => u.id === user.id);
     const updatedAssignees = isAssigned
@@ -1078,7 +1144,9 @@ export function TaskDetailModalContent({
       clearTimeout(assigneeDebounceRef.current);
     }
     assigneeDebounceRef.current = setTimeout(() => {
-      persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees);
+      const previousAssignees = assigneeBaselineRef.current || [];
+      assigneeBaselineRef.current = null;
+      persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees, previousAssignees);
     }, 50);
   };
 
@@ -1089,6 +1157,8 @@ export function TaskDetailModalContent({
     if (assigneeDebounceRef.current) {
       clearTimeout(assigneeDebounceRef.current);
     }
+    const previousAssignees = assigneeBaselineRef.current || task.assignees || (task.assignee ? [task.assignee] : []);
+    assigneeBaselineRef.current = null;
 
     const updatedTask: Task = {
       ...task,
@@ -1108,7 +1178,7 @@ export function TaskDetailModalContent({
     }
     setIsAssigneeOpen(false);
 
-    persistAssignees(updatedTask, [], null, []);
+    persistAssignees(updatedTask, [], null, [], previousAssignees);
   };
 
   const handlePriorityChange = async (p: Priority) => {
@@ -1393,7 +1463,8 @@ export function TaskDetailModalContent({
               <button
                 onClick={() => {
                   onClose();
-                  router.push(`/tasks/${task.id}`);
+                  const fromPath = typeof window !== 'undefined' ? window.location.pathname : '';
+                  router.push(`/tasks/${task.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
                 }}
                 className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
                 title="Open in full page"
@@ -2091,6 +2162,12 @@ export function TaskDetailModalContent({
                 </div>
 
                 {/* Sort activities and comments oldest to newest */}
+                {loadError && (
+                  <div className="text-red-400 text-sm p-4 mb-4 border border-red-500/20 bg-red-500/10 rounded-lg">
+                    <p className="font-semibold mb-1">Failed to load activity logs</p>
+                    <p className="opacity-80">{loadError}</p>
+                  </div>
+                )}
                 {loadingActivities ? <CommentSkeleton /> : (() => {
                   const otherActivities = activities.filter(a => a.type !== 'comment');
                   const combined = [
@@ -2336,24 +2413,13 @@ export function TaskDetailModalContent({
                               }
                               if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower') {
                                 const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
-                                const assigneeName = act.assigneeName === currentUser?.name ? 'You' : act.assigneeName;
-                                const isUnassigned = act.assigneeName === 'Unassigned';
 
-                                let actionText = 'assigned to:';
-                                if (act.type === 'unassignment') actionText = 'removed assignee:';
-                                else if (act.type === 'add_follower') actionText = 'added follower:';
-                                else if (act.type === 'remove_follower') actionText = 'removed follower:';
-                                
                                 return (
                                   <div key={act.id} className="flex justify-between items-center text-sm text-zinc-400 py-1">
                                     <div className="flex gap-2 items-center">
                                       <span className="text-zinc-500 text-lg leading-none mt-[-2px]">&bull;</span>
                                       <span>
-                                        {isUnassigned && act.type === 'assignment' ? (
-                                          <>{actorName} removed all assignees</>
-                                        ) : (
-                                          <>{actorName} {actionText} {assigneeName}</>
-                                        )}
+                                        {actorName} {describeAssigneeActivity(act, currentUser?.name)}
                                       </span>
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -2519,7 +2585,7 @@ export function TaskDetailModalContent({
                   }}
                   onSubmit={handleAddComment}
                   disabled={isSubmittingComment}
-                  placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment... (Press Enter to post)"}
+                  placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
                 />
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
                 <button
@@ -2632,7 +2698,7 @@ export function SubtaskDetailView({
       });
     });
 
-    return wsUsers.filter((u) => {
+    const filteredUsers = wsUsers.filter((u) => {
       const userRoles = (u.roles || []) as string[];
       return (subtask.assigneeRoleRestrictions || []).some((role: string) => {
         if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
@@ -2641,10 +2707,21 @@ export function SubtaskDetailView({
         return false;
       });
     });
-  }, [subtask?.assigneeRoleRestrictions, workspaceUsers, workspaceTeams]);
+
+    // Always allow the current user to assign themselves
+    if (currentUser && !filteredUsers.some(u => u.id === currentUser.id)) {
+      const me = wsUsers.find(u => u.id === currentUser.id);
+      if (me) {
+        filteredUsers.push(me);
+      }
+    }
+
+    return filteredUsers;
+  }, [subtask?.assigneeRoleRestrictions, workspaceUsers, workspaceTeams, currentUser]);
 
   const [richComments, setRichComments] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
@@ -2771,7 +2848,7 @@ export function SubtaskDetailView({
     }
   };
 
-  const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 300);
+  const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 380);
   const isResizingRef = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(300);
@@ -3007,6 +3084,7 @@ export function SubtaskDetailView({
     const load = async () => {
       try {
         setLoadingActivities(true);
+        setLoadError(null);
         const [actRes, commentRes] = await Promise.all([
           tasksApi.getActivities(parentTask.id),
           tasksApi.getComments(parentTask.id, subtask.id)
@@ -3015,8 +3093,9 @@ export function SubtaskDetailView({
           setActivities(actRes.activities.filter((a: any) => a.subtaskTitle === subtask.title));
         }
         if (commentRes?.comments) setRichComments(commentRes.comments);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to load comments/activities:', err);
+        setLoadError(err?.message || String(err));
       } finally {
         setLoadingActivities(false);
       }
@@ -3225,7 +3304,8 @@ export function SubtaskDetailView({
           <button
             onClick={() => {
               onClose();
-              router.push(`/tasks/${subtask.id}`);
+              const fromPath = typeof window !== 'undefined' ? window.location.pathname : '';
+              router.push(`/tasks/${subtask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
             }}
             className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
             title="Open subtask in full page"
@@ -3974,6 +4054,12 @@ export function SubtaskDetailView({
               </div>
 
               {/* Sort activities and comments oldest to newest */}
+              {loadError && (
+                <div className="text-red-400 text-sm p-4 mb-4 border border-red-500/20 bg-red-500/10 rounded-lg">
+                  <p className="font-semibold mb-1">Failed to load activity logs</p>
+                  <p className="opacity-80">{loadError}</p>
+                </div>
+              )}
               {loadingActivities ? <CommentSkeleton /> : (() => {
                 const otherActivities = activities.filter(a => a.type !== 'comment');
                 const combined = [
@@ -4185,24 +4271,13 @@ export function SubtaskDetailView({
                             }
                             if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower') {
                               const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
-                              const assigneeName = act.assigneeName === currentUser?.name ? 'You' : act.assigneeName;
-                              const isUnassigned = act.assigneeName === 'Unassigned';
-
-                              let actionText = 'assigned to:';
-                              if (act.type === 'unassignment') actionText = 'removed assignee:';
-                              else if (act.type === 'add_follower') actionText = 'added follower:';
-                              else if (act.type === 'remove_follower') actionText = 'removed follower:';
 
                               return (
                                 <div key={act.id} className="flex justify-between items-center text-sm text-zinc-400 py-1 mb-2">
                                   <div className="flex gap-2 items-center">
                                     <span className="text-zinc-500 text-lg leading-none mt-[-2px]">&bull;</span>
                                     <span>
-                                      {isUnassigned && act.type === 'assignment' ? (
-                                        <>{actorName} removed all assignees</>
-                                      ) : (
-                                        <>{actorName} {actionText} {assigneeName}</>
-                                      )}
+                                      {actorName} {describeAssigneeActivity(act, currentUser?.name)}
                                     </span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -4352,7 +4427,7 @@ export function SubtaskDetailView({
                   }}
                   onSubmit={handleAddComment}
                   disabled={isSubmitting}
-                  placeholder={isSubmitting ? "Posting comment..." : "Write a comment... (Press Enter to post)"}
+                  placeholder={isSubmitting ? "Posting comment..." : "Write a comment..."}
                 />
               <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
               <button

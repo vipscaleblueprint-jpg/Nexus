@@ -1,6 +1,8 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useState, useCallback, useMemo } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useState, useCallback, useMemo, useRef } from 'react';
 import { CornerDownLeft, Layout, Search, Filter, Folder, ListTodo, X, ChevronRight, Hash, CircleDashed } from 'lucide-react';
 import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
+import { getStatusColor, FREQUENCY_LABELS } from './taskSuggestion';
+import { useAppStore } from '@/lib/store';
 import * as Popover from '@radix-ui/react-popover';
 
 type FilterType = 'all' | 'task' | 'board';
@@ -17,6 +19,7 @@ interface TaskItem {
   listId?: string;
   assignees?: Array<{ id: string; name: string; avatarUrl?: string }>;
   priority?: string;
+  isSubtask?: boolean;
 }
 
 interface BoardItem {
@@ -28,22 +31,109 @@ interface BoardItem {
 }
 
 export const TaskListDropdown = forwardRef((props: any, ref) => {
-  const rawItems = props.items || {};
-  const tasks: TaskItem[] = rawItems.tasks || [];
-  const boards: BoardItem[] = rawItems.boards || [];
+  const storeState = useAppStore();
+  
+  const [localQuery, setLocalQuery] = useState(props.query || '');
+  const [hasEditedLocal, setHasEditedLocal] = useState(false);
+  
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Steal focus from Tiptap immediately so typing goes into our search bar
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 10);
+  }, []);
+
+  useEffect(() => {
+    if (!hasEditedLocal) {
+      setLocalQuery(props.query || '');
+    }
+  }, [props.query, hasEditedLocal]);
+
+  const activeQuery = localQuery;
 
   const [filter, setFilter] = useState<FilterType>('all');
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
+  // Directly fetch and filter from store to support typing inside the dropdown
+  const tasks = useMemo(() => {
+    const tasksIndex = storeState.tasksIndex || {};
+    const taskItems: TaskItem[] = [];
+    const search = activeQuery.toLowerCase();
+    
+    let skippedCount = 0;
+    
+    for (const key in tasksIndex) {
+      if (taskItems.length >= 50) break;
+      
+      const task = tasksIndex[key];
+      const taskListId = task.listId || task.list?.id || '';
+      
+      // If a specific list is selected, ignore tasks not in that list
+      if (selectedListId && taskListId !== selectedListId) {
+        skippedCount++;
+        continue;
+      }
+      
+      if (!search || (task.title || '').toLowerCase().includes(search)) {
+        taskItems.push({
+          ...task, type: 'task', name: task.title, 
+          statusColor: getStatusColor(task.status || ''),
+          frequencyLabel: FREQUENCY_LABELS[(task.status || '').toUpperCase()] || null,
+          listName: task.list?.name || '', listId: taskListId
+        });
+      }
+      if (task.subtasks) {
+        for (const st of task.subtasks) {
+           if (taskItems.length >= 50) break;
+           const stAny = st as any;
+           const stListId = stAny.listId || stAny.list?.id || taskListId;
+           if (selectedListId && stListId !== selectedListId) continue;
+           
+           if (!search || (st.title || '').toLowerCase().includes(search)) {
+              taskItems.push({
+                ...st, isSubtask: true, type: 'task', name: `└─ ${st.title}`,
+                statusColor: getStatusColor(st.status || ''),
+                frequencyLabel: FREQUENCY_LABELS[(st.status || '').toUpperCase()] || null,
+                listName: task.list?.name || '', listId: stListId
+              });
+           }
+        }
+      }
+    }
+    
+    console.log(`[TaskListDropdown] tasks useMemo: selectedListId=${selectedListId}, activeQuery="${activeQuery}", skipped=${skippedCount}, returned=${taskItems.length} items`);
+    return taskItems;
+  }, [storeState.tasksIndex, activeQuery, selectedListId]);
+
+  const boards = useMemo(() => {
+    const search = activeQuery.toLowerCase();
+    return (storeState.allLists || [])
+      .filter((entry: any) => {
+        const listName = entry.list?.name || entry.name || '';
+        return !search || listName.toLowerCase().includes(search);
+      })
+      .map((entry: any) => {
+        const list = entry.list || entry;
+        return {
+          id: list.id, type: 'board', name: list.name,
+          color: list.color || '#3b82f6', icon: list.icon || null,
+          spaceName: entry.spaceName || '', folderName: entry.folderName || ''
+        } as BoardItem;
+      });
+  }, [storeState.allLists, activeQuery]);
+
   const visibleTasks = useMemo(() => {
-    if (filter === 'board') return [];
+    if (filter === 'board' && !selectedListId) return [];
     let t = tasks;
     if (selectedListId) {
       t = t.filter((task) => task.listId === selectedListId);
     }
-    return t.slice(0, 30);
+    const result = t.slice(0, 30);
+    console.log(`[TaskListDropdown] visibleTasks: filtered from ${tasks.length} down to ${result.length} (selectedListId: ${selectedListId})`);
+    return result;
   }, [tasks, filter, selectedListId]);
 
   const visibleBoards = useMemo(() => {
@@ -63,6 +153,10 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
     if (item.type === 'board' && !forceInsertBoard) {
       // By default, selecting a board filters the view
       setSelectedListId(item.id);
+      
+      // Keep focus in the input so the user can continue typing, and to prevent
+      // Tiptap from regaining focus and closing the dropdown.
+      setTimeout(() => searchInputRef.current?.focus(), 0);
       return;
     }
 
@@ -127,56 +221,77 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
   return (
     <div className="bg-background border border-border rounded-xl shadow-2xl overflow-hidden w-[400px] z-[99999] flex flex-col font-sans">
       
-      {/* ── Search Header ───────────────────────────────────────── */}
+      {/* ── Filter Header ───────────────────────────────────────── */}
       <div className="flex flex-col border-b border-border/80 bg-card">
-        <div className="flex items-center px-3 py-2.5 cursor-text">
+        {/* Interactive Search Bar */}
+        <div className="flex items-center px-3 py-2.5">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <Search className="w-4 h-4 text-teal-400 shrink-0" />
-            <div className="text-[13px] text-zinc-700 dark:text-zinc-300 flex-1 flex items-center gap-1.5 min-w-0">
-              {selectedListId && (
-                <div className="flex items-center gap-1 bg-teal-500/10 text-teal-400 px-1.5 py-0.5 rounded text-[11px] font-medium border border-teal-500/20 shrink-0">
-                  <span>{boards.find(b => b.id === selectedListId)?.name}</span>
-                  <button onClick={() => setSelectedListId(null)} className="hover:text-teal-300 transition-colors ml-0.5">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-              <div className="flex flex-row items-baseline flex-1 min-w-0 pt-[1px] relative">
-                {props.query ? (
-                  <>
-                    <span className="text-zinc-900 dark:text-zinc-100 truncate">{props.query}</span>
-                    <span className="inline-block w-[1.5px] h-[15px] bg-teal-400 ml-[1px] shrink-0 animate-[blink_1s_step-end_infinite] relative top-[2px]" />
-                  </>
-                ) : (
-                  <>
-                    <span className="inline-block w-[1.5px] h-[15px] bg-teal-400 mr-[1px] shrink-0 animate-[blink_1s_step-end_infinite] relative top-[2px]" />
-                    <span className="text-zinc-500 dark:text-zinc-400 italic truncate">Search for a task...</span>
-                  </>
-                )}
-              </div>
-            </div>
+            <input
+              ref={searchInputRef}
+              autoFocus
+              type="text"
+              className="text-[13px] bg-transparent border-none outline-none flex-1 min-w-0 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 placeholder:italic"
+              placeholder="Search for a task..."
+              value={localQuery}
+              onChange={(e) => {
+                setHasEditedLocal(true);
+                setLocalQuery(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowUp') { e.preventDefault(); upHandler(); }
+                if (e.key === 'ArrowDown') { e.preventDefault(); downHandler(); }
+                if (e.key === 'Enter') { e.preventDefault(); enterHandler(); }
+              }}
+            />
           </div>
         </div>
 
-        {/* Tabs Row */}
-        {!selectedListId && (
-          <div className="flex items-center px-2 pb-2 gap-4">
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('board'); }}
-              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'board' || filter === 'all' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 dark:text-zinc-400 border-transparent hover:text-zinc-600 dark:text-zinc-400'}`}
-            >
-              <Folder className="w-3 h-3" /> Clients
-            </button>
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('task'); }}
-              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'task' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 dark:text-zinc-400 border-transparent hover:text-zinc-600 dark:text-zinc-400'}`}
-            >
-              <ListTodo className="w-3 h-3" /> Tasks
-            </button>
-          </div>
-        )}
+        {/* Tabs Row / Filter state */}
+        <div className="flex items-center px-2 py-2">
+          {!selectedListId ? (
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('all'); searchInputRef.current?.focus(); }}
+                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'all' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 dark:text-zinc-400 border-transparent hover:text-zinc-600 dark:text-zinc-400'}`}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('board'); searchInputRef.current?.focus(); }}
+                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'board' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 dark:text-zinc-400 border-transparent hover:text-zinc-600 dark:text-zinc-400'}`}
+              >
+                <Folder className="w-3 h-3" /> Clients
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFilter('task'); searchInputRef.current?.focus(); }}
+                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold tracking-widest uppercase transition-colors border-b-2 ${filter === 'task' ? 'text-teal-400 border-teal-500' : 'text-zinc-500 dark:text-zinc-400 border-transparent hover:text-zinc-600 dark:text-zinc-400'}`}
+              >
+                <ListTodo className="w-3 h-3" /> Tasks
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-2 py-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Client:</span>
+              <div className="flex items-center gap-1 bg-teal-500/10 text-teal-400 px-1.5 py-0.5 rounded text-[11px] font-medium border border-teal-500/20">
+                <span>{boards.find(b => b.id === selectedListId)?.name}</span>
+                <button 
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedListId(null); searchInputRef.current?.focus(); }} 
+                  className="hover:text-teal-300 transition-colors ml-0.5"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Results list ─────────────────────────────────────────────────── */}
@@ -201,7 +316,8 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                     <div
                       key={board.id}
                       onMouseEnter={() => setSelectedIndex(idx)}
-                      onClick={() => selectItem(board)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); selectItem(board); }}
                       className={`w-full flex items-center justify-between px-2 py-2 rounded-lg transition-all cursor-pointer group ${
                         isSelected ? 'bg-indigo-500/10 dark:bg-indigo-500/20' : 'hover:bg-accent/50 dark:hover:bg-accent/80'
                       }`}
@@ -242,7 +358,8 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                     <button
                       key={task.id}
                       onMouseEnter={() => setSelectedIndex(idx)}
-                      onClick={() => selectItem(task)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); selectItem(task); }}
                       className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg transition-all text-left group ${
                         isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50 dark:hover:bg-accent/80'
                       }`}

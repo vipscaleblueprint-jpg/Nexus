@@ -200,6 +200,62 @@ export async function getTask(req: Request, res: Response) {
   }
 }
 
+// POST /api/tasks/batch - fetch many tasks in one round trip (used by docs with many task mentions).
+// Returns results keyed by the requested ID, each shaped like GET /api/tasks/:id ({ task, subtask }).
+export async function batchGetTasks(req: Request, res: Response) {
+  try {
+    const ids: string[] = Array.from(new Set(req.body.ids as string[]));
+    const results: Record<string, { task: any; subtask: any }> = {};
+
+    // 1. Serve what we can from cache
+    const cached = await Promise.all(ids.map(id => getCache<any>(`task:${id}`)));
+    const missing: string[] = [];
+    ids.forEach((id, i) => {
+      if (cached[i]) results[id] = { task: cached[i], subtask: null };
+      else missing.push(id);
+    });
+
+    if (missing.length > 0) {
+      // 2. Missing IDs as tasks, in one query
+      const tasks = await prisma.task.findMany({ where: { id: { in: missing } }, include: taskInclude });
+      const taskById = new Map(tasks.map(t => [t.id, t]));
+
+      // 3. Whatever is left may be subtask IDs — resolve to their parent task
+      const stillMissing = missing.filter(id => !taskById.has(id));
+      const subtasks = stillMissing.length > 0
+        ? await prisma.subtask.findMany({
+            where: { id: { in: stillMissing } },
+            include: {
+              assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+              team: { select: { id: true, name: true, color: true } },
+            },
+          })
+        : [];
+      const parentIds = Array.from(new Set(subtasks.map(s => s.taskId))).filter(id => !taskById.has(id));
+      if (parentIds.length > 0) {
+        const parents = await prisma.task.findMany({ where: { id: { in: parentIds } }, include: taskInclude });
+        parents.forEach(p => taskById.set(p.id, p));
+      }
+
+      missing.forEach(id => {
+        const task = taskById.get(id);
+        if (task) results[id] = { task, subtask: null };
+      });
+      subtasks.forEach(s => {
+        const parent = taskById.get(s.taskId);
+        if (parent) results[s.id] = { task: parent, subtask: s };
+      });
+
+      // Warm the per-task cache without blocking the response
+      Promise.all(Array.from(taskById.values()).map(t => setCache(`task:${t.id}`, t, 300))).catch(() => {});
+    }
+
+    return res.json({ results });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // POST /api/tasks
 export async function createTask(req: Request, res: Response) {
   try {
@@ -711,13 +767,16 @@ export async function updateTask(req: Request, res: Response) {
               ? await prisma.user.findMany({ where: { id: { in: computedAssigneeIds } }, select: { id: true, name: true, avatarUrl: true } })
               : [];
             const names = assignedUsers.length > 0 ? assignedUsers.map((u: any) => u.name).join(', ') : 'Unassigned';
+            // Diff against the previous assignees so the feed can say exactly who was added/removed
+            const added = assignedUsers.filter((u: any) => !currentTask.assignees.some((a: any) => a.id === u.id)).map((u: any) => u.name);
+            const removed = currentTask.assignees.filter((a: any) => !computedAssigneeIds.includes(a.id)).map((a: any) => a.name);
             const log = await prisma.auditLog.create({
               data: {
                 action: 'ASSIGNMENT',
                 entity: 'TASK',
                 entityId: taskId,
                 userId: actingUserId,
-                details: { assigneeName: names, assigneeNames: assignedUsers.map((u: any) => u.name), count: assignedUsers.length },
+                details: { assigneeName: names, assigneeNames: assignedUsers.map((u: any) => u.name), count: assignedUsers.length, added, removed },
               },
             });
             const newlyAssigned = computedAssigneeIds.filter((id: string) => !currentTask.assignees.some((a: any) => a.id === id));
@@ -745,6 +804,8 @@ export async function updateTask(req: Request, res: Response) {
               author: user?.name || 'Someone',
               assigneeName: names,
               assignees: assignedUsers.map((u: any) => u.name),
+              added,
+              removed,
               date: log.createdAt,
               user,
             };
@@ -1344,6 +1405,8 @@ export async function getTaskActivities(req: Request, res: Response) {
           type: 'assignment',
           author: log.user?.name || 'Someone',
           assigneeName: details.assigneeName || (details.assignees ? details.assignees.join(', ') : 'Unassigned'),
+          added: details.added,
+          removed: details.removed,
           subtaskTitle: details.subtaskTitle,
           date: log.createdAt,
           user: log.user,
@@ -1710,6 +1773,16 @@ export async function updateSubtask(req: Request, res: Response) {
         });
       }
     }
+
+    // Snapshot previous assignees so the activity feed can show who was added/removed
+    const previousAssignees: { id: string; name: string }[] = computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)
+      ? ((await prisma.subtask.findUnique({
+          where: { id: subtaskId },
+          // @ts-ignore
+          select: { assignees: { select: { id: true, name: true } } } as any,
+        })) as any)?.assignees || []
+      : [];
+
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
       data: {
@@ -1740,6 +1813,9 @@ export async function updateSubtask(req: Request, res: Response) {
 
     const authReq = req as any;
     const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
+    const newSubtaskAssignees: { id: string; name: string }[] = (subtask as any).assignees || [];
+    const subtaskAdded = newSubtaskAssignees.filter(u => !previousAssignees.some(p => p.id === u.id)).map(u => u.name);
+    const subtaskRemoved = previousAssignees.filter(p => !newSubtaskAssignees.some(u => u.id === p.id)).map(p => p.name);
     if (actingUserId) {
       if (computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)) {
         await prisma.auditLog.create({
@@ -1748,7 +1824,7 @@ export async function updateSubtask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { assignees: (subtask as any).assignees ? (subtask as any).assignees.map((u: any) => u.name) : ((subtask as any).User ? [(subtask as any).User.name] : []), subtaskTitle: subtask.title }
+            details: { assignees: (subtask as any).assignees ? (subtask as any).assignees.map((u: any) => u.name) : ((subtask as any).User ? [(subtask as any).User.name] : []), subtaskTitle: subtask.title, added: subtaskAdded, removed: subtaskRemoved }
           }
         });
 
@@ -1821,6 +1897,8 @@ export async function updateSubtask(req: Request, res: Response) {
             type: 'assignment',
             author: authorName,
             assigneeName: (subtask as any).assignees?.length ? (subtask as any).assignees.map((u: any) => u.name).join(', ') : ((subtask as any).User ? (subtask as any).User.name : 'Unassigned'),
+            added: subtaskAdded,
+            removed: subtaskRemoved,
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
           };

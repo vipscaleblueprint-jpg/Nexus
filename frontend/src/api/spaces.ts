@@ -129,8 +129,8 @@ export const spacesApi = {
     });
   },
 
-  async getList(id: string): Promise<{ list: any }> {
-    return apiClient<{ list: any }>(`/api/lists/${id}`, {
+  async getList(id: string, excludeTasks: boolean = false): Promise<{ list: any }> {
+    return apiClient<{ list: any }>(`/api/lists/${id}${excludeTasks ? '?excludeTasks=true' : ''}`, {
       method: 'GET',
     });
   },
@@ -168,14 +168,14 @@ export const spacesApi = {
     });
   },
 
-  async reorderLists(items: { id: string; order: number; spaceId?: string; folderId?: string }[]): Promise<{ success: boolean }> {
+  async reorderLists(items: { id: string; order: number; spaceId?: string | null; folderId?: string | null }[]): Promise<{ success: boolean }> {
     return apiClient<{ success: boolean }>('/api/spaces/lists/reorder', {
       method: 'PUT',
       body: JSON.stringify({ items }),
     });
   },
 
-  async reorderDocs(items: { id: string; order: number; spaceId?: string; folderId?: string }[]): Promise<{ success: boolean }> {
+  async reorderDocs(items: { id: string; order: number; spaceId?: string | null; folderId?: string | null }[]): Promise<{ success: boolean }> {
     return apiClient<{ success: boolean }>('/api/spaces/docs/reorder', {
       method: 'PUT',
       body: JSON.stringify({ items }),

@@ -9,7 +9,7 @@ let cachedTasks: any[] | null = null;
 let cachedLists: any[] | null = null;
 
 
-const getStatusColor = (status: string) => {
+export const getStatusColor = (status: string) => {
   if (!status) return '#3b82f6';
   const colorStr = STATUS_COLORS[status.toUpperCase()];
   if (!colorStr) return '#3b82f6';
@@ -18,7 +18,7 @@ const getStatusColor = (status: string) => {
 };
 
 // Frequency badges — derived from status name
-const FREQUENCY_LABELS: Record<string, string> = {
+export const FREQUENCY_LABELS: Record<string, string> = {
   'DAILY': 'DAILY',
   'WEEKLY': 'WEEKLY',
   'MONTHLY': 'MONTHLY',
@@ -169,6 +169,12 @@ export const taskSuggestion = {
       },
 
       onExit() {
+        if (component?.element?.contains(document.activeElement)) {
+          // Focus moved into the popup's search input!
+          // We keep the popup alive so the user can type in the input.
+          return;
+        }
+
         if (scrollHandler) {
           window.removeEventListener('scroll', scrollHandler, true);
           window.removeEventListener('resize', scrollHandler);

@@ -56,7 +56,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-sm prose-invert focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full'
+        class: 'prose prose-sm prose-invert focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full pr-20'
       },
       handleKeyDown: (view, event) => {
         if (event.key === 'Enter' && !event.shiftKey) {

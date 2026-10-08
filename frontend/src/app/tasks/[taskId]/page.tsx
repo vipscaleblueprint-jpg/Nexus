@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { TaskDetailModalContent } from '@/components/modals/TaskDetailModal';
 import { SubtaskDetailView } from '@/components/modals/TaskDetailModal';
 import { tasksApi } from '@/api/tasks';
@@ -12,8 +12,18 @@ import { useAppStore } from '@/lib/store';
 export default function TaskFullPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromPath = searchParams.get('from');
   const taskId = params.taskId as string;
   const { workspaceRoles, loadRoles, currentUser, workspaceUsers, workspaceTeams, tasksIndex, tasks } = useAppStore();
+
+  const handleClose = () => {
+    if (fromPath) {
+      router.push(fromPath);
+    } else {
+      router.back();
+    }
+  };
 
   const [task, setTask] = useState<Task | null>(null);
   const [subtask, setSubtask] = useState<any | null>(null);
@@ -79,7 +89,7 @@ export default function TaskFullPage() {
       <div className="flex flex-col h-screen w-full items-center justify-center bg-background text-zinc-400 gap-4">
         <div>Task not found</div>
         <button
-          onClick={() => router.back()}
+          onClick={handleClose}
           className="flex items-center gap-2 hover:text-zinc-200 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" /> Go back
@@ -95,7 +105,7 @@ export default function TaskFullPage() {
         <SubtaskDetailView
           subtask={subtask}
           parentTask={task}
-          onClose={() => router.back()}
+          onClose={handleClose}
           currentUser={currentUser}
           workspaceUsers={workspaceUsers}
           workspaceTeams={workspaceTeams}
@@ -111,7 +121,7 @@ export default function TaskFullPage() {
       <div className="flex-1 overflow-hidden relative">
         <TaskDetailModalContent
           isOpen={true}
-          onClose={() => router.back()}
+          onClose={handleClose}
           task={task}
           workspaceRoles={workspaceRoles}
           mode="full"

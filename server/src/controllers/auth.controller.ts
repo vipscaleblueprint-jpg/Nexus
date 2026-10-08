@@ -23,6 +23,7 @@ import { sendOTPEmail, sendPasswordChangeEmail } from '../services/emailService'
 import { AuthRequest } from '../middleware/auth.middleware';
 import { requireEnv, optionalEnv } from '../config/env';
 import { prisma } from '../config/prisma';
+import { queueUserPush } from '../services/toolsSync';
 import { createLogger, errMsg } from '../config/logger';
 
 const log = createLogger('auth');
@@ -382,6 +383,8 @@ export async function updateProfile(req: AuthRequest, res: Response) {
       data,
       include: { team: true },
     });
+    // Name and daily sheet are mirrored in the tools' assistant row.
+    queueUserPush(updatedUser.email);
 
     // credits is a BigInt column — JSON.stringify (via res.json) can't serialize it directly.
     return res.json({ user: { ...updatedUser, credits: updatedUser.credits != null ? Number(updatedUser.credits) : null } });

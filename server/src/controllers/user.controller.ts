@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache, clearAllCache } from '../services/redisService';
 import { syncUsers } from './webhook.controller';
+import { queueUserPush } from '../services/toolsSync';
 
 export async function triggerSyncUsers(req: Request, res: Response) {
   req.headers['x-api-key'] = process.env.VIPSCALE_API_KEY;
@@ -115,6 +116,8 @@ export async function updateUser(req: Request, res: Response) {
     });
 
     await invalidateCache('users:all', 'teams:all', 'dashboard:all');
+    // The tools are the source of truth for these fields, so mirror the edit there.
+    queueUserPush(user.email);
 
     return res.json({ user: serializeCredits(user) });
   } catch (err: any) {
@@ -131,11 +134,14 @@ export async function deleteUser(req: Request, res: Response) {
       return res.status(400).json({ error: 'You cannot delete your own account' });
     }
 
-    await prisma.user.delete({
+    const deleted = await prisma.user.delete({
       where: { id },
+      select: { email: true },
     });
 
     await invalidateCache('users:all', 'teams:all', 'dashboard:all');
+    // No Nexus user left, so the push marks the assistant inactive in the tools.
+    queueUserPush(deleted.email);
 
     return res.json({ message: 'User deleted successfully' });
   } catch (err: any) {

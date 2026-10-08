@@ -1,11 +1,12 @@
 import { Router } from 'express';
-import { handleGalaxyTask, handleGalaxyStatus, handleGalaxySubtask, syncClients, syncUsers } from '../controllers/webhook.controller';
+import { handleGalaxyTask, handleGalaxyStatus, handleGalaxySubtask, syncClients, syncUsers, assistantChanged } from '../controllers/webhook.controller';
 
 const router = Router();
 
 // Galaxy Webhooks
 router.post('/sync-clients', syncClients);
 router.post('/sync-users', syncUsers);
+router.post('/assistant-changed', assistantChanged);
 router.post('/galaxy/task', handleGalaxyTask);
 router.post('/galaxy/status', handleGalaxyStatus);
 router.post('/galaxy/subtask', handleGalaxySubtask);

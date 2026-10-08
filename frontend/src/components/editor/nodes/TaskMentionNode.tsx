@@ -591,29 +591,31 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       {openDropdown === 'status' && (
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
           <div className="z-[9999] w-48 p-1.5 bg-popover border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl outline-none flex flex-col gap-0.5">
-            <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Change Status</div>
-            {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
-              const isActive = statusName === parsedStatusName;
-              const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
-              const colorHex = customObj?.color || getStatusColor(statusName);
-              return (
-                <button
-                  key={statusName}
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(statusName); }}
-                  className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg cursor-pointer transition-colors ${
-                    isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'
-                  }`}
-                >
-                  {(statusName || '').toUpperCase() === 'KYC' ? (
-                    <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
-                  ) : (
-                    <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
-                  )}
-                  <span style={{ color: colorHex }}>{statusName}</span>
-                  {isActive && <Check className="w-4 h-4 ml-auto text-blue-500 opacity-70" />}
-                </button>
-              );
-            })}
+            <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider shrink-0">Change Status</div>
+            <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+              {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
+                const isActive = statusName === parsedStatusName;
+                const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
+                const colorHex = customObj?.color || getStatusColor(statusName);
+                return (
+                  <button
+                    key={statusName}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(statusName); }}
+                    className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg cursor-pointer transition-colors ${
+                      isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'
+                    }`}
+                  >
+                    {(statusName || '').toUpperCase() === 'KYC' ? (
+                      <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
+                    ) : (
+                      <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
+                    )}
+                    <span>{statusName}</span>
+                    {isActive && <Check className="w-4 h-4 ml-auto text-blue-500 opacity-70" />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </PortalDropdown>
       )}

@@ -29,7 +29,7 @@ export const dailyRolloverWorker = new Worker(
     const getStatusOrder = (status: string) => STATUS_ORDER[status] ?? 99;
 
     const activeTasks = await prisma.task.findMany({
-      where: { status: { not: 'Closed' } },
+      where: { status: { notIn: ['Closed', 'CLOSED'] } },
       include: {
         list: { select: { id: true, name: true } },
         subtasks: { orderBy: { createdAt: 'asc' } },

@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
+import { getClickUpTask } from '../services/clickupService';
 
 const prisma = new PrismaClient();
 
@@ -228,16 +229,57 @@ export const assistantChanged = async (req: Request, res: Response) => {
   }
 };
 
+const FALLBACK_TITLE_MAX = 80;
+const CLICKUP_TITLE_TIMEOUT_MS = 5000;
+
+/** First line of the prompt, shortened — used when a Galaxy task has no title. */
+function titleFromPrompt(prompt: unknown): string | null {
+  if (typeof prompt !== 'string') return null;
+  const firstLine = prompt.trim().split(/\r?\n/)[0]?.trim();
+  if (!firstLine) return null;
+  return firstLine.length > FALLBACK_TITLE_MAX
+    ? `${firstLine.slice(0, FALLBACK_TITLE_MAX - 1).trimEnd()}…`
+    : firstLine;
+}
+
+/**
+ * The name n8n gave the ClickUp task. Galaxy's title field is optional and n8n
+ * writes one for ClickUp without returning it, so read it back from ClickUp.
+ * Returns null on any failure so task creation never waits long or fails.
+ */
+async function clickUpTaskName(taskLink: unknown): Promise<string | null> {
+  if (typeof taskLink !== 'string' || !taskLink.trim()) return null;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const task = await Promise.race([
+      getClickUpTask(taskLink),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timed out')), CLICKUP_TITLE_TIMEOUT_MS);
+      }),
+    ]);
+    const name = typeof task?.name === 'string' ? task.name.trim() : '';
+    return name || null;
+  } catch (err: any) {
+    console.warn(`[Galaxy] Could not read ClickUp task name for ${taskLink}: ${err?.message ?? err}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const handleGalaxyTask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
 
   try {
-    const { clients, prompt, title, priority, assignee, auditor, task_link, listed_by } = req.body;
+    const { clients, prompt, priority, assignee, auditor, task_link, listed_by } = req.body;
 
     const clientName = clients?.name;
     if (!clientName) {
       return res.status(400).json({ error: 'Client name is required in GalaxyTaskPayload.clients.name' });
     }
+
+    const typedTitle = typeof req.body.title === 'string' ? req.body.title.trim() : '';
+    const title = typedTitle || (await clickUpTaskName(task_link)) || titleFromPrompt(prompt);
 
     const folder = await getClientDashboardFolder();
 
@@ -673,9 +715,12 @@ export const handleGalaxyStatus = async (req: Request, res: Response) => {
 export const handleGalaxySubtask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
   try {
-    const { title, task_link, listed_by, priority, assignee } = req.body;
+    const { task_link, listed_by, priority, assignee } = req.body;
 
     if (!task_link) return res.status(400).json({ error: 'task_link required' });
+
+    // task_link here is the parent's, so ClickUp can't supply this subtask's name.
+    const title = (typeof req.body.title === 'string' && req.body.title.trim()) || titleFromPrompt(req.body.prompt);
 
     const parentTask = await prisma.task.findUnique({
       where: { externalId: task_link }

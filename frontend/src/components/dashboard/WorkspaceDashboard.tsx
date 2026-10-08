@@ -251,11 +251,6 @@ const PRIORITY_FLAGS: Record<
     color: "text-blue-400",
     iconColor: "text-blue-500 fill-blue-500",
   },
-  NORMAL: {
-    label: "Normal",
-    color: "text-blue-400",
-    iconColor: "text-blue-500 fill-blue-500",
-  },
   LOW: {
     label: "Low",
     color: "text-zinc-400",
@@ -763,7 +758,7 @@ function WorkspaceDashboardContent({
 
   const groupedAllTasksByPriority = useMemo(() => {
     const priorityGroups: Record<string, Record<string, Task[]>> = {};
-    const priorityOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW", "EMPTY"];
+    const priorityOrder = ["URGENT", "HIGH", "MEDIUM", "LOW", "EMPTY"];
     
     // Initialize all priorities so they show even if empty
     priorityOrder.forEach(p => { priorityGroups[p] = {}; });

@@ -1390,7 +1390,7 @@ export function TaskDetailModalContent({
                 {task.list.space && (
                   <>
                     <button
-                      onClick={() => { onClose(); }}
+                      onClick={() => { onClose(); router.push('/'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -1405,7 +1405,7 @@ export function TaskDetailModalContent({
                 {task.list.folder && (
                   <>
                     <button
-                      onClick={() => { onClose(); }}
+                      onClick={() => { onClose(); router.push('/'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <Folder className="w-3.5 h-3.5 shrink-0" />

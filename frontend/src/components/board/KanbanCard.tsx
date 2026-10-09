@@ -304,10 +304,10 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
       <div className="flex flex-col gap-1.5 mt-2.5">
         {/* Status */}
-        <div className="relative">
+        <div className="relative w-full">
           <div
             ref={statusTriggerRef}
-            className={`${fieldHoverClass} text-zinc-300`}
+            className={`${fieldHoverClass} w-full text-zinc-300`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >
             {(() => {
@@ -429,19 +429,19 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
         {/* Checklists */}
         {checklistTotal > 0 && (
-          <div className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}>
+          <div className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}>
             <CheckSquare className="w-3.5 h-3.5" />
             <span>{checklistCompleted}/{checklistTotal}</span>
           </div>
         )}
 
         {/* Team Role & Assignees */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 w-full">
           {/* Team Role Assign */}
-          <div className="relative flex items-center group/teamrole">
+          <div className="relative flex items-center group/teamrole shrink-0">
             <div
               ref={teamRoleTriggerRef}
-              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 max-w-[150px]`}
+              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
               onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'teamRole' ? null : 'teamRole'); }}
             >
               <Shield className="w-4 h-4 shrink-0" />
@@ -482,10 +482,10 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           </div>
 
           {/* Assignees */}
-          <div className="relative flex items-center group/assignee">
+          <div className="relative flex items-center group/assignee flex-1 min-w-0">
             <div
               ref={assigneeTriggerRef}
-              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 max-w-[150px]`}
+              className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
               onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
             >
               {assignees.length > 0 ? (
@@ -559,10 +559,10 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
         </div>
 
         {/* Due Date */}
-        <div className="relative">
+        <div className="relative w-full">
           <div
             ref={dateTriggerRef}
-            className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
+            className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
           >
             <Calendar className="w-3.5 h-3.5" />
@@ -572,16 +572,34 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           </div>
           {openDropdown === 'date' && (
             <PortalDropdown triggerRef={dateTriggerRef} onClose={closeDropdown}>
-              <div className="bg-background border border-zinc-800 rounded-xl shadow-xl z-50 p-3">
+              <div className="kanban-date-picker bg-background border border-zinc-800 rounded-xl shadow-xl z-50 p-2.5 w-[210px]">
+                {/* react-day-picker v10 class names (v8 names like .rdp-button/.rdp-head_cell no longer exist) */}
                 <style>{`
-                  .rdp { --rdp-cell-size: 32px; --rdp-accent-color: #6366f1; --rdp-background-color: rgba(99, 102, 241, 0.2); margin: 0; }
-                  .rdp-day_selected, .rdp-day_selected:focus-visible, .rdp-day_selected:hover { background-color: var(--rdp-accent-color); font-weight: bold; color: white; }
-                  .rdp-button:hover:not([disabled]):not(.rdp-day_selected) { background-color: rgba(255, 255, 255, 0.1); }
-                  .rdp-day { border-radius: 6px; color: #d4d4d8; font-size: 13px; }
-                  .rdp-caption { color: #f4f4f5; }
-                  .rdp-head_cell { color: #a1a1aa; font-weight: 500; font-size: 12px; }
-                  .rdp-nav_button { color: #d4d4d8; }
-                  .rdp-nav_button:hover { background-color: rgba(255, 255, 255, 0.1); }
+                  .kanban-date-picker .rdp-root {
+                    --rdp-accent-color: #6366f1;
+                    --rdp-accent-background-color: rgba(99, 102, 241, 0.2);
+                    --rdp-day-height: 26px; --rdp-day-width: 26px;
+                    --rdp-day_button-height: 24px; --rdp-day_button-width: 24px;
+                    --rdp-day_button-border-radius: 4px;
+                    --rdp-selected-border: none;
+                    --rdp-nav-height: 24px;
+                    --rdp-nav_button-height: 20px; --rdp-nav_button-width: 20px;
+                    --rdp-weekday-padding: 2px 0;
+                    margin: 0; font-size: 11px;
+                  }
+                  .kanban-date-picker .rdp-months, .kanban-date-picker .rdp-month { max-width: 100%; }
+                  .kanban-date-picker .rdp-month_grid { margin: 0 auto; border-collapse: separate; border-spacing: 1px; }
+                  .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: #f4f4f5; padding-left: 4px; }
+                  .kanban-date-picker .rdp-caption_label { font-size: 12px; font-weight: 600; }
+                  .kanban-date-picker .rdp-weekday { color: #a1a1aa; font-weight: 600; font-size: 10px; }
+                  .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; }
+                  .kanban-date-picker .rdp-day_button { transition: background-color 0.15s; }
+                  .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: rgba(255, 255, 255, 0.1); }
+                  .kanban-date-picker .rdp-today:not(.rdp-outside) { color: #818cf8; font-weight: 700; }
+                  .kanban-date-picker .rdp-selected .rdp-day_button { background-color: var(--rdp-accent-color); color: white; font-weight: 700; }
+                  .kanban-date-picker .rdp-button_previous, .kanban-date-picker .rdp-button_next { border-radius: 4px; }
+                  .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: rgba(255, 255, 255, 0.1); }
+                  .kanban-date-picker .rdp-chevron { fill: #d4d4d8; width: 12px; height: 12px; }
                 `}</style>
                 <div className="flex justify-between items-center mb-2 px-2">
                   <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
@@ -605,10 +623,10 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
         </div>
 
         {/* Priority */}
-        <div className="relative">
+        <div className="relative w-full">
           <div
             ref={priorityTriggerRef}
-            className={`${fieldHoverClass} max-w-[150px]`}
+            className={`${fieldHoverClass} w-full`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           >
             {(() => {

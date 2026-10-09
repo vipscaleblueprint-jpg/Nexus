@@ -12,6 +12,7 @@ import {
   getClickUpTaskProxy,
   getRecentSyncedActivity,
   syncAllClickUp,
+  getClickUpSyncStatus,
 } from '../controllers/clickup.controller';
 
 const router = Router();
@@ -39,5 +40,6 @@ router.get('/recent-activity', getRecentSyncedActivity);
 
 // Sync all data
 router.post('/sync-all', syncAllClickUp);
+router.get('/sync-status', getClickUpSyncStatus);
 
 export default router;

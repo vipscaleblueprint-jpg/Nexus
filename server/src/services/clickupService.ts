@@ -13,6 +13,15 @@ function getApiKey(): string | null {
   return process.env.Clickup_API_KEY || process.env.CLICKUP_API_KEY || null;
 }
 
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+/** How long to wait after a 429 — until X-RateLimit-Reset (unix seconds), clamped to 1–60s. */
+function rateLimitDelayMs(res: Response): number {
+  const reset = Number(res.headers.get('x-ratelimit-reset'));
+  if (!reset) return 10_000;
+  return Math.min(Math.max(reset * 1000 - Date.now(), 1000), 60_000);
+}
+
 async function clickupFetch(
   path: string,
   options: RequestInit = {}
@@ -22,14 +31,26 @@ async function clickupFetch(
     throw new Error('ClickUp API key not configured (Clickup_API_KEY)');
   }
 
-  const res = await fetch(`${CLICKUP_API_BASE}${path}`, {
-    ...options,
-    headers: {
-      Authorization: apiKey,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(`${CLICKUP_API_BASE}${path}`, {
+        ...options,
+        headers: {
+          Authorization: apiKey,
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+      });
+    } catch (err) {
+      // Network-level failure ("fetch failed"): back off and try again.
+      if (attempt >= MAX_RATE_LIMIT_RETRIES) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+      continue;
+    }
+    if (res.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) break;
+    await new Promise((resolve) => setTimeout(resolve, rateLimitDelayMs(res)));
+  }
 
   if (!res.ok) {
     const body = await res.text();
@@ -194,6 +215,34 @@ export async function deleteClickUpComment(commentId: string): Promise<any> {
 export async function getClickUpTask(taskId: string): Promise<any> {
   const id = extractClickUpTaskId(taskId);
   return clickupFetch(`/task/${id}?include_subtasks=true`);
+}
+
+/**
+ * One page (up to 100) of a list's tasks, subtasks and closed tasks included.
+ * Response: { tasks: [...], last_page: boolean }
+ */
+export async function getClickUpListTasks(listId: string, page: number, includeClosed = true): Promise<any> {
+  return clickupFetch(
+    `/list/${listId}/task?page=${page}&subtasks=true&include_closed=${includeClosed}&archived=false`
+  );
+}
+
+/**
+ * Up to 25 comments on a task, newest first. Pass the oldest comment seen so far
+ * as `start` to get the next older page. Response: { comments: [...] }
+ */
+export async function getClickUpTaskComments(
+  taskId: string,
+  start?: { date: string; id: string }
+): Promise<any> {
+  const id = extractClickUpTaskId(taskId);
+  const qs = start ? `?start=${start.date}&start_id=${start.id}` : '';
+  return clickupFetch(`/task/${id}/comment${qs}`);
+}
+
+/** Threaded replies of a comment. Response: { comments: [...] } */
+export async function getClickUpCommentReplies(commentId: string): Promise<any> {
+  return clickupFetch(`/comment/${commentId}/reply`);
 }
 
 /**
@@ -481,6 +530,17 @@ export function extractClickUpTaskId(value: string): string {
     return parts[parts.length - 1] || value;
   }
   return value;
+}
+
+/**
+ * The ClickUp list a Nexus list is mapped to: the clickUpListId column, or the
+ * legacy "cu:<id>" value older mappings wrote into List.externalId.
+ */
+export function resolveClickUpListId(
+  list: { clickUpListId?: string | null; externalId?: string | null } | null | undefined
+): string | null {
+  if (list?.clickUpListId) return list.clickUpListId;
+  return list?.externalId?.startsWith('cu:') ? list.externalId.slice(3) : null;
 }
 
 /**

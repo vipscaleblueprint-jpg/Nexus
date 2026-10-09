@@ -14,6 +14,7 @@ import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { canUserMoveTask } from '@/lib/permissions';
 import { toast } from '@/lib/toast';
+import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
 import { fetchListStatuses } from '@/lib/listStatusCache';
 import { SubtasksSection } from './SubtasksSection';
@@ -67,13 +68,6 @@ interface Props {
   workspaceRoles?: any[];
   mode?: 'modal' | 'full';
 }
-
-const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400',
-  MEDIUM: 'text-blue-400',
-  HIGH: 'text-orange-400',
-  URGENT: 'text-red-400',
-};
 
 export const ALL_STATUSES = [
   'KYC',
@@ -241,6 +235,49 @@ const describeAssigneeActivity = (act: any, currentUserName?: string) => {
   // Legacy entries only stored the resulting assignee list
   if (act.assigneeName === 'Unassigned') return 'removed all assignees';
   return `assigned to: ${toYou(act.assigneeName)}`;
+};
+
+// Renders a rename as an inline diff: shared prefix/suffix plain, removed text struck through, added text bold.
+// e.g. "Testing" -> "TestingUpdate" renders "Testing**Update**".
+const TitleChangeDiff = ({ oldTitle = '', newTitle = '' }: { oldTitle?: string; newTitle?: string }) => {
+  let start = 0;
+  while (start < oldTitle.length && start < newTitle.length && oldTitle[start] === newTitle[start]) start++;
+  let end = 0;
+  while (
+    end < oldTitle.length - start &&
+    end < newTitle.length - start &&
+    oldTitle[oldTitle.length - 1 - end] === newTitle[newTitle.length - 1 - end]
+  ) end++;
+  const prefix = oldTitle.slice(0, start);
+  const removed = oldTitle.slice(start, oldTitle.length - end);
+  const added = newTitle.slice(start, newTitle.length - end);
+  const suffix = oldTitle.slice(oldTitle.length - end);
+  return (
+    <span className="text-zinc-300">
+      {prefix}
+      {removed && <span className="line-through text-zinc-500">{removed}</span>}
+      {added && <span className="font-semibold text-zinc-100">{added}</span>}
+      {suffix}
+    </span>
+  );
+};
+
+const renderTitleChangeActivity = (act: any, currentUserName?: string) => {
+  const actorName = act.author === currentUserName ? 'You' : (act.author || 'Someone');
+  const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return (
+    <div key={act.id} className="flex justify-between items-center text-sm text-zinc-400 py-1">
+      <div className="flex gap-2 items-center min-w-0">
+        <span className="text-zinc-500 text-lg leading-none mt-[-2px]">&bull;</span>
+        <span className="break-words">
+          {actorName} changed name: <TitleChangeDiff oldTitle={act.oldTitle} newTitle={act.newTitle} />
+        </span>
+      </div>
+      <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap ml-2">
+        {timeStr}
+      </span>
+    </div>
+  );
 };
 
 export function TaskDetailModalContent({
@@ -703,6 +740,18 @@ export function TaskDetailModalContent({
     const trimmed = localTitle.trim();
     if (!trimmed) { setLocalTitle(task?.title || ''); return; }
     if (trimmed !== task?.title && task) {
+      // Optimistic "changed name" entry; replaced by the real one when the server's task_activity arrives
+      if (!(task as any).parentTaskId) {
+        setActivities(prev => [...prev, {
+          id: `optimistic-title-${Date.now()}`,
+          type: 'title_change',
+          author: currentUser?.name || 'Someone',
+          oldTitle: task.title,
+          newTitle: trimmed,
+          date: new Date(),
+          user: currentUser,
+        }]);
+      }
       const updatePromise = (task as any).parentTaskId
         ? tasksApi.updateSubtask((task as any).parentTaskId, task.id, { title: trimmed })
         : tasksApi.updateTask(task.id, {
@@ -808,12 +857,16 @@ export function TaskDetailModalContent({
           const typePrefix = data.activity.type === 'status_change' ? 'optimistic-status'
             : data.activity.type === 'assignment' ? 'optimistic-assign'
               : data.activity.type === 'priority_change' ? 'optimistic-priority'
-                : null;
+                : data.activity.type === 'title_change' ? 'optimistic-title'
+                  : null;
           if (typePrefix) {
             const optimisticIdx = prev.findIndex(
               a => {
                 if (typeof a.id !== 'string' || !a.id.startsWith(typePrefix)) return false;
-                
+
+                if (data.activity.type === 'title_change') {
+                  return a.newTitle === data.activity.newTitle;
+                }
                 // Match specific fields to avoid race conditions overriding the wrong optimistic item
                 if (data.activity.type === 'assignment') {
                   return a.assigneeName === data.activity.assigneeName;
@@ -1042,7 +1095,9 @@ export function TaskDetailModalContent({
       return;
     }
     
-    task.status = newStatus;
+    // Let the caller (dashboard, doc, activity page) reflect the new status right away
+    if (onUpdateTask) onUpdateTask({ ...task, status: newStatus });
+    else task.status = newStatus;
 
     try {
       let res: any;
@@ -1057,8 +1112,10 @@ export function TaskDetailModalContent({
       }
       toast.success(`Moved to ${newStatus}`);
     } catch (err: any) {
-      // Rollback optimistic activity on error
+      // Rollback optimistic activity and status on error
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
+      if (onUpdateTask) onUpdateTask({ ...task, status: oldStatus });
+      else task.status = oldStatus;
       toast.error(err.message || 'Failed to move task');
     }
   };
@@ -1234,7 +1291,7 @@ export function TaskDetailModalContent({
           userId: currentUser?.id,
         });
       }
-      toast.success(`Priority set to ${p}`);
+      toast.success(`Priority set to ${getPriorityConfig(p).label}`);
     } catch (err: any) {
       // Rollback on error
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
@@ -1410,7 +1467,7 @@ export function TaskDetailModalContent({
                 {task.list.space && (
                   <>
                     <button
-                      onClick={() => { onClose(); router.push('/'); }}
+                      onClick={() => { if (mode === 'modal') onClose(); router.push('/'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -1425,7 +1482,7 @@ export function TaskDetailModalContent({
                 {task.list.folder && (
                   <>
                     <button
-                      onClick={() => { onClose(); router.push('/'); }}
+                      onClick={() => { if (mode === 'modal') onClose(); router.push('/'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <Folder className="w-3.5 h-3.5 shrink-0" />
@@ -1436,7 +1493,7 @@ export function TaskDetailModalContent({
                 )}
 
                 <button
-                  onClick={() => { onClose(); router.push(`/lists/${task.list?.id}`); }}
+                  onClick={() => { if (mode === 'modal') onClose(); router.push(`/lists/${task.list?.id}`); }}
                   className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                 >
                   <ListTodo className="w-3.5 h-3.5 shrink-0" />
@@ -1483,7 +1540,7 @@ export function TaskDetailModalContent({
               <button
                 onClick={() => {
                   onClose();
-                  const fromPath = typeof window !== 'undefined' ? window.location.pathname : '';
+                  const fromPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
                   router.push(`/tasks/${task.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
                 }}
                 className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
@@ -1928,11 +1985,14 @@ export function TaskDetailModalContent({
                     <Popover.Trigger asChild>
                       <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
                         {(() => {
-                          const priorityColor = task.priority ? (PRIORITY_COLORS[task.priority] ?? 'text-zinc-400') : 'text-zinc-500';
+                          const config = getPriorityConfig(task.priority);
                           return (
-                            <span className={`capitalize ${priorityColor}`}>
-                              {task.priority?.toLowerCase() || 'Empty'}
-                            </span>
+                            <>
+                              {task.priority && <Flag className={`w-3.5 h-3.5 shrink-0 ${config.iconColor}`} />}
+                              <span className={`font-medium ${config.color}`}>
+                                {task.priority ? config.label : 'Empty'}
+                              </span>
+                            </>
                           );
                         })()}
                       </div>
@@ -1941,14 +2001,14 @@ export function TaskDetailModalContent({
                       <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-56 p-1 bg-popover border border-zinc-800 rounded-xl shadow-2xl outline-none" side="bottom" align="start" sideOffset={4}>
                         <div className="flex flex-col gap-0.5">
                           <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
-                          {(['URGENT', 'HIGH', 'MEDIUM', 'LOW'] as Priority[]).map(p => (
+                          {(PRIORITY_OPTIONS as readonly Priority[]).map(p => (
                             <button
                               key={p}
                               onClick={() => { handlePriorityChange(p); setIsPriorityOpen(false); }}
-                              className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${task.priority === p ? 'text-zinc-100 bg-zinc-800/50' : 'text-zinc-300 hover:text-zinc-100'}`}
+                              className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${task.priority === p ? 'bg-zinc-800/50' : ''}`}
                             >
-                              <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p] ?? 'text-zinc-400'}`} />
-                              <span className="capitalize">{p.toLowerCase()}</span>
+                              <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
+                              <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
                               {task.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
                             </button>
                           ))}
@@ -2448,6 +2508,9 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
+                              if (act.type === 'title_change') {
+                                return renderTitleChangeActivity(act, currentUser?.name);
+                              }
                               if (act.type === 'priority_change') {
                                 return (
                                   <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
@@ -2459,7 +2522,7 @@ export function TaskDetailModalContent({
                                       ) : (
                                         <>changed priority to{' '}</>
                                       )}
-                                      <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                                      <span className={`font-medium ${getPriorityConfig(act.newPriority).color}`}>{getPriorityConfig(act.newPriority).label}</span>
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                       {timeStr}
@@ -3335,8 +3398,10 @@ export function SubtaskDetailView({
                   if (mode === 'modal' && setActiveSubtask) {
                     setActiveSubtask(null);
                   } else {
+                    // Carry the original origin along so closing the parent still returns there
+                    const fromPath = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null;
                     onClose();
-                    router.push(`/tasks/${parentTask.id}`);
+                    router.push(`/tasks/${parentTask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
                   }
                 }}
                 className="truncate max-w-[150px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
@@ -3383,7 +3448,7 @@ export function SubtaskDetailView({
             <button
               onClick={() => {
                 onClose();
-                const fromPath = typeof window !== 'undefined' ? window.location.pathname : '';
+                const fromPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
                 router.push(`/tasks/${subtask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
               }}
               className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
@@ -3895,8 +3960,9 @@ export function SubtaskDetailView({
                           : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50'
                       }`}
                     >
-                      <span className={`capitalize ${subtask.priority ? (PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400') : 'text-zinc-500'}`}>
-                        {subtask.priority?.toLowerCase() || 'Empty'}
+                      {subtask.priority && <Flag className={`w-3.5 h-3.5 shrink-0 mr-1.5 ${getPriorityConfig(subtask.priority).iconColor}`} />}
+                      <span className={getPriorityConfig(subtask.priority).color}>
+                        {subtask.priority ? getPriorityConfig(subtask.priority).label : 'Empty'}
                       </span>
                     </div>
                   </Popover.Trigger>
@@ -3904,14 +3970,14 @@ export function SubtaskDetailView({
                     <Popover.Content className="z-[100000] w-36 p-1.5 bg-popover border border-zinc-800 rounded-xl shadow-2xl outline-none" align="start" sideOffset={4}>
                       <div className="flex flex-col gap-0.5">
                         <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
-                        {(['URGENT', 'HIGH', 'MEDIUM', 'LOW'] as Priority[]).map((p) => (
+                        {(PRIORITY_OPTIONS as readonly Priority[]).map((p) => (
                           <button
                             key={p}
                             onClick={() => { handleUpdatePriority(p); setIsPriorityOpen(false); }}
-                            className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer"
+                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${subtask.priority === p ? 'bg-zinc-800/50' : ''}`}
                           >
-                            <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p] ?? 'text-zinc-400'}`} />
-                            <span className="capitalize">{p.toLowerCase()}</span>
+                            <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
+                            <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
                             {subtask.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
                           </button>
                         ))}
@@ -4591,8 +4657,9 @@ export function TaskDetailModal(props: Props) {
           if (res?.task) {
             setFullTask(prev => {
               if (!prev) return res.task;
-              // Merge: keep local optimistic state (assignees, roles) but refresh deep data
-              return { ...res.task, ...prev };
+              // The DB copy wins: the seeded prop may be a stale/partial cache (e.g. an old status
+              // from a doc mention or dashboard). Only fill in fields the response didn't include.
+              return { ...prev, ...res.task };
             });
           }
         } catch (err) {
@@ -4662,6 +4729,7 @@ export function TaskDetailModal(props: Props) {
           // Backdrop appears instantly; only the modal card animates
           <div
             key="modal-backdrop"
+            data-task-detail-modal=""
             className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
             onPointerDown={(e) => {
               if (e.target === e.currentTarget) {

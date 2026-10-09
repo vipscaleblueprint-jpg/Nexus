@@ -420,15 +420,20 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     useSensor(KeyboardSensor, keyboardSensorOptions)
   );
 
-  // Group tasks by status
+  // Group tasks by status (case-insensitive, so legacy "In Progress" lands in the "IN PROGRESS" column)
   const tasksByStatus = useMemo(() => {
+    const canonicalStatus: Record<string, string> = {};
+    localStatuses.forEach((s: any) => {
+      if (s.name) canonicalStatus[s.name.trim().toUpperCase()] = s.name;
+    });
     return localTasks.reduce((acc: Record<string, Task[]>, task) => {
-      const status = task.status || 'Pending';
+      const raw = task.status || 'PENDING';
+      const status = canonicalStatus[raw.trim().toUpperCase()] || raw;
       if (!acc[status]) acc[status] = [];
       acc[status].push(task);
       return acc;
     }, {});
-  }, [localTasks]);
+  }, [localTasks, localStatuses]);
 
   // Group columns into configured categories + dynamic custom groups
   const categorizedColumns = useMemo(() => {

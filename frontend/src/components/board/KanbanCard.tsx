@@ -1,24 +1,18 @@
 import { useSortable } from '@dnd-kit/sortable';
-import { memo, useState, useMemo, useRef, useEffect } from 'react';
+import { memo, useState, useMemo, useRef, useEffect, useCallback } from 'react';
 
 import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield } from 'lucide-react';
+import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
 import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { canUserEditTask } from '@/lib/permissions';
-
-
-const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-500 dark:text-zinc-500 dark:text-zinc-400',
-  MEDIUM: 'text-blue-400',
-  HIGH: 'text-orange-400',
-  URGENT: 'text-red-400',
-};
+import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
+import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 
 interface Props {
   task: Task;
@@ -118,7 +112,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
       } else {
         await tasksApi.updateTask(task.id, { priority: (p || undefined) as any, userId: currentUser.id });
       }
-      toast.success(p ? `Priority set to ${p}` : 'Priority cleared');
+      toast.success(p ? `Priority set to ${getPriorityConfig(p).label}` : 'Priority cleared');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update priority');
       setTask(initialTask);
@@ -572,16 +566,25 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
             className={`${fieldHoverClass} max-w-[150px]`}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
           >
-            <Flag className={`w-3.5 h-3.5 shrink-0 ${('priority' in task && task.priority) ? (PRIORITY_COLORS[task.priority] ?? 'text-zinc-500') : 'text-zinc-500'}`} />
-            <span className={`truncate ${('priority' in task && task.priority) ? (PRIORITY_COLORS[task.priority] ?? 'text-zinc-500') : 'text-zinc-500'}`}>
-              {('priority' in task && task.priority) ? task.priority.toLowerCase() : '-'}
-            </span>
+            {(() => {
+              const priority = 'priority' in task ? task.priority : null;
+              const config = getPriorityConfig(priority);
+              return (
+                <>
+                  <Flag className={`w-3.5 h-3.5 shrink-0 ${config.iconColor}`} />
+                  <span className={`truncate font-medium ${config.color}`}>
+                    {priority ? config.label : '-'}
+                  </span>
+                </>
+              );
+            })()}
           </div>
           {openDropdown === 'priority' && (
             <PortalDropdown triggerRef={priorityTriggerRef} onClose={closeDropdown}>
               <div className="w-44 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
                 <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-zinc-900 z-10">Priority</div>
-                {(['URGENT', 'HIGH', 'MEDIUM', 'LOW']).map(p => {
+                {PRIORITY_OPTIONS.map(p => {
+                  const config = getPriorityConfig(p);
                   const isSelected = ('priority' in task && task.priority === p);
                   return (
                     <div
@@ -591,9 +594,9 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                       }`}
                       onClick={() => handlePriorityChange(p)}
                     >
-                      <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p] ?? 'text-zinc-400'}`} />
-                      <span className="text-xs capitalize flex-1">
-                        {p.toLowerCase()}
+                      <Flag className={`w-3.5 h-3.5 shrink-0 ${config.iconColor}`} />
+                      <span className={`text-xs font-medium flex-1 ${config.color}`}>
+                        {config.label}
                       </span>
                       {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                     </div>
@@ -626,8 +629,57 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isCreatingSubtask, setIsCreatingSubtask] = useState(false);
 
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [isDuplicating, setIsDuplicating] = useState(false);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+
   const currentUser = useAppStore((s) => s.currentUser);
+  const removeTask = useAppStore((s) => s.removeTask);
   const editCheck = useMemo(() => canUserEditTask(task as any, currentUser), [(task as any).teamAssignAccessRole, currentUser]);
+
+  const closeMenu = useCallback(() => setIsMenuOpen(false), []);
+
+  const handleDuplicate = async () => {
+    if (!currentUser || isDuplicating) return;
+    setIsMenuOpen(false);
+    setIsDuplicating(true);
+    try {
+      // The new task reaches every view through the `task:created` websocket broadcast
+      await tasksApi.createTask({
+        title: `${task.title} (copy)`,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        listId: task.listId,
+        assigneeIds: task.assignees?.map((a) => a.id) ?? task.assigneeIds,
+        teamId: task.teamId,
+        creatorId: currentUser.id,
+        dueDate: task.dueDate,
+        startDate: task.startDate,
+        assigneeRoleRestrictions: task.assigneeRoleRestrictions,
+        teamAssignAccessRole: task.teamAssignAccessRole,
+        afterTaskId: task.id,
+      });
+      toast.success('Task duplicated');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to duplicate task');
+    } finally {
+      setIsDuplicating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      // Other views (list board, other clients) drop the card via the `task:deleted` broadcast
+      await tasksApi.deleteTask(task.id);
+      removeTask(task.id);
+      toast.success('Task deleted');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete task');
+      throw err;
+    }
+  };
 
   const effectivelyDisabled = isMoveDisabled || !editCheck.allowed;
 
@@ -716,8 +768,43 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
           ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3"
           : `bg-card hover:bg-card/90 border border-border hover:border-zinc-400 dark:hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
           } ${isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
-          } ${hasOpenDropdown ? 'z-50' : 'z-10'}`}
+          } ${hasOpenDropdown || isMenuOpen ? 'z-50' : 'z-10'}`}
       >
+        {!isOverlay && !isDragging && (
+          <button
+            ref={menuTriggerRef}
+            type="button"
+            title="Task actions"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setIsMenuOpen((prev) => !prev); }}
+            className={`absolute top-2.5 right-2.5 z-10 p-1 rounded-md border border-border bg-card text-zinc-500 hover:text-foreground hover:bg-black/5 dark:hover:bg-zinc-700/50 transition-opacity ${isMenuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {isMenuOpen && (
+          <PortalDropdown triggerRef={menuTriggerRef} onClose={closeMenu}>
+            <div className="w-40 flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                disabled={isDuplicating}
+                onClick={handleDuplicate}
+                className="px-2.5 py-2 flex items-center gap-2.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded-md transition-colors disabled:opacity-50"
+              >
+                <Copy className="w-3.5 h-3.5" /> Duplicate
+              </button>
+              {editCheck.allowed && (
+                <button
+                  type="button"
+                  onClick={() => { setIsMenuOpen(false); setIsConfirmDeleteOpen(true); }}
+                  className="px-2.5 py-2 flex items-center gap-2.5 text-xs text-red-400/80 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              )}
+            </div>
+          </PortalDropdown>
+        )}
         <div className={isDragging ? 'opacity-0 pointer-events-none flex flex-col gap-3 w-full h-full' : 'contents'}>
           <CardContent task={task} listStatuses={listStatuses} onDropdownOpenChange={setHasOpenDropdown}>
             {subtasksToggle}
@@ -828,6 +915,21 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
             </div>
           )}
         </div>
+      )}
+
+      {/* Portaled so the card's hover transform doesn't trap the fixed overlay, and wrapped so
+          clicks inside the modal don't bubble (via React's tree) into the card's open/drag handlers */}
+      {isConfirmDeleteOpen && typeof document !== 'undefined' && createPortal(
+        <div onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <ConfirmDeleteModal
+            isOpen={isConfirmDeleteOpen}
+            onClose={() => setIsConfirmDeleteOpen(false)}
+            onConfirm={handleDelete}
+            title="Delete Task"
+            itemName={task.title}
+          />
+        </div>,
+        document.body
       )}
     </div>
   );

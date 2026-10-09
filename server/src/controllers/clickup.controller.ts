@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { io } from '../server';
 import {
   testConnection,
   getWorkspaces,
@@ -8,7 +9,9 @@ import {
   getListsInFolder,
   getFolderlessLists,
   getClickUpTask,
+  resolveClickUpListId,
 } from '../services/clickupService';
+import { startClickUpSync, getClickUpSyncState } from '../services/clickupSyncService';
 
 // ---------------------------------------------------------------------------
 // GET /api/clickup/status
@@ -91,31 +94,31 @@ export async function listFolderlessLists(req: Request, res: Response) {
 // ---------------------------------------------------------------------------
 // GET /api/clickup/mappings
 // Returns all Nexus lists that have a ClickUp list ID mapped to them.
-// We store the mapping in the List.externalId field (or a separate JSON
-// column if that field is already in use). For now we use List.externalId
-// prefixed with "cu:" so it doesn't clash with other external IDs.
+// Mappings live in List.clickUpListId (List.externalId holds the Galaxy client
+// ID); older mappings stored as "cu:<id>" in externalId are still read.
 // ---------------------------------------------------------------------------
 export async function getMappings(req: Request, res: Response) {
   try {
     const lists = await prisma.list.findMany({
       where: {
-        externalId: { startsWith: 'cu:' }
-      } as any,
+        OR: [{ clickUpListId: { not: null } }, { externalId: { startsWith: 'cu:' } }]
+      },
       select: {
         id: true,
         name: true,
         externalId: true,
+        clickUpListId: true,
         space: { select: { id: true, name: true } },
         folder: { select: { id: true, name: true } },
       }
     });
 
-    const mappings = lists.map((l: any) => ({
+    const mappings = lists.map((l) => ({
       nexusListId: l.id,
       nexusListName: l.name,
       space: l.space,
       folder: l.folder,
-      clickUpListId: l.externalId?.replace('cu:', '') ?? null,
+      clickUpListId: resolveClickUpListId(l),
     }));
 
     return res.json({ mappings });
@@ -138,8 +141,8 @@ export async function createMapping(req: Request, res: Response) {
 
     const list = await prisma.list.update({
       where: { id: nexusListId },
-      data: { externalId: `cu:${clickUpListId}` } as any,
-      select: { id: true, name: true, externalId: true }
+      data: { clickUpListId: String(clickUpListId) },
+      select: { id: true, name: true }
     });
 
     return res.json({
@@ -151,6 +154,9 @@ export async function createMapping(req: Request, res: Response) {
       }
     });
   } catch (err: any) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'That ClickUp list is already mapped to another Nexus list' });
+    }
     return res.status(500).json({ error: err.message });
   }
 }
@@ -162,9 +168,14 @@ export async function createMapping(req: Request, res: Response) {
 export async function deleteMapping(req: Request, res: Response) {
   try {
     const { nexusListId } = req.params;
+    const list = await prisma.list.findUnique({ where: { id: nexusListId }, select: { externalId: true } });
     await prisma.list.update({
       where: { id: nexusListId },
-      data: { externalId: null } as any,
+      // Only clear externalId when it's a legacy "cu:" mapping — otherwise it's the Galaxy client ID.
+      data: {
+        clickUpListId: null,
+        ...(list?.externalId?.startsWith('cu:') && { externalId: null }),
+      },
     });
     return res.json({ ok: true });
   } catch (err: any) {
@@ -221,19 +232,26 @@ export async function getRecentSyncedActivity(req: Request, res: Response) {
 
 // ---------------------------------------------------------------------------
 // POST /api/clickup/sync-all
-// Pulls all latest data from ClickUp for mapped lists.
-// (Stub implementation for now)
+// Starts pulling every mapped ClickUp list into Nexus in the background — a
+// full pull can outlast an HTTP request. Poll /sync-status for the result.
 // ---------------------------------------------------------------------------
 export async function syncAllClickUp(req: Request, res: Response) {
   try {
-    // A complete sync would involve:
-    // 1. Fetching all mapped lists
-    // 2. Fetching tasks for each list from ClickUp
-    // 3. Updating/Creating tasks in Nexus database based on ClickUp data
-    // For now, we simulate a delay and return success.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    return res.json({ ok: true });
+    const started = startClickUpSync({
+      // Active tasks only unless the caller asks for closed ones too.
+      includeClosed: req.body?.includeClosed === true,
+      emit: (room, event, payload) => io.to(room).emit(event, payload),
+    });
+    return res.status(202).json({ ok: true, started });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/clickup/sync-status
+// Whether a pull is running, with its live progress — or the last finished one.
+// ---------------------------------------------------------------------------
+export async function getClickUpSyncStatus(req: Request, res: Response) {
+  return res.json(getClickUpSyncState());
 }

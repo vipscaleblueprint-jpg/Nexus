@@ -174,7 +174,14 @@ export default function BoardPage() {
           updated[tempIdx] = newTask;
           return { ...prev, tasks: updated };
         }
-        return { ...prev, tasks: [...prev.tasks, newTask] };
+        // Mirror the server's board order (position, else createdAt) so duplicates land beside their original
+        const sortKey = (t: any) => t.position ?? new Date(t.createdAt).getTime();
+        const newKey = sortKey(newTask);
+        const insertIdx = prev.tasks.findIndex((t: any) => sortKey(t) > newKey);
+        if (insertIdx === -1) return { ...prev, tasks: [...prev.tasks, newTask] };
+        const updated = [...prev.tasks];
+        updated.splice(insertIdx, 0, newTask);
+        return { ...prev, tasks: updated };
       });
     });
 
@@ -203,12 +210,12 @@ export default function BoardPage() {
     });
 
     // Real-time: task deleted by another user
-    s.on('task:deleted', (data: { taskId: string }) => {
+    s.on('task:deleted', (data: { id: string }) => {
       setList((prev: any) => {
         if (!prev || !prev.tasks) return prev;
-        return { ...prev, tasks: prev.tasks.filter((t: any) => t.id !== data.taskId) };
+        return { ...prev, tasks: prev.tasks.filter((t: any) => t.id !== data.id) };
       });
-      setSelectedTask((prev: any) => prev?.id === data.taskId ? null : prev);
+      setSelectedTask((prev: any) => prev?.id === data.id ? null : prev);
     });
 
     // Real-time: task dragging between columns

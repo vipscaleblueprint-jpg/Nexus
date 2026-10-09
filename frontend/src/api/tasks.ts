@@ -22,7 +22,7 @@ export const tasksApi = {
     });
   },
 
-  async createTask(data: Partial<Task>): Promise<{ task: Task }> {
+  async createTask(data: Partial<Task> & { afterTaskId?: string }): Promise<{ task: Task }> {
     return apiClient<{ task: Task }>('/api/tasks', {
       method: 'POST',
       body: JSON.stringify(data),

@@ -31,6 +31,35 @@ export interface ClickUpList {
   task_count?: number;
 }
 
+export interface ClickUpSyncSummary {
+  startedAt: string;
+  finishedAt?: string;
+  lists: number;
+  tasksCreated: number;
+  tasksUpdated: number;
+  subtasks: number;
+  checklists: number;
+  checklistItems: number;
+  comments: number;
+  attachments: number;
+  statusesCreated: number;
+  unmatchedUsers: string[];
+  /** Failures left after the server's automatic retries. */
+  errors: string[];
+  listResults: ClickUpListResult[];
+  /** The list being pulled right now; absent once finished. */
+  currentList?: string;
+}
+
+export interface ClickUpListResult {
+  name: string;
+  created: number;
+  updated: number;
+  subtasks: number;
+  retried: number;
+  failed: number;
+}
+
 export const clickUpApi = {
   /** Test ClickUp connectivity — returns the authenticated user. */
   async getStatus(): Promise<{ ok: boolean; user?: any; error?: string }> {
@@ -90,8 +119,16 @@ export const clickUpApi = {
     return apiClient(`/api/clickup/tasks/${taskId}`);
   },
 
-  /** Fetch all latest data from ClickUp and pull it (sync mappings) */
-  async syncAll(): Promise<{ ok: boolean }> {
-    return apiClient('/api/clickup/sync-all', { method: 'POST' });
+  /**
+   * Start pulling every mapped ClickUp list into Nexus (active tasks unless includeClosed).
+   * Runs in the background; poll getSyncStatus. started=false means one is already running.
+   */
+  async syncAll(includeClosed = false): Promise<{ ok: boolean; started: boolean }> {
+    return apiClient('/api/clickup/sync-all', { method: 'POST', body: JSON.stringify({ includeClosed }) });
+  },
+
+  /** Whether a pull is running, with its live progress — or the last finished one. */
+  async getSyncStatus(): Promise<{ running: boolean; summary: ClickUpSyncSummary | null }> {
+    return apiClient('/api/clickup/sync-status');
   },
 };

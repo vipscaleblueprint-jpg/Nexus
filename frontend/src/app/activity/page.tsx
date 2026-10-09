@@ -37,6 +37,8 @@ const formatActivityMessage = (log: any) => {
     case 'PRIORITY_CHANGE':
       message = `changed priority ${details?.oldPriority ? `from ${details.oldPriority} ` : ''}to ${details?.newPriority}`;
       break;
+    case 'TITLE_CHANGE':
+      return `renamed ${isSubtask ? 'subtask' : 'task'} "${details?.oldTitle || ''}" to "${details?.newTitle || targetTitle}"`;
     case 'ASSIGNMENT':
       if (Array.isArray(details?.added) || Array.isArray(details?.removed)) {
         const added: string[] = details.added || [];
@@ -78,24 +80,33 @@ export default function ActivityPage() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [myAuditLogs, setMyAuditLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { decrementUnreadNotifications, workspaceRoles, currentUser } = useAppStore();
+  const currentUserIdRef = useRef<string | undefined>(currentUser?.id);
+  currentUserIdRef.current = currentUser?.id;
 
-  const fetchData = async () => {
-    setLoading(true);
+  // silent = live refresh from a socket event: keep the current list on screen instead of the spinner
+  const fetchData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const [notifRes, auditRes] = await Promise.all([
+      const userId = currentUserIdRef.current;
+      const { activityApi } = await import('@/api/activity');
+      const [notifRes, auditRes, myAuditRes] = await Promise.all([
         notificationsApi.getNotifications('primary'),
-        import('@/api/activity').then(m => m.activityApi.getAuditLogs())
+        activityApi.getAuditLogs(),
+        // The user's own actions are fetched separately so they aren't crowded out of the global window
+        userId ? activityApi.getAuditLogs(userId) : Promise.resolve({ logs: [] }),
       ]);
       setNotifications(notifRes.notifications);
       setAuditLogs(auditRes.logs || []);
+      setMyAuditLogs(myAuditRes.logs || []);
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -114,12 +125,22 @@ export default function ActivityPage() {
     router.push(`/tasks/${taskId}`);
   };
 
+  // Refetch once the current user is known so the "For Me" feed can load their own logs
   useEffect(() => {
     fetchData();
+  }, [currentUser?.id]);
+
+  useEffect(() => {
     const url = new URL(window.location.href);
     const taskId = url.searchParams.get('task');
     if (taskId) handleOpenTask(taskId);
-    const onNew = () => fetchData();
+    // Live updates: status/name changes, comments and notifications arrive as socket events.
+    // Debounced so a burst (e.g. room + global emits, or a doubled integration request) refetches once.
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const onNew = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => fetchData(true), 400);
+    };
     const onClear = () => {
       setSelectedTask(null);
       const u = new URL(window.location.href);
@@ -131,6 +152,7 @@ export default function ActivityPage() {
     window.addEventListener('task:comment_added', onNew);
     window.addEventListener('clear_activity_task', onClear);
     return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
       window.removeEventListener('notification_received', onNew);
       window.removeEventListener('task_activity', onNew);
       window.removeEventListener('task:comment_added', onNew);
@@ -218,7 +240,6 @@ export default function ActivityPage() {
   const filteredNotifications = notifications.filter(n => matchesCategoryNotif(n, category));
   const filteredLogs = auditLogs.filter(l => matchesCategoryLog(l, category));
 
-  const myAuditLogs = auditLogs.filter(l => l.user?.email === currentUser?.email || l.userId === currentUser?.id);
   const filteredMyLogs = myAuditLogs.filter(l => matchesCategoryLog(l, category));
 
   const mergedForMe = [
@@ -402,7 +423,7 @@ export default function ActivityPage() {
                 <div className="space-y-4">
                   {items.map((log: any, i: number) => {
                     const isAssignment = log.action === 'ASSIGNMENT';
-                    const isStatus = log.action === 'STATUS_CHANGE';
+                    const isStatus = log.action === 'STATUS_CHANGE' || log.action === 'TITLE_CHANGE';
                     const isComment = log.action === 'COMMENT_ADDED';
                     const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : Globe;
                     const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : 'text-zinc-400';

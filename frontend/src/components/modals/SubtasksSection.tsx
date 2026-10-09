@@ -9,6 +9,7 @@ import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, su
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
+import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
@@ -46,13 +47,6 @@ interface SubtasksSectionProps {
   listStatuses?: any[];
   teams?: any[];
 }
-
-const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400',
-  MEDIUM: 'text-blue-400',
-  HIGH: 'text-orange-400',
-  URGENT: 'text-red-400',
-};
 
 // Subcomponent for description to avoid hook-in-loop issues
 function SubtaskDescription({
@@ -412,7 +406,8 @@ function SubtaskRow({
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusRowOpen, setStatusRowOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState<number | undefined>(undefined);
-  const priorityTextColor = subtask.priority ? (PRIORITY_COLORS[subtask.priority] ?? 'text-zinc-400') : 'text-zinc-500';
+  const priorityConfig = getPriorityConfig(subtask.priority);
+  const priorityLabel = subtask.priority ? priorityConfig.label : 'Empty';
   const resizeRef = useRef<HTMLDivElement>(null);
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -722,8 +717,8 @@ function SubtaskRow({
             </div>
 
             <div className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[10px] shrink-0 whitespace-nowrap">
-              <Flag className={`w-3.5 h-3.5 shrink-0 text-zinc-500`} />
-              <span className={priorityTextColor}>{subtask.priority || 'Empty'}</span>
+              <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
+              <span className={`font-medium ${priorityConfig.color}`}>{priorityLabel}</span>
             </div>
           </div>
         </div>
@@ -1059,9 +1054,8 @@ function SubtaskRow({
                       : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50'
                   }`}
                 >
-                  <span className={`capitalize ${priorityTextColor}`}>
-                    {subtask.priority?.toLowerCase() || 'Empty'}
-                  </span>
+                  {subtask.priority && <Flag className={`w-3.5 h-3.5 shrink-0 mr-1.5 ${priorityConfig.iconColor}`} />}
+                  <span className={priorityConfig.color}>{priorityLabel}</span>
                 </div>
               </Popover.Trigger>
               <Popover.Portal>
@@ -1073,14 +1067,14 @@ function SubtaskRow({
                 >
                   <div className="flex flex-col gap-0.5">
                     <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
-                    {(['URGENT', 'HIGH', 'MEDIUM', 'LOW'] as Priority[]).map((p) => (
+                    {(PRIORITY_OPTIONS as readonly Priority[]).map((p) => (
                       <button
                         key={p}
                         onClick={() => { onUpdate(subtask.id, { priority: p }); setPriorityOpen(false); }}
-                        className="flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer"
+                        className={`flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${subtask.priority === p ? 'bg-zinc-800/50' : ''}`}
                       >
-                        <Flag className={`w-3.5 h-3.5 shrink-0 ${PRIORITY_COLORS[p]?.split(' ')[0] ?? 'text-zinc-400'}`} />
-                        <span className="capitalize">{p.toLowerCase()}</span>
+                        <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
+                        <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
                         {subtask.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
                       </button>
                     ))}

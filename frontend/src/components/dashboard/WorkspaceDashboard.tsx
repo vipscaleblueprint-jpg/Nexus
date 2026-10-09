@@ -53,6 +53,7 @@ import { API_BASE_URL } from "@/api/client";
 import { TaskDetailModal } from "@/components/modals/TaskDetailModal";
 import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
+import { getPriorityConfig } from "@/lib/priority";
 
 export interface WorkspaceDashboardProps {
   activeView?: "all" | "my" | "spaces" | "lists" | "docs" | "folders";
@@ -231,32 +232,6 @@ function getStatusConfig(statusName: string, allLists?: any[]) {
     border: "border-indigo-500",
   };
 }
-
-const PRIORITY_FLAGS: Record<
-  string,
-  { label: string; color: string; iconColor: string }
-> = {
-  URGENT: {
-    label: "Urgent",
-    color: "text-rose-400",
-    iconColor: "text-rose-500 fill-rose-500",
-  },
-  HIGH: {
-    label: "High",
-    color: "text-amber-400",
-    iconColor: "text-amber-500 fill-amber-500",
-  },
-  MEDIUM: {
-    label: "Normal",
-    color: "text-blue-400",
-    iconColor: "text-blue-500 fill-blue-500",
-  },
-  LOW: {
-    label: "Low",
-    color: "text-zinc-400",
-    iconColor: "text-zinc-400 fill-zinc-400",
-  },
-};
 
 // ── Custom dropdown to replace native <select> (supports hover bg + cursor) ──
 function FilterDropdown({
@@ -587,8 +562,12 @@ function WorkspaceDashboardContent({
     });
   }, [tasks, currentUser]);
 
+  // Closed tasks are hidden from every overview tab unless the user explicitly filters by "Closed"
+  const isClosedTask = (t: Task) => (t.status || "").trim().toUpperCase() === "CLOSED";
+  const showClosed = filterStatus.toUpperCase() === "CLOSED";
+
   const filteredMyTasks = useMemo(() => {
-    let result = [...myTasks];
+    let result = showClosed ? [...myTasks] : myTasks.filter((t) => !isClosedTask(t));
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -642,7 +621,7 @@ function WorkspaceDashboardContent({
 
   // All Tasks filtering and sorting
   const filteredAllTasks = useMemo(() => {
-    let result = [...tasks];
+    let result = showClosed ? [...tasks] : tasks.filter((t) => !isClosedTask(t));
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -804,11 +783,7 @@ function WorkspaceDashboardContent({
     });
 
     return allGroupKeys.map((priorityKey) => {
-      const config = PRIORITY_FLAGS[priorityKey] || {
-        label: priorityKey === "EMPTY" ? "No Priority" : priorityKey,
-        color: "text-zinc-500",
-        iconColor: "text-zinc-500",
-      };
+      const config = getPriorityConfig(priorityKey === "EMPTY" ? null : priorityKey);
 
       const statusGroups = priorityGroups[priorityKey];
       const statusKeys = Object.keys(statusGroups).sort((a, b) => {
@@ -1011,8 +986,9 @@ function WorkspaceDashboardContent({
       return groupedAllTasksByPriority.map(g => ({
         key: g.priority,
         label: g.config.label,
-        pillClass: `bg-zinc-800/80 ${g.config.color}`,
+        pillClass: g.config.pill,
         customColor: undefined,
+        flagClass: g.config.iconColor,
         tasks: g.tasks,
         subGroups: g.subGroups,
         totalTasks: g.totalTasks
@@ -1049,14 +1025,8 @@ function WorkspaceDashboardContent({
           setSelectedTask(updatedTask);
           updateTask(updatedTask);
         }}
-        onStatusChange={(newStatus) => {
-          if (selectedTask) {
-            const updated = { ...selectedTask, status: newStatus };
-            pendingTaskUpdatesRef.current[updated.id] = Date.now();
-            setSelectedTask(updated);
-            updateTask(updated);
-          }
-        }}
+        // No onStatusChange: the modal persists the status itself via moveTask (which logs the
+        // activity and notifies assignees), then reports the change back through onUpdateTask.
       />
 
       <div className={selectedTask ? "hidden" : "flex flex-col gap-6"}>
@@ -1187,7 +1157,7 @@ function WorkspaceDashboardContent({
                 { value: "all", label: "Priority" },
                 { value: "URGENT", label: "Urgent" },
                 { value: "HIGH", label: "High" },
-                { value: "MEDIUM", label: "Medium" },
+                { value: "MEDIUM", label: "Normal" },
                 { value: "LOW", label: "Low" },
               ]}
               icon={Flag}
@@ -1277,7 +1247,7 @@ function WorkspaceDashboardContent({
                 )}
                 {activeGroups.map(
                   (groupData) => {
-                    const { key, label, pillClass, customColor, tasks: groupTasks, subGroups, totalTasks } = groupData as any;
+                    const { key, label, pillClass, customColor, flagClass, tasks: groupTasks, subGroups, totalTasks } = groupData as any;
                     const isCollapsed = collapsedGroups.has(key);
                     const count = totalTasks ?? groupTasks.length;
                     
@@ -1288,14 +1258,8 @@ function WorkspaceDashboardContent({
                     const renderTasks = (tasksToRender: Task[]) => (
                       <div className="flex flex-col w-full">
                         {tasksToRender.map((task) => {
-                          const priorityConfig =
-                            task.priority && PRIORITY_FLAGS[task.priority]
-                              ? PRIORITY_FLAGS[task.priority]
-                              : {
-                                  label: task.priority || "Normal",
-                                  color: "text-blue-400",
-                                };
-                          
+                          const priorityConfig = getPriorityConfig(task.priority);
+
                           const taskAssignees = task.assignees && task.assignees.length > 0 ? task.assignees : (task.assignee ? [task.assignee] : []);
 
                           return (
@@ -1334,10 +1298,8 @@ function WorkspaceDashboardContent({
                                   </div>
                                   {/* Priority Pill */}
                                   {currentTab !== "priorities" && (
-                                    <div className="w-[100px] flex justify-center shrink-0">
-                                      <span
-                                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-800/60 ${priorityConfig.color}`}
-                                      >
+                                    <div className="w-[100px] flex items-center justify-center shrink-0">
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide ${priorityConfig.pill}`}>
                                         {priorityConfig.label}
                                       </span>
                                     </div>
@@ -1366,9 +1328,10 @@ function WorkspaceDashboardContent({
                         >
                           <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                           <span
-                            className={`text-[11px] font-bold px-2 py-1 rounded-md uppercase tracking-wide ${pillClass} shadow-sm`}
+                            className={`text-[11px] font-bold px-2 py-1 rounded-md uppercase tracking-wide ${pillClass} shadow-sm ${flagClass ? 'flex items-center gap-1.5' : ''}`}
                             style={(customColor as any) ? { backgroundColor: customColor as any } : {}}
                           >
+                            {flagClass && <Flag className={`w-3.5 h-3.5 shrink-0 ${flagClass}`} />}
                             {label}
                           </span>
                           {unassignedCount > 0 && (
@@ -1479,42 +1442,35 @@ function WorkspaceDashboardContent({
                         className="flex items-center gap-2 cursor-pointer select-none hover:bg-accent/50 rounded-md transition-colors px-1.5 py-1 -ml-1.5"
                         onClick={() => toggleGroup(status)}
                       >
+                        <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                         {/* Status Pill Badge */}
                         <span
-                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${config.pill} shadow-sm flex items-center gap-1 transition-transform`}
+                          className={`text-[11px] font-bold px-2 py-1 rounded-md uppercase tracking-wide ${config.pill} shadow-sm`}
                           style={(config as any).customColor ? { backgroundColor: (config as any).customColor } : {}}
                         >
                           {config.label}
-                          <ChevronDown className={`w-3 h-3 opacity-70 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
-                        </span>
-                        {/* Count badge */}
-                        <span className="text-xs font-semibold text-zinc-500 ml-1">
-                          {groupTasks.length}
                         </span>
                       </div>
+                      <span className="text-sm font-bold text-zinc-300 w-8 shrink-0 text-center">
+                        {groupTasks.length}
+                      </span>
                     </div>
 
                     {!isCollapsed && (
                       <>
                         {/* Column Headers matching ClickUp */}
-                        <div className="hidden sm:flex items-center justify-between text-[11px] font-medium text-zinc-500 px-1 pb-1.5 border-b border-zinc-800/60 w-full">
-                          <span className="w-1/2 text-left pl-6">Name</span>
-                          <div className="flex items-center gap-8 pr-10">
-                            <span className="w-20 text-left">Priority</span>
+                        <div className="hidden sm:flex items-center justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1 pb-1.5 border-b border-zinc-800/60 w-full">
+                          <span className="text-left pl-6">Name</span>
+                          <div className="flex items-center shrink-0 w-[220px] pr-2">
+                            <span className="w-[120px] shrink-0 text-center">Assignee</span>
+                            <span className="w-[100px] shrink-0 text-center">Priority</span>
                           </div>
                         </div>
 
                         {/* Task Rows List */}
                         <div className="flex flex-col w-full">
                           {groupTasks.map((task) => {
-                            const priorityConfig =
-                              task.priority && PRIORITY_FLAGS[task.priority]
-                                ? PRIORITY_FLAGS[task.priority]
-                                : {
-                                    label: task.priority || "Normal",
-                                    color: "text-zinc-500",
-                                    iconColor: "text-zinc-500",
-                                  };
+                            const priorityConfig = getPriorityConfig(task.priority);
 
                             const taskAssignees =
                               task.assignees && task.assignees.length > 0
@@ -1575,10 +1531,10 @@ function WorkspaceDashboardContent({
                                 </div>
 
                                 {/* Right: Assignees + Priority + Due Date + More */}
-                                <div className="flex items-center gap-8 shrink-0 pr-2">
+                                <div className="hidden sm:flex items-center shrink-0 w-[220px] pr-2">
                                   {/* ClickUp-style Stacked Avatars */}
                                   <div
-                                    className="hidden sm:flex items-center -space-x-1"
+                                    className="flex items-center justify-center -space-x-1 w-[120px] shrink-0"
                                     title={
                                       taskAssignees.map((a) => a.name).join(", ") ||
                                       "Unassigned"
@@ -1608,13 +1564,8 @@ function WorkspaceDashboardContent({
                                   </div>
 
                                   {/* Priority Column */}
-                                  <div className="hidden sm:flex items-center gap-1.5 w-20">
-                                    <Flag
-                                      className={`w-3.5 h-3.5 ${priorityConfig.iconColor}`}
-                                    />
-                                    <span
-                                      className={`text-[11px] font-medium ${priorityConfig.color}`}
-                                    >
+                                  <div className="flex items-center justify-center w-[100px] shrink-0">
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide ${priorityConfig.pill}`}>
                                       {priorityConfig.label}
                                     </span>
                                   </div>

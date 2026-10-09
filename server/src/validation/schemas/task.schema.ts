@@ -28,6 +28,8 @@ export const createTaskSchema = z.object({
   startDate: nullableIsoDate,
   assigneeRoleRestrictions: z.array(z.string()).optional(),
   teamAssignAccessRole: z.string().nullable().optional(),
+  // Place the new task directly after this one on the board (used by Duplicate)
+  afterTaskId: uuid.optional(),
 });
 
 export const updateTaskSchema = z

@@ -2,10 +2,9 @@ import { Request, Response } from 'express';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { requireEnv } from '../config/env';
 import { logger, errMsg } from '../config/logger';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../config/prisma';
 import path from 'path';
 
-const prisma = new PrismaClient();
 
 const accountId = requireEnv('R2_ACCOUNT_ID');
 const accessKeyId = requireEnv('R2_ACCESS_KEY_ID');

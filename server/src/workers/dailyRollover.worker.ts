@@ -11,22 +11,22 @@ export const dailyRolloverWorker = new Worker(
     // Custom status priority order (lower index = higher priority in the list)
     const STATUS_ORDER: Record<string, number> = {
       'KYC':          1,
-      'Pin Board':    2,
-      'Daily':        3,
-      'Weekly':       4,
-      'Monthly':      5,
-      'Pending':      6,
-      'In Progress':  7,
-      'Revision':     8,
-      'Closed':       9,
-      'On-Hold':      10,
-      'Waiting':      11,
-      'In Review':    12,
-      'Checking':     13,
+      'PIN BOARD':    2,
+      'DAILY':        3,
+      'WEEKLY':       4,
+      'MONTHLY':      5,
+      'PENDING':      6,
+      'IN PROGRESS':  7,
+      'REVISION':     8,
+      'CLOSED':       9,
+      'ON-HOLD':      10,
+      'WAITING':      11,
+      'IN REVIEW':    12,
+      'CHECKING':     13,
       'CRM':          14,
     };
 
-    const getStatusOrder = (status: string) => STATUS_ORDER[status] ?? 99;
+    const getStatusOrder = (status: string) => STATUS_ORDER[(status || '').toUpperCase()] ?? 99;
 
     const activeTasks = await prisma.task.findMany({
       where: { status: { notIn: ['Closed', 'CLOSED'] } },
@@ -72,13 +72,6 @@ export const dailyRolloverWorker = new Worker(
       });
 
       for (const task of clientTasks) {
-        // Add a little more space above each parent
-        tiptapNodes.push({
-          id: `blk-space-t-${Date.now()}-${task.id}`,
-          type: 'text',
-          content: `<p></p>`
-        });
-
         tiptapNodes.push({
           id: `blk-t-${Date.now()}-${task.id}`,
           type: 'text',

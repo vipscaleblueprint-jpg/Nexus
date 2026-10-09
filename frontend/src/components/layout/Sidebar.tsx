@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -438,6 +438,52 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
   const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
+
+  // ── Resizable Nexus sub-sidebar (width persisted per user) ──
+  const NEXUS_DEFAULT_WIDTH = 224;
+  const NEXUS_MIN_WIDTH = 180;
+  const NEXUS_MAX_WIDTH = 480;
+  const widthStorageKey = `nexus-sidebar-width:${currentUser?.id ?? 'anon'}`;
+  const [nexusWidth, setNexusWidth] = useState(NEXUS_DEFAULT_WIDTH);
+  const [isResizingNexus, setIsResizingNexus] = useState(false);
+  const nexusPanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const stored = parseInt(localStorage.getItem(widthStorageKey) || '', 10);
+    setNexusWidth(!isNaN(stored) ? Math.min(NEXUS_MAX_WIDTH, Math.max(NEXUS_MIN_WIDTH, stored)) : NEXUS_DEFAULT_WIDTH);
+  }, [widthStorageKey]);
+
+  const startNexusResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = nexusPanelRef.current?.offsetWidth ?? nexusWidth;
+    let latestWidth = startWidth;
+    setIsResizingNexus(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    // Write width straight to the DOM while dragging to avoid re-rendering the whole tree
+    const onMove = (ev: PointerEvent) => {
+      latestWidth = Math.min(NEXUS_MAX_WIDTH, Math.max(NEXUS_MIN_WIDTH, startWidth + ev.clientX - startX));
+      if (nexusPanelRef.current) nexusPanelRef.current.style.width = `${latestWidth}px`;
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setIsResizingNexus(false);
+      setNexusWidth(latestWidth);
+      localStorage.setItem(widthStorageKey, String(latestWidth));
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const resetNexusWidth = () => {
+    setNexusWidth(NEXUS_DEFAULT_WIDTH);
+    localStorage.removeItem(widthStorageKey);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -880,7 +926,20 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
 
       {/* ── SECONDARY Nexus Sub-Sidebar ───────────────────────── */}
-      <div className="h-full w-56 bg-card border-r border-zinc-800 flex flex-col text-zinc-100 shrink-0 transition-all duration-300 ease-in-out">
+      <div
+        ref={nexusPanelRef}
+        style={{ width: nexusWidth }}
+        className="relative h-full bg-card border-r border-zinc-800 flex flex-col text-zinc-100 shrink-0"
+      >
+          {/* Resize handle — press and drag to widen, double-click to reset */}
+          <div
+            onPointerDown={startNexusResize}
+            onDoubleClick={resetNexusWidth}
+            title="Drag to resize · Double-click to reset"
+            className={`absolute top-0 -right-1 h-full w-2 cursor-col-resize z-30 group/resize`}
+          >
+            <div className={`mx-auto h-full w-0.5 transition-colors ${isResizingNexus ? 'bg-indigo-500' : 'bg-transparent group-hover/resize:bg-indigo-500/70'}`} />
+          </div>
           {/* Nexus header */}
           <div className="flex h-[60px] items-center px-3 shrink-0 border-b border-zinc-800 gap-2">
             <div className="size-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">

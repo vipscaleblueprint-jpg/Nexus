@@ -3,17 +3,36 @@ import { prisma } from '../config/prisma';
 
 export const getAuditLogs = async (req: Request, res: Response) => {
   try {
-    const logs = await prisma.auditLog.findMany({
-      take: 100,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: {
-          select: { id: true, name: true, email: true, avatarUrl: true }
-        }
+    // Optional ?userId= scopes the feed to one user's own actions (the "For Me" view),
+    // so their entries aren't pushed out of the window by everyone else's activity
+    const userId = typeof req.query.userId === 'string' && req.query.userId ? req.query.userId : undefined;
+    const userFilter = userId ? { userId } : {};
+
+    const logInclude = {
+      user: {
+        select: { id: true, name: true, email: true, avatarUrl: true }
       }
-    });
+    };
+    const [recentLogs, statusLogs] = await Promise.all([
+      prisma.auditLog.findMany({
+        where: userFilter,
+        take: 100,
+        orderBy: { createdAt: 'desc' },
+        include: logInclude,
+      }),
+      // Status/title changes get their own window: bulk assignment logs otherwise push them out
+      prisma.auditLog.findMany({
+        where: { ...userFilter, action: { in: ['STATUS_CHANGE', 'TITLE_CHANGE'] } },
+        take: 100,
+        orderBy: { createdAt: 'desc' },
+        include: logInclude,
+      }),
+    ]);
+    const recentLogIds = new Set(recentLogs.map(l => l.id));
+    const logs = [...recentLogs, ...statusLogs.filter(l => !recentLogIds.has(l.id))];
 
     const comments = await prisma.taskComment.findMany({
+      where: userFilter,
       take: 100,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -21,7 +40,26 @@ export const getAuditLogs = async (req: Request, res: Response) => {
       }
     });
 
-    const commentLogs = comments.map(c => ({
+    const existingCommentIds = new Set(
+      logs
+        .filter(l => (l.action === 'COMMENT' || l.action === 'REPLY') && (l.details as any)?.commentId)
+        .map(l => (l.details as any).commentId)
+    );
+
+    // Collapse duplicate rows (same author, task and text posted within 10s — e.g. an integration
+    // that fired its request twice) so each comment only appears once in the feed
+    const lastSeenComment = new Map<string, number>();
+    const dedupedComments = comments.filter(c => {
+      const key = `${c.userId}:${c.taskId}:${c.content}`;
+      const t = c.createdAt.getTime();
+      const prev = lastSeenComment.get(key);
+      lastSeenComment.set(key, t);
+      return prev === undefined || Math.abs(prev - t) > 10_000;
+    });
+
+    const commentLogs = dedupedComments
+      .filter(c => !existingCommentIds.has(c.id))
+      .map(c => ({
       id: c.id,
       action: c.parentCommentId ? 'REPLY' : 'COMMENT',
       entity: 'TASK',
@@ -34,7 +72,7 @@ export const getAuditLogs = async (req: Request, res: Response) => {
 
     const allLogs = [...logs, ...commentLogs]
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, 200);
+      .slice(0, 300);
 
     // ---------------------------------------------------------------
     // Batch enrich: collect all unique task/subtask IDs in ONE pass

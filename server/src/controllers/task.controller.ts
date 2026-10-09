@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma';
 import { getR2PresignedUrl } from '../services/r2Service';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
 import { taskUpdatesQueue } from '../queues/task.queue';
+import { getPositionAfter } from '../services/taskOrderService';
 import { io } from '../server';
 import {
   safeCreateClickUpTask,
@@ -21,6 +22,7 @@ import {
   mapNexusStatusToClickUp,
   mapNexusPriorityToClickUp,
   extractClickUpTaskId,
+  resolveClickUpListId,
 } from '../services/clickupService';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
@@ -262,10 +264,11 @@ export async function createTask(req: Request, res: Response) {
     const {
       title, description, status, priority, listId,
       assigneeId, assigneeIds, teamId, creatorId, dueDate, startDate,
-      assigneeRoleRestrictions, teamAssignAccessRole,
+      assigneeRoleRestrictions, teamAssignAccessRole, afterTaskId,
     } = req.body;
 
     const effectiveAssigneeId = (assigneeIds && assigneeIds.length > 0) ? assigneeIds[0] : (assigneeId || null);
+    const position = afterTaskId ? await getPositionAfter(listId, afterTaskId) : null;
 
     const task = await prisma.task.create({
       data: {
@@ -286,6 +289,7 @@ export async function createTask(req: Request, res: Response) {
         startDate: startDate ? new Date(startDate) : null,
         assigneeRoleRestrictions: assigneeRoleRestrictions || [],
         teamAssignAccessRole: teamAssignAccessRole || null,
+        position,
       },
       include: taskInclude,
     });
@@ -419,11 +423,9 @@ export async function createTask(req: Request, res: Response) {
       try {
         const nexusList = await prisma.list.findUnique({
           where: { id: listId },
-          select: { externalId: true }
+          select: { externalId: true, clickUpListId: true }
         });
-        const clickUpListId = nexusList?.externalId?.startsWith('cu:')
-          ? nexusList.externalId.replace('cu:', '')
-          : null;
+        const clickUpListId = resolveClickUpListId(nexusList);
 
         if (clickUpListId) {
           const cuPayload = {
@@ -723,6 +725,54 @@ export async function updateTask(req: Request, res: Response) {
           });
           let activity: any = null;
 
+          const emitActivity = (act: any) => {
+            if (roomListId) {
+              io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId, activity: act });
+            }
+            io.emit('task_activity', { taskId, activity: act });
+          };
+
+          // Title changes are logged independently so they still show up when sent alongside other fields
+          if (typeof title === 'string' && title !== currentTask.title) {
+            const titleLog = await prisma.auditLog.create({
+              data: {
+                action: 'TITLE_CHANGE',
+                entity: 'TASK',
+                entityId: taskId,
+                userId: actingUserId,
+                details: { oldTitle: currentTask.title, newTitle: title },
+              },
+            });
+
+            const titleUsersToNotify = currentTask.assignees
+              .map((a: any) => a.id)
+              .filter((id: any) => id !== actingUserId);
+            if (titleUsersToNotify.length > 0) {
+              await prisma.taskNotification.createMany({
+                data: titleUsersToNotify.map((id: any) => ({
+                  userId: id,
+                  actorId: actingUserId,
+                  taskId,
+                  type: 'TITLE_CHANGE',
+                  title: `${user?.name || 'Someone'} renamed "${currentTask.title}" to "${title}"`,
+                })),
+              });
+              titleUsersToNotify.forEach((id: any) => {
+                io.to(`user:${id}`).emit('notification_received');
+              });
+            }
+
+            emitActivity({
+              id: titleLog.id,
+              type: 'title_change',
+              author: user?.name || 'Someone',
+              oldTitle: currentTask.title,
+              newTitle: title,
+              date: titleLog.createdAt,
+              user,
+            });
+          }
+
           if (status && status !== currentTask.status) {
             const log = await prisma.auditLog.create({
               data: {
@@ -864,12 +914,7 @@ export async function updateTask(req: Request, res: Response) {
             };
           }
 
-          if (activity) {
-            if (roomListId) {
-              io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId, activity });
-            }
-            io.emit('task_activity', { taskId, activity });
-          }
+          if (activity) emitActivity(activity);
         } catch (err) {
           console.error('Background task logging error:', err);
         }
@@ -890,12 +935,12 @@ export async function deleteTask(req: Request, res: Response) {
     });
     await prisma.task.delete({ where: { id: taskId } });
 
-    await invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
-
     if (taskToDelete?.listId) {
       io.to(`list:${taskToDelete.listId}`).emit('task:deleted', { id: taskId });
     }
     io.emit('task:deleted', { id: taskId });
+
+    await invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
 
     // --- ClickUp Sync ---
     if (taskToDelete?.externalId) {
@@ -920,7 +965,7 @@ export async function moveTask(req: Request, res: Response) {
 
     const currentTask = await prisma.task.findUnique({
       where: { id },
-      select: { id: true, status: true, listId: true, creatorId: true, externalId: true },
+      select: { id: true, status: true, listId: true, creatorId: true, externalId: true, assignees: { select: { id: true } } },
     });
 
     if (!currentTask) {
@@ -989,7 +1034,7 @@ export async function moveTask(req: Request, res: Response) {
               userId: actingUserId,
               details: { oldStatus, newStatus: status },
             },
-          }).then(log => {
+          }).then(async log => {
             const activity = {
               id: log.id,
               type: 'status_change',
@@ -1001,7 +1046,28 @@ export async function moveTask(req: Request, res: Response) {
             };
             if (roomListId) {
               io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId: id, activity });
-            } else { io.emit('task_activity', { taskId: id, activity }); }
+            }
+            // Global broadcast so the Activity page and dashboards refresh too
+            io.emit('task_activity', { taskId: id, activity });
+
+            // Notify assignees (same as updateTask) so the change shows in their "For Me" feed
+            const usersToNotify = currentTask.assignees
+              .map((a: any) => a.id)
+              .filter((uid: string) => uid !== actingUserId);
+            if (usersToNotify.length > 0) {
+              await prisma.taskNotification.createMany({
+                data: usersToNotify.map((uid: string) => ({
+                  userId: uid,
+                  actorId: actingUserId,
+                  taskId: id,
+                  type: 'STATUS_CHANGE',
+                  title: `${user?.name || 'Someone'} changed the status to ${status}`,
+                })),
+              });
+              usersToNotify.forEach((uid: string) => {
+                io.to(`user:${uid}`).emit('notification_received');
+              });
+            }
           }).catch(console.error);
         }).catch(console.error);
       }
@@ -1131,7 +1197,8 @@ export async function createTaskComment(req: Request, res: Response) {
     const payload = { taskId, comment, activity, subtaskId };
     if (listId) {
       io.to(`list:${listId}`).emit('task:comment_added', payload);
-      io.to(`list:${listId}`).emit('task_activity', { listId, taskId, activity });
+      // Broadcast globally (room members included) so the Activity page, which isn't in list rooms, refreshes live
+      io.emit('task_activity', { listId, taskId, activity });
     } else {
       io.emit('task:comment_added', payload);
       io.emit('task_activity', { taskId, activity });
@@ -1424,6 +1491,18 @@ export async function getTaskActivities(req: Request, res: Response) {
           user: log.user,
         };
       }
+      if (log.action === 'TITLE_CHANGE') {
+        return {
+          id: log.id,
+          type: 'title_change',
+          author: log.user?.name || 'Someone',
+          oldTitle: details.oldTitle,
+          newTitle: details.newTitle,
+          subtaskTitle: details.subtaskTitle,
+          date: log.createdAt,
+          user: log.user,
+        };
+      }
       if (log.action === 'TEAM_ROLE_CHANGE') {
         return {
           id: log.id,
@@ -1575,7 +1654,7 @@ export async function getLiveBlocksData(req: Request, res: Response) {
 
     if (type === 'statuses') {
       const groupedTasks = tasks.reduce((acc: any, task: any) => {
-        const status = task.status || 'Pending';
+        const status = task.status || 'PENDING';
         if (!acc[status]) acc[status] = [];
         acc[status].push(task);
         return acc;
@@ -1639,8 +1718,8 @@ export async function createSubtask(req: Request, res: Response) {
     if (task?.externalId) {
       (async () => {
         try {
-          const list = await prisma.list.findUnique({ where: { id: task.listId }, select: { externalId: true } });
-          let cuListId = list?.externalId?.startsWith('cu:') ? list.externalId.replace('cu:', '') : null;
+          const list = await prisma.list.findUnique({ where: { id: task.listId }, select: { externalId: true, clickUpListId: true } });
+          let cuListId = resolveClickUpListId(list);
           
           if (!cuListId && task.externalId) {
             try {

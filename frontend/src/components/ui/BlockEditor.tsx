@@ -127,7 +127,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
     },
     editorProps: {
       attributes: {
-        class: 'prose dark:prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-900 dark:text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap inline-block min-w-[2px]',
+        class: 'prose dark:prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-900 dark:text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap block w-full',
       },
       // Task 2: Preserve all data-* attributes on mention spans during paste.
       transformPastedHTML(html: string) {
@@ -322,7 +322,9 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
           <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999, appendTo: typeof document !== 'undefined' ? document.body : undefined, popperOptions: { strategy: 'absolute', modifiers: [{ name: 'preventOverflow', enabled: false }, { name: 'flip', enabled: false }, { name: 'hide', enabled: true }] } }} className="flex flex-wrap items-center gap-0.5 bg-card p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
-            
+            {/* Keep editor focus + text selection while clicking any toolbar button */}
+            <div className="contents" onMouseDown={e => e.preventDefault()}>
+
             {/* Headings */}
             <button
               onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
@@ -483,6 +485,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
                 </div>
               </div>
             </div>
+            </div>
 
           </BubbleMenu>
         </div>
@@ -491,11 +494,12 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       <div
         className="flex-1 min-w-0 cursor-text"
         onMouseDown={(e) => {
+          // Only handle clicks on the bare wrapper. Clicks inside the editor are left to the
+          // browser/ProseMirror — calling focus() here restores the old selection one frame later
+          // and clobbers a drag-highlight that just started.
           if (e.target === e.currentTarget) {
             e.preventDefault();
             editor.commands.focus('end');
-          } else if (!editor.isFocused) {
-            editor.commands.focus();
           }
         }}
       >

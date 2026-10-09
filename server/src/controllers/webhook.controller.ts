@@ -1,12 +1,12 @@
 import { Request, Response } from 'express';
-import { PrismaClient, Priority } from '@prisma/client';
+import { Priority } from '@prisma/client';
+import { prisma } from '../config/prisma';
 import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 import { getClickUpTask } from '../services/clickupService';
 
-const prisma = new PrismaClient();
 
 // Galaxy-created tasks/subtasks are authored by this system account rather than
 // whichever admin happens to be oldest, so the Activity feed reads "VIP Scale created this task".

@@ -142,6 +142,7 @@ model List {
   customGroups String[]     @default([])
   order        Int          @default(0)
   externalId   String?      @unique
+  clickUpListId String?     @unique
   folder       Folder?      @relation(fields: [folderId], references: [id], onDelete: Cascade)
   space        Space?       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   statuses     ListStatus[]
@@ -245,11 +246,13 @@ model Task {
   assigneeId               String?
   dueDate                  DateTime?
   startDate                DateTime?
-  status                   String             @default("Pending")
+  status                   String             @default("PENDING")
   teamId                   String?
   externalId               String?            @unique
   assigneeRoleRestrictions String[]           @default([])
   teamAssignAccessRole     String?
+  /// Manual board order; null falls back to createdAt (see taskSortKey)
+  position                 Float?
   attachments              Attachment[]
   checklists               Checklist[]
   subtasks                 Subtask[]

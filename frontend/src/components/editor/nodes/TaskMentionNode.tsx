@@ -10,17 +10,7 @@ import { Flag, User as UserIcon, CheckCircle2, CircleDashed, AlignLeft, Shield, 
 import { useAppStore } from '@/lib/store';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Command } from 'cmdk';
-
-
-
-
-
-const PRIORITY_COLORS: Record<string, string> = {
-  LOW: 'text-zinc-400',
-  MEDIUM: 'text-blue-400',
-  HIGH: 'text-orange-400',
-  URGENT: 'text-red-400',
-};
+import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 
 const STATUS_HEX_MAP: Record<string, string> = {
   PENDING: '#D4A02A',
@@ -343,7 +333,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       } else {
         await tasksApi.updateTask(id, { priority: (p !== null ? p : null) as any, userId: currentUser.id });
       }
-      toast.success('Priority updated');
+      toast.success(p ? `Priority set to ${getPriorityConfig(p).label}` : 'Priority cleared');
     } catch (e: any) {
       toast.error('Failed to update priority');
     }
@@ -493,12 +483,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           ref={priorityRef}
           className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700/50 cursor-pointer transition-colors mr-1.5 align-middle"
           onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
-          title={localPriority ? `${localPriority} Priority` : 'Set Priority'}
+          title={localPriority ? `${getPriorityConfig(localPriority).label} Priority` : 'Set Priority'}
         >
           <Flag className={`w-3.5 h-3.5 shrink-0 transition-colors ${
-            localPriority === 'URGENT' ? 'text-red-500 dark:text-red-400 fill-red-500/20' :
-            localPriority === 'HIGH' ? 'text-orange-500 dark:text-orange-400 fill-orange-500/20' :
-            'text-zinc-400 dark:text-zinc-500'
+            localPriority ? getPriorityConfig(localPriority).iconColor : 'text-zinc-400 dark:text-zinc-500'
           }`} />
         </span>
 
@@ -625,14 +613,14 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         <PortalDropdown triggerRef={priorityRef} onClose={() => setOpenDropdown(null)}>
           <div className="z-[9999] w-36 p-1.5 bg-popover border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl outline-none flex flex-col gap-0.5">
             <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Priority</div>
-            {['URGENT', 'HIGH', 'MEDIUM', 'LOW'].map((p) => (
+            {PRIORITY_OPTIONS.map((p) => (
               <button
                 key={p}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); handlePriorityChange(p); }}
-                className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors cursor-pointer ${localPriority === p ? 'bg-accent text-accent-foreground' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors cursor-pointer ${localPriority === p ? 'bg-accent' : 'hover:bg-accent'}`}
               >
-                <Flag className={`w-3.5 h-3.5 shrink-0 ${p === 'URGENT' ? 'text-red-500 fill-red-500/20' : p === 'HIGH' ? 'text-orange-500 fill-orange-500/20' : 'text-zinc-400 dark:text-zinc-500'}`} />
-                <span className="capitalize">{p.toLowerCase()}</span>
+                <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
+                <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
                 {localPriority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
               </button>
             ))}

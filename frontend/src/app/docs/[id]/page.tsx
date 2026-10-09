@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, memo, useCallback } from 'react';
+import { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { authApi, spacesApi } from '@/api';
@@ -45,9 +45,56 @@ import {
   Circle,
   Flag,
   Check,
-  History
+  History,
+  CaseSensitive
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
+import {
+  PageStylesPanel,
+  usePageStyles,
+  computePageStats,
+  computeOutline,
+  FONT_STYLE_CLASS,
+  FONT_SIZE_CLASS,
+} from '@/components/docs/PageStylesPanel';
+import { DocTransferPanel, type ExportScope, type ExportFormat } from '@/components/docs/DocTransferPanel';
+import {
+  VersionHistoryPanel,
+  VersionPreview,
+  buildVersionEntries,
+  diffBlocks,
+  formatVersionTime,
+  type PageVersionRecord,
+} from '@/components/docs/VersionHistory';
+import { ConfirmActionModal } from '@/components/modals/ConfirmActionModal';
+import {
+  pagesToHtmlDocument,
+  pagesToMarkdown,
+  printHtmlDocument,
+  downloadFile,
+  safeFileName,
+  fileToPages,
+  type ExportPage,
+  type ImportKind,
+} from '@/components/docs/docTransfer';
+
+// "today at 3:04 PM" / "yesterday at 3:04 PM" / "Oct 2" / "Oct 2, 2025"
+const formatLastModified = (iso: string | null | undefined) => {
+  if (!iso) return 'today';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'today';
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `today at ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `yesterday at ${time}`;
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}),
+  });
+};
 
 export interface Assignee {
   type: 'letter' | 'more';
@@ -241,7 +288,7 @@ const DocBlockRow = memo(({
   onDragOverWrapper,
   onDropWrapper,
   onMouseDownCaptureWrapper,
-  onMouseEnterWrapper,
+  onMouseMoveWrapper,
   onClickWrapper,
   handleTurnInto,
   handleToggleCollapse,
@@ -254,7 +301,7 @@ const DocBlockRow = memo(({
       onDrop={onDropWrapper}
       onDragEnd={handleDragEnd}
       onMouseDownCapture={onMouseDownCaptureWrapper}
-      onMouseEnter={onMouseEnterWrapper}
+      onMouseMove={onMouseMoveWrapper}
       onClick={onClickWrapper}
       className={`flex items-center justify-between py-1 group transition-all relative ${
         block.type === 'callout'
@@ -468,6 +515,12 @@ const DocBlockRow = memo(({
   );
 });
 
+// True when an event comes from the task detail modal (or one of its portaled popovers) rather than
+// the doc itself — the page's document-level key/paste/drop handlers must leave those alone.
+const isFromTaskModal = (target: EventTarget | null) =>
+  target instanceof Element &&
+  !!(target.closest('[data-task-detail-modal]') || target.closest('[data-radix-popper-content-wrapper]'));
+
 export default function DocPage({ docId }: { docId?: string }) {
   const params = useParams<{ id: string }>();
   const id = docId || params?.id;
@@ -489,6 +542,16 @@ export default function DocPage({ docId }: { docId?: string }) {
     activePageRef.current = activePage;
   }, [activePage]);
 
+  // Mirror the active page into the URL so returning from a task's full view lands on the same page
+  const activePageId = activePage?.id;
+  useEffect(() => {
+    if (typeof window === 'undefined' || !activePageId) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('page') === activePageId) return;
+    url.searchParams.set('page', activePageId);
+    window.history.replaceState(null, '', url.toString());
+  }, [activePageId]);
+
   const [pageTitle, setPageTitle] = useState('');
   const pageTitleRef = useRef(pageTitle);
   useEffect(() => { pageTitleRef.current = pageTitle; }, [pageTitle]);
@@ -507,7 +570,10 @@ export default function DocPage({ docId }: { docId?: string }) {
   const dragSelectionStartBlockIndexRef = useRef<number | null>(null);
   // Track whether the last mouseup resolved a cross-block native text selection
   const crossBlockNativeSelectionRef = useRef(false);
-  
+  // "min-max" index range of the current drag block-selection (null = still a text highlight).
+  // Lets mousemove skip redundant state updates while the pointer moves within the same range.
+  const dragSelectRangeKeyRef = useRef<string | null>(null);
+
   // Drag and drop state
   const [draggedBlockIndex, setDraggedBlockIndex] = useState<number | null>(null);
   const [dragOverBlockIndex, setDragOverBlockIndex] = useState<number | null>(null);
@@ -526,7 +592,68 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
   const [pageVersions, setPageVersions] = useState<any[]>([]);
-  const [showVersionHistory, setShowVersionHistory] = useState(false);
+
+  // ── Right-hand panels opened from the floating tool rail
+  type RightPanel = 'styles' | 'transfer' | 'history';
+  const [rightPanel, setRightPanel] = useState<RightPanel | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<PageVersionRecord | null>(null);
+
+  const refreshVersions = () => {
+    const pageId = activePageRef.current?.id;
+    if (!pageId) return;
+    setVersionsLoading(true);
+    spacesApi.getPageVersions(pageId)
+      .then(res => { if (res.versions && activePageRef.current?.id === pageId) setPageVersions(res.versions); })
+      .catch(err => console.error('Failed to load versions:', err))
+      .finally(() => setVersionsLoading(false));
+  };
+
+  const toggleRightPanel = (panel: RightPanel) => {
+    if (rightPanel === panel) {
+      setRightPanel(null);
+      return;
+    }
+    if (panel === 'history') {
+      // History swaps the editor for a read-only preview: drop focus so keystrokes can't land in a hidden editor
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      setSelectedVersionId(null);
+      refreshVersions();
+    }
+    setRightPanel(panel);
+  };
+
+  // Versions that actually changed content, newest first, each paired with the version before it
+  const versionEntries = useMemo(() => buildVersionEntries(pageVersions), [pageVersions]);
+  const isBrowsingHistory = rightPanel === 'history' && versionEntries.length > 0;
+  const selectedVersionEntry = isBrowsingHistory
+    ? (versionEntries.find(e => e.version.id === selectedVersionId) ?? versionEntries[0])
+    : null;
+  const selectedVersionDiffs = useMemo(() => {
+    if (!selectedVersionEntry) return [];
+    const after = markdownToBlocks(selectedVersionEntry.version.content);
+    if (!selectedVersionEntry.previous) return after.map(block => ({ kind: 'same' as const, block }));
+    return diffBlocks(markdownToBlocks(selectedVersionEntry.previous.content), after);
+  }, [selectedVersionEntry]);
+
+  // ── Page Styles (saved per browser in localStorage — see PageStylesPanel)
+  const { styles: pageStyles, updateStyles: updatePageStyles, applyTypographyToAll } = usePageStyles(activePage?.id);
+  const statsVisible = rightPanel === 'styles' || pageStyles.showStats;
+  const pageStats = useMemo(() => (statsVisible ? computePageStats(blocks) : null), [blocks, statsVisible]);
+  const pageOutline = useMemo(() => (pageStyles.showOutline ? computeOutline(blocks) : []), [blocks, pageStyles.showOutline]);
+  // Last successful save in this session, tied to its page; otherwise the page's server timestamp.
+  const [lastSave, setLastSave] = useState<{ pageId: string; at: string } | null>(null);
+  const lastModifiedAt = lastSave && lastSave.pageId === activePage?.id ? lastSave.at : (activePage?.updatedAt ?? null);
+  // Versions are newest-first (max 50): the oldest loaded one approximates the page owner.
+  const pageOwner = pageVersions[pageVersions.length - 1]?.user || currentUser;
+  const pageContributors = useMemo(() => {
+    const seen = new Map<string, { id: string; name?: string; avatarUrl?: string }>();
+    pageVersions.forEach((v) => {
+      if (v.user?.id && !seen.has(v.user.id)) seen.set(v.user.id, v.user);
+    });
+    return Array.from(seen.values());
+  }, [pageVersions]);
 
   useEffect(() => {
     if (activePage?.id && currentUser?.id) {
@@ -599,9 +726,51 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [selectedTaskForModal, setSelectedTaskForModal] = useState<Task | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
+  // Opens the task modal for a task id OR a subtask id.
+  // The modal only works on real Task records: given a subtask it would call /api/tasks/<subtaskId>/…
+  // endpoints, which 404 ("Task not found"). Subtask records carry their parent in `taskId`, so a
+  // subtask opens its PARENT task with `?subtask=<id>` — the modal reads that on mount and shows the
+  // subtask's own detail view (with the correct activity/comments).
+  const openTaskDetail = useCallback(async (taskId: string, taskObj?: Task & { taskId?: string }) => {
+    const setSubtaskParam = (subtaskId: string | null) => {
+      const url = new URL(window.location.href);
+      if (subtaskId) url.searchParams.set('subtask', subtaskId);
+      else url.searchParams.delete('subtask');
+      window.history.replaceState(null, '', url.toString());
+    };
+    const open = (task: Task, subtaskId: string | null) => {
+      setSubtaskParam(subtaskId);
+      setSelectedTaskForModal(task);
+      setIsTaskModalOpen(true);
+    };
+    const hasSubtask = (task?: { subtasks?: { id: string }[] } | null) => !!task?.subtasks?.some(s => s.id === taskId);
+    const { tasksIndex: index, tasks: allTasks } = useAppStore.getState();
+
+    try {
+      let parentId: string | null = taskObj?.taskId && taskObj.taskId !== taskObj.id ? taskObj.taskId : null;
+
+      if (!parentId) {
+        const known = (taskObj?.id === taskId ? taskObj : null) || index[taskId] || allTasks.find(t => t.id === taskId);
+        if (known) return open(known, null);
+        const res = await tasksApi.getTask(taskId);
+        if (!res.task) return;
+        if (!res.subtask) return open(res.task, null);
+        // The requested id was a subtask: the server answered with its parent task
+        if (hasSubtask(res.task)) return open(res.task, taskId);
+        parentId = res.task.id;
+      }
+
+      const cachedParent = index[parentId];
+      const parent = hasSubtask(cachedParent) ? cachedParent : (await tasksApi.getTask(parentId)).task;
+      if (parent) open(parent, hasSubtask(parent) ? taskId : null);
+    } catch (err) {
+      console.error('Could not load task detail:', err);
+    }
+  }, []);
+
   // Native click handler for mention nodes — works even in read-only BlockEditor
   useEffect(() => {
-    const handleDocClick = async (e: MouseEvent) => {
+    const handleDocClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       const mentionSpan = target.closest('span[data-type="mention"]');
       if (!mentionSpan) return;
@@ -609,58 +778,24 @@ export default function DocPage({ docId }: { docId?: string }) {
       if (!taskId) return;
       e.preventDefault();
       e.stopPropagation();
-      const foundTask = tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
-      if (foundTask) {
-        setSelectedTaskForModal(foundTask);
-        setIsTaskModalOpen(true);
-      } else {
-        try {
-          const res = await tasksApi.getTask(taskId);
-          if (res.task) {
-            setSelectedTaskForModal(res.task);
-            setIsTaskModalOpen(true);
-          }
-        } catch (err) {
-          console.error('Could not load task detail:', err);
-        }
-      }
+      openTaskDetail(taskId);
     };
     document.addEventListener('click', handleDocClick);
     return () => document.removeEventListener('click', handleDocClick);
-  }, [tasksIndex, tasks]);
+  }, [openTaskDetail]);
 
   useEffect(() => {
-    const handleOpenTaskDetail = async (e: any) => {
-      const taskId = e.detail?.taskId;
-      const taskObj = e.detail?.task;
-      if (!taskId) return;
-      if (taskObj) {
-        setSelectedTaskForModal(taskObj);
-        setIsTaskModalOpen(true);
-        return;
-      }
-      const foundTask = tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
-      if (foundTask) {
-        setSelectedTaskForModal(foundTask);
-        setIsTaskModalOpen(true);
-      } else {
-        try {
-          const res = await tasksApi.getTask(taskId);
-          if (res.task) {
-            setSelectedTaskForModal(res.task);
-            setIsTaskModalOpen(true);
-          }
-        } catch (err) {
-          console.error('Could not load task detail:', err);
-        }
-      }
+    const handleOpenTaskDetail = (e: Event) => {
+      const detail = (e as CustomEvent<{ taskId?: string; task?: Task & { taskId?: string } }>).detail;
+      if (!detail?.taskId) return;
+      openTaskDetail(detail.taskId, detail.task);
     };
-    window.addEventListener('open-task-detail', handleOpenTaskDetail as any);
+    window.addEventListener('open-task-detail', handleOpenTaskDetail);
 
     return () => {
-      window.removeEventListener('open-task-detail', handleOpenTaskDetail as any);
+      window.removeEventListener('open-task-detail', handleOpenTaskDetail);
     };
-  }, [tasksIndex, tasks]);
+  }, [openTaskDetail]);
 
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
@@ -708,8 +843,24 @@ export default function DocPage({ docId }: { docId?: string }) {
       setDoc(docRes.doc);
       if (docRes.doc?.pages?.length > 0 && !activePageRef.current) {
         let firstPage = docRes.doc.pages[0];
-        
-        if (docRes.doc.isDailyRollover) {
+
+        // Restore the page (e.g. journal date) the user was on before leaving, via ?page=<id>
+        const requestedPageId = typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('page')
+          : null;
+        const findPage = (pages: any[]): any => {
+          for (const p of pages || []) {
+            if (p.id === requestedPageId) return p;
+            const sub = findPage(p.subpages);
+            if (sub) return sub;
+          }
+          return null;
+        };
+        const requestedPage = requestedPageId ? findPage(docRes.doc.pages) : null;
+
+        if (requestedPage) {
+          firstPage = requestedPage;
+        } else if (docRes.doc.isDailyRollover) {
           const sortedPages = [...docRes.doc.pages].sort((a, b) => {
             const timeA = new Date(a.title || '').getTime();
             const timeB = new Date(b.title || '').getTime();
@@ -828,10 +979,12 @@ export default function DocPage({ docId }: { docId?: string }) {
         setRedoStack([]);
       }
 
-      await spacesApi.updatePage(activePageRef.current.id, {
+      const savedPageId = activePageRef.current.id;
+      await spacesApi.updatePage(savedPageId, {
         title: pageTitleRef.current,
         content: content,
       });
+      setLastSave({ pageId: savedPageId, at: new Date().toISOString() });
       if (socket) {
         socket.emit('page_updated', { docId: id, pageId: activePageRef.current.id });
       }
@@ -1129,6 +1282,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     const handleMouseDown = (e: MouseEvent) => {
       isMouseDownRef.current = true;
       crossBlockNativeSelectionRef.current = false;
+      dragSelectRangeKeyRef.current = null;
       const target = e.target as HTMLElement;
 
       // Clear BLOCK-selection when clicking anywhere that isn't the grip or inside
@@ -1148,6 +1302,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       isMouseDownRef.current = false;
       dragSelectionStartBlockIndexRef.current = null;
       crossBlockNativeSelectionRef.current = false;
+      dragSelectRangeKeyRef.current = null;
 
       // Debug: log what the native selection looks like after mouseup
       const sel = window.getSelection();
@@ -1182,6 +1337,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   useEffect(() => {
     const handleNativeBackspace = (e: KeyboardEvent) => {
       if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+      if (isFromTaskModal(e.target)) return;
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) return;
 
@@ -1340,10 +1496,22 @@ export default function DocPage({ docId }: { docId?: string }) {
 
     const handleSelectAll = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        if (isFromTaskModal(e.target)) return;
         // If they are focusing something that is NOT our editor (like a title input), don't intercept
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
           if (!target.closest('.ProseMirror')) return;
+        }
+
+        // Notion-style: the first Ctrl+A inside a block selects that block's text (so it can be
+        // formatted); only a second press, once the whole block is already selected, selects all blocks.
+        const blockEl = target.closest?.('.ProseMirror')?.closest('[data-block-id]');
+        const blockEditor = blockEl ? editorRegistryRef.current[blockEl.getAttribute('data-block-id') || ''] : null;
+        if (blockEditor && !blockEditor.isEmpty) {
+          const { from, to } = blockEditor.state.selection;
+          const docSize = blockEditor.state.doc.content.size;
+          const wholeBlockSelected = from <= 1 && to >= docSize - 1;
+          if (!wholeBlockSelected) return;
         }
 
         e.preventDefault();
@@ -1376,6 +1544,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     if (selectedBlockIds.size === 0) return;
 
     const handleGlobalKeyDown = async (e: KeyboardEvent) => {
+      if (isFromTaskModal(e.target)) return;
       // Don't intercept if focus is inside an active editor
       if (e.target instanceof HTMLElement && e.target.closest('.ProseMirror') && document.activeElement === e.target) {        return;
       }
@@ -1594,6 +1763,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   // Global Undo/Redo keydown
   useEffect(() => {
     const handleUndoRedoKeys = (e: KeyboardEvent) => {
+      if (isFromTaskModal(e.target)) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) {
@@ -1619,6 +1789,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   //   4. If block-selection mode is active → the keydown Ctrl+V handler takes precedence.
   useEffect(() => {
     const handleGlobalPaste = (e: ClipboardEvent | DragEvent) => {
+      if (isFromTaskModal(e.target)) return;
       let text = '';
       if (e.type === 'drop') {
         text = (e as DragEvent).dataTransfer?.getData('text/plain') ?? '';
@@ -2061,6 +2232,90 @@ export default function DocPage({ docId }: { docId?: string }) {
     setIsLinkModalOpen(false);
   };
 
+  // ── Export: this page (live editor state) or the entire doc (fresh from the server)
+  const handleExport = async (scope: ExportScope, format: ExportFormat) => {
+    const currentPageId = activePageRef.current?.id;
+    // Mounted editors hold the freshest HTML (including unsaved keystrokes / Tiptap JSON blocks)
+    const liveHtml = (blockId: string): string | undefined => editorRegistryRef.current[blockId]?.getHTML?.();
+
+    let exportTitle = pageTitleRef.current || 'Untitled Page';
+    let pages: ExportPage[] = [{ title: exportTitle, blocks: blocksRef.current }];
+
+    if (scope === 'doc') {
+      const res = await spacesApi.getDoc(id as string);
+      const freshDoc = res.doc;
+      exportTitle = freshDoc?.title || doc?.title || 'Document';
+      // Same ordering as the sidebar
+      type ApiPage = { id: string; title?: string; content?: string; order?: number; subpages?: ApiPage[] };
+      const sortPages = (list: ApiPage[]) => [...(list || [])].sort((a, b) => {
+        if (freshDoc?.isDailyRollover) {
+          const timeA = new Date(a.title || '').getTime();
+          const timeB = new Date(b.title || '').getTime();
+          if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+        }
+        return (a.order || 0) - (b.order || 0);
+      });
+      pages = [];
+      const collect = (list: ApiPage[]) => {
+        for (const p of sortPages(list)) {
+          pages.push(p.id === currentPageId
+            ? { title: pageTitleRef.current || p.title || 'Untitled Page', blocks: blocksRef.current }
+            : { title: p.title || 'Untitled Page', blocks: markdownToBlocks(p.content || '') });
+          if (p.subpages?.length) collect(p.subpages);
+        }
+      };
+      collect(freshDoc?.pages || []);
+    }
+
+    const fileBase = safeFileName(exportTitle);
+    if (format === 'markdown') {
+      downloadFile(`${fileBase}.md`, pagesToMarkdown(pages, liveHtml), 'text/markdown');
+      return;
+    }
+    const html = pagesToHtmlDocument(exportTitle, pages, liveHtml);
+    if (format === 'html') {
+      downloadFile(`${fileBase}.html`, html, 'text/html');
+    } else {
+      // PDF and Print both use the browser print dialog; its "Save as PDF" names the file after <title>
+      printHtmlDocument(html);
+    }
+  };
+
+  // ── Import: every file (or H1 section, for page splitting) becomes a new top-level page
+  const handleImport = async (kind: ImportKind, files: File[]): Promise<string> => {
+    const created: Awaited<ReturnType<typeof spacesApi.createPage>>['page'][] = [];
+    const failures: string[] = [];
+    for (const file of files) {
+      try {
+        const importedPages = await fileToPages(file, kind);
+        for (const imported of importedPages) {
+          const newBlocks: DocBlock[] = imported.blockHtml.map(html => ({
+            id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            type: 'text',
+            content: html,
+          }));
+          newBlocks.push({ id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`, type: 'text', content: '' });
+          const res = await spacesApi.createPage({
+            title: imported.title,
+            content: blocksToMarkdown(newBlocks),
+            docId: id as string,
+          });
+          created.push(res.page);
+        }
+      } catch (err) {
+        failures.push(err instanceof Error ? err.message : `${file.name}: import failed`);
+      }
+    }
+
+    if (created.length > 0) {
+      await fetchDoc();
+      handleSelectPage(created[0]);
+    }
+    if (created.length === 0) throw new Error(failures.join(' · ') || 'Nothing to import');
+    const summary = `Imported ${created.length} page${created.length === 1 ? '' : 's'}`;
+    return failures.length ? `${summary} · Skipped: ${failures.join(' · ')}` : summary;
+  };
+
   const filteredTasks = tasks.filter((t) =>
     t.title.toLowerCase().includes(taskSearchQuery.toLowerCase())
   );
@@ -2075,7 +2330,8 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   return (
     <div className="flex h-full w-full bg-background text-foreground overflow-hidden font-sans">
-      <aside className="w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none">
+      {/* Hidden (not unmounted) in page focus mode so the tree keeps its expand state */}
+      <aside className={`w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none ${activePage && pageStyles.focusPage ? 'hidden' : ''}`}>
         <div
           onClick={() => setActivePage(null)}
           className="mb-5 pb-3 border-b border-zinc-800/60 cursor-pointer group hover:opacity-90 transition-all"
@@ -2164,27 +2420,84 @@ export default function DocPage({ docId }: { docId?: string }) {
           }
         `}</style>
         {activePage ? (
-          <div className="max-w-4xl mx-auto px-10 py-6 space-y-6">
+          <div className="flex items-start">
+          {/* Read-only version preview (Google Docs-style). The live editor below stays mounted but hidden. */}
+          {selectedVersionEntry && (
+            <div className={`flex-1 min-w-0 ${pageStyles.fullWidth ? 'max-w-none' : 'max-w-4xl'} mx-auto px-10 py-6`}>
+              <VersionPreview
+                entry={selectedVersionEntry}
+                diffs={selectedVersionDiffs}
+                isCurrent={selectedVersionEntry.version.id === versionEntries[0]?.version.id}
+                typographyClass={`${FONT_STYLE_CLASS[pageStyles.fontStyle]} ${FONT_SIZE_CLASS[pageStyles.fontSize]}`}
+                onRestore={() => setRestoreTarget(selectedVersionEntry.version)}
+                onExit={() => setRightPanel(null)}
+              />
+            </div>
+          )}
+          <div className={`flex-1 min-w-0 ${pageStyles.fullWidth ? 'max-w-none' : 'max-w-4xl'} mx-auto px-10 py-6 space-y-6 ${selectedVersionEntry ? 'hidden' : ''}`}>
 
             <div className="space-y-2">
-              <input
-                type="text"
-                value={pageTitle}
-                onChange={(e) => setPageTitle(e.target.value)}
-                onBlur={() => handleSavePage()}
-                placeholder="Page Title..."
-                className="w-full bg-transparent border-none text-4xl font-extrabold text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-700 focus:outline-none tracking-tight"
-              />
+              {pageStyles.showTitle && (
+                <input
+                  type="text"
+                  value={pageTitle}
+                  onChange={(e) => setPageTitle(e.target.value)}
+                  onBlur={() => handleSavePage()}
+                  placeholder="Page Title..."
+                  className="w-full bg-transparent border-none text-4xl font-extrabold text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-700 focus:outline-none tracking-tight"
+                />
+              )}
 
               <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400 flex-wrap">
-                <div className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center font-bold text-[10px] shadow-sm">
-                  {currentUser?.name ? currentUser.name[0] : 'H'}
-                </div>
-                <span className="font-semibold text-zinc-700 dark:text-zinc-300">{currentUser?.name || 'Hannah'}</span>
-                <span className="text-zinc-400 dark:text-zinc-600">•</span>
-                <span className="text-zinc-500 dark:text-zinc-400">Last updated today</span>
-                <button 
-                  onClick={() => setShowVersionHistory(true)}
+                {(() => {
+                  const metaItems: React.ReactNode[] = [];
+                  if (pageStyles.showOwners) {
+                    metaItems.push(
+                      <span key="owner" className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center font-bold text-[10px] shadow-sm">
+                          {pageOwner?.name ? pageOwner.name[0] : 'H'}
+                        </span>
+                        <span className="font-semibold text-zinc-700 dark:text-zinc-300">{pageOwner?.name || 'Hannah'}</span>
+                      </span>
+                    );
+                  }
+                  if (pageStyles.showContributors && pageContributors.length > 0) {
+                    metaItems.push(
+                      <span key="contributors" className="flex items-center gap-1.5" title={pageContributors.map((u) => u.name).join(', ')}>
+                        <span className="flex -space-x-1.5">
+                          {pageContributors.slice(0, 4).map((u) => (
+                            <span key={u.id} className="w-5 h-5 rounded-full overflow-hidden ring-2 ring-background bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-[9px]">
+                              {u.avatarUrl
+                                ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full rounded-full object-cover" />
+                                : (u.name?.charAt(0).toUpperCase() || '?')}
+                            </span>
+                          ))}
+                        </span>
+                        <span>
+                          {pageContributors.length} contributor{pageContributors.length === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                    );
+                  }
+                  if (pageStyles.showLastModified) {
+                    metaItems.push(
+                      <span key="modified" className="text-zinc-500 dark:text-zinc-400">Last updated {formatLastModified(lastModifiedAt)}</span>
+                    );
+                  }
+                  if (pageStyles.showStats && pageStats) {
+                    metaItems.push(
+                      <span key="stats" className="text-zinc-500 dark:text-zinc-400 tabular-nums">
+                        {pageStats.words.toLocaleString()} words · {pageStats.readingTime} read
+                      </span>
+                    );
+                  }
+                  return metaItems.flatMap((item, i) => i === 0 ? [item] : [
+                    <span key={`sep-${i}`} className="text-zinc-400 dark:text-zinc-600">•</span>,
+                    item,
+                  ]);
+                })()}
+                <button
+                  onClick={() => { if (rightPanel !== 'history') toggleRightPanel('history'); }}
                   className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 underline underline-offset-2 transition-colors ml-1"
                 >
                   Version History
@@ -2195,7 +2508,7 @@ export default function DocPage({ docId }: { docId?: string }) {
             </div>
 
             {/* ── Subpages List ── */}
-            {activePage.subpages && activePage.subpages.length > 0 && (() => {
+            {activePage.subpages && activePage.subpages.length > 0 && pageStyles.subpagesView !== 'hidden' && (() => {
               const sortedContentSubpages = [...activePage.subpages].sort((a: any, b: any) => {
                 if (doc?.isDailyRollover) {
                   const timeA = new Date(a.title || '').getTime();
@@ -2210,6 +2523,35 @@ export default function DocPage({ docId }: { docId?: string }) {
                   <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold border-b border-zinc-800 pb-2 mb-2 px-2">
                     <span>Subpages</span>
                   </div>
+                  {pageStyles.subpagesView === 'table' ? (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-zinc-500">
+                          <th className="font-medium py-1.5 px-2">Name</th>
+                          <th className="font-medium py-1.5 px-2 w-24">Subpages</th>
+                          <th className="font-medium py-1.5 px-2 w-36">Last updated</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedContentSubpages.slice(0, subpageLimit).map((sub: any) => (
+                          <tr
+                            key={sub.id}
+                            onClick={() => handleSelectPage(sub)}
+                            className="border-t border-zinc-800/60 hover:bg-zinc-800/40 cursor-pointer transition-colors group"
+                          >
+                            <td className="py-2 px-2">
+                              <span className="flex items-center gap-2 text-sm text-zinc-200 font-medium group-hover:text-white">
+                                <FileText className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                                <span className="truncate">{sub.title || 'Untitled Page'}</span>
+                              </span>
+                            </td>
+                            <td className="py-2 px-2 text-zinc-400 tabular-nums">{sub.subpages?.length ?? 0}</td>
+                            <td className="py-2 px-2 text-zinc-400">{sub.updatedAt ? formatLastModified(sub.updatedAt) : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
                   <div className="space-y-1">
                     {sortedContentSubpages.slice(0, subpageLimit).map((sub: any) => (
                       <div
@@ -2226,6 +2568,7 @@ export default function DocPage({ docId }: { docId?: string }) {
                       </div>
                     ))}
                   </div>
+                  )}
                   {activePage.subpages.length > subpageLimit && (
                     <div className="flex justify-center mt-3">
                       <button
@@ -2243,7 +2586,12 @@ export default function DocPage({ docId }: { docId?: string }) {
               );
             })()}
 
-            <div className="space-y-1.5 pt-2">
+            <div className={`space-y-1.5 pt-2 ${FONT_STYLE_CLASS[pageStyles.fontStyle]} ${FONT_SIZE_CLASS[pageStyles.fontSize]} ${
+              // Block focus mode: dim every row except the one holding the caret
+              pageStyles.focusBlock && focusedBlockId
+                ? '[&>[data-block-id]]:transition-opacity [&>[data-block-id]:not(:focus-within)]:opacity-30'
+                : ''
+            }`}>
               {(() => {
                 if (blocks.length === 0) {
                   return (
@@ -2338,28 +2686,42 @@ export default function DocPage({ docId }: { docId?: string }) {
                             dragSelectionStartBlockIndexRef.current = null;
                           }
                         }}
-                        onMouseEnterWrapper={(e: any) => {
-                          if (isMouseDownRef.current && e.buttons === 1 && dragSelectionStartBlockIndexRef.current !== null) {
-                            const start = dragSelectionStartBlockIndexRef.current;
-                            const min = Math.min(start, index);
-                            const max = Math.max(start, index);
-                            
-                            if (min !== max) { // Crossed block boundaries
-                              setSelectedBlockIds(prev => {
-                                const newSel = new Set<string>();
-                                const currentBlocks = blocksRef.current;
-                                for (let i = min; i <= max; i++) {
-                                  if (currentBlocks[i]) newSel.add(currentBlocks[i].id);
-                                }
-                                return newSel;
-                              });
-                              
-                              if (document.activeElement instanceof HTMLElement) {
-                                document.activeElement.blur();
-                              }
-                              window.getSelection()?.removeAllRanges();
-                            }
+                        onMouseMoveWrapper={(e: any) => {
+                          const start = dragSelectionStartBlockIndexRef.current;
+                          if (!isMouseDownRef.current || e.buttons !== 1 || start === null) return;
+
+                          if (start !== index) {
+                            // Dead zone: the pointer must be clearly inside this block, not just grazing
+                            // its edge — otherwise a text highlight that overshoots its line by a few
+                            // pixels would be wiped out and turned into a block selection.
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            const DEAD_ZONE_PX = 8;
+                            const notFarEnough = index > start
+                              ? e.clientY < rect.top + DEAD_ZONE_PX
+                              : e.clientY > rect.bottom - DEAD_ZONE_PX;
+                            if (notFarEnough) return;
+                          } else if (dragSelectRangeKeyRef.current === null) {
+                            // Still highlighting text inside the origin block — leave it alone
+                            return;
                           }
+
+                          const min = Math.min(start, index);
+                          const max = Math.max(start, index);
+                          const rangeKey = `${min}-${max}`;
+                          if (dragSelectRangeKeyRef.current === rangeKey) return;
+                          dragSelectRangeKeyRef.current = rangeKey;
+
+                          const newSel = new Set<string>();
+                          const currentBlocks = blocksRef.current;
+                          for (let i = min; i <= max; i++) {
+                            if (currentBlocks[i]) newSel.add(currentBlocks[i].id);
+                          }
+                          setSelectedBlockIds(newSel);
+
+                          if (document.activeElement instanceof HTMLElement) {
+                            document.activeElement.blur();
+                          }
+                          window.getSelection()?.removeAllRanges();
                         }}
                         onClickWrapper={(e: any) => {
                           const isProseMirror = (e.target as Element).closest('.ProseMirror');
@@ -2413,6 +2775,59 @@ export default function DocPage({ docId }: { docId?: string }) {
               }}
             />
           </div>
+
+          {/* ── Page outline (headings in this page) ── */}
+          {pageStyles.showOutline && !selectedVersionEntry && (
+            <nav className="hidden lg:block w-52 shrink-0 sticky top-0 self-start max-h-screen overflow-y-auto custom-scrollbar py-6 pr-4 select-none">
+              <div className="text-[11px] font-medium text-zinc-500 mb-2 px-2">On this page</div>
+              {pageOutline.length === 0 ? (
+                <p className="text-[11px] text-zinc-600 italic px-2">Add headings to build an outline.</p>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  {pageOutline.map((item, i) => (
+                    <button
+                      key={`${item.blockId}-${i}`}
+                      onClick={() => {
+                        document.querySelector(`[data-block-id="${item.blockId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      className={`text-left text-xs truncate rounded-md py-1 pr-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40 transition-colors cursor-pointer ${
+                        item.level === 1 ? 'pl-2' : item.level === 2 ? 'pl-5' : 'pl-8'
+                      }`}
+                      title={item.text}
+                    >
+                      {item.text}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </nav>
+          )}
+
+          {/* ── Floating tool rail (stays in view while the page scrolls) ── */}
+          <div className="sticky top-6 self-start shrink-0 flex flex-col items-center gap-1 mt-6 mr-3 select-none">
+            <button
+              onClick={() => toggleRightPanel('styles')}
+              className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'styles' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+              title="Page styles"
+            >
+              <CaseSensitive className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => toggleRightPanel('transfer')}
+              className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'transfer' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+              title="Export & import"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => toggleRightPanel('history')}
+              className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'history' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+              title="Version history"
+            >
+              <History className="w-4 h-4" />
+            </button>
+          </div>
+          </div>
         ) : (
           /* Document Overview State */
           <div className="max-w-4xl mx-auto p-10 space-y-6">
@@ -2431,6 +2846,55 @@ export default function DocPage({ docId }: { docId?: string }) {
           </div>
         )}
       </main>
+
+      {rightPanel === 'styles' && activePage && pageStats && (
+        <PageStylesPanel
+          styles={pageStyles}
+          onChange={updatePageStyles}
+          onApplyTypographyToAll={applyTypographyToAll}
+          stats={pageStats}
+          onClose={() => setRightPanel(null)}
+        />
+      )}
+      {rightPanel === 'history' && activePage && (
+        <VersionHistoryPanel
+          entries={versionEntries}
+          selectedId={selectedVersionEntry?.version.id ?? null}
+          loading={versionsLoading}
+          onSelect={setSelectedVersionId}
+          onClose={() => setRightPanel(null)}
+        />
+      )}
+      <ConfirmActionModal
+        isOpen={!!restoreTarget}
+        onClose={() => setRestoreTarget(null)}
+        title="Restore this version?"
+        message={restoreTarget && (
+          <>
+            The page will go back to the version from{' '}
+            <strong className="text-zinc-100">{formatVersionTime(restoreTarget.createdAt)}</strong>
+            {restoreTarget.user?.name ? <> edited by <strong className="text-zinc-100">{restoreTarget.user.name}</strong></> : null}.
+            {' '}The current content is kept in version history, so you can switch back later.
+          </>
+        )}
+        confirmText="Restore"
+        onConfirm={async () => {
+          if (!restoreTarget) return;
+          const newBlocks = markdownToBlocks(restoreTarget.content);
+          blocksRef.current = newBlocks;
+          setBlocks(newBlocks);
+          await handleSavePage(newBlocks);
+          setRightPanel(null);
+          refreshVersions();
+        }}
+      />
+      {rightPanel === 'transfer' && activePage && (
+        <DocTransferPanel
+          onClose={() => setRightPanel(null)}
+          onExport={handleExport}
+          onImport={handleImport}
+        />
+      )}
 
       {/* ── Link Task Picker Modal ── */}
       {isLinkModalOpen && (
@@ -2636,74 +3100,6 @@ export default function DocPage({ docId }: { docId?: string }) {
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Version History Sidebar */}
-      {showVersionHistory && (
-        <div className="fixed inset-0 z-[100] flex justify-end bg-black/20 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowVersionHistory(false)}>
-          <div 
-            className="w-80 h-full bg-background border-l border-zinc-800 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <div className="flex items-center gap-2 text-zinc-200">
-                <History className="w-4 h-4" />
-                <h3 className="font-semibold">Version History</h3>
-              </div>
-              <button onClick={() => setShowVersionHistory(false)} className="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-              {pageVersions.length === 0 ? (
-                <div className="text-zinc-500 text-sm text-center py-10">No version history available</div>
-              ) : (
-                pageVersions.map((version, i) => (
-                  <div key={version.id || i} className="flex flex-col gap-2 p-3 rounded-md bg-secondary/50 border border-zinc-800 hover:border-zinc-700 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-zinc-300">
-                        {new Date(version.createdAt).toLocaleString(undefined, { 
-                          month: 'short', day: 'numeric', 
-                          hour: 'numeric', minute: '2-digit'
-                        })}
-                      </span>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if(confirm('Restore this version? This will overwrite the current page content.')) {
-                            const newBlocks = markdownToBlocks(version.content);
-                            blocksRef.current = newBlocks;
-                            setBlocks(newBlocks);
-                            handleSavePage(newBlocks);
-                            setShowVersionHistory(false);
-                          }
-                        }}
-                        className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded transition-colors"
-                      >
-                        Restore
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded-full overflow-hidden shrink-0 bg-zinc-800 border border-zinc-700 flex items-center justify-center">
-                        {version.user?.avatarUrl ? (
-                          <img src={version.user.avatarUrl} alt={version.user.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-[10px] font-bold text-zinc-400">
-                            {version.user?.name?.charAt(0) || '?'}
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-sm text-zinc-400">
-                        Edited by <strong className="text-zinc-200 font-medium">{version.user?.name || 'Unknown'}</strong>
-                      </span>
-                    </div>
-                  </div>
-                ))
               )}
             </div>
           </div>

@@ -150,6 +150,8 @@ export interface Task {
   teamAssignAccessRole?: string | null;
   teamId?: string | null;
   team?: Team | null;
+  /** Manual board order; null falls back to createdAt */
+  position?: number | null;
   creatorId: string;
   creator?: User;
   subtasks: Subtask[];

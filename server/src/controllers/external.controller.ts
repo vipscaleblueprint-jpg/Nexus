@@ -1,11 +1,10 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../config/prisma';
 import bcrypt from 'bcryptjs';
 import { timingSafeEqual } from 'crypto';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 
-const prisma = new PrismaClient();
 
 async function getOrCreateVipScaleUser() {
   let vipScaleUser = await prisma.user.findFirst({
@@ -775,6 +774,9 @@ export async function postActivity(req: Request, res: Response) {
 // Tip: format your spreadsheet columns as markdown and pass as `content`.
 // The comment will appear under the API key owner's account.
 // ---------------------------------------------------------------------------
+// Pending/recent external comment inserts keyed by owner+task+content, used to collapse duplicate requests
+const inFlightExternalComments = new Map<string, Promise<any>>();
+
 export async function postComment(req: Request, res: Response) {
   try {
     const apiKey = await authenticateApiKey(req, res);
@@ -791,17 +793,56 @@ export async function postComment(req: Request, res: Response) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    // Create the comment as the API key owner
-    const comment = await prisma.taskComment.create({
-      data: {
-        content,
-        taskId,
-        userId: apiKey.userId,
-      },
-      include: {
-        user: { select: { id: true, name: true, avatarUrl: true } }
-      }
-    });
+    // Integrations sometimes fire the same request twice (~10ms apart). Concurrent duplicates share
+    // the first request's insert; later ones within 10s are caught by the DB lookup below.
+    const dedupeKey = `${apiKey.userId}:${taskId}:${content}`;
+    const inFlight = inFlightExternalComments.get(dedupeKey);
+    if (inFlight) {
+      const existing = await inFlight;
+      return res.json({ message: 'Comment posted successfully', comment: existing, deduplicated: true });
+    }
+
+    const createPromise = (async () => {
+      const duplicate = await prisma.taskComment.findFirst({
+        where: {
+          taskId,
+          userId: apiKey.userId,
+          content,
+          createdAt: { gte: new Date(Date.now() - 10_000) },
+        },
+        include: {
+          user: { select: { id: true, name: true, avatarUrl: true } }
+        }
+      });
+      if (duplicate) return { comment: duplicate, created: false };
+
+      // Create the comment as the API key owner
+      const created = await prisma.taskComment.create({
+        data: {
+          content,
+          taskId,
+          userId: apiKey.userId,
+        },
+        include: {
+          user: { select: { id: true, name: true, avatarUrl: true } }
+        }
+      });
+      return { comment: created, created: true };
+    })();
+    const sharedComment = createPromise.then(r => r.comment);
+    sharedComment.catch(() => {}); // avoid an unhandled rejection when no duplicate is waiting on it
+    inFlightExternalComments.set(dedupeKey, sharedComment);
+    let result: { comment: any; created: boolean };
+    try {
+      result = await createPromise;
+    } finally {
+      setTimeout(() => inFlightExternalComments.delete(dedupeKey), 10_000);
+    }
+
+    const comment = result.comment;
+    if (!result.created) {
+      return res.json({ message: 'Comment posted successfully', comment, deduplicated: true });
+    }
 
     // Realtime update for the frontend
     io.emit('task:comment_added', { taskId, comment });

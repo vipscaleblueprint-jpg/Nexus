@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
+import { compareTaskOrder } from '../services/taskOrderService';
 
 // GET /api/lists - Redis Cache-Aside
 export async function listLists(req: Request, res: Response) {
@@ -72,6 +73,9 @@ export async function getList(req: Request, res: Response) {
     });
 
     if (!list) return res.status(404).json({ error: 'List not found' });
+
+    // Stable sort on top of the createdAt ordering, so only positioned tasks (e.g. duplicates) move
+    if ('tasks' in list) list.tasks.sort(compareTaskOrder);
 
     return res.json({ list });
   } catch (err: any) {

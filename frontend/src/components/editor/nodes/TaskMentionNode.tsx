@@ -408,6 +408,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
   const isSubtask = mentionType === 'subtask';
+  const isClosedNode = (parsedStatusName || '').toUpperCase() === 'CLOSED' || (parsedStatusName || '').toUpperCase() === 'DONE';
 
   return (
     <NodeViewWrapper 
@@ -422,10 +423,14 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         }
       }}
     >
-      <motion.span layout className={`inline align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 box-decoration-clone leading-relaxed ${isSubtask ? 'bg-[#111113] hover:bg-[#111113]/80' : 'bg-[#17171A] hover:bg-[#17171A]/80'}`}>
+      <motion.span layout className={`relative inline align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 box-decoration-clone leading-relaxed ${isSubtask ? 'bg-[#111113] hover:bg-[#111113]/80' : 'bg-[#17171A] hover:bg-[#17171A]/80'} ${isClosedNode ? 'opacity-75' : ''}`}>
         
+        {isClosedNode && (
+          <div className="absolute top-1/2 left-1.5 right-1.5 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
+        )}
+
         <span 
-          className="inline-flex items-center justify-center shrink-0 cursor-pointer mr-1.5 align-middle transition-transform duration-300 group-hover:scale-110" 
+          className="inline-flex items-center justify-center shrink-0 cursor-pointer mr-1.5 align-middle transition-transform duration-300 group-hover:scale-110 relative z-10" 
           title="Open Task Detail"
           onClick={(e: React.MouseEvent) => {
             e.stopPropagation();

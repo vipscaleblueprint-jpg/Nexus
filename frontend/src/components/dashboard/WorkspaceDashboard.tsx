@@ -55,6 +55,32 @@ import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
 import { getPriorityConfig } from "@/lib/priority";
 
+const avatarColors = [
+  "bg-red-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-green-500",
+  "bg-emerald-500",
+  "bg-teal-500",
+  "bg-cyan-500",
+  "bg-sky-500",
+  "bg-blue-500",
+  "bg-indigo-500",
+  "bg-violet-500",
+  "bg-purple-500",
+  "bg-fuchsia-500",
+  "bg-pink-500",
+  "bg-rose-500"
+];
+
+function getAvatarColor(name: string) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return avatarColors[Math.abs(hash) % avatarColors.length];
+}
+
 export interface WorkspaceDashboardProps {
   activeView?: "all" | "my" | "spaces" | "lists" | "docs" | "folders";
   spaces: Space[];
@@ -693,8 +719,6 @@ function WorkspaceDashboardContent({
     const groups: Record<string, Task[]> = {};
     // Real ordering from DB ListStatus table (order field)
     const priorityOrder = [
-      "KYC",
-      "PIN BOARD",
       "DAILY",
       "WEEKLY",
       "MONTHLY",
@@ -708,6 +732,8 @@ function WorkspaceDashboardContent({
       "CRM",
       "CLOSED",
       "ON-HOLD",
+      "KYC",
+      "PIN BOARD",
       "TODO",
       "COMPLETE",
       "COMPLETED",
@@ -824,8 +850,6 @@ function WorkspaceDashboardContent({
     });
 
     const priorityOrder = [
-      "KYC",
-      "PIN BOARD",
       "DAILY",
       "WEEKLY",
       "MONTHLY",
@@ -839,6 +863,8 @@ function WorkspaceDashboardContent({
       "CRM",
       "CLOSED",
       "ON-HOLD",
+      "KYC",
+      "PIN BOARD",
       "TODO",
       "COMPLETE",
       "COMPLETED",
@@ -882,8 +908,6 @@ function WorkspaceDashboardContent({
 
     // Standard ordering priority
     const priorityOrder = [
-      "KYC",
-      "PIN BOARD",
       "DAILY",
       "WEEKLY",
       "MONTHLY",
@@ -897,6 +921,8 @@ function WorkspaceDashboardContent({
       "CRM",
       "CLOSED",
       "ON-HOLD",
+      "KYC",
+      "PIN BOARD",
       "TODO",
       "COMPLETE",
       "COMPLETED",
@@ -1266,31 +1292,38 @@ function WorkspaceDashboardContent({
                             <div
                               key={task.id}
                               onClick={() => setSelectedTask(task)}
-                              className="group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                              className={`group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''}`}
                             >
-                              <div className="flex items-center gap-3 min-w-0 flex-1 pl-4 pr-4">
-                                <div className="w-4 h-4 rounded-[4px] border border-zinc-700 shrink-0 flex items-center justify-center transition-colors shadow-sm group-hover:border-zinc-500" />
-                                <span className="text-[13px] font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors">
+                              {((task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE') && (
+                                <div className="absolute top-1/2 left-4 right-4 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
+                              )}
+                              <div className="flex items-center gap-3 min-w-0 flex-1 pl-4 pr-4 relative z-10">
+                                <div className="w-[18px] h-[18px] rounded border border-zinc-700 shrink-0 flex items-center justify-center transition-colors shadow-sm group-hover:border-zinc-500 bg-zinc-900/50" />
+                                <span className="text-[13px] font-medium text-zinc-300 group-hover:text-indigo-300 transition-colors truncate">
                                   {task.title}
                                 </span>
                                 {task.list && (
-                                  <span className="hidden sm:inline-block text-[11px] font-medium text-zinc-500 truncate max-w-[140px] ml-2">
-                                    {task.list.name}
+                                  <span className="hidden md:inline-flex items-center text-[11px] text-zinc-600 shrink-0 max-w-[200px] truncate ml-1 font-medium group-hover:text-zinc-400 transition-colors">
+                                    ≡ {task.list.name}
                                   </span>
                                 )}
                               </div>
-                              <div className="flex items-center gap-1">
+                              <div className="flex items-center gap-1 relative z-10">
                                 <div className={`hidden sm:flex items-center shrink-0 ${currentTab !== 'priorities' ? 'w-[320px]' : 'w-[220px]'}`}>
                                   {/* Assignees */}
                                   <div className="flex items-center justify-center shrink-0 w-[120px]" title={taskAssignees.map(a => a.name).join(", ")}>
-                                    <div className="flex items-center -space-x-1 z-10">
+                                    <div className="flex items-center justify-center -space-x-1 z-10 w-full">
                                       {taskAssignees.slice(0, 3).map((a, i) => (
-                                        <div key={i} className="w-6 h-6 rounded-full border border-[#18181c] flex items-center justify-center text-[9px] font-bold text-white uppercase bg-red-500 shadow-sm">
-                                          {a.name?.substring(0, 2) || "U"}
+                                        <div key={i} className={`w-6 h-6 rounded-full border border-[#18181c] flex items-center justify-center text-[9px] font-bold text-white uppercase ${getAvatarColor(a.name || a.id || 'U')} shadow-sm overflow-hidden shrink-0`}>
+                                          {a.avatarUrl ? (
+                                            <img src={a.avatarUrl} alt={a.name} className="w-full h-full object-cover" />
+                                          ) : (
+                                            a.name?.substring(0, 2) || "U"
+                                          )}
                                         </div>
                                       ))}
                                       {taskAssignees.length === 0 && (
-                                        <div className="w-6 h-6 rounded-full bg-card border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer">
+                                        <div className="w-6 h-6 rounded-full bg-card border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer shrink-0">
                                           <Plus className="w-3.5 h-3.5" />
                                         </div>
                                       )}
@@ -1299,7 +1332,7 @@ function WorkspaceDashboardContent({
                                   {/* Priority Pill */}
                                   {currentTab !== "priorities" && (
                                     <div className="w-[100px] flex items-center justify-center shrink-0">
-                                      <span className={`flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/80 text-xs font-medium ${priorityConfig.color}`}>
+                                      <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-[4px] text-[11px] font-bold uppercase tracking-wide ${priorityConfig.pill}`}>
                                         <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
                                         {priorityConfig.label}
                                       </span>
@@ -1324,24 +1357,24 @@ function WorkspaceDashboardContent({
                     <div key={key} className="space-y-0.5">
                       <div className="flex items-center justify-between px-1 pb-2 pt-2 group">
                         <div 
-                          className="flex items-center gap-2 cursor-pointer select-none hover:bg-accent/50 rounded-md transition-colors px-1.5 py-1 -ml-1.5"
+                          className="flex items-center gap-2 cursor-pointer select-none bg-[#17171A] hover:bg-[#1C1C20] rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
                           onClick={() => toggleGroup(key)}
                         >
                           <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                           <span
-                            className={`text-[11px] font-bold px-2 py-1 rounded-md uppercase tracking-wide ${pillClass} shadow-sm ${flagClass ? 'flex items-center gap-1.5' : ''}`}
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-[4px] uppercase tracking-wide ${pillClass} shadow-sm ${flagClass ? 'flex items-center gap-1.5' : ''}`}
                             style={(customColor as any) ? { backgroundColor: customColor as any } : {}}
                           >
                             {flagClass && <Flag className={`w-3.5 h-3.5 shrink-0 ${flagClass}`} />}
                             {label}
                           </span>
                           {unassignedCount > 0 && (
-                            <span className="px-2.5 py-1 rounded-full bg-zinc-800/80 text-[10px] text-zinc-400 font-bold ml-1">
+                            <span className="px-2.5 py-0.5 rounded-full bg-zinc-800/80 text-[10px] text-zinc-400 font-bold ml-1">
                               {unassignedCount} unassigned
                             </span>
                           )}
                         </div>
-                        <span className="text-sm font-bold text-zinc-300 w-8 shrink-0 text-center">
+                        <span className="text-xs font-semibold text-zinc-400 w-8 shrink-0 text-center">
                           {count}
                         </span>
                       </div>
@@ -1356,12 +1389,14 @@ function WorkspaceDashboardContent({
                                 <div key={sgKey} className="space-y-0.5">
                                   <div className="flex items-center justify-between px-1 pb-2 pt-1 group">
                                     <div 
-                                      className="flex items-center gap-2 cursor-pointer select-none hover:bg-accent/50 rounded-md transition-colors px-1.5 py-1 -ml-1.5"
+                                      className="flex items-center gap-2 cursor-pointer select-none bg-[#17171A] hover:bg-[#1C1C20] rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
                                       onClick={() => toggleGroup(sgKey)}
                                     >
                                       <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isSgCollapsed ? "-rotate-90" : ""}`} />
-                                      <div className={`w-2 h-2 rounded-full ${sg.config.dot}`} style={(sg.config as any).customColor ? { backgroundColor: (sg.config as any).customColor } : {}} />
-                                      <span className="text-[13px] font-bold text-zinc-200">
+                                      <span
+                                        className={`text-[11px] font-bold px-2 py-0.5 rounded-[4px] uppercase tracking-wide ${sg.config.pill} shadow-sm`}
+                                        style={(sg.config as any).customColor ? { backgroundColor: (sg.config as any).customColor } : {}}
+                                      >
                                         {sg.config.label}
                                       </span>
                                     </div>
@@ -1373,7 +1408,7 @@ function WorkspaceDashboardContent({
                                           <span className="w-[100px] shrink-0 text-center">Due</span>
                                         </div>
                                       )}
-                                      <span className="text-xs font-bold text-zinc-300 w-8 shrink-0 text-center">
+                                      <span className="text-xs font-semibold text-zinc-400 w-8 shrink-0 text-center">
                                         {sg.tasks.length}
                                       </span>
                                     </div>
@@ -1440,19 +1475,19 @@ function WorkspaceDashboardContent({
                     {/* Status Group Header Bar */}
                     <div className="flex items-center justify-between px-1 pb-2 pt-2 group">
                       <div 
-                        className="flex items-center gap-2 cursor-pointer select-none hover:bg-accent/50 rounded-md transition-colors px-1.5 py-1 -ml-1.5"
+                        className="flex items-center gap-2 cursor-pointer select-none bg-[#17171A] hover:bg-[#1C1C20] rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
                         onClick={() => toggleGroup(status)}
                       >
                         <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                         {/* Status Pill Badge */}
                         <span
-                          className={`text-[11px] font-bold px-2 py-1 rounded-md uppercase tracking-wide ${config.pill} shadow-sm`}
+                          className={`text-[11px] font-bold px-2 py-0.5 rounded-[4px] uppercase tracking-wide ${config.pill} shadow-sm`}
                           style={(config as any).customColor ? { backgroundColor: (config as any).customColor } : {}}
                         >
                           {config.label}
                         </span>
                       </div>
-                      <span className="text-sm font-bold text-zinc-300 w-8 shrink-0 text-center">
+                      <span className="text-xs font-semibold text-zinc-400 w-8 shrink-0 text-center">
                         {groupTasks.length}
                       </span>
                     </div>
@@ -1484,13 +1519,16 @@ function WorkspaceDashboardContent({
                               <div
                                 key={task.id}
                                 onClick={() => setSelectedTask(task)}
-                                className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                                className={`group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''}`}
                               >
+                                {((task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE') && (
+                                  <div className="absolute top-1/2 left-6 right-6 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
+                                )}
                                 {/* Left: Check/Status dot + Title + Context Breadcrumb */}
-                                <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4 relative z-10">
                                   {/* Checkbox (Square) */}
                                   <div
-                                    className="w-3.5 h-3.5 rounded-[3px] border border-zinc-600 hover:border-zinc-400 shrink-0 flex items-center justify-center transition-colors shadow-sm"
+                                    className="w-[18px] h-[18px] rounded border border-zinc-700 hover:border-zinc-500 shrink-0 flex items-center justify-center transition-colors shadow-sm bg-zinc-900/50"
                                     title="Mark complete"
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1506,7 +1544,7 @@ function WorkspaceDashboardContent({
                                   />
 
                                   {/* Task Title */}
-                                  <span className="text-[13px] text-zinc-300 group-hover:text-indigo-300 transition-colors truncate font-medium">
+                                  <span className="text-[13px] font-medium text-zinc-300 group-hover:text-indigo-300 transition-colors truncate">
                                     {task.title}
                                   </span>
 
@@ -1533,7 +1571,7 @@ function WorkspaceDashboardContent({
 
                                 {/* Right: Assignees + Priority + Due Date + More */}
                                 <div className="hidden sm:flex items-center shrink-0 w-[220px] pr-2">
-                                  {/* ClickUp-style Stacked Avatars */}
+                                {/* ClickUp-style Stacked Avatars */}
                                   <div
                                     className="flex items-center justify-center -space-x-1 w-[120px] shrink-0"
                                     title={
@@ -1544,7 +1582,7 @@ function WorkspaceDashboardContent({
                                     {taskAssignees.slice(0, 3).map((a) => (
                                       <div
                                         key={a.id}
-                                        className="w-5 h-5 rounded-full ring-2 ring-[#18181c] flex items-center justify-center text-[9px] font-bold text-white overflow-hidden bg-indigo-600 shrink-0"
+                                        className={`w-6 h-6 rounded-full border border-[#18181c] flex items-center justify-center text-[9px] font-bold text-white uppercase ${getAvatarColor(a.name || a.id || 'U')} shadow-sm overflow-hidden shrink-0`}
                                       >
                                         {a.avatarUrl ? (
                                           <img
@@ -1558,15 +1596,15 @@ function WorkspaceDashboardContent({
                                       </div>
                                     ))}
                                     {taskAssignees.length === 0 && (
-                                      <div className="w-5 h-5 rounded-full border border-dashed border-zinc-700 flex items-center justify-center text-[10px] text-zinc-500 bg-card shadow-sm shrink-0">
-                                        <UserIcon className="w-3 h-3" />
+                                      <div className="w-6 h-6 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer shrink-0 bg-card shadow-sm">
+                                        <Plus className="w-3.5 h-3.5" />
                                       </div>
                                     )}
                                   </div>
 
                                   {/* Priority Column */}
                                   <div className="flex items-center justify-center w-[100px] shrink-0">
-                                    <span className={`flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/80 text-xs font-medium ${priorityConfig.color}`}>
+                                    <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-[4px] text-[11px] font-bold uppercase tracking-wide ${priorityConfig.pill}`}>
                                       <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
                                       {priorityConfig.label}
                                     </span>

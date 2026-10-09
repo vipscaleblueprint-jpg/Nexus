@@ -139,8 +139,8 @@ export interface Task {
   description?: string;
   status: string;
   priority: Priority;
-  dueDate?: string;
-  startDate?: string;
+  dueDate?: string | null;
+  startDate?: string | null;
   listId: string;
   assigneeId?: string | null;
   assignee?: User | null;

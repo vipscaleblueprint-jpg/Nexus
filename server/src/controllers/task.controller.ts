@@ -26,6 +26,7 @@ import {
   extractClickUpTaskId,
   resolveClickUpListId,
 } from '../services/clickupService';
+import { isNexusAuditChecklist } from '../utils/auditChecklist';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -609,7 +610,7 @@ export async function updateTask(req: Request, res: Response) {
     if (status !== undefined && status.toLowerCase() === 'checking') {
       // Check task audit checklists
       const requiredTaskAudits = getRequiredAudits(currentTask.title, (currentTask as any).assigneeRoleRestrictions);
-      const auditChecklists = currentTask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
+      const auditChecklists = currentTask.checklists.filter((c: any) => isNexusAuditChecklist(c));
       for (const c of auditChecklists) {
         if (c.items.some((i: any) => requiredTaskAudits.includes(i.text) && !i.completed)) {
           return res.status(400).json({ error: `Cannot move to ${status}: Required audits for task are not fully completed.` });
@@ -619,7 +620,7 @@ export async function updateTask(req: Request, res: Response) {
       // Check subtasks audit checklists
       for (const subtask of currentTask.subtasks) {
         const requiredSubtaskAudits = getRequiredAudits(subtask.title, (subtask as any).assigneeRoleRestrictions);
-        const subtaskAuditChecklists = subtask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
+        const subtaskAuditChecklists = subtask.checklists.filter((c: any) => isNexusAuditChecklist(c));
         for (const c of subtaskAuditChecklists) {
           if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {
             return res.status(400).json({ error: `Cannot move to ${status}: Subtask "${subtask.title}" required audits are not fully completed.` });
@@ -988,9 +989,13 @@ export async function moveTask(req: Request, res: Response) {
 
     // Immediately persist to DB (scalar fields only for max speed)
     if (status && status.toLowerCase() === 'revision') {
-      const auditChecklist = await prisma.checklist.findFirst({
-        where: { taskId: id, subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
-      });
+      // Reset only Nexus's Audit checklist, not a ClickUp checklist also named "Audit".
+      const auditChecklist = (
+        await prisma.checklist.findMany({
+          where: { taskId: id, subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
+          include: { items: { select: { text: true } } },
+        })
+      ).find(isNexusAuditChecklist);
       if (auditChecklist) {
         await prisma.checklistItem.updateMany({
           where: { checklistId: auditChecklist.id },
@@ -1838,7 +1843,7 @@ export async function updateSubtask(req: Request, res: Response) {
       });
       if (currentSubtask) {
         const requiredSubtaskAudits = getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions);
-        const auditChecklists = currentSubtask.checklists.filter((c: any) => c.name.toLowerCase().includes('audit'));
+        const auditChecklists = currentSubtask.checklists.filter((c: any) => isNexusAuditChecklist(c));
         for (const c of auditChecklists) {
           if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {
             return res.status(400).json({ error: `Cannot move to ${status}: Required audits for subtask are not fully completed.` });
@@ -1858,9 +1863,13 @@ export async function updateSubtask(req: Request, res: Response) {
     }
 
     if (status && status.toLowerCase() === 'revision') {
-      const auditChecklist = await prisma.checklist.findFirst({
-        where: { subtaskId: subtaskId, name: { equals: 'Audit', mode: 'insensitive' } },
-      });
+      // Reset only Nexus's Audit checklist, not a ClickUp checklist also named "Audit".
+      const auditChecklist = (
+        await prisma.checklist.findMany({
+          where: { subtaskId: subtaskId, name: { equals: 'Audit', mode: 'insensitive' } },
+          include: { items: { select: { text: true } } },
+        })
+      ).find(isNexusAuditChecklist);
       if (auditChecklist) {
         await prisma.checklistItem.updateMany({
           where: { checklistId: auditChecklist.id },

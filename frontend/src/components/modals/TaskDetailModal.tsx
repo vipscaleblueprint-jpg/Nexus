@@ -14,6 +14,7 @@ import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { canUserMoveTask } from '@/lib/permissions';
 import { toast } from '@/lib/toast';
+import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
 import { fetchListStatuses } from '@/lib/listStatusCache';
@@ -1051,7 +1052,8 @@ export function TaskDetailModalContent({
     if (!task) return;
 
     if (newStatus.toLowerCase() === 'checking') {
-      const auditChecklists = (task.checklists || []).filter(c => c.name.toLowerCase().includes('audit'));
+      // Only Nexus's Audit checklist gates CHECKING; ClickUp checklists don't.
+      const auditChecklists = (task.checklists || []).filter(c => isNexusAuditChecklist(c));
       for (const c of auditChecklists) {
         if (c.items && c.items.some(i => !i.completed)) {
           toast.error(`Cannot move to ${newStatus}: Audit checklist "${c.name}" is not fully completed.`);
@@ -1062,7 +1064,7 @@ export function TaskDetailModalContent({
 
     if (newStatus.toLowerCase() === 'revision') {
       const updatedChecklists = (task.checklists || []).map(c => {
-        if (c.name.toLowerCase() === 'audit') {
+        if (isNexusAuditChecklist(c)) {
           return {
             ...c,
             items: c.items?.map(i => ({ ...i, completed: false })) || []
@@ -2737,6 +2739,15 @@ export function TaskDetailModalContent({
   );
 }
 
+/** Assignee clicks within this window are saved together as one change. */
+const ASSIGNEE_BATCH_MS = 600;
+
+/** "Leo, Aaron" vs "Aaron, Leo": same people regardless of order. */
+function sameNameSet(a?: string, b?: string): boolean {
+  const split = (s?: string) => (s || '').split(', ').map(n => n.trim()).filter(Boolean).sort().join('|');
+  return split(a) === split(b);
+}
+
 // ─── Subtask Detail View (Replaces Parent View) ─────────────────────────────
 export function SubtaskDetailView({
   subtask,
@@ -2945,7 +2956,7 @@ export function SubtaskDetailView({
       let updatedChecklists = subtask.checklists || [];
       if (newStatus.toLowerCase() === 'revision') {
         updatedChecklists = updatedChecklists.map((c: any) => {
-          if (c.name.toLowerCase() === 'audit') {
+          if (isNexusAuditChecklist(c)) {
             return {
               ...c,
               items: c.items?.map((i: any) => ({ ...i, completed: false })) || []
@@ -3052,6 +3063,19 @@ export function SubtaskDetailView({
       if (data.taskId === currentParentTask?.id && data.activity?.subtaskTitle === currentSubtask?.title) {
         setActivities(prev => {
           if (prev.some(a => a.id === data.activity.id)) return prev;
+          // The acting client already shows an optimistic entry for its own assignment —
+          // swap it for the server's instead of listing the change twice.
+          if (data.activity.type === 'assignment') {
+            const idx = prev.findIndex(
+              a => typeof a.id === 'string' && a.id.startsWith('optimistic-assign') &&
+                sameNameSet(a.assigneeName, data.activity.assigneeName)
+            );
+            if (idx !== -1) {
+              const updated = [...prev];
+              updated[idx] = data.activity;
+              return updated;
+            }
+          }
           return [...prev, data.activity];
         });
 
@@ -3098,77 +3122,82 @@ export function SubtaskDetailView({
   const currentAssignees = subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
   const isUserAssigned = (userId: string) => currentAssignees.some((u: any) => u.id === userId);
 
-  const handleToggleAssignee = (u: any) => {
-    const isAssigned = isUserAssigned(u.id);
-    const updatedAssignees = isAssigned
-      ? currentAssignees.filter((a: any) => a.id !== u.id)
-      : [...currentAssignees, u];
+  // Rapid toggles are batched into one save and one activity entry (like the main task view),
+  // so overlapping requests can't report half-applied changes ("assigned Leo and removed …").
+  const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Assignees before the first toggle of the current batch. */
+  const assigneeBaselineRef = useRef<any[] | null>(null);
+  /** Latest assignees, so clicks before the next render build on each other. */
+  const latestAssigneesRef = useRef<any[]>(currentAssignees);
+  useEffect(() => {
+    if (!assigneeDebounceRef.current) latestAssigneesRef.current = currentAssignees;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- currentAssignees is derived from these
+  }, [subtask.assignees, subtask.User, subtask.assignee]);
+  useEffect(() => () => {
+    if (assigneeDebounceRef.current) clearTimeout(assigneeDebounceRef.current);
+  }, []);
 
-    const updatedIds = updatedAssignees.map((a: any) => a.id);
-    const updatedSubtask = { ...subtask, assignees: updatedAssignees, assigneeIds: updatedIds };
+  const applyAssigneesLocally = (updatedAssignees: any[]) => {
+    latestAssigneesRef.current = updatedAssignees;
+    const updatedSubtask = { ...subtask, assignees: updatedAssignees, assigneeIds: updatedAssignees.map((a: any) => a.id) };
     if (setActiveSubtask) setActiveSubtask(updatedSubtask);
     if (onUpdateTask) {
       const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
       onUpdateTask({ ...parentTask, subtasks: newSubtasks });
     }
+  };
+
+  const persistAssignees = (previous: any[], next: any[]) => {
+    const added = next.filter(u => !previous.some(p => p.id === u.id)).map(u => u.name);
+    const removed = previous.filter(p => !next.some(u => u.id === p.id)).map(p => p.name);
+    if (added.length === 0 && removed.length === 0) return; // toggled on and off again
 
     const optimisticId = `optimistic-assign-${Date.now()}`;
-    const added = isAssigned ? [] : [u.name];
-    const removed = isAssigned ? [u.name] : [];
-    const names = updatedAssignees.length > 0 ? updatedAssignees.map((a: any) => a.name).join(', ') : 'Unassigned';
-    
-    const optimisticActivity = {
+    setActivities(prev => [...prev, {
       id: optimisticId,
       type: 'assignment',
       author: currentUser?.name || 'Someone',
-      assigneeName: names,
-      assignees: updatedAssignees.map((a: any) => a.name),
+      assigneeName: next.length > 0 ? next.map(u => u.name).join(', ') : 'Unassigned',
+      assignees: next.map(u => u.name),
       added,
       removed,
       date: new Date(),
       user: currentUser,
-    };
-    setActivities(prev => [...prev, optimisticActivity]);
+    }]);
 
-    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: updatedIds, assignees: updatedAssignees } as any).catch((err) => {
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: next.map(u => u.id) }).catch((err) => {
       console.error(err);
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
     });
   };
 
+  const handleToggleAssignee = (u: any) => {
+    const latest = latestAssigneesRef.current;
+    if (!assigneeBaselineRef.current) assigneeBaselineRef.current = latest;
+    const updatedAssignees = latest.some((a: any) => a.id === u.id)
+      ? latest.filter((a: any) => a.id !== u.id)
+      : [...latest, u];
+    applyAssigneesLocally(updatedAssignees);
+
+    if (assigneeDebounceRef.current) clearTimeout(assigneeDebounceRef.current);
+    assigneeDebounceRef.current = setTimeout(() => {
+      assigneeDebounceRef.current = null;
+      const previous = assigneeBaselineRef.current || [];
+      assigneeBaselineRef.current = null;
+      persistAssignees(previous, latestAssigneesRef.current);
+    }, ASSIGNEE_BATCH_MS);
+  };
+
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const updatedSubtask = { ...subtask, assignees: [], assigneeIds: [] };
-    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-    if (onUpdateTask) {
-      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+    if (assigneeDebounceRef.current) {
+      clearTimeout(assigneeDebounceRef.current);
+      assigneeDebounceRef.current = null;
     }
-
-    const optimisticId = `optimistic-assign-${Date.now()}`;
-    const removed = currentAssignees.map((a: any) => a.name);
-    
-    if (removed.length > 0) {
-      const optimisticActivity = {
-        id: optimisticId,
-        type: 'assignment',
-        author: currentUser?.name || 'Someone',
-        assigneeName: 'Unassigned',
-        assignees: [],
-        added: [],
-        removed,
-        date: new Date(),
-        user: currentUser,
-      };
-      setActivities(prev => [...prev, optimisticActivity]);
-    }
-
-    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: [], assignees: [] } as any).catch((err) => {
-      console.error(err);
-      if (removed.length > 0) {
-        setActivities(prev => prev.filter(a => a.id !== optimisticId));
-      }
-    });
+    const previous = assigneeBaselineRef.current || latestAssigneesRef.current;
+    assigneeBaselineRef.current = null;
+    applyAssigneesLocally([]);
+    persistAssignees(previous, []);
     setIsAssigneeOpen(false);
   };
 

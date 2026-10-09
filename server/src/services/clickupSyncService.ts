@@ -120,9 +120,6 @@ const MAX_ACTIVITY = 300;
 const INCREMENTAL_OVERLAP_MS = 5 * 60_000;
 const LAST_PULLED_KEY = (listId: string) => `clickup:lastPulled:${listId}`;
 const REDIS_TIMEOUT_MS = 3000;
-/** What a ClickUp checklist named "Audit" is imported as, so it doesn't feed Nexus's Audit section. */
-export const CLICKUP_AUDIT_CHECKLIST = 'ClickUp Audit';
-
 function isReservedChecklistName(name: string | undefined): boolean {
   return (name ?? '').trim().toLowerCase() === 'audit';
 }
@@ -552,8 +549,9 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
 
 async function syncChecklists(checklists: any[] | undefined, target: Target, ctx: SyncContext) {
   for (const cl of checklists ?? []) {
-    // "Audit" is Nexus's own audit checklist (Design / UI UX / Funnel / Instructions).
-    // A ClickUp checklist of that name gets its own checklist instead of merging in.
+    // ClickUp checklists keep their ClickUp name, even "Audit". Nexus's own Audit checklist
+    // (Design / UI UX / Funnel / Instructions) is a different thing, so a ClickUp "Audit"
+    // never merges into it by name — it gets its own checklist.
     const reserved = isReservedChecklistName(cl.name);
     const existing =
       (await prisma.checklist.findUnique({ where: { externalId: cl.id }, select: { id: true } })) ??
@@ -566,12 +564,11 @@ async function syncChecklists(checklists: any[] | undefined, target: Target, ctx
     const checklist = existing
       ? await prisma.checklist.update({
           where: { id: existing.id },
-          // Keep the Nexus name on a linked reserved checklist (it may be Nexus's own Audit).
-          data: reserved ? { externalId: cl.id } : { name: cl.name, externalId: cl.id },
+          data: { name: cl.name, externalId: cl.id },
           select: { id: true },
         })
       : await prisma.checklist.create({
-          data: { ...target, name: reserved ? CLICKUP_AUDIT_CHECKLIST : cl.name, externalId: cl.id },
+          data: { ...target, name: cl.name, externalId: cl.id },
           select: { id: true },
         });
     ctx.summary.checklists++;

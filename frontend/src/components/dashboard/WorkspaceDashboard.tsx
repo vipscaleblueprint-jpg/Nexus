@@ -1299,7 +1299,8 @@ function WorkspaceDashboardContent({
                                   {/* Priority Pill */}
                                   {currentTab !== "priorities" && (
                                     <div className="w-[100px] flex items-center justify-center shrink-0">
-                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide ${priorityConfig.pill}`}>
+                                      <span className={`flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/80 text-xs font-medium ${priorityConfig.color}`}>
+                                        <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
                                         {priorityConfig.label}
                                       </span>
                                     </div>
@@ -1565,7 +1566,8 @@ function WorkspaceDashboardContent({
 
                                   {/* Priority Column */}
                                   <div className="flex items-center justify-center w-[100px] shrink-0">
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide ${priorityConfig.pill}`}>
+                                    <span className={`flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/80 text-xs font-medium ${priorityConfig.color}`}>
+                                      <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
                                       {priorityConfig.label}
                                     </span>
                                   </div>

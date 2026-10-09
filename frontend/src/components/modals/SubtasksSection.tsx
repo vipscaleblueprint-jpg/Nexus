@@ -1150,8 +1150,9 @@ function SubtaskRow({
             {activeTab === 'checklist' && (
               <div className="flex-1 flex flex-col relative h-full">
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
-                  {subtask.checklists && subtask.checklists.filter((c: any) => !c.name.toLowerCase().includes('audit')).length > 0 ? (
-                    subtask.checklists.filter((c: any) => !c.name.toLowerCase().includes('audit')).map((checklist: any) => {
+                  {/* Only Nexus's own "Audit" checklist is shown separately below. */}
+                  {subtask.checklists && subtask.checklists.filter((c: any) => c.name.trim().toLowerCase() !== 'audit').length > 0 ? (
+                    subtask.checklists.filter((c: any) => c.name.trim().toLowerCase() !== 'audit').map((checklist: any) => {
                       const canCheck = true; // Subtask checks are allowed by default for standard checklists
 
                       return (

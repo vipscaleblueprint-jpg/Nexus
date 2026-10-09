@@ -49,10 +49,24 @@ export interface ClickUpSyncSummary {
   listResults: ClickUpListResult[];
   /** The list being pulled right now; absent once finished. */
   currentList?: string;
+  /** Newest-last feed of what the pull added or updated. */
+  activity: ClickUpSyncActivity[];
+  /** true when every task was re-read; false when only changes since the last pull. */
+  full: boolean;
+}
+
+export interface ClickUpSyncActivity {
+  at: string;
+  list: string;
+  action: 'added' | 'updated';
+  kind: 'task' | 'subtask';
+  title: string;
 }
 
 export interface ClickUpListResult {
   name: string;
+  /** Tasks ClickUp reported for this pull (only changed ones unless full). */
+  checked: number;
   created: number;
   updated: number;
   subtasks: number;
@@ -123,8 +137,19 @@ export const clickUpApi = {
    * Start pulling every mapped ClickUp list into Nexus (active tasks unless includeClosed).
    * Runs in the background; poll getSyncStatus. started=false means one is already running.
    */
-  async syncAll(includeClosed = false): Promise<{ ok: boolean; started: boolean }> {
-    return apiClient('/api/clickup/sync-all', { method: 'POST', body: JSON.stringify({ includeClosed }) });
+  async syncAll(
+    options: { includeClosed?: boolean; full?: boolean; nexusListIds?: string[] } = {}
+  ): Promise<{ ok: boolean; started: boolean }> {
+    return apiClient('/api/clickup/sync-all', { method: 'POST', body: JSON.stringify(options) });
+  },
+
+  /** Link unmapped Client Dashboard lists to the ClickUp list with the same name. */
+  async autoLink(): Promise<{
+    ok: boolean;
+    linked: { nexusListName: string; clickUpListName: string; clickUpListId: string }[];
+    unmatched: string[];
+  }> {
+    return apiClient('/api/clickup/mappings/auto-link', { method: 'POST' });
   },
 
   /** Whether a pull is running, with its live progress — or the last finished one. */

@@ -163,6 +163,8 @@ export async function updateClickUpTask(
     priority?: number | null;
     due_date?: number | null;
     start_date?: number | null;
+    /** ClickUp user ids to add to / remove from the task's assignees */
+    assignees?: { add: number[]; rem: number[] };
   }
 ): Promise<any> {
   const finalPayload: any = { ...payload };
@@ -221,9 +223,16 @@ export async function getClickUpTask(taskId: string): Promise<any> {
  * One page (up to 100) of a list's tasks, subtasks and closed tasks included.
  * Response: { tasks: [...], last_page: boolean }
  */
-export async function getClickUpListTasks(listId: string, page: number, includeClosed = true): Promise<any> {
+export async function getClickUpListTasks(
+  listId: string,
+  page: number,
+  includeClosed = true,
+  /** Only tasks updated after this time (unix ms). */
+  updatedSince?: number
+): Promise<any> {
+  const since = updatedSince ? `&date_updated_gt=${updatedSince}` : '';
   return clickupFetch(
-    `/list/${listId}/task?page=${page}&subtasks=true&include_closed=${includeClosed}&archived=false`
+    `/list/${listId}/task?page=${page}&subtasks=true&include_closed=${includeClosed}&archived=false${since}`
   );
 }
 
@@ -361,7 +370,7 @@ export async function deleteClickUpChecklistItem(
 export async function createClickUpSubtask(
   listId: string,
   parentTaskId: string,
-  payload: { name: string; description?: string; status?: string; priority?: number | null }
+  payload: { name: string; description?: string; status?: string; priority?: number | null; assignees?: number[] }
 ): Promise<any> {
   const finalPayload: any = { ...payload, parent: parentTaskId };
   if (payload.description !== undefined) {
@@ -575,6 +584,93 @@ export async function safeUpdateClickUpTask(
     await updateClickUpTask(id, payload);
   } catch (err) {
     console.error('[ClickUp] safeUpdateClickUpTask error:', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Assignees — Nexus users and ClickUp members are matched by email, the same way the
+// inbound ClickUp → Nexus sync matches them.
+// ---------------------------------------------------------------------------
+
+const MEMBER_CACHE_TTL_MS = 10 * 60 * 1000;
+let memberCache: { at: number; byEmail: Map<string, number> } | null = null;
+
+/** Lowercase email → ClickUp user id, across every workspace the API key can see. Cached. */
+async function getClickUpMemberIdsByEmail(forceRefresh = false): Promise<Map<string, number>> {
+  if (!forceRefresh && memberCache && Date.now() - memberCache.at < MEMBER_CACHE_TTL_MS) {
+    return memberCache.byEmail;
+  }
+  const data = await getWorkspaces();
+  const byEmail = new Map<string, number>();
+  for (const team of data?.teams ?? []) {
+    for (const member of team?.members ?? []) {
+      const user = member?.user;
+      const email = typeof user?.email === 'string' ? user.email.toLowerCase() : '';
+      if (email && typeof user.id === 'number') byEmail.set(email, user.id);
+    }
+  }
+  memberCache = { at: Date.now(), byEmail };
+  return byEmail;
+}
+
+const normalizeEmails = (emails: Array<string | null | undefined>) =>
+  Array.from(new Set(emails.filter((e): e is string => typeof e === 'string' && !!e.trim()).map((e) => e.trim().toLowerCase())));
+
+/**
+ * Maps Nexus user emails to ClickUp user ids. Emails with no ClickUp member are skipped
+ * (and logged) rather than failing the whole sync. Never throws.
+ */
+export async function resolveClickUpAssigneeIds(emails: Array<string | null | undefined>): Promise<number[]> {
+  const wanted = normalizeEmails(emails);
+  if (wanted.length === 0 || !getApiKey()) return [];
+  try {
+    let byEmail = await getClickUpMemberIdsByEmail();
+    // Someone may have joined ClickUp since the cache was filled — refresh once (at most every minute)
+    if (wanted.some((e) => !byEmail.has(e)) && memberCache && Date.now() - memberCache.at > 60_000) {
+      byEmail = await getClickUpMemberIdsByEmail(true);
+    }
+    const missing = wanted.filter((e) => !byEmail.has(e));
+    if (missing.length > 0) {
+      console.warn(`[ClickUp] Not assigned in ClickUp — no ClickUp member with email: ${missing.join(', ')}`);
+    }
+    return wanted.map((e) => byEmail.get(e)).filter((id): id is number => id !== undefined);
+  } catch (err) {
+    console.error('[ClickUp] resolveClickUpAssigneeIds error:', err);
+    return [];
+  }
+}
+
+/**
+ * Pushes a Nexus assignee change to an existing ClickUp task (or subtask).
+ * Adds every current Nexus assignee ClickUp is missing (which also heals assignments made before
+ * this sync existed) and removes only the people Nexus removed — ClickUp-only assignees are kept.
+ */
+export async function safeSyncClickUpAssignees(
+  clickUpTaskId: string | null | undefined,
+  previousEmails: Array<string | null | undefined>,
+  nextEmails: Array<string | null | undefined>
+): Promise<void> {
+  if (!clickUpTaskId || !getApiKey()) return;
+  try {
+    const id = extractClickUpTaskId(clickUpTaskId);
+    const next = normalizeEmails(nextEmails);
+    const removedEmails = normalizeEmails(previousEmails).filter((e) => !next.includes(e));
+
+    const [cuTask, nextIds, removedIds] = await Promise.all([
+      getClickUpTask(id),
+      resolveClickUpAssigneeIds(next),
+      resolveClickUpAssigneeIds(removedEmails),
+    ]);
+    const current = new Set<number>((cuTask?.assignees ?? []).map((a: any) => Number(a?.id)).filter((n: number) => !isNaN(n)));
+
+    const add = nextIds.filter((uid) => !current.has(uid));
+    const rem = removedIds.filter((uid) => current.has(uid) && !nextIds.includes(uid));
+    if (add.length === 0 && rem.length === 0) return;
+
+    await updateClickUpTask(id, { assignees: { add, rem } });
+    console.log(`[ClickUp] Assignees synced for ${id}: +${add.length} / -${rem.length}`);
+  } catch (err) {
+    console.error('[ClickUp] safeSyncClickUpAssignees error:', err);
   }
 }
 

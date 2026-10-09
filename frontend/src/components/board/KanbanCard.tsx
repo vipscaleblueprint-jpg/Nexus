@@ -12,6 +12,8 @@ import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { canUserEditTask } from '@/lib/permissions';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
+import { DayPicker } from 'react-day-picker';
+import 'react-day-picker/dist/style.css';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 
 interface Props {
@@ -115,6 +117,25 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
       toast.success(p ? `Priority set to ${getPriorityConfig(p).label}` : 'Priority cleared');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update priority');
+      setTask(initialTask);
+    }
+  };
+
+  const handleDueDateChange = async (date: Date | undefined) => {
+    if (!currentUser) return;
+    
+    setTask(prev => ({ ...prev, dueDate: date?.toISOString() || null } as any));
+    closeDropdown();
+
+    try {
+      if (isSubtask) {
+        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { dueDate: date?.toISOString() || null });
+      } else {
+        await tasksApi.updateTask(task.id, { dueDate: date?.toISOString() || null });
+      }
+      toast.success(date ? 'Due date set' : 'Due date cleared');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update due date');
       setTask(initialTask);
     }
   };
@@ -551,9 +572,33 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
           </div>
           {openDropdown === 'date' && (
             <PortalDropdown triggerRef={dateTriggerRef} onClose={closeDropdown}>
-              <div className="w-48 p-2">
-                <div className="text-[11px] text-zinc-500 dark:text-zinc-500 font-semibold uppercase mb-2">Set Due Date</div>
-                <div className="text-xs text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 italic">Date picker would appear here...</div>
+              <div className="bg-background border border-zinc-800 rounded-xl shadow-xl z-50 p-3">
+                <style>{`
+                  .rdp { --rdp-cell-size: 32px; --rdp-accent-color: #6366f1; --rdp-background-color: rgba(99, 102, 241, 0.2); margin: 0; }
+                  .rdp-day_selected, .rdp-day_selected:focus-visible, .rdp-day_selected:hover { background-color: var(--rdp-accent-color); font-weight: bold; color: white; }
+                  .rdp-button:hover:not([disabled]):not(.rdp-day_selected) { background-color: rgba(255, 255, 255, 0.1); }
+                  .rdp-day { border-radius: 6px; color: #d4d4d8; font-size: 13px; }
+                  .rdp-caption { color: #f4f4f5; }
+                  .rdp-head_cell { color: #a1a1aa; font-weight: 500; font-size: 12px; }
+                  .rdp-nav_button { color: #d4d4d8; }
+                  .rdp-nav_button:hover { background-color: rgba(255, 255, 255, 0.1); }
+                `}</style>
+                <div className="flex justify-between items-center mb-2 px-2">
+                  <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
+                  {('dueDate' in task && task.dueDate) && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDueDateChange(undefined); }}
+                      className="text-[10px] text-red-400/80 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <DayPicker
+                  mode="single"
+                  selected={('dueDate' in task && task.dueDate) ? new Date(task.dueDate) : undefined}
+                  onSelect={handleDueDateChange}
+                />
               </div>
             </PortalDropdown>
           )}

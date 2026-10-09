@@ -17,6 +17,8 @@ import {
   safeUpdateClickUpChecklistItem,
   safeDeleteClickUpChecklistItem,
   safeCreateClickUpSubtask,
+  safeSyncClickUpAssignees,
+  resolveClickUpAssigneeIds,
   findClickUpChecklistByName,
   findClickUpSubtaskByName,
   mapNexusStatusToClickUp,
@@ -428,6 +430,7 @@ export async function createTask(req: Request, res: Response) {
         const clickUpListId = resolveClickUpListId(nexusList);
 
         if (clickUpListId) {
+          const cuAssigneeIds = await resolveClickUpAssigneeIds((task.assignees ?? []).map((a) => a.email));
           const cuPayload = {
             name: task.title,
             description: task.description ?? undefined,
@@ -435,6 +438,7 @@ export async function createTask(req: Request, res: Response) {
             priority: mapNexusPriorityToClickUp(task.priority),
             ...(task.dueDate ? { due_date: new Date(task.dueDate).getTime() } : {}),
             ...(task.startDate ? { start_date: new Date(task.startDate).getTime() } : {}),
+            ...(cuAssigneeIds.length > 0 ? { assignees: cuAssigneeIds } : {}),
           };
           const clickUpTaskId = await safeCreateClickUpTask(clickUpListId, cuPayload);
           if (clickUpTaskId) {
@@ -580,7 +584,7 @@ export async function updateTask(req: Request, res: Response) {
         listId: true,
         creatorId: true,
         externalId: true,
-        assignees: { select: { id: true, name: true } },
+        assignees: { select: { id: true, name: true, email: true } },
         assigneeRoleRestrictions: true,
         checklists: { where: { subtaskId: null }, include: { items: true } },
         subtasks: { include: { checklists: { include: { items: true } } } },
@@ -705,6 +709,14 @@ export async function updateTask(req: Request, res: Response) {
             console.log(`[ClickUp Debug] Syncing updateTask payload for ${clickUpTaskId}:`, cuPayload);
             await safeUpdateClickUpTask(clickUpTaskId, cuPayload);
             console.log(`[ClickUp Debug] Sync success for updateTask ${clickUpTaskId}`);
+          }
+          // Assignees (incl. ones resolved from role restrictions) — matched to ClickUp members by email
+          if (computedAssigneeIds !== undefined || assigneeId !== undefined) {
+            await safeSyncClickUpAssignees(
+              clickUpTaskId,
+              currentTask.assignees.map((a) => a.email),
+              ((payload.assignees ?? []) as Array<{ email?: string | null }>).map((a) => a.email),
+            );
           }
         }
       } catch (err: any) {
@@ -1734,6 +1746,9 @@ export async function createSubtask(req: Request, res: Response) {
           }
 
           if (cuListId) {
+            const cuAssigneeIds = await resolveClickUpAssigneeIds(
+              (((subtask as any).assignees ?? []) as Array<{ email?: string | null }>).map((a) => a.email)
+            );
             const cuSubtaskId = await safeCreateClickUpSubtask(
               cuListId,
               task.externalId!,
@@ -1742,6 +1757,7 @@ export async function createSubtask(req: Request, res: Response) {
                 description: description,
                 status: status ? mapNexusStatusToClickUp(status) : undefined,
                 priority: priority ? mapNexusPriorityToClickUp(priority) : undefined,
+                ...(cuAssigneeIds.length > 0 ? { assignees: cuAssigneeIds } : {}),
               }
             );
             if (cuSubtaskId) {
@@ -1853,12 +1869,13 @@ export async function updateSubtask(req: Request, res: Response) {
       }
     }
 
-    // Snapshot previous assignees so the activity feed can show who was added/removed
-    const previousAssignees: { id: string; name: string }[] = computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)
+    // Snapshot previous assignees so the activity feed (and ClickUp sync) can tell who was added/removed
+    const assigneesChanging = (computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)) || assigneeId !== undefined;
+    const previousAssignees: { id: string; name: string; email?: string | null }[] = assigneesChanging
       ? ((await prisma.subtask.findUnique({
           where: { id: subtaskId },
           // @ts-ignore
-          select: { assignees: { select: { id: true, name: true } } } as any,
+          select: { assignees: { select: { id: true, name: true, email: true } } } as any,
         })) as any)?.assignees || []
       : [];
 
@@ -2030,6 +2047,14 @@ export async function updateSubtask(req: Request, res: Response) {
             console.log(`[ClickUp Debug] Syncing updateSubtask payload for ${clickUpSubtaskId}:`, cuPayload);
             await safeUpdateClickUpTask(clickUpSubtaskId, cuPayload);
             console.log(`[ClickUp Debug] Sync success for updateSubtask ${clickUpSubtaskId}`);
+          }
+          // Assignees — ClickUp subtasks are tasks, so the same add/remove sync applies
+          if (assigneesChanging) {
+            await safeSyncClickUpAssignees(
+              clickUpSubtaskId,
+              previousAssignees.map((a) => a.email),
+              (((subtask as any).assignees ?? []) as Array<{ email?: string | null }>).map((a) => a.email),
+            );
           }
         }
       } catch (err: any) {

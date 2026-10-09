@@ -43,7 +43,7 @@ export function EditColumnModal({
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isRendered, setIsRendered] = useState(isOpen);
   const [isVisible, setIsVisible] = useState(false);
-  const workspaceTeams = useAppStore(state => state.workspaceTeams);
+  const { workspaceTeams, loadTeams, hasLoadedTeams } = useAppStore();
 
   useEffect(() => {
     if (isOpen) {
@@ -78,12 +78,14 @@ export function EditColumnModal({
   useEffect(() => {
     if (isOpen) {
       setIsLoadingRoles(true);
-      getRoles()
-        .then(setRoles)
+      const promises: Promise<any>[] = [getRoles().then(setRoles)];
+      if (!hasLoadedTeams) promises.push(loadTeams());
+      
+      Promise.all(promises)
         .catch(console.error)
         .finally(() => setIsLoadingRoles(false));
     }
-  }, [isOpen]);
+  }, [isOpen, hasLoadedTeams, loadTeams]);
 
   // Filter out ADMIN and ADMINISTRATOR from selectable options
   // Admins always have access to all columns
@@ -151,7 +153,11 @@ export function EditColumnModal({
   };
 
   return (
-    <div className={`fixed inset-0 z-[100] overflow-y-auto overscroll-contain flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity duration-200 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
+    <div 
+      className={`fixed inset-0 z-[200] overflow-y-auto overscroll-contain flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity duration-200 ${isVisible ? 'opacity-100' : 'opacity-0'}`}
+      onWheel={(e) => e.stopPropagation()}
+      onTouchMove={(e) => e.stopPropagation()}
+    >
       <div 
         className={`w-full max-w-md bg-card border border-zinc-800 rounded-xl shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ${isVisible ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}
         onClick={(e) => e.stopPropagation()}
@@ -196,7 +202,11 @@ export function EditColumnModal({
                   }`}
                   title={t}
                 >
-                  {selectedTheme === t && <Check className="w-4 h-4 text-white drop-shadow-md" />}
+                  {selectedTheme === t && (
+                    <Check 
+                      className={`w-4 h-4 drop-shadow-md ${THEMES[t as keyof typeof THEMES].badge.includes('text-black') ? 'text-black/80' : 'text-white'}`} 
+                    />
+                  )}
                 </button>
               ))}
             </div>
@@ -252,8 +262,8 @@ export function EditColumnModal({
                     No custom roles available
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1 pr-1">
-                    {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                  <div className="flex flex-col gap-3 pr-1">
+                    {workspaceTeams.length === 0 && <div className="text-xs text-zinc-500">No teams found.</div>}
                     {workspaceTeams.map(team => {
                       const teamRoles = (team.teamRoles || []).filter((r: any) => {
                         const upper = r.name.trim().toUpperCase();
@@ -269,40 +279,37 @@ export function EditColumnModal({
                             onClick={() => {
                               if (!hasRoles) return;
                               if (allSelected) {
-                                // Deselect all
                                 setAllowedRoles(prev => prev.filter(r => !teamRoles.find((tr: any) => tr.name === r || tr.id === r || tr.name.toUpperCase() === r.toUpperCase())));
                               } else {
-                                // Select all missing
                                 const toAdd = teamRoles.filter((tr: any) => !isRoleSelected(tr)).map((tr: any) => tr.name);
                                 setAllowedRoles(prev => [...prev, ...toAdd]);
                               }
                             }}
-                            className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                            className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase ${hasRoles ? 'cursor-pointer hover:text-white transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
                           >
-                            {hasRoles && (
-                              <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-popover'}`}>
-                                {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                                {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
-                              </div>
-                            )}
+                            <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${hasRoles ? 'border-zinc-700 bg-black' : 'border-zinc-800 bg-zinc-900'} ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/40 border-indigo-500' : ''}`}>
+                              {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                              {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                            </div>
                             <span>{team.name}</span>
                           </div>
-                          {(!team.teamRoles || teamRoles.length === 0) && (
+                          
+                          {(!team.teamRoles || teamRoles.length === 0) ? (
                             <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
-                          )}
-                          {teamRoles.length > 0 && (
-                            <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                          ) : (
+                            <div className="flex flex-col ml-4 pl-3 py-1 border-l border-zinc-700 mt-1 mb-1 relative space-y-0.5">
                               {teamRoles.map((role: any) => {
                                 const selected = isRoleSelected(role);
                                 return (
                                   <div
                                     key={role.id}
                                     onClick={() => toggleRole(role)}
-                                    className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
+                                    className={`px-3 py-1.5 text-xs rounded transition-colors cursor-pointer ${
+                                      selected 
+                                        ? 'text-indigo-400 bg-indigo-500/10 font-semibold' 
+                                        : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100'
+                                    }`}
                                   >
-                                    <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                      {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                    </div>
                                     {role.name}
                                   </div>
                                 );

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
-import { Plus, ChevronDown, ChevronRight, User, Trash2, X, MoreHorizontal, Maximize2, Check, ListTodo } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, User, Trash2, X, MoreHorizontal, Maximize2, Check, ListTodo, Pencil } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 
 interface ChecklistsSectionProps {
@@ -18,9 +18,16 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
   const [addingItemTo, setAddingItemTo] = useState<string | null>(null);
   const [newItemText, setNewItemText] = useState('');
   const [creatingChecklist, setCreatingChecklist] = useState(false);
+  // Inline rename of a checklist header (no modal)
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  // Set on Escape so the blur that follows doesn't save the draft
+  const cancelRenameRef = useRef(false);
 
   const standardChecklists = checklists.filter(c => {
-    if (c.name.toLowerCase().includes('audit')) return false;
+    // Only Nexus's own "Audit" checklist lives in the Audit section; other audit-named
+    // checklists (e.g. "ClickUp Audit", "Audit Design Checklist — …") show here.
+    if (c.name.trim().toLowerCase() === 'audit') return false;
     if (subtaskId) {
       return c.subtaskId === subtaskId;
     } else {
@@ -50,6 +57,32 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
       onUpdateChecklists(checklists.filter(c => c.id !== id));
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const startRename = (checklist: Checklist) => {
+    cancelRenameRef.current = false;
+    setRenameDraft(checklist.name);
+    setRenamingId(checklist.id);
+  };
+
+  const commitRename = async (checklistId: string) => {
+    const wasCancelled = cancelRenameRef.current;
+    cancelRenameRef.current = false;
+    setRenamingId(null);
+    if (wasCancelled) return;
+
+    const original = checklists.find(c => c.id === checklistId);
+    const name = renameDraft.trim();
+    if (!original || !name || name === original.name) return;
+
+    // Optimistic: the header shows the new name immediately; revert if the save fails
+    onUpdateChecklists(checklists.map(c => (c.id === checklistId ? { ...c, name } : c)));
+    try {
+      await tasksApi.updateChecklist(task.id, checklistId, { name });
+    } catch (e) {
+      console.error(e);
+      onUpdateChecklists(checklists.map(c => (c.id === checklistId ? { ...c, name: original.name } : c)));
     }
   };
 
@@ -158,19 +191,66 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
           {standardChecklists.map((checklist, index) => (
             <div key={checklist.id} className="bg-secondary/50 border border-zinc-800/60 rounded-xl">
               {/* Checklist Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60">
-                <div className="font-medium text-sm text-zinc-100">
-                  {checklist.name} <span className="text-zinc-400 font-normal text-xs ml-2">{index + 1} of {standardChecklists.length}</span>
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-zinc-800/60">
+                <div className="flex items-center min-w-0 flex-1 font-medium text-sm text-zinc-100">
+                  {renamingId === checklist.id ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onKeyDown={(e) => {
+                        // Keep Enter/Escape from reaching the task modal's own key handlers
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.currentTarget.blur();
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          cancelRenameRef.current = true;
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      onBlur={() => commitRename(checklist.id)}
+                      aria-label="Checklist name"
+                      className="flex-1 min-w-0 bg-transparent font-medium text-sm text-zinc-100 rounded-md px-1.5 py-0.5 -mx-1.5 border border-zinc-700 outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
+                    />
+                  ) : (
+                    <span
+                      className="truncate cursor-text"
+                      onDoubleClick={() => startRename(checklist)}
+                      title="Double-click to rename"
+                    >
+                      {checklist.name}
+                    </span>
+                  )}
+                  <span className="text-zinc-400 font-normal text-xs ml-2 shrink-0">{index + 1} of {standardChecklists.length}</span>
                 </div>
                 <Popover.Root>
                   <Popover.Trigger asChild>
-                    <button className="text-zinc-400 hover:text-zinc-200 p-1 hover:bg-zinc-800 rounded-md cursor-pointer">
+                    <button className="text-zinc-400 hover:text-zinc-200 p-1 hover:bg-zinc-800 rounded-md cursor-pointer shrink-0">
                       <MoreHorizontal className="w-4 h-4" />
                     </button>
                   </Popover.Trigger>
                   <Popover.Portal>
-                    <Popover.Content className="z-[100000] w-48 rounded-lg bg-secondary border border-zinc-800 p-1 shadow-xl outline-none" align="end" sideOffset={5}>
-                      <button 
+                    <Popover.Content
+                      className="z-[100000] w-48 rounded-lg bg-secondary border border-zinc-800 p-1 shadow-xl outline-none"
+                      align="end"
+                      sideOffset={5}
+                      // Don't send focus back to the ⋯ button on close — it would steal focus from the rename input
+                      onCloseAutoFocus={(e) => e.preventDefault()}
+                    >
+                      <Popover.Close asChild>
+                        <button
+                          className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded flex items-center gap-2 cursor-pointer"
+                          onClick={() => startRename(checklist)}
+                        >
+                          <Pencil className="w-4 h-4" /> Rename
+                        </button>
+                      </Popover.Close>
+                      <button
                         className="w-full text-left px-2 py-1.5 text-sm text-red-400 hover:bg-zinc-800 rounded flex items-center gap-2 cursor-pointer"
                         onClick={() => handleDeleteChecklist(checklist.id)}
                       >

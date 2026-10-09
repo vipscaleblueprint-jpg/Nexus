@@ -13,6 +13,7 @@ import {
   getRecentSyncedActivity,
   syncAllClickUp,
   getClickUpSyncStatus,
+  autoLinkMappings,
 } from '../controllers/clickup.controller';
 
 const router = Router();
@@ -30,6 +31,7 @@ router.get('/spaces/:spaceId/folderless-lists', listFolderlessLists);
 // Nexus → ClickUp list mappings
 router.get('/mappings', getMappings);
 router.post('/mappings', createMapping);
+router.post('/mappings/auto-link', autoLinkMappings);
 router.delete('/mappings/:nexusListId', deleteMapping);
 
 // Proxy task info from ClickUp

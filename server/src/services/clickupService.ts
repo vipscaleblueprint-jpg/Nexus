@@ -117,6 +117,96 @@ function htmlToClickupMarkdown(html: string | undefined): string | undefined {
     .trim();
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function inlineMarkdownToHtml(text: string): string {
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*(?!\s)([^*]+?)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
+}
+
+/**
+ * Converts a ClickUp markdown_description into the HTML the Nexus description
+ * editor stores. Covers what ClickUp/n8n descriptions use: headings, bullet and
+ * numbered lists, rules, bold/italic/code/links and plain paragraphs.
+ */
+export function clickupMarkdownToHtml(markdown: string | undefined | null): string {
+  if (!markdown) return '';
+  const out: string[] = [];
+  let list: 'ul' | 'ol' | null = null;
+  let paragraph: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      out.push(`<p>${paragraph.map(inlineMarkdownToHtml).join('<br>')}</p>`);
+      paragraph = [];
+    }
+  };
+  const closeList = () => {
+    if (list) {
+      out.push(`</${list}>`);
+      list = null;
+    }
+  };
+
+  for (const rawLine of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+
+    const heading = line.match(/^\s*(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      closeList();
+      const level = Math.min(heading[1].length, 3);
+      out.push(`<h${level}>${inlineMarkdownToHtml(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flushParagraph();
+      closeList();
+      out.push('<hr>');
+      continue;
+    }
+
+    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const item = bullet ?? numbered;
+    if (item) {
+      flushParagraph();
+      const type = bullet ? 'ul' : 'ol';
+      if (list !== type) {
+        closeList();
+        out.push(`<${type}>`);
+        list = type;
+      }
+      // ClickUp checklist bullets ("- [ ] x") read as plain list items here.
+      out.push(`<li>${inlineMarkdownToHtml(item[1].replace(/^\[[ xX]\]\s+/, ''))}</li>`);
+      continue;
+    }
+
+    closeList();
+    paragraph.push(line.trim());
+  }
+
+  flushParagraph();
+  closeList();
+  return out.join('');
+}
+
 // ---------------------------------------------------------------------------
 // Task Operations
 // ---------------------------------------------------------------------------
@@ -216,7 +306,7 @@ export async function deleteClickUpComment(commentId: string): Promise<any> {
  */
 export async function getClickUpTask(taskId: string): Promise<any> {
   const id = extractClickUpTaskId(taskId);
-  return clickupFetch(`/task/${id}?include_subtasks=true`);
+  return clickupFetch(`/task/${id}?include_subtasks=true&include_markdown_description=true`);
 }
 
 /**

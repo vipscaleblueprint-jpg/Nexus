@@ -44,6 +44,8 @@ export function ConfirmDeleteModal({
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 cursor-pointer"
           onClick={onClose}
+          onWheel={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.96 }}

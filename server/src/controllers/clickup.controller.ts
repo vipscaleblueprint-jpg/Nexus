@@ -12,6 +12,7 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { startClickUpSync, getClickUpSyncState } from '../services/clickupSyncService';
+import { autoLinkClientDashboardLists } from '../services/clickupMappingService';
 
 // ---------------------------------------------------------------------------
 // GET /api/clickup/status
@@ -162,6 +163,19 @@ export async function createMapping(req: Request, res: Response) {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/clickup/mappings/auto-link
+// Links unmapped Client Dashboard lists to the ClickUp list with the same name.
+// ---------------------------------------------------------------------------
+export async function autoLinkMappings(req: Request, res: Response) {
+  try {
+    const result = await autoLinkClientDashboardLists();
+    return res.json({ ok: true, ...result });
+  } catch (err: any) {
+    return res.status(502).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // DELETE /api/clickup/mappings/:nexusListId
 // Removes the ClickUp mapping from a Nexus list.
 // ---------------------------------------------------------------------------
@@ -240,6 +254,11 @@ export async function syncAllClickUp(req: Request, res: Response) {
     const started = startClickUpSync({
       // Active tasks only unless the caller asks for closed ones too.
       includeClosed: req.body?.includeClosed === true,
+      // Default: only tasks changed since each list's last clean pull.
+      full: req.body?.full === true,
+      // Optional: pull just these Nexus lists (e.g. one client).
+      ...(Array.isArray(req.body?.nexusListIds) &&
+        req.body.nexusListIds.length > 0 && { nexusListIds: req.body.nexusListIds.map(String) }),
       emit: (room, event, payload) => io.to(room).emit(event, payload),
     });
     return res.status(202).json({ ok: true, started });

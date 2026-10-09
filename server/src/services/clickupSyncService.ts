@@ -13,6 +13,7 @@
 import bcrypt from 'bcryptjs';
 import { Priority } from '@prisma/client';
 import { prisma } from '../config/prisma';
+import { redis } from '../config/redis';
 import { invalidateCache } from './redisService';
 import {
   getClickUpTask,
@@ -42,10 +43,24 @@ export interface ClickUpSyncSummary {
   listResults: ClickUpListResult[];
   /** The list being pulled right now; absent once finished. */
   currentList?: string;
+  /** Newest-last feed of what the pull added or updated (capped). */
+  activity: ClickUpSyncActivity[];
+  /** true when every task was re-read; false when only changes since the last pull were. */
+  full: boolean;
+}
+
+export interface ClickUpSyncActivity {
+  at: string;
+  list: string;
+  action: 'added' | 'updated';
+  kind: 'task' | 'subtask';
+  title: string;
 }
 
 export interface ClickUpListResult {
   name: string;
+  /** Tasks ClickUp reported for this pull (only changed ones unless full). */
+  checked: number;
   created: number;
   updated: number;
   subtasks: number;
@@ -63,6 +78,8 @@ export interface ClickUpSyncOptions {
   nexusListIds?: string[];
   /** Pull closed tasks too (default true). */
   includeClosed?: boolean;
+  /** Re-read every task instead of only those changed since the list's last clean pull. */
+  full?: boolean;
   emit?: SyncEmit;
   /** Receives the live summary object as soon as the pull starts. */
   onProgress?: (summary: ClickUpSyncSummary) => void;
@@ -78,7 +95,11 @@ interface SyncContext {
   fallbackUserId: string;
   /** listId → (lower-case status name → stored status name) */
   statusCache: Map<string, Map<string, string>>;
+  /** In-flight status creations, so parallel tasks don't create the same status twice. */
+  statusCreates: Map<string, Promise<string>>;
   unmatched: Set<string>;
+  /** Name of the list being pulled, for the activity feed. */
+  listName: string;
 }
 
 interface Target {
@@ -92,6 +113,34 @@ const CLICKUP_PAGE_SIZE = 100;
 const CLICKUP_COMMENT_PAGE_SIZE = 25;
 /** Waits before each retry pass over tasks that failed (dropped DB/ClickUp connections). */
 const RETRY_DELAYS_MS = [5_000, 20_000];
+/** Tasks pulled at once within a list. */
+const CONCURRENCY = 4;
+const MAX_ACTIVITY = 300;
+/** Overlap with the previous pull so edits made while it ran aren't missed. */
+const INCREMENTAL_OVERLAP_MS = 5 * 60_000;
+const LAST_PULLED_KEY = (listId: string) => `clickup:lastPulled:${listId}`;
+const REDIS_TIMEOUT_MS = 3000;
+/** What a ClickUp checklist named "Audit" is imported as, so it doesn't feed Nexus's Audit section. */
+export const CLICKUP_AUDIT_CHECKLIST = 'ClickUp Audit';
+
+function isReservedChecklistName(name: string | undefined): boolean {
+  return (name ?? '').trim().toLowerCase() === 'audit';
+}
+
+/**
+ * Auditor role for an "--Audit …" subtask, matching the Audit Team roles Galaxy assigns.
+ * e.g. "--Audit Design — Landing Page" → "Design Auditor".
+ */
+export function auditorRoleFromTitle(title: string | undefined): string | null {
+  const t = (title ?? '').trim().toLowerCase();
+  if (!/^--\s*audit/.test(t)) return null;
+  // Only the "--Audit <Kind>" part, so "--Audit Design — Funnel Page" stays Design.
+  const head = t.replace(/^--\s*/, '').split(/\s[—–-]\s/)[0];
+  if (/ui\s*\/?\s*ux/.test(head)) return 'UI UX Auditor';
+  if (/funnel|automation|kajabi/.test(head)) return 'Funnel Auditor';
+  if (/design/.test(head)) return 'Design Auditor';
+  return null;
+}
 
 const PRIORITY_MAP: Record<string, Priority> = {
   urgent: Priority.URGENT,
@@ -153,6 +202,8 @@ export async function runClickUpSync(options: ClickUpSyncOptions = {}): Promise<
     unmatchedUsers: [],
     errors: [],
     listResults: [],
+    activity: [],
+    full: !!options.full,
   };
   options.onProgress?.(summary);
 
@@ -174,19 +225,27 @@ export async function runClickUpSync(options: ClickUpSyncOptions = {}): Promise<
     userIndex: new Map(users.map((u) => [u.email.toLowerCase(), u.id])),
     fallbackUserId: (await getOrCreateClickUpUser()).id,
     statusCache: new Map(),
+    statusCreates: new Map(),
     unmatched: new Set(),
+    listName: '',
   };
 
   for (const list of lists) {
     const clickUpListId = resolveClickUpListId(list)!;
     summary.currentList = list.name;
+    ctx.listName = list.name;
+    const listStartedAt = Date.now();
     const before = { created: summary.tasksCreated, updated: summary.tasksUpdated, subtasks: summary.subtasks };
-    const result: ClickUpListResult = { name: list.name, created: 0, updated: 0, subtasks: 0, retried: 0, failed: 0 };
+    const result: ClickUpListResult = { name: list.name, checked: 0, created: 0, updated: 0, subtasks: 0, retried: 0, failed: 0 };
     try {
-      Object.assign(result, await syncList(list.id, clickUpListId, ctx));
+      const lastPulled = options.full ? null : await getLastPulled(list.id);
+      const updatedSince = lastPulled ? lastPulled - INCREMENTAL_OVERLAP_MS : undefined;
+      Object.assign(result, await syncList(list.id, clickUpListId, ctx, updatedSince));
+      // Only a clean pull moves the marker, so failed tasks are fetched again next time.
+      if (result.failed === 0) await setLastPulled(list.id, listStartedAt);
     } catch (err: any) {
       result.failed++;
-      summary.errors.push(`${list.name}: ${err.message}`);
+      summary.errors.push(`${list.name}: ${firstLine(err.message)}`);
     }
     result.created = summary.tasksCreated - before.created;
     result.updated = summary.tasksUpdated - before.updated;
@@ -201,6 +260,45 @@ export async function runClickUpSync(options: ClickUpSyncOptions = {}): Promise<
   return summary;
 }
 
+/** Redis can hang when it's down (maxRetriesPerRequest: null), so cap every call. */
+function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), REDIS_TIMEOUT_MS)),
+  ]);
+}
+
+/** When this list last pulled cleanly (unix ms), or null → full pull. */
+async function getLastPulled(listId: string): Promise<number | null> {
+  const value = await withTimeout(redis.get(LAST_PULLED_KEY(listId)), null);
+  const ms = Number(value);
+  return value && Number.isFinite(ms) ? ms : null;
+}
+
+async function setLastPulled(listId: string, ms: number): Promise<void> {
+  await withTimeout(redis.set(LAST_PULLED_KEY(listId), String(ms)).then(() => undefined), undefined);
+}
+
+function recordActivity(ctx: SyncContext, action: ClickUpSyncActivity['action'], kind: ClickUpSyncActivity['kind'], title: string) {
+  const feed = ctx.summary.activity;
+  feed.push({ at: new Date().toISOString(), list: ctx.listName, action, kind, title });
+  if (feed.length > MAX_ACTIVITY) feed.splice(0, feed.length - MAX_ACTIVITY);
+}
+
+/** Runs fn over items with at most `limit` in flight. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // Same pattern as the "VIP Scale" system account in webhook.controller.
 async function getOrCreateClickUpUser() {
   const email = 'clickup@system.local';
@@ -210,14 +308,17 @@ async function getOrCreateClickUpUser() {
   return prisma.user.create({ data: { name: 'ClickUp', email, password } });
 }
 
-async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncContext) {
+async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncContext, updatedSince?: number) {
   const cuTasks: any[] = [];
   for (let page = 0; page < MAX_TASK_PAGES; page++) {
-    const data = await getClickUpListTasks(clickUpListId, page, ctx.includeClosed);
+    const data = await getClickUpListTasks(clickUpListId, page, ctx.includeClosed, updatedSince);
     const tasks: any[] = data?.tasks ?? [];
     cuTasks.push(...tasks);
     if (data?.last_page === true || tasks.length < CLICKUP_PAGE_SIZE) break;
   }
+  const checked = cuTasks.length;
+  // Nothing changed in ClickUp since the last pull.
+  if (checked === 0) return { checked, retried: 0, failed: 0 };
 
   // Nexus has one subtask level, so nested ClickUp subtasks hang off their root task.
   const byId = new Map(cuTasks.map((t) => [t.id, t]));
@@ -280,10 +381,10 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length && pending.length; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1]));
     const errors = new Map<string, string>();
-    for (const t of pending) {
+    await mapPool(pending, CONCURRENCY, async (t) => {
       const error = await syncGroup(t);
       if (error) errors.set(t.id, error);
-    }
+    });
     if (attempt === 0) errors.forEach((_e, id) => firstFailures.add(id));
     pending = pending.filter((t) => errors.has(t.id));
     lastErrors = errors;
@@ -292,7 +393,7 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
   for (const t of pending) {
     ctx.summary.errors.push(`"${t.name}" (${t.id}): ${firstLine(lastErrors.get(t.id))}`);
   }
-  return { retried: firstFailures.size - pending.length, failed: pending.length };
+  return { checked, retried: firstFailures.size - pending.length, failed: pending.length };
 }
 
 /** Prisma errors span many lines; the last non-empty line is the readable cause. */
@@ -346,6 +447,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
     ctx.emit(`list:${listId}`, 'task:updated', updated);
     taskId = existing.id;
     ctx.summary.tasksUpdated++;
+    recordActivity(ctx, 'updated', 'task', updated.title);
   } else {
     const created = await prisma.task.create({
       data: {
@@ -368,6 +470,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
     });
     taskId = created.id;
     ctx.summary.tasksCreated++;
+    recordActivity(ctx, 'added', 'task', cu.name);
   }
 
   const target: Target = { taskId, subtaskId: null };
@@ -382,13 +485,17 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
   const existing =
     (await prisma.subtask.findFirst({
       where: { OR: [{ externalId: cuSubtaskId }, { externalId: { endsWith: `/${cuSubtaskId}` } }] },
-      select: { id: true, externalId: true },
+      select: { id: true, externalId: true, assigneeRoleRestrictions: true },
     })) ??
     // Subtasks created in Nexus before their ClickUp ID was stored.
     (await prisma.subtask.findFirst({
       where: { taskId: nexusTaskId, externalId: null, title: { equals: cu.name, mode: 'insensitive' } },
-      select: { id: true, externalId: true },
+      select: { id: true, externalId: true, assigneeRoleRestrictions: true },
     }));
+
+  // The auditor role drives which audits (Design / UI UX / Funnel) the task requires,
+  // the way Galaxy sets it. Never replaces a role already set in Nexus.
+  const auditorRole = auditorRoleFromTitle(cu.name);
 
   // Nexus subtask statuses are upper-case (e.g. "CLOSED").
   const completed = ['closed', 'done'].includes(cu.status?.type);
@@ -403,6 +510,7 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
         title: cu.name,
         externalId: existing.externalId ?? cuSubtaskId,
         ...(status && { status, completed }),
+        ...(auditorRole && existing.assigneeRoleRestrictions.length === 0 && { assigneeRoleRestrictions: [auditorRole] }),
         ...(assigneeIds.length > 0 && {
           assigneeId: assigneeIds[0],
           assignees: { set: assigneeIds.map((id) => ({ id })) },
@@ -422,6 +530,7 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
         dueDate: toDate(cu.due_date),
         externalId: cuSubtaskId,
         createdAt: toDate(cu.date_created) ?? undefined,
+        ...(auditorRole && { assigneeRoleRestrictions: [auditorRole] }),
         ...(assigneeIds.length > 0 && {
           assigneeId: assigneeIds[0],
           assignees: { connect: assigneeIds.map((id) => ({ id })) },
@@ -432,6 +541,7 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
     subtaskId = created.id;
   }
   ctx.summary.subtasks++;
+  recordActivity(ctx, existing ? 'updated' : 'added', 'subtask', cu.name);
 
   const target: Target = { taskId: nexusTaskId, subtaskId };
   await syncChecklists(cu.checklists, target, ctx);
@@ -442,20 +552,26 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
 
 async function syncChecklists(checklists: any[] | undefined, target: Target, ctx: SyncContext) {
   for (const cl of checklists ?? []) {
+    // "Audit" is Nexus's own audit checklist (Design / UI UX / Funnel / Instructions).
+    // A ClickUp checklist of that name gets its own checklist instead of merging in.
+    const reserved = isReservedChecklistName(cl.name);
     const existing =
       (await prisma.checklist.findUnique({ where: { externalId: cl.id }, select: { id: true } })) ??
-      (await prisma.checklist.findFirst({
-        where: { ...target, externalId: null, name: { equals: cl.name, mode: 'insensitive' } },
-        select: { id: true },
-      }));
+      (reserved
+        ? null
+        : await prisma.checklist.findFirst({
+            where: { ...target, externalId: null, name: { equals: cl.name, mode: 'insensitive' } },
+            select: { id: true },
+          }));
     const checklist = existing
       ? await prisma.checklist.update({
           where: { id: existing.id },
-          data: { name: cl.name, externalId: cl.id },
+          // Keep the Nexus name on a linked reserved checklist (it may be Nexus's own Audit).
+          data: reserved ? { externalId: cl.id } : { name: cl.name, externalId: cl.id },
           select: { id: true },
         })
       : await prisma.checklist.create({
-          data: { ...target, name: cl.name, externalId: cl.id },
+          data: { ...target, name: reserved ? CLICKUP_AUDIT_CHECKLIST : cl.name, externalId: cl.id },
           select: { id: true },
         });
     ctx.summary.checklists++;
@@ -589,13 +705,23 @@ async function resolveStatus(listId: string, cuStatus: any, ctx: SyncContext): P
   const match = statuses.get(name.toLowerCase());
   if (match) return match;
 
-  const stored = name.toUpperCase();
-  await prisma.listStatus.create({
-    data: { listId, name: stored, color: cuStatus.color || 'zinc', order: statuses.size },
-  });
-  statuses.set(name.toLowerCase(), stored);
-  ctx.summary.statusesCreated++;
-  return stored;
+  // Tasks run in parallel, so share one create per list+status.
+  const key = `${listId}:${name.toLowerCase()}`;
+  let pending = ctx.statusCreates.get(key);
+  if (!pending) {
+    const stored = name.toUpperCase();
+    const known = statuses;
+    pending = prisma.listStatus
+      .create({ data: { listId, name: stored, color: cuStatus.color || 'zinc', order: known.size } })
+      .then(() => {
+        known.set(name.toLowerCase(), stored);
+        ctx.summary.statusesCreated++;
+        return stored;
+      });
+    ctx.statusCreates.set(key, pending);
+    pending.catch(() => ctx.statusCreates.delete(key)); // let a retry try again
+  }
+  return pending;
 }
 
 function userIdFor(cuUser: any, ctx: SyncContext): string | null {

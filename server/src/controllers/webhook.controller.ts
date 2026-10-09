@@ -416,7 +416,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
 
     const newTask = await prisma.task.create({
       data: {
-        title: title ? (clientName ? `${title} - ${clientName}` : title) : (clientName ? `New Task - ${clientName}` : 'New Task'),
+        title: title || 'New Task',
         description,
         listId: list.id,
         creatorId: creator.id,

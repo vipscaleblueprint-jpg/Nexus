@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
-import { getClickUpTask } from '../services/clickupService';
+import { getClickUpTask, clickupMarkdownToHtml } from '../services/clickupService';
 
 
 // Galaxy-created tasks/subtasks are authored by this system account rather than
@@ -243,12 +243,15 @@ function titleFromPrompt(prompt: unknown): string | null {
 }
 
 /**
- * The name n8n gave the ClickUp task. Galaxy's title field is optional and n8n
- * writes one for ClickUp without returning it, so read it back from ClickUp.
- * Returns null on any failure so task creation never waits long or fails.
+ * The name and description n8n generated for the ClickUp task. n8n writes both
+ * to ClickUp without returning them to Galaxy, so read them back from ClickUp.
+ * Fields are null on any failure so task creation never waits long or fails.
  */
-async function clickUpTaskName(taskLink: unknown): Promise<string | null> {
-  if (typeof taskLink !== 'string' || !taskLink.trim()) return null;
+async function clickUpTaskContent(
+  taskLink: unknown
+): Promise<{ name: string | null; descriptionHtml: string | null }> {
+  const empty = { name: null, descriptionHtml: null };
+  if (typeof taskLink !== 'string' || !taskLink.trim()) return empty;
   let timer: NodeJS.Timeout | undefined;
   try {
     const task = await Promise.race([
@@ -258,10 +261,12 @@ async function clickUpTaskName(taskLink: unknown): Promise<string | null> {
       }),
     ]);
     const name = typeof task?.name === 'string' ? task.name.trim() : '';
-    return name || null;
+    const markdown = [task?.markdown_description, task?.text_content, task?.description]
+      .find((d): d is string => typeof d === 'string' && d.trim() !== '');
+    return { name: name || null, descriptionHtml: clickupMarkdownToHtml(markdown) || null };
   } catch (err: any) {
-    console.warn(`[Galaxy] Could not read ClickUp task name for ${taskLink}: ${err?.message ?? err}`);
-    return null;
+    console.warn(`[Galaxy] Could not read ClickUp task for ${taskLink}: ${err?.message ?? err}`);
+    return empty;
   } finally {
     clearTimeout(timer);
   }
@@ -279,7 +284,20 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     }
 
     const typedTitle = typeof req.body.title === 'string' ? req.body.title.trim() : '';
-    const title = typedTitle || (await clickUpTaskName(task_link)) || titleFromPrompt(prompt);
+    // n8n may send its generated description as markdown (what it writes to
+    // ClickUp) or HTML; Nexus stores HTML.
+    const sentDescription = typeof req.body.description === 'string' ? req.body.description.trim() : '';
+    const typedDescription = /^<[a-z]/i.test(sentDescription)
+      ? sentDescription
+      : clickupMarkdownToHtml(sentDescription);
+
+    // Only ask ClickUp for what n8n didn't send.
+    const clickUp = typedTitle && typedDescription
+      ? { name: null, descriptionHtml: null }
+      : await clickUpTaskContent(task_link);
+    const title = typedTitle || clickUp.name || titleFromPrompt(prompt);
+    // Prefer n8n's generated description; the raw prompt is only a fallback.
+    const description = typedDescription || clickUp.descriptionHtml || prompt || '';
 
     const folder = await getClientDashboardFolder();
 
@@ -399,7 +417,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     const newTask = await prisma.task.create({
       data: {
         title: title ? (clientName ? `${title} - ${clientName}` : title) : (clientName ? `New Task - ${clientName}` : 'New Task'),
-        description: prompt || '',
+        description,
         listId: list.id,
         creatorId: creator.id,
         ...(resolvedTeamId && { teamId: resolvedTeamId }),

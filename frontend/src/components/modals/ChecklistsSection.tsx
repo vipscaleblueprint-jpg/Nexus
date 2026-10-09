@@ -3,6 +3,7 @@ import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { Plus, ChevronDown, ChevronRight, User, Trash2, X, MoreHorizontal, Maximize2, Check, ListTodo, Pencil } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
+import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 
 interface ChecklistsSectionProps {
   task: Task;
@@ -25,9 +26,9 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
   const cancelRenameRef = useRef(false);
 
   const standardChecklists = checklists.filter(c => {
-    // Only Nexus's own "Audit" checklist lives in the Audit section; other audit-named
-    // checklists (e.g. "ClickUp Audit", "Audit Design Checklist — …") show here.
-    if (c.name.trim().toLowerCase() === 'audit') return false;
+    // Only Nexus's own Audit checklist lives in the Audit section; ClickUp checklists
+    // (even one named "Audit") show here as written in ClickUp.
+    if (isNexusAuditChecklist(c)) return false;
     if (subtaskId) {
       return c.subtaskId === subtaskId;
     } else {
@@ -264,7 +265,8 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
               {/* Items */}
               <div className="p-2 flex flex-col">
                 {(checklist.items || []).map(item => {
-                  const isAuditChecklist = checklist.name.toLowerCase().includes('audit');
+                  // Auditor-only ticking is for Nexus's Audit checklist; ClickUp checklists follow ClickUp.
+                  const isAuditChecklist = isNexusAuditChecklist(checklist);
                   const isAuditor = (currentUser && (currentUser.roles || [])
                     .some(r => r?.toLowerCase().includes('auditor'))) || currentUser?.systemRole === 'ADMIN';
                   const canCheck = !isAuditChecklist || isAuditor;

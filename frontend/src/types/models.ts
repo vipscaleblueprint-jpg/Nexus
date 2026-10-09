@@ -192,6 +192,8 @@ export interface Checklist {
   name: string;
   taskId: string;
   subtaskId?: string;
+  /** Linked ClickUp checklist ID, when the checklist came from or was sent to ClickUp. */
+  externalId?: string | null;
   items: ChecklistItem[];
   createdAt: string;
 }

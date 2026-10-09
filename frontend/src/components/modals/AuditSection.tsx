@@ -3,6 +3,7 @@ import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { ChevronDown, ChevronRight, User, Check, ShieldCheck } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
+import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 
 interface AuditSectionProps {
   task: Task;
@@ -44,7 +45,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   const [isProcessing, setIsProcessing] = useState(false);
 
   const auditChecklist = checklists.find(c => {
-    if (c.name.toLowerCase() !== 'audit') return false;
+    if (!isNexusAuditChecklist(c)) return false;
     if (subtaskId) {
       return c.subtaskId === subtaskId;
     } else {

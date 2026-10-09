@@ -10,6 +10,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
+import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
@@ -1150,9 +1151,9 @@ function SubtaskRow({
             {activeTab === 'checklist' && (
               <div className="flex-1 flex flex-col relative h-full">
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-4">
-                  {/* Only Nexus's own "Audit" checklist is shown separately below. */}
-                  {subtask.checklists && subtask.checklists.filter((c: any) => c.name.trim().toLowerCase() !== 'audit').length > 0 ? (
-                    subtask.checklists.filter((c: any) => c.name.trim().toLowerCase() !== 'audit').map((checklist: any) => {
+                  {/* Only Nexus's own Audit checklist is shown separately, in the Audit tab. */}
+                  {subtask.checklists && subtask.checklists.filter((c: any) => !isNexusAuditChecklist(c)).length > 0 ? (
+                    subtask.checklists.filter((c: any) => !isNexusAuditChecklist(c)).map((checklist: any) => {
                       const canCheck = true; // Subtask checks are allowed by default for standard checklists
 
                       return (
@@ -1202,7 +1203,7 @@ function SubtaskRow({
                   <div className="flex flex-col gap-1.5">
                     <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Audit Items</div>
                     {(() => {
-                      const auditChecklist = subtask.checklists?.find((c: any) => c.name.toLowerCase() === 'audit');
+                      const auditChecklist = subtask.checklists?.find((c: any) => isNexusAuditChecklist(c));
                       const requiredAudits = Array.from(new Set([
                         ...getRequiredAudits(subtask.title, subtask.assigneeRoleRestrictions),
                         ...(auditChecklist?.items?.map((i: any) => i.text) || [])
@@ -1410,7 +1411,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
 
       if ('status' in data && typeof data.status === 'string' && data.status.toLowerCase() === 'revision') {
         merged.checklists = (merged.checklists || []).map((c: any) => {
-          if (c.name.toLowerCase() === 'audit') {
+          if (isNexusAuditChecklist(c)) {
             return {
               ...c,
               items: c.items?.map((i: any) => ({ ...i, completed: false })) || []

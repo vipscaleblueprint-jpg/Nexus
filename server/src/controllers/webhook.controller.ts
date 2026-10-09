@@ -10,7 +10,7 @@ import { getClickUpTask, clickupMarkdownToHtml } from '../services/clickupServic
 
 // Galaxy-created tasks/subtasks are authored by this system account rather than
 // whichever admin happens to be oldest, so the Activity feed reads "VIP Scale created this task".
-async function getOrCreateVipScaleUser() {
+export async function getOrCreateVipScaleUser() {
   let vipScaleUser = await prisma.user.findFirst({
     where: { name: { equals: 'VIP Scale', mode: 'insensitive' } }
   });
@@ -30,7 +30,7 @@ async function getOrCreateVipScaleUser() {
   return vipScaleUser;
 }
 
-const requireApiKey = (req: Request, res: Response) => {
+export const requireApiKey = (req: Request, res: Response) => {
   const apiKey = req.headers['x-api-key'];
   const expected = process.env.VIPSCALE_API_KEY;
   if (!apiKey || apiKey !== expected) {

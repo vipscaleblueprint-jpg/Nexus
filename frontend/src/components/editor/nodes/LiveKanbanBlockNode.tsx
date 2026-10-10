@@ -1,4 +1,5 @@
-import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
+import { canTransitionTaskStatus } from '@/lib/permissions';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi } from '@/api/tasks';
@@ -56,6 +57,48 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
     return () => { cancelled = true; };
   }, [task.listId, allLists]);
 
+  const orderedListStatuses = React.useMemo(() => {
+    const rawStatuses = listStatuses.length > 0 ? listStatuses : [];
+    if (rawStatuses.length === 0) return ALL_STATUSES;
+
+    const sortedInternals = [...rawStatuses].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const listObj = allLists.find((l: any) => l.list?.id === task?.listId || l.id === task?.listId);
+    const list = listObj?.list || listObj;
+
+    if (!list?.customGroups || list.customGroups.length === 0) {
+      const validStatuses = sortedInternals.filter(s => {
+        if (!list?.customGroups) return true;
+        const sName = (s.name || s.status || s.title || '').toUpperCase();
+        return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
+      });
+      return sortStatusesWithClosedAndKycAtEnd(validStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')));
+    }
+
+    const finalStatuses: any[] = [];
+    const processed = new Set<string>();
+
+    list.customGroups.forEach((groupName: string) => {
+      const groupStatuses = sortedInternals.filter(s => s.groupName === groupName);
+      groupStatuses.forEach(s => {
+        const sName = s.name || s.status || s.title || '';
+        finalStatuses.push(sName);
+        processed.add(sName);
+      });
+    });
+
+    sortedInternals.forEach(s => {
+      const sName = s.name || s.status || s.title || '';
+      if (!processed.has(sName)) {
+        if (!list.customGroups.some((g: string) => g.toUpperCase() === sName.toUpperCase())) {
+          finalStatuses.push(sName);
+          processed.add(sName);
+        }
+      }
+    });
+
+    return sortStatusesWithClosedAndKycAtEnd(finalStatuses);
+  }, [listStatuses, allLists, task?.listId]);
+
   const handleDescBlur = () => {
     if (localDesc !== currentTask.description) {
       lastOptimisticTime.current = Date.now();
@@ -95,6 +138,11 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
+    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
+    if (!transitionCheck.allowed) {
+      toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+      return;
+    }
     lastOptimisticTime.current = Date.now();
     setOptimisticTask((prev: any) => ({ ...prev, status: JSON.stringify({ name: newStatus, color: getStatusColor(newStatus) }) }));
     setOpenDropdown(null);
@@ -237,7 +285,7 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
           <div className="w-48 py-1">
             <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Change Status</div>
-            {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
+            {orderedListStatuses.map((statusName: string) => {
               const isActive = statusName === parsedStatusName;
               const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
               const colorHex = customObj?.color || null;

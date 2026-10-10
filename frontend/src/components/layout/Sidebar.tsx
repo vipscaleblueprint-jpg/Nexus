@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -27,6 +27,8 @@ import {
   useSensors,
   DragEndEvent,
   DragStartEvent,
+  DragMoveEvent,
+  DragOverEvent,
   DragOverlay,
   defaultDropAnimationSideEffects,
   useDroppable,
@@ -41,6 +43,20 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { toast } from '@/lib/toast';
+
+interface DropIndicatorContextType {
+  activeId: string | null;
+  overId: string | null;
+  dropEdge: 'top' | 'bottom';
+  spaces: Space[];
+}
+
+const DropIndicatorContext = createContext<DropIndicatorContextType>({
+  activeId: null,
+  overId: null,
+  dropEdge: 'bottom',
+  spaces: [],
+});
 
 import {
   Home,
@@ -211,21 +227,110 @@ const contentCreationItems = [
 
 
 
+function parseSortableId(idStr: string) {
+  const firstDash = idStr.indexOf('-');
+  if (firstDash === -1) return { parentType: '', parentId: '', itemType: '', itemId: '', parentKey: '' };
+  const parentType = idStr.slice(0, firstDash);
+  let itemType = '';
+  let typeIndex = -1;
+  if (idStr.includes('-folder-')) { itemType = 'folder'; typeIndex = idStr.lastIndexOf('-folder-'); }
+  else if (idStr.includes('-list-')) { itemType = 'list'; typeIndex = idStr.lastIndexOf('-list-'); }
+  else if (idStr.includes('-doc-')) { itemType = 'doc'; typeIndex = idStr.lastIndexOf('-doc-'); }
+  
+  if (typeIndex === -1) return { parentType, parentId: '', itemType: '', itemId: '', parentKey: '' };
+  
+  const parentId = idStr.slice(firstDash + 1, typeIndex);
+  const itemId = idStr.slice(typeIndex + itemType.length + 2);
+  
+  return { parentType, parentId, itemType, itemId, parentKey: `${parentType}-${parentId}` };
+}
+
+function getActiveItemInfo(id: string, spaces: Space[]) {
+  const parsed = parseSortableId(id);
+  if (!parsed.itemType) return null;
+  const { parentType, parentId, itemType, itemId } = parsed;
+
+  let item: any = null;
+  if (parentType === 'space') {
+    const space = spaces.find(s => s.id === parentId);
+    if (space) {
+      if (itemType === 'folder') item = space.folders?.find(f => f.id === itemId);
+      if (itemType === 'list') item = space.lists?.find(l => l.id === itemId);
+      if (itemType === 'doc') item = space.docs?.find(d => d.id === itemId);
+    }
+  } else if (parentType === 'folder') {
+    for (const s of spaces) {
+      const findFolder = (folders: any[]): any => {
+        for (const f of folders) {
+          if (f.id === parentId) return f;
+          if (f.subfolders) {
+            const found = findFolder(f.subfolders);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      const found = findFolder(s.folders || []);
+      if (found) {
+        if (itemType === 'folder') item = found.subfolders?.find((f: any) => f.id === itemId);
+        if (itemType === 'list') item = found.lists?.find((l: any) => l.id === itemId);
+        if (itemType === 'doc') item = found.docs?.find((d: any) => d.id === itemId);
+        break;
+      }
+    }
+  }
+
+  if (!item) return null;
+  return {
+    itemType,
+    name: item.name || item.title || 'Item',
+  };
+}
+
+function DragLandingSlot({ activeId, spaces }: { activeId: string; spaces: Space[] }) {
+  const info = getActiveItemInfo(activeId, spaces);
+  if (!info) return null;
+
+  return (
+    <div className="relative opacity-50 ring-2 ring-indigo-500/50 rounded-md bg-zinc-800 px-2 py-1 my-0.5 text-xs text-zinc-100 flex items-center gap-2 pointer-events-none select-none">
+      {info.itemType === 'folder' && <FolderIcon className="size-3.5 text-amber-400 shrink-0" />}
+      {info.itemType === 'list' && <ListIcon className="size-3.5 text-blue-400 shrink-0" />}
+      {info.itemType === 'doc' && <FileText className="size-3.5 text-zinc-400 shrink-0" />}
+      <span className="truncate">{info.name}</span>
+    </div>
+  );
+}
+
 function SortableWrapper({ id, children, disabled = false }: { id: string; children: React.ReactNode; disabled?: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const { activeId, overId, dropEdge, spaces } = useContext(DropIndicatorContext);
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition: transition || undefined,
   };
+
+  const isMovable = Boolean(activeId && (activeId.includes('-list-') || activeId.includes('-doc-') || activeId.includes('-folder-')));
+  const activeParsed = activeId ? parseSortableId(activeId) : null;
+  const thisParsed = parseSortableId(id);
+  const isDifferentContainer = Boolean(activeParsed && activeParsed.parentKey && activeParsed.parentKey !== thisParsed.parentKey);
+  const showLandingSlot = Boolean(isMovable && isDifferentContainer && overId === id);
+
   return (
     <div 
       ref={setNodeRef} 
       style={style} 
       {...attributes} 
       {...listeners} 
-      className={isDragging ? "relative z-50 opacity-50 ring-2 ring-indigo-500/50 rounded-md bg-zinc-800" : ""}
+      className={isDragging ? "relative z-50 opacity-50 ring-2 ring-indigo-500/50 rounded-md bg-zinc-800" : "relative"}
     >
+      {showLandingSlot && dropEdge === 'top' && (
+        <DragLandingSlot activeId={activeId!} spaces={spaces} />
+      )}
       {children}
+      {showLandingSlot && dropEdge === 'bottom' && (
+        <DragLandingSlot activeId={activeId!} spaces={spaces} />
+      )}
     </div>
   );
 }
@@ -388,6 +493,12 @@ function GroupLabel({ children, collapsed }: { children: React.ReactNode; collap
 
 export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: SidebarProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const [dropEdge, setDropEdge] = useState<'top' | 'bottom'>('bottom');
+  const dropPlacementRef = useRef<{ overId: string | null; edge: 'top' | 'bottom' }>({
+    overId: null,
+    edge: 'bottom',
+  });
   const [isLightMode, setIsLightMode] = useState(false);
 
   useEffect(() => {
@@ -421,13 +532,57 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       applyTheme();
     }
   };
+
+  const updateDropIndicator = (active: any, over: any) => {
+    if (!over) {
+      if (overId !== null) setOverId(null);
+      dropPlacementRef.current = { overId: null, edge: 'bottom' };
+      return;
+    }
+    const newOverId = String(over.id);
+    if (newOverId !== overId) {
+      setOverId(newOverId);
+    }
+    let newEdge: 'top' | 'bottom' = dropEdge;
+    if (active && over.rect) {
+      const activeTranslated = active.rect?.current?.translated;
+      if (activeTranslated) {
+        const activeCenterY = activeTranslated.top + activeTranslated.height / 2;
+        const overCenterY = over.rect.top + over.rect.height / 2;
+        const threshold = 6;
+        if (activeCenterY < overCenterY - threshold) {
+          newEdge = 'top';
+        } else if (activeCenterY > overCenterY + threshold) {
+          newEdge = 'bottom';
+        }
+      }
+    }
+    if (newEdge !== dropEdge) {
+      setDropEdge(newEdge);
+    }
+    dropPlacementRef.current = { overId: newOverId, edge: newEdge };
+  };
   
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(String(event.active.id));
+    setOverId(null);
+    setDropEdge('bottom');
+    dropPlacementRef.current = { overId: null, edge: 'bottom' };
+  };
+
+  const handleDragMove = (event: DragMoveEvent) => {
+    updateDropIndicator(event.active, event.over);
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    updateDropIndicator(event.active, event.over);
   };
   
   const handleDragCancel = () => {
     setActiveId(null);
+    setOverId(null);
+    setDropEdge('bottom');
+    dropPlacementRef.current = { overId: null, edge: 'bottom' };
   };
 
   const pathname = usePathname();
@@ -490,20 +645,6 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const parseSortableId = (idStr: string) => {
-    const firstDash = idStr.indexOf('-');
-    const parentType = idStr.slice(0, firstDash);
-    let itemType = '';
-    let typeIndex = -1;
-    if (idStr.includes('-folder-')) { itemType = 'folder'; typeIndex = idStr.lastIndexOf('-folder-'); }
-    else if (idStr.includes('-list-')) { itemType = 'list'; typeIndex = idStr.lastIndexOf('-list-'); }
-    else if (idStr.includes('-doc-')) { itemType = 'doc'; typeIndex = idStr.lastIndexOf('-doc-'); }
-    
-    const parentId = idStr.slice(firstDash + 1, typeIndex);
-    const itemId = idStr.slice(typeIndex + itemType.length + 2);
-    
-    return { parentType, parentId, itemType, itemId, parentKey: `${parentType}-${parentId}` };
-  };
 
   // 'root-space' is a virtual space for items without a space — it maps to spaceId null in the DB
   const toRealSpaceId = (spaceId: string | null) => (!spaceId || spaceId === 'root-space' ? null : spaceId);
@@ -523,10 +664,36 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
   type DropTarget = { folderId: string | null; spaceId: string | null };
 
+  const getTargetContainerFromOverId = (idStr: string | null) => {
+    if (!idStr) return { folderId: null, spaceId: null };
+    if (idStr.startsWith('folderdrop-')) {
+      const folderId = idStr.replace('-empty', '').slice('folderdrop-'.length);
+      const found = findFolderWithSpace(spaces, folderId);
+      return { folderId, spaceId: found?.spaceId || null };
+    }
+    if (idStr.startsWith('spacedrop-')) {
+      return { folderId: null, spaceId: toRealSpaceId(idStr.slice('spacedrop-'.length)) };
+    }
+    const parsed = parseSortableId(idStr);
+    if (!parsed.itemType) return { folderId: null, spaceId: null };
+    if (parsed.itemType === 'folder') {
+      const found = findFolderWithSpace(spaces, parsed.itemId);
+      return { folderId: parsed.itemId, spaceId: found?.spaceId || null };
+    }
+    if (parsed.parentType === 'folder') {
+      const found = findFolderWithSpace(spaces, parsed.parentId);
+      return { folderId: parsed.parentId, spaceId: found?.spaceId || null };
+    }
+    if (parsed.parentType === 'space') {
+      return { folderId: null, spaceId: toRealSpaceId(parsed.parentId) };
+    }
+    return { folderId: null, spaceId: null };
+  };
+
   // Works out which folder/space a board or doc was dropped into
   const resolveDropTarget = (overStr: string, activeParentKey: string): DropTarget | null => {
     if (overStr.startsWith('folderdrop-')) {
-      const folderId = overStr.slice('folderdrop-'.length);
+      const folderId = overStr.replace('-empty', '').slice('folderdrop-'.length);
       const found = findFolderWithSpace(spaces, folderId);
       return found ? { folderId, spaceId: found.spaceId } : null;
     }
@@ -549,7 +716,13 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     return null;
   };
 
-  const moveItemToContainer = async (itemType: 'list' | 'doc', itemId: string, target: DropTarget) => {
+  const moveItemToContainer = async (
+    itemType: 'list' | 'doc',
+    itemId: string,
+    target: DropTarget,
+    targetOverId?: string,
+    edge: 'top' | 'bottom' = 'bottom'
+  ) => {
     const key = itemType === 'list' ? 'lists' : 'docs';
     const newSpaces = JSON.parse(JSON.stringify(spaces));
 
@@ -562,23 +735,68 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     newSpaces.forEach((s: any) => { pluck(s); walkFolders(s.folders, pluck); });
     if (!moved) return;
 
-    // …and append it to the end of the target container
+    // Find target container
     const container = target.folderId
       ? findFolderWithSpace(newSpaces, target.folderId)?.folder
       : newSpaces.find((s: any) => s.id === (target.spaceId ?? 'root-space'));
-    const siblings = container
-      ? [...(container.subfolders || container.folders || []), ...(container.lists || []), ...(container.docs || [])]
-      : [];
-    const order = siblings.reduce((max: number, x: any) => Math.max(max, x.order || 0), -1) + 1;
-    if (container) {
-      container[key] = [...(container[key] || []), { ...moved, folderId: target.folderId, spaceId: target.spaceId, order }];
+    if (!container) return;
+
+    const siblings = [
+      ...(container.subfolders?.map((f: any) => ({ ...f, itemType: 'folder' })) || []),
+      ...(container.lists?.map((l: any) => ({ ...l, itemType: 'list' })) || []),
+      ...(container.docs?.filter((d: any) => d.title !== 'Priorities Journal').map((d: any) => ({ ...d, itemType: 'doc' })) || [])
+    ].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+
+    let insertIndex = siblings.length;
+    if (targetOverId && !targetOverId.startsWith('folderdrop-') && !targetOverId.startsWith('spacedrop-')) {
+      const overParsed = parseSortableId(targetOverId);
+      if (overParsed.itemType === 'folder' && target.folderId === overParsed.itemId) {
+        insertIndex = 0;
+      } else {
+        const matchIdx = siblings.findIndex((s: any) => s.id === overParsed.itemId && s.itemType === overParsed.itemType);
+        if (matchIdx !== -1) {
+          insertIndex = edge === 'top' ? matchIdx : matchIdx + 1;
+        }
+      }
+    } else if (targetOverId?.startsWith('folderdrop-') || targetOverId?.startsWith('spacedrop-')) {
+      insertIndex = 0;
     }
+
+    const updatedMoved = { ...moved, folderId: target.folderId, spaceId: target.spaceId, itemType };
+    siblings.splice(insertIndex, 0, updatedMoved);
+
+    // Re-index siblings with order 0, 1, 2...
+    siblings.forEach((item: any, idx: number) => {
+      item.order = idx;
+    });
+
+    container.lists = siblings.filter((s: any) => s.itemType === 'list');
+    container.docs = siblings.filter((s: any) => s.itemType === 'doc');
+    if (container.subfolders) {
+      container.subfolders = siblings.filter((s: any) => s.itemType === 'folder');
+    }
+
     useAppStore.setState({ spaces: newSpaces });
 
+    const foldersToUpdate = siblings
+      .filter((s: any) => s.itemType === 'folder')
+      .map((s: any) => ({
+        id: s.id,
+        order: s.order,
+        spaceId: target.spaceId ?? undefined,
+        parentFolderId: target.folderId ?? undefined,
+      }));
+    const listsToUpdate = siblings
+      .filter((s: any) => s.itemType === 'list')
+      .map((s: any) => ({ id: s.id, order: s.order, folderId: target.folderId, spaceId: target.spaceId }));
+    const docsToUpdate = siblings
+      .filter((s: any) => s.itemType === 'doc')
+      .map((s: any) => ({ id: s.id, order: s.order, folderId: target.folderId, spaceId: target.spaceId }));
+
     try {
-      const payload = [{ id: itemId, order, folderId: target.folderId, spaceId: target.spaceId }];
-      if (itemType === 'list') await spacesApi.reorderLists(payload);
-      else await spacesApi.reorderDocs(payload);
+      if (foldersToUpdate.length) await spacesApi.reorderFolders(foldersToUpdate);
+      if (listsToUpdate.length) await spacesApi.reorderLists(listsToUpdate);
+      if (docsToUpdate.length) await spacesApi.reorderDocs(docsToUpdate);
       setTimeout(() => { globalLoadSpaces(); }, 1500);
     } catch (err) {
       console.error('Failed to move item', err);
@@ -588,7 +806,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
+    const finalPlacement = { ...dropPlacementRef.current };
     setActiveId(null);
+    setOverId(null);
+    dropPlacementRef.current = { overId: null, edge: 'bottom' };
     const { active, over } = event;
     
     if (!over || active.id === over.id) {
@@ -597,19 +818,28 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
     const activeStr = String(active.id);
     let overStr = String(over.id);
+    const effectiveOverId = (finalPlacement.overId && finalPlacement.overId !== activeStr)
+      ? finalPlacement.overId
+      : overStr;
 
     const activeParsed = parseSortableId(activeStr);
 
     // Boards (lists) and docs can be moved into another folder/space
     if (activeParsed.itemType === 'list' || activeParsed.itemType === 'doc') {
-      const target = resolveDropTarget(overStr, activeParsed.parentKey);
+      const target = resolveDropTarget(effectiveOverId, activeParsed.parentKey);
       const currentFolderId = activeParsed.parentType === 'folder' ? activeParsed.parentId : null;
       const currentSpaceId = activeParsed.parentType === 'space' ? toRealSpaceId(activeParsed.parentId) : null;
       const isSameContainer = target && (currentFolderId
         ? target.folderId === currentFolderId
         : target.folderId === null && target.spaceId === currentSpaceId);
       if (target && !isSameContainer) {
-        await moveItemToContainer(activeParsed.itemType, activeParsed.itemId, target);
+        await moveItemToContainer(
+          activeParsed.itemType,
+          activeParsed.itemId,
+          target,
+          effectiveOverId,
+          finalPlacement.edge
+        );
         return;
       }
     }
@@ -669,7 +899,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     }
 
     const oldIndex = itemsArray.findIndex(i => `${parentType}-${parentId}-${i.itemType}-${i.id}` === activeStr);
-    const newIndex = itemsArray.findIndex(i => `${parentType}-${parentId}-${i.itemType}-${i.id}` === overStr);
+    let newIndex = itemsArray.findIndex(i => `${parentType}-${parentId}-${i.itemType}-${i.id}` === overStr);
 
     if (oldIndex !== -1 && newIndex !== -1) {
       const newItems = arrayMove(itemsArray, oldIndex, newIndex);
@@ -983,74 +1213,101 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
 
             {/* Spaces Section */}
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={handleDragCancel}>
-              <div className="pt-2 space-y-px">
-              <div className="flex items-center justify-between mb-1 px-2 pt-1">
-                <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Spaces</span>
-                <button onClick={() => setIsCreateSpaceOpen(true)} className="text-zinc-600 dark:text-zinc-400 hover:text-white transition-colors cursor-pointer" title="New Space">
-                  <Plus className="size-3.5" />
-                </button>
-              </div>
-
-              {/* ── ALL TASKS ── */}
-              <Link
-                href="/"
-                className={`flex items-center gap-2 px-2 py-1.5 rounded-md font-medium text-xs transition-colors group cursor-pointer mb-1 ${
-                  isAllTasksActive
-                    ? 'bg-accent text-accent-foreground font-semibold'
-                    : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
-                }`}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragMove={handleDragMove}
+              onDragOver={handleDragOver}
+              onDragEnd={handleDragEnd}
+              onDragCancel={handleDragCancel}
+            >
+              <DropIndicatorContext.Provider
+                value={{
+                  activeId,
+                  overId,
+                  dropEdge,
+                  spaces,
+                }}
               >
-                <Sparkles className="size-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
-                <span className="truncate flex-1">All Tasks</span>
-              </Link>
+                <div className="pt-2 space-y-px">
+                  <div className="flex items-center justify-between mb-1 px-2 pt-1">
+                    <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Spaces</span>
+                    <button onClick={() => setIsCreateSpaceOpen(true)} className="text-zinc-600 dark:text-zinc-400 hover:text-white transition-colors cursor-pointer" title="New Space">
+                      <Plus className="size-3.5" />
+                    </button>
+                  </div>
 
-              {/* Spaces & Root Folders */}
-              {spaces.filter(s => s.name !== 'Member Directory').map((space) => {
-                if (space.id === 'root-space') {
-                  return (
-                    <div key="root-items" className="space-y-px">
-                      {space.folders?.map((folder) => (
-                        <FolderTreeItem
-                          key={folder.id}
-                          folder={folder}
-                          onAddFolder={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateFolderOpen(true); }}
-                          onAddDoc={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateDocOpen(true); }}
-                          onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }}
-                          onAddList={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateListOpen(true); }}
-                          onAction={handleAction}
-                        />
-                      ))}
-                      {space.lists?.filter((l) => !l.folderId).map((list) => (
-                        <ListTreeItem key={list.id} list={list} onAction={handleAction} />
-                      ))}
-                      {space.docs?.filter((d) => !d.folderId && d.title !== 'Priorities Journal').map((doc) => (
-                        <DocTreeItem key={doc.id} doc={doc} onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }} onAction={handleAction} />
-                      ))}
-                    </div>
-                  );
-                }
+                  {/* ── ALL TASKS ── */}
+                  <Link
+                    href="/"
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md font-medium text-xs transition-colors group cursor-pointer mb-1 ${
+                      isAllTasksActive
+                        ? 'bg-accent text-accent-foreground font-semibold'
+                        : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
+                    }`}
+                  >
+                    <Sparkles className="size-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
+                    <span className="truncate flex-1">All Tasks</span>
+                  </Link>
 
-                return (
-                  <SpaceTreeItem
-                    key={space.id}
-                    space={space}
-                    onAddFolder={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateFolderOpen(true); }}
-                    onAddDoc={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateDocOpen(true); }}
-                    onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }}
-                    onAddList={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateListOpen(true); }}
-                    onAction={handleAction}
-                  />
-                );
-              })}
-              <button onClick={() => setIsCreateSpaceOpen(true)} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:text-white hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer">
-                <Plus className="size-3.5" />
-                <span>New Space</span>
-              </button>
-                <DragOverlay dropAnimation={{ sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: "0.4" } } }) }}>
-                  {activeId ? <ActiveDragItem id={activeId} spaces={spaces.filter(s => s.name !== 'Member Directory')} /> : null}
-                </DragOverlay>
-              </div>
+                  {/* Spaces & Root Folders */}
+                  {spaces.filter(s => s.name !== 'Member Directory').map((space) => {
+                    if (space.id === 'root-space') {
+                      return (
+                        <div key="root-items" className="space-y-px">
+                          {space.folders?.map((folder) => (
+                            <FolderTreeItem
+                              key={folder.id}
+                              folder={folder}
+                              onAddFolder={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateFolderOpen(true); }}
+                              onAddDoc={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateDocOpen(true); }}
+                              onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }}
+                              onAddList={(sId, fId) => { setActiveSpaceId(undefined); setActiveFolderId(fId); setIsCreateListOpen(true); }}
+                              onAction={handleAction}
+                            />
+                          ))}
+                          {space.lists?.filter((l) => !l.folderId).map((list) => {
+                            const sortableId = `space-root-space-list-${list.id}`;
+                            return (
+                              <SortableWrapper key={sortableId} id={sortableId}>
+                                <ListTreeItem list={list} onAction={handleAction} />
+                              </SortableWrapper>
+                            );
+                          })}
+                          {space.docs?.filter((d) => !d.folderId && d.title !== 'Priorities Journal').map((doc) => {
+                            const sortableId = `space-root-space-doc-${doc.id}`;
+                            return (
+                              <SortableWrapper key={sortableId} id={sortableId}>
+                                <DocTreeItem doc={doc} onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }} onAction={handleAction} />
+                              </SortableWrapper>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <SpaceTreeItem
+                        key={space.id}
+                        space={space}
+                        onAddFolder={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateFolderOpen(true); }}
+                        onAddDoc={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateDocOpen(true); }}
+                        onAddPage={(dId) => { setActiveDocId(dId); setIsCreatePageOpen(true); }}
+                        onAddList={(sId, fId) => { setActiveSpaceId(sId); setActiveFolderId(fId); setIsCreateListOpen(true); }}
+                        onAction={handleAction}
+                      />
+                    );
+                  })}
+                  <button onClick={() => setIsCreateSpaceOpen(true)} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:text-white hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer">
+                    <Plus className="size-3.5" />
+                    <span>New Space</span>
+                  </button>
+                  <DragOverlay dropAnimation={{ sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: "0.4" } } }) }}>
+                    {activeId ? <ActiveDragItem id={activeId} spaces={spaces.filter(s => s.name !== 'Member Directory')} /> : null}
+                  </DragOverlay>
+                </div>
+              </DropIndicatorContext.Provider>
             </DndContext>
             
           </div>
@@ -1100,10 +1357,16 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
     ...(space.docs?.filter(d => !d.folderId && d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
   ].sort((a, b) => (a.order || 0) - (b.order || 0));
   const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`spacedrop-${space.id}`);
+  const { activeId, spaces } = useContext(DropIndicatorContext);
+  const activeParsed = activeId ? parseSortableId(activeId) : null;
+  const isFromOtherContainer = Boolean(activeParsed && activeParsed.parentKey !== `space-${space.id}`);
 
   return (
     <div className="space-y-px text-xs">
-      <div ref={setDropRef} className={`group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors ${isDropTarget ? 'ring-2 ring-indigo-500/60 bg-indigo-500/10' : ''}`}>
+      <div
+        ref={setDropRef}
+        className="group flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors"
+      >
         <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 truncate flex-1 cursor-pointer">
           <div className="relative size-4 flex items-center justify-center shrink-0">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1142,6 +1405,9 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
             className="pl-4 border-l border-zinc-800 ml-3 space-y-px overflow-hidden"
           >
             <SortableContext items={combinedItems.map(i => `space-${space.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
+              {isDropTarget && activeId && isFromOtherContainer && (
+                <DragLandingSlot activeId={activeId} spaces={spaces} />
+              )}
               {combinedItems.map((item) => {
                 const sortableId = `space-${space.id}-${item.itemType}-${item.id}`;
                 if (item.itemType === 'folder') {
@@ -1181,6 +1447,19 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
     ...(folder.docs?.filter(d => d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
   ].sort((a, b) => (a.order || 0) - (b.order || 0));
   const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`folderdrop-${folder.id}`);
+  const { activeId, spaces } = useContext(DropIndicatorContext);
+  const activeParsed = activeId ? parseSortableId(activeId) : null;
+  const isFromOtherContainer = Boolean(activeParsed && activeParsed.parentKey !== `folder-${folder.id}`);
+
+  // Auto-expand folder on drag hover if closed
+  useEffect(() => {
+    if (isDropTarget && !isOpen) {
+      const timer = setTimeout(() => {
+        setIsOpen(true);
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [isDropTarget, isOpen]);
 
   const handleRename = async () => {
     setIsEditing(false);
@@ -1199,7 +1478,10 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
 
   return (
     <div className="space-y-px">
-      <div ref={setDropRef} className={`group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors ${isDropTarget ? 'ring-2 ring-indigo-500/60 bg-indigo-500/10' : ''}`}>
+      <div
+        ref={setDropRef}
+        className="group flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors"
+      >
         <div className="flex items-center gap-2 truncate flex-1">
           <div onClick={() => setIsOpen(!isOpen)} className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1250,6 +1532,9 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
             className="pl-3 border-l border-zinc-800 ml-3 space-y-px overflow-hidden"
           >
             <SortableContext items={combinedItems.map(i => `folder-${folder.id}-${i.itemType}-${i.id}`)} strategy={verticalListSortingStrategy}>
+              {isDropTarget && activeId && isFromOtherContainer && (
+                <DragLandingSlot activeId={activeId} spaces={spaces} />
+              )}
               {combinedItems.map((item) => {
                 const sortableId = `folder-${folder.id}-${item.itemType}-${item.id}`;
                 if (item.itemType === 'folder') {

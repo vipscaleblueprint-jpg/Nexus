@@ -1,4 +1,5 @@
-import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
+import { canTransitionTaskStatus } from '@/lib/permissions';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi } from '@/api';
@@ -102,6 +103,48 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     const found = foundObj?.list || foundObj;
     return found?.statuses || [];
   }, [allLists, taskData?.listId, fallbackListStatuses]);
+
+  const orderedListStatuses = React.useMemo(() => {
+    const rawStatuses = listStatuses.length > 0 ? listStatuses : [];
+    if (rawStatuses.length === 0) return ALL_STATUSES;
+
+    const sortedInternals = [...rawStatuses].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const listObj = allLists.find((l: any) => l.list?.id === taskData?.listId || l.id === taskData?.listId);
+    const list = listObj?.list || listObj;
+
+    if (!list?.customGroups || list.customGroups.length === 0) {
+      const validStatuses = sortedInternals.filter(s => {
+        if (!list?.customGroups) return true;
+        const sName = (s.name || s.status || s.title || '').toUpperCase();
+        return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
+      });
+      return sortStatusesWithClosedAndKycAtEnd(validStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')));
+    }
+
+    const finalStatuses: any[] = [];
+    const processed = new Set<string>();
+
+    list.customGroups.forEach((groupName: string) => {
+      const groupStatuses = sortedInternals.filter(s => s.groupName === groupName);
+      groupStatuses.forEach(s => {
+        const sName = s.name || s.status || s.title || '';
+        finalStatuses.push(sName);
+        processed.add(sName);
+      });
+    });
+
+    sortedInternals.forEach(s => {
+      const sName = s.name || s.status || s.title || '';
+      if (!processed.has(sName)) {
+        if (!list.customGroups.some((g: string) => g.toUpperCase() === sName.toUpperCase())) {
+          finalStatuses.push(sName);
+          processed.add(sName);
+        }
+      }
+    });
+
+    return sortStatusesWithClosedAndKycAtEnd(finalStatuses);
+  }, [listStatuses, allLists, taskData?.listId]);
 
   // Local state for read-only interactivity
   const [localStatus, setLocalStatus] = useState<string>(taskStatus || '');
@@ -298,7 +341,15 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || !taskData) return;
-    
+
+    if (mentionType !== 'subtask') {
+      const transitionCheck = canTransitionTaskStatus(taskData, newStatus);
+      if (!transitionCheck.allowed) {
+        toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+        return;
+      }
+    }
+
     // Optimistic UI updates
     const optimisticTask = { ...taskData, status: newStatus };
     updateTaskStore(optimisticTask);
@@ -586,7 +637,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           <div className="z-[9999] w-48 p-1.5 bg-popover border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl outline-none flex flex-col gap-0.5">
             <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider shrink-0">Change Status</div>
             <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-              {(listStatuses.length > 0 ? listStatuses.map((s: any) => s.name) : ALL_STATUSES).map((statusName: string) => {
+              {orderedListStatuses.map((statusName: string) => {
                 const isActive = statusName === parsedStatusName;
                 const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
                 const colorHex = customObj?.color || getStatusColor(statusName);
@@ -753,10 +804,12 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                                 setLocalTeam(teamStr);
                                 
                                 if (taskData) {
-                                  const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t };
+                                  const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
+                                  const matchingIds = matchingUsers.map((u: any) => u.id);
+                                  const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t, assignees: matchingUsers, assigneeIds: matchingIds };
                                   setTaskData(updatedTask);
                                   updateTaskStore(updatedTask);
-                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id } as any).catch(console.error);
+                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id, assigneeIds: matchingIds } as any).catch(console.error);
                                 }
                               }}
                           className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
@@ -794,10 +847,12 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                                 setLocalTeam(teamStr);
                                 
                                 if (taskData) {
-                                  const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t };
+                                  const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
+                                  const matchingIds = matchingUsers.map((u: any) => u.id);
+                                  const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t, assignees: matchingUsers, assigneeIds: matchingIds };
                                   setTaskData(updatedTask);
                                   updateTaskStore(updatedTask);
-                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id } as any).catch(console.error);
+                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id, assigneeIds: matchingIds } as any).catch(console.error);
                                 }
                               }}
                               className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"

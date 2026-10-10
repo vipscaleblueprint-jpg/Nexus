@@ -36,6 +36,7 @@ import {
   SlidersHorizontal,
   CheckCheck,
   ExternalLink,
+  Lock,
 } from "lucide-react";
 import { Space, Folder, List, Doc, Task } from "@/lib/types";
 import type { WorkspaceRole } from "@/types/models";
@@ -50,7 +51,7 @@ import { tasksApi } from "@/api";
 import { clickUpApi } from "@/api/clickup";
 import { io, Socket } from "socket.io-client";
 import { API_BASE_URL } from "@/api/client";
-import { TaskDetailModal } from "@/components/modals/TaskDetailModal";
+import { TaskDetailModal, getAssigneeAvatarColor } from "@/components/modals/TaskDetailModal";
 import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
 import { getPriorityConfig } from "@/lib/priority";
@@ -105,115 +106,168 @@ const isRecentItem = (dateStr?: string, maxDays = 30) => {
 // ClickUp-style Status Badges & Colors
 const STATUS_STYLES: Record<
   string,
-  { label: string; pill: string; dot: string; border: string }
+  { label: string; pill: string; dot: string; border: string; customColor: string }
 > = {
-  "IN PROGRESS": {
-    label: "IN PROGRESS",
-    pill: "bg-[#D82C7C] text-white",
-    dot: "bg-[#D82C7C]",
-    border: "border-[#D82C7C]",
-  },
-  IN_PROGRESS: {
-    label: "IN PROGRESS",
-    pill: "bg-[#D82C7C] text-white",
-    dot: "bg-[#D82C7C]",
-    border: "border-[#D82C7C]",
-  },
-  PENDING: {
-    label: "PENDING",
-    pill: "bg-[#D97706] text-white",
-    dot: "bg-[#D97706]",
-    border: "border-[#D97706]",
-  },
-  DAILY: {
-    label: "DAILY",
-    pill: "bg-[#2563EB] text-white",
-    dot: "bg-[#2563EB]",
-    border: "border-[#2563EB]",
-  },
   KYC: {
     label: "KYC",
-    pill: "bg-[#0284C7] text-white",
-    dot: "bg-[#0284C7]",
-    border: "border-[#0284C7]",
-  },
-  TODO: {
-    label: "TO DO",
-    pill: "bg-[#475569] text-white",
-    dot: "bg-[#475569]",
-    border: "border-[#475569]",
-  },
-  REVIEW: {
-    label: "REVIEW",
-    pill: "bg-[#7C3AED] text-white",
-    dot: "bg-[#7C3AED]",
-    border: "border-[#7C3AED]",
-  },
-  COMPLETE: {
-    label: "COMPLETE",
-    pill: "bg-[#059669] text-white",
-    dot: "bg-[#059669]",
-    border: "border-[#059669]",
-  },
-  REVISION: {
-    label: "REVISION",
-    pill: "bg-[#5B6BD6] text-white",
-    dot: "bg-[#5B6BD6]",
-    border: "border-[#5B6BD6]",
+    pill: "bg-[#3A8F55] text-white",
+    dot: "bg-[#3A8F55]",
+    border: "border-[#3A8F55]",
+    customColor: "#3A8F55",
   },
   "PIN BOARD": {
     label: "PIN BOARD",
     pill: "bg-[#1F8A6E] text-white",
     dot: "bg-[#1F8A6E]",
     border: "border-[#1F8A6E]",
+    customColor: "#1F8A6E",
+  },
+  PIN_BOARD: {
+    label: "PIN BOARD",
+    pill: "bg-[#1F8A6E] text-white",
+    dot: "bg-[#1F8A6E]",
+    border: "border-[#1F8A6E]",
+    customColor: "#1F8A6E",
+  },
+  DAILY: {
+    label: "DAILY",
+    pill: "bg-[#2F7BD0] text-white",
+    dot: "bg-[#2F7BD0]",
+    border: "border-[#2F7BD0]",
+    customColor: "#2F7BD0",
   },
   WEEKLY: {
     label: "WEEKLY",
     pill: "bg-[#2F7BD0] text-white",
     dot: "bg-[#2F7BD0]",
     border: "border-[#2F7BD0]",
+    customColor: "#2F7BD0",
   },
   MONTHLY: {
     label: "MONTHLY",
     pill: "bg-[#2F7BD0] text-white",
     dot: "bg-[#2F7BD0]",
     border: "border-[#2F7BD0]",
+    customColor: "#2F7BD0",
   },
-  CRM: {
-    label: "CRM",
-    pill: "bg-[#22A3AE] text-white",
-    dot: "bg-[#22A3AE]",
-    border: "border-[#22A3AE]",
+  PENDING: {
+    label: "PENDING",
+    pill: "bg-[#D29A2A] text-white",
+    dot: "bg-[#D29A2A]",
+    border: "border-[#D29A2A]",
+    customColor: "#D29A2A",
+  },
+  "IN PROGRESS": {
+    label: "IN PROGRESS",
+    pill: "bg-[#D04A7C] text-white",
+    dot: "bg-[#D04A7C]",
+    border: "border-[#D04A7C]",
+    customColor: "#D04A7C",
+  },
+  IN_PROGRESS: {
+    label: "IN PROGRESS",
+    pill: "bg-[#D04A7C] text-white",
+    dot: "bg-[#D04A7C]",
+    border: "border-[#D04A7C]",
+    customColor: "#D04A7C",
+  },
+  REVISION: {
+    label: "REVISION",
+    pill: "bg-[#5B6BD6] text-white",
+    dot: "bg-[#5B6BD6]",
+    border: "border-[#5B6BD6]",
+    customColor: "#5B6BD6",
   },
   WAITING: {
     label: "WAITING",
     pill: "bg-[#D9534F] text-white",
     dot: "bg-[#D9534F]",
     border: "border-[#D9534F]",
+    customColor: "#D9534F",
   },
   "IN REVIEW": {
     label: "IN REVIEW",
     pill: "bg-[#D97B3A] text-white",
     dot: "bg-[#D97B3A]",
     border: "border-[#D97B3A]",
+    customColor: "#D97B3A",
+  },
+  IN_REVIEW: {
+    label: "IN REVIEW",
+    pill: "bg-[#D97B3A] text-white",
+    dot: "bg-[#D97B3A]",
+    border: "border-[#D97B3A]",
+    customColor: "#D97B3A",
+  },
+  REVIEW: {
+    label: "REVIEW",
+    pill: "bg-[#D97B3A] text-white",
+    dot: "bg-[#D97B3A]",
+    border: "border-[#D97B3A]",
+    customColor: "#D97B3A",
   },
   CHECKING: {
     label: "CHECKING",
     pill: "bg-[#A35DB8] text-white",
     dot: "bg-[#A35DB8]",
     border: "border-[#A35DB8]",
+    customColor: "#A35DB8",
+  },
+  CRM: {
+    label: "CRM",
+    pill: "bg-[#22A3AE] text-white",
+    dot: "bg-[#22A3AE]",
+    border: "border-[#22A3AE]",
+    customColor: "#22A3AE",
   },
   CLOSED: {
     label: "CLOSED",
     pill: "bg-[#2FA37A] text-white",
     dot: "bg-[#2FA37A]",
     border: "border-[#2FA37A]",
+    customColor: "#2FA37A",
   },
   "ON-HOLD": {
     label: "ON-HOLD",
     pill: "bg-[#8A8F98] text-white",
     dot: "bg-[#8A8F98]",
     border: "border-[#8A8F98]",
+    customColor: "#8A8F98",
+  },
+  ON_HOLD: {
+    label: "ON-HOLD",
+    pill: "bg-[#8A8F98] text-white",
+    dot: "bg-[#8A8F98]",
+    border: "border-[#8A8F98]",
+    customColor: "#8A8F98",
+  },
+  TODO: {
+    label: "TO DO",
+    pill: "bg-[#475569] text-white",
+    dot: "bg-[#475569]",
+    border: "border-[#475569]",
+    customColor: "#475569",
+  },
+  COMPLETE: {
+    label: "COMPLETE",
+    pill: "bg-[#2FA37A] text-white",
+    dot: "bg-[#2FA37A]",
+    border: "border-[#2FA37A]",
+    customColor: "#2FA37A",
+  },
+  COMPLETED: {
+    label: "COMPLETED",
+    pill: "bg-[#2FA37A] text-white",
+    dot: "bg-[#2FA37A]",
+    border: "border-[#2FA37A]",
+    customColor: "#2FA37A",
+  },
+  DONE: {
+    label: "DONE",
+    pill: "bg-[#2FA37A] text-white",
+    dot: "bg-[#2FA37A]",
+    border: "border-[#2FA37A]",
+    customColor: "#2FA37A",
   },
 };
 
@@ -231,31 +285,41 @@ const getHexColor = (color: string) => {
 function getStatusConfig(statusName: string, allLists?: any[]) {
   const normalized = (statusName || "TODO").trim().toUpperCase();
   
+  if (STATUS_STYLES[normalized]) {
+    return STATUS_STYLES[normalized];
+  }
+
+  const altKey = normalized.replace(/_/g, " ").replace(/-/g, " ");
+  if (STATUS_STYLES[altKey]) {
+    return STATUS_STYLES[altKey];
+  }
+
   if (allLists) {
     for (const listData of allLists) {
       if (listData.list && listData.list.statuses) {
-        const customStatus = listData.list.statuses.find((s: any) => (s.name || s.status || s.title)?.trim().toUpperCase() === normalized);
+        const customStatus = listData.list.statuses.find(
+          (s: any) => (s.name || s.status || s.title)?.trim().toUpperCase() === normalized
+        );
         if (customStatus && customStatus.color) {
+          const hex = getHexColor(customStatus.color);
           return {
             label: customStatus.name || statusName,
-            customColor: getHexColor(customStatus.color),
+            customColor: hex,
             pill: "text-white",
             dot: "",
-            border: ""
+            border: "",
           };
         }
       }
     }
   }
 
-  if (STATUS_STYLES[normalized]) {
-    return STATUS_STYLES[normalized];
-  }
   return {
     label: normalized,
     pill: "bg-indigo-600 text-white",
     dot: "bg-indigo-500",
     border: "border-indigo-500",
+    customColor: "#6366f1",
   };
 }
 
@@ -1012,7 +1076,7 @@ function WorkspaceDashboardContent({
       return groupedAllTasksByPriority.map(g => ({
         key: g.priority,
         label: g.config.label,
-        pillClass: g.config.pill,
+        pillClass: g.config.color,
         customColor: undefined,
         flagClass: g.config.iconColor,
         tasks: g.tasks,
@@ -1056,15 +1120,6 @@ function WorkspaceDashboardContent({
       />
 
       <div className={selectedTask ? "hidden" : "flex flex-col gap-6"}>
-      {/* ClickUp Header & Quick Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2 mb-1">
-            My Tasks
-          </h1>
-        </div>
-
-      </div>
 
 
       {/* ─── TOOLBAR ─── */}
@@ -1285,6 +1340,7 @@ function WorkspaceDashboardContent({
                       <div className="flex flex-col w-full">
                         {tasksToRender.map((task) => {
                           const priorityConfig = getPriorityConfig(task.priority);
+                          const statusConfig = getStatusConfig(task.status, allLists);
 
                           const taskAssignees = task.assignees && task.assignees.length > 0 ? task.assignees : (task.assignee ? [task.assignee] : []);
 
@@ -1297,8 +1353,23 @@ function WorkspaceDashboardContent({
                               {((task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE') && (
                                 <div className="absolute top-1/2 left-4 right-4 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
                               )}
-                              <div className="flex items-center gap-3 min-w-0 flex-1 pl-4 pr-4 relative z-10">
-                                <div className="w-[18px] h-[18px] rounded border border-zinc-700 shrink-0 flex items-center justify-center transition-colors shadow-sm group-hover:border-zinc-500 bg-zinc-900/50" />
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-4 pr-4 relative z-10">
+                                {/* Checkbox (Square) */}
+                                <div
+                                  className="w-[18px] h-[18px] rounded border border-zinc-700 hover:border-zinc-500 shrink-0 flex items-center justify-center transition-colors shadow-sm bg-zinc-900/50"
+                                  title="Mark complete"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                  }}
+                                />
+
+                                {/* Status circle indicator */}
+                                <div
+                                  className={`w-2.5 h-2.5 rounded-full ${statusConfig.dot} shrink-0`}
+                                  style={(statusConfig as any).customColor ? { backgroundColor: (statusConfig as any).customColor } : {}}
+                                  title={`Status: ${task.status}`}
+                                />
+
                                 <span className="text-[13px] font-medium text-zinc-300 group-hover:text-indigo-300 transition-colors truncate">
                                   {task.title}
                                 </span>
@@ -1307,34 +1378,88 @@ function WorkspaceDashboardContent({
                                     ≡ {task.list.name}
                                   </span>
                                 )}
+                                {task.subtasks && task.subtasks.length > 0 && (
+                                  <span className="flex items-center gap-1 text-[11px] text-zinc-500 font-mono shrink-0 ml-1">
+                                    <ListIcon className="w-3 h-3 text-zinc-500" />
+                                    {
+                                      task.subtasks.filter(
+                                        (st: any) => st.isCompleted,
+                                      ).length
+                                    }
+                                    /{task.subtasks.length}
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1 relative z-10">
                                 <div className={`hidden sm:flex items-center shrink-0 ${currentTab !== 'priorities' ? 'w-[320px]' : 'w-[220px]'}`}>
                                   {/* Assignees */}
-                                  <div className="flex items-center justify-center shrink-0 w-[120px]" title={taskAssignees.map(a => a.name).join(", ")}>
-                                    <div className="flex items-center justify-center -space-x-1 z-10 w-full">
-                                      {taskAssignees.slice(0, 3).map((a, i) => (
-                                        <div key={i} className={`w-6 h-6 rounded-full border border-[#18181c] flex items-center justify-center text-[9px] font-bold text-white uppercase ${getAvatarColor(a.name || a.id || 'U')} shadow-sm overflow-hidden shrink-0`}>
-                                          {a.avatarUrl ? (
-                                            <img src={a.avatarUrl} alt={a.name} className="w-full h-full object-cover" />
+                                  <div className="flex items-center justify-center shrink-0 w-[120px]">
+                                    {(() => {
+                                      const hasTeamRole = Boolean(task.assigneeRoleRestrictions && task.assigneeRoleRestrictions.length > 0);
+                                      return (
+                                        <div
+                                          title={!hasTeamRole ? (taskAssignees.length > 0 ? `${taskAssignees.map((a: any) => a.name).join(", ")} (Role restricted)` : "Select a team role first to assign members") : (taskAssignees.map((a: any) => a.name).join(", ") || "Assign")}
+                                          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${
+                                            hasTeamRole
+                                              ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
+                                              : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
+                                          }`}
+                                        >
+                                          {taskAssignees.length > 0 ? (
+                                            <>
+                                              <div className="flex items-center -space-x-1.5">
+                                                {taskAssignees.slice(0, 3).map((a: any, i: number) => {
+                                                  const avatarSrc = a.avatarUrl || a.imageUrl;
+                                                  return (
+                                                    <div
+                                                      key={a.id || i}
+                                                      style={{ zIndex: i + 1 }}
+                                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                                      title={a.name}
+                                                    >
+                                                      {avatarSrc ? (
+                                                        <img src={avatarSrc} alt={a.name} className="w-5 h-5 rounded-full object-cover" />
+                                                      ) : (
+                                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(a.name || a.id || 'U')}`}>
+                                                          {(a.name || 'U').substring(0, 2).toUpperCase()}
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                                {taskAssignees.length > 3 && (
+                                                  <div
+                                                    style={{ zIndex: 10 }}
+                                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
+                                                  >
+                                                    +{taskAssignees.length - 3}
+                                                  </div>
+                                                )}
+                                              </div>
+                                              {taskAssignees.length === 1 && (
+                                                <span className="truncate max-w-[70px]">{taskAssignees[0].name}</span>
+                                              )}
+                                              {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
+                                            </>
                                           ) : (
-                                            a.name?.substring(0, 2) || "U"
+                                            <>
+                                              <Plus className="w-3.5 h-3.5 shrink-0" />
+                                              <span>Assign</span>
+                                              {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
+                                            </>
                                           )}
                                         </div>
-                                      ))}
-                                      {taskAssignees.length === 0 && (
-                                        <div className="w-6 h-6 rounded-full bg-card border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer shrink-0">
-                                          <Plus className="w-3.5 h-3.5" />
-                                        </div>
-                                      )}
-                                    </div>
+                                      );
+                                    })()}
                                   </div>
                                   {/* Priority Pill */}
                                   {currentTab !== "priorities" && (
                                     <div className="w-[100px] flex items-center justify-center shrink-0">
-                                      <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-[4px] text-[11px] font-bold uppercase tracking-wide ${priorityConfig.pill}`}>
+                                      <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-zinc-800/80 shadow-sm">
                                         <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
-                                        {priorityConfig.label}
+                                        <span className={priorityConfig.color}>
+                                          {priorityConfig.label}
+                                        </span>
                                       </span>
                                     </div>
                                   )}
@@ -1361,13 +1486,19 @@ function WorkspaceDashboardContent({
                           onClick={() => toggleGroup(key)}
                         >
                           <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
-                          <span
-                            className={`text-[11px] font-bold px-2 py-0.5 rounded-[4px] uppercase tracking-wide ${pillClass} shadow-sm ${flagClass ? 'flex items-center gap-1.5' : ''}`}
-                            style={(customColor as any) ? { backgroundColor: customColor as any } : {}}
-                          >
-                            {flagClass && <Flag className={`w-3.5 h-3.5 shrink-0 ${flagClass}`} />}
-                            {label}
-                          </span>
+                          {flagClass ? (
+                            <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-zinc-800/80 shadow-sm">
+                              <Flag className={`w-3.5 h-3.5 shrink-0 ${flagClass}`} />
+                              <span className={pillClass}>{label}</span>
+                            </span>
+                          ) : (
+                            <span
+                              className={`text-[11px] font-bold px-2 py-0.5 rounded-[4px] uppercase tracking-wide ${pillClass} shadow-sm`}
+                              style={(customColor as any) ? { backgroundColor: customColor as any } : {}}
+                            >
+                              {label}
+                            </span>
+                          )}
                           {unassignedCount > 0 && (
                             <span className="px-2.5 py-0.5 rounded-full bg-zinc-800/80 text-[10px] text-zinc-400 font-bold ml-1">
                               {unassignedCount} unassigned
@@ -1571,42 +1702,74 @@ function WorkspaceDashboardContent({
 
                                 {/* Right: Assignees + Priority + Due Date + More */}
                                 <div className="hidden sm:flex items-center shrink-0 w-[220px] pr-2">
-                                {/* ClickUp-style Stacked Avatars */}
-                                  <div
-                                    className="flex items-center justify-center -space-x-1 w-[120px] shrink-0"
-                                    title={
-                                      taskAssignees.map((a) => a.name).join(", ") ||
-                                      "Unassigned"
-                                    }
-                                  >
-                                    {taskAssignees.slice(0, 3).map((a) => (
-                                      <div
-                                        key={a.id}
-                                        className={`w-6 h-6 rounded-full border border-[#18181c] flex items-center justify-center text-[9px] font-bold text-white uppercase ${getAvatarColor(a.name || a.id || 'U')} shadow-sm overflow-hidden shrink-0`}
-                                      >
-                                        {a.avatarUrl ? (
-                                          <img
-                                            src={a.avatarUrl}
-                                            alt={a.name}
-                                            className="w-full h-full object-cover"
-                                          />
-                                        ) : (
-                                          (a.name || "U").charAt(0).toUpperCase()
-                                        )}
-                                      </div>
-                                    ))}
-                                    {taskAssignees.length === 0 && (
-                                      <div className="w-6 h-6 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors hover:border-zinc-500 cursor-pointer shrink-0 bg-card shadow-sm">
-                                        <Plus className="w-3.5 h-3.5" />
-                                      </div>
-                                    )}
+                                  {/* ClickUp-style Stacked Avatars */}
+                                  <div className="flex items-center justify-center w-[120px] shrink-0">
+                                    {(() => {
+                                      const hasTeamRole = Boolean(task.assigneeRoleRestrictions && task.assigneeRoleRestrictions.length > 0);
+                                      return (
+                                        <div
+                                          title={!hasTeamRole ? (taskAssignees.length > 0 ? `${taskAssignees.map((a: any) => a.name).join(", ")} (Role restricted)` : "Select a team role first to assign members") : (taskAssignees.map((a: any) => a.name).join(", ") || "Assign")}
+                                          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${
+                                            hasTeamRole
+                                              ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
+                                              : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
+                                          }`}
+                                        >
+                                          {taskAssignees.length > 0 ? (
+                                            <>
+                                              <div className="flex items-center -space-x-1.5">
+                                                {taskAssignees.slice(0, 3).map((a: any, i: number) => {
+                                                  const avatarSrc = a.avatarUrl || a.imageUrl;
+                                                  return (
+                                                    <div
+                                                      key={a.id || i}
+                                                      style={{ zIndex: i + 1 }}
+                                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                                      title={a.name}
+                                                    >
+                                                      {avatarSrc ? (
+                                                        <img src={avatarSrc} alt={a.name} className="w-5 h-5 rounded-full object-cover" />
+                                                      ) : (
+                                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(a.name || a.id || 'U')}`}>
+                                                          {(a.name || 'U').substring(0, 2).toUpperCase()}
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                                {taskAssignees.length > 3 && (
+                                                  <div
+                                                    style={{ zIndex: 10 }}
+                                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
+                                                  >
+                                                    +{taskAssignees.length - 3}
+                                                  </div>
+                                                )}
+                                              </div>
+                                              {taskAssignees.length === 1 && (
+                                                <span className="truncate max-w-[70px]">{taskAssignees[0].name}</span>
+                                              )}
+                                              {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Plus className="w-3.5 h-3.5 shrink-0" />
+                                              <span>Assign</span>
+                                              {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
+                                            </>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
 
                                   {/* Priority Column */}
                                   <div className="flex items-center justify-center w-[100px] shrink-0">
-                                    <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-[4px] text-[11px] font-bold uppercase tracking-wide ${priorityConfig.pill}`}>
+                                    <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-zinc-800/80 shadow-sm">
                                       <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
-                                      {priorityConfig.label}
+                                      <span className={priorityConfig.color}>
+                                        {priorityConfig.label}
+                                      </span>
                                     </span>
                                   </div>
                                 </div>

@@ -4,14 +4,14 @@ import { BlockEditor } from '../ui/BlockEditor';
 import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { canUserEditTask } from '@/lib/permissions';
-import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
+import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck, Shield, Lock, UserPlus } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
-import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted } from './TaskDetailModal';
+import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -47,6 +47,8 @@ interface SubtasksSectionProps {
   onOpenSubtask?: (subtask: Subtask) => void;
   listStatuses?: any[];
   teams?: any[];
+  onCollapseSection?: () => void;
+  expandAllSignal?: number;
 }
 
 // Subcomponent for description to avoid hook-in-loop issues
@@ -386,6 +388,9 @@ function SubtaskRow({
   canEditTask,
   listStatuses,
   teams = [],
+  isCollapsed: isCollapsedProp,
+  onToggleCollapse,
+  onSetCollapsed,
 }: {
   subtask: Subtask;
   users?: any[];
@@ -401,9 +406,16 @@ function SubtaskRow({
   canEditTask?: boolean;
   listStatuses?: any[];
   teams?: any[];
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
+  onSetCollapsed?: (val: boolean) => void;
 }) {
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
+  // Separate open states for the collapsed table cells so they never open alongside the hidden detail panel popovers
+  const [colRoleOpen, setColRoleOpen] = useState(false);
+  const [colAssigneeOpen, setColAssigneeOpen] = useState(false);
+  const [colPriorityOpen, setColPriorityOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusRowOpen, setStatusRowOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState<number | undefined>(undefined);
@@ -414,12 +426,29 @@ function SubtaskRow({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleVal, setTitleVal] = useState(subtask.title);
   const [activeTab, setActiveTab] = useState<'checklist' | 'comments' | 'audit'>('comments');
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [internalCollapsed, setInternalCollapsed] = useState(true);
+  const isCollapsed = isCollapsedProp !== undefined ? isCollapsedProp : internalCollapsed;
+  const setIsCollapsed = (val: boolean) => {
+    if (onSetCollapsed) onSetCollapsed(val);
+    else setInternalCollapsed(val);
+  };
+
+  const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(() => subtask?.assigneeRoleRestrictions || []);
+  const latestRoleRestrictionsRef = useRef<string[]>(subtask?.assigneeRoleRestrictions || []);
+  const lastRoleUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+      const fromProps = subtask?.assigneeRoleRestrictions || [];
+      setLocalRoleRestrictions(fromProps);
+      latestRoleRestrictionsRef.current = fromProps;
+    }
+  }, [subtask?.assigneeRoleRestrictions]);
 
   const assignableUsers = useMemo(() => {
     const wsUsers = users || [];
     const wsTeams = teams || [];
-    if (!subtask?.assigneeRoleRestrictions || subtask.assigneeRoleRestrictions.length === 0) {
+    if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
       return wsUsers;
     }
     const teamRoleToTeamId = new Map<string, string>();
@@ -431,35 +460,52 @@ function SubtaskRow({
 
     return wsUsers.filter((u: any) => {
       const userRoles = (u.roles || []) as string[];
-      return (subtask.assigneeRoleRestrictions || []).some((role: string) => {
+      return localRoleRestrictions.some((role: string) => {
         if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
         const teamId = teamRoleToTeamId.get(role.toLowerCase());
         if (teamId && (u as any).teamId === teamId) return true;
         return false;
       });
     });
-  }, [subtask?.assigneeRoleRestrictions, users, teams]);
+  }, [localRoleRestrictions, users, teams]);
 
-  // Multi-assignee derived value
-  const currentAssignees: any[] = useMemo(() => {
+  const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
+  const canAssignMember = Boolean(canEditTask) && hasTeamRole && !subtask.completed;
+
+  const [localAssignees, setLocalAssignees] = useState<any[]>(() => {
     const s = subtask as any;
     if (s.assignees && s.assignees.length > 0) return s.assignees;
     if (s.User) return [s.User];
     if (s.assignee) return [s.assignee];
     return [];
-  }, [subtask.assignees]);
+  });
+  const latestAssigneesRef = useRef<any[]>(localAssignees);
+  const lastAssigneeUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+      const s = subtask as any;
+      const fromProps = (s.assignees && s.assignees.length > 0) ? s.assignees : (s.User ? [s.User] : (s.assignee ? [s.assignee] : []));
+      setLocalAssignees(fromProps);
+      latestAssigneesRef.current = fromProps;
+    }
+  }, [subtask.assignees, (subtask as any).User, (subtask as any).assignee]);
+
+  const currentAssignees = localAssignees;
 
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
   const handleToggleAssignee = (u: any) => {
-    const s = subtask as any;
-    const latestAssignees: any[] = s.assignees || (s.User ? [s.User] : (s.assignee ? [s.assignee] : []));
+    const latestAssignees = latestAssigneesRef.current;
     const isAssigned = latestAssignees.some(a => a.id === u.id);
     const updatedAssignees = isAssigned
       ? latestAssignees.filter((a) => a.id !== u.id)
       : [...latestAssignees, u];
 
     const updatedIds = updatedAssignees.map((a) => a.id);
+    lastAssigneeUpdateTimestampRef.current = Date.now();
+    latestAssigneesRef.current = updatedAssignees;
+    setLocalAssignees(updatedAssignees);
     subtask.assignees = updatedAssignees;
     subtask.assigneeIds = updatedIds;
     onUpdate(subtask.id, { assigneeIds: updatedIds, assignees: updatedAssignees } as any);
@@ -467,10 +513,14 @@ function SubtaskRow({
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    lastAssigneeUpdateTimestampRef.current = Date.now();
+    latestAssigneesRef.current = [];
+    setLocalAssignees([]);
     subtask.assignees = [];
     subtask.assigneeIds = [];
     onUpdate(subtask.id, { assigneeIds: [], assignees: [] } as any);
     setAssigneeOpen(false);
+    setColAssigneeOpen(false);
   };
 
   useEffect(() => {
@@ -565,6 +615,197 @@ function SubtaskRow({
     }
   };
 
+  // Shared menus — used by both the collapsed table cells and the expanded detail panel
+  const roleMenuContent = (
+    <div className="max-h-[240px] overflow-y-auto custom-scrollbar p-1">
+      <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
+      {(!teams || teams.length === 0) && (
+        <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>
+      )}
+      {(teams || []).map((team: any) => {
+        const teamRoles = team.teamRoles || [];
+        const current = localRoleRestrictions || [];
+        const hasRoles = teamRoles.length > 0;
+        const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+        const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+
+        return (
+          <div key={team.id} className="mb-2">
+            <div
+              onClick={() => {
+                if (!hasRoles || !canEditTask) return;
+                let next = [...current];
+                if (allSelected) {
+                  next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                } else {
+                  const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                  next = [...next, ...toAdd];
+                }
+                const matchingUsers = resolveUsersFromRoleRestrictions(next, users || [], teams || []);
+                const matchingIds = matchingUsers.map((u: any) => u.id);
+
+                lastRoleUpdateTimestampRef.current = Date.now();
+                latestRoleRestrictionsRef.current = next;
+                setLocalRoleRestrictions(next);
+
+                lastAssigneeUpdateTimestampRef.current = Date.now();
+                latestAssigneesRef.current = matchingUsers;
+                setLocalAssignees(matchingUsers);
+
+                subtask.assigneeRoleRestrictions = next;
+                subtask.assignees = matchingUsers;
+                subtask.assigneeIds = matchingIds;
+                onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds, assignees: matchingUsers } as any);
+              }}
+              className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles && canEditTask ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'} ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
+            >
+              {hasRoles && (
+                <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-popover'}`}>
+                  {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                  {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                </div>
+              )}
+              <span>{team.name}</span>
+            </div>
+            {(!team.teamRoles || team.teamRoles.length === 0) && (
+              <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+            )}
+            {team.teamRoles && team.teamRoles.length > 0 && (
+              <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                {team.teamRoles.map((role: any) => {
+                  const selected = (localRoleRestrictions || []).includes(role.name);
+                  return (
+                    <div
+                      key={role.id}
+                      onClick={() => {
+                        if (!canEditTask) return;
+                        const current = localRoleRestrictions || [];
+                        const next = selected
+                          ? current.filter((r: string) => r !== role.name)
+                          : [...current, role.name];
+
+                        const matchingUsers = resolveUsersFromRoleRestrictions(next, users || [], teams || []);
+                        const matchingIds = matchingUsers.map((u: any) => u.id);
+
+                        lastRoleUpdateTimestampRef.current = Date.now();
+                        latestRoleRestrictionsRef.current = next;
+                        setLocalRoleRestrictions(next);
+
+                        lastAssigneeUpdateTimestampRef.current = Date.now();
+                        latestAssigneesRef.current = matchingUsers;
+                        setLocalAssignees(matchingUsers);
+
+                        subtask.assigneeRoleRestrictions = next;
+                        subtask.assignees = matchingUsers;
+                        subtask.assigneeIds = matchingIds;
+                        onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds, assignees: matchingUsers } as any);
+                      }}
+                      className={`flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
+                    >
+                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                        {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                      </div>
+                      <span className="truncate">{role.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const assigneeMenuContent = (
+    <Command className="flex h-full w-full flex-col overflow-hidden bg-transparent">
+      <div className="flex items-center border-b border-zinc-800/60 px-3">
+        <Command.Input 
+          placeholder="Search assignee..." 
+          className="flex h-9 w-full rounded-md bg-transparent py-3 text-[13px] outline-none placeholder:text-zinc-500 text-zinc-200"
+          autoFocus
+        />
+      </div>
+      <Command.List className="max-h-[300px] overflow-y-auto p-1.5 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+        <Command.Empty className="py-4 text-center text-sm text-zinc-500">
+          No user found.
+        </Command.Empty>
+        {currentAssignees.length > 0 && (
+          <Command.Item
+            value="clear all unassigned none"
+            onSelect={() => handleClearAllAssignees()}
+            className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 mb-1 border-b border-zinc-800/40"
+          >
+            <div className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 mr-2 shrink-0">
+              <X className="w-3 h-3" />
+            </div>
+            <span>Clear all assignees</span>
+          </Command.Item>
+        )}
+        {assignableUsers?.map((u: any) => {
+          const isAssigned = isUserAssigned(u.id);
+          const initials = (u.name || 'U').substring(0, 2).toUpperCase();
+          const role = u.roles?.[0] || '';
+          const avatarColors = ['bg-violet-600','bg-blue-600','bg-emerald-600','bg-rose-600','bg-amber-600','bg-cyan-600','bg-fuchsia-600'];
+          const avatarBg = avatarColors[(u.name || '').charCodeAt(0) % avatarColors.length];
+          return (
+            <Command.Item
+              key={u.id}
+              value={`${u.name} ${u.email} ${role}`}
+              onSelect={() => handleToggleAssignee(u)}
+              className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
+            >
+              {u.avatarUrl ? (
+                <img src={u.avatarUrl} className="w-8 h-8 rounded-full shrink-0 object-cover" alt="" />
+              ) : (
+                <div className={`w-8 h-8 rounded-full ${avatarBg} flex items-center justify-center text-[11px] font-bold text-white shrink-0`}>
+                  {initials}
+                </div>
+              )}
+              <div className="flex flex-col min-w-0 flex-1">
+                <span className="truncate text-zinc-100 text-[13px] font-medium">{u.name}</span>
+                {role && <span className="truncate text-[10px] text-zinc-500 uppercase tracking-wide font-medium">{role}</span>}
+              </div>
+              <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center transition-all ml-1 ${isAssigned ? 'bg-indigo-600' : 'border border-zinc-700'}`}>
+                {isAssigned && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
+              </div>
+            </Command.Item>
+          );
+        })}
+      </Command.List>
+    </Command>
+  );
+
+  const renderPriorityMenu = (close: () => void) => (
+    <div className="flex flex-col gap-0.5">
+      <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
+      {(PRIORITY_OPTIONS as readonly Priority[]).map((p) => (
+        <button
+          key={p}
+          onClick={() => { onUpdate(subtask.id, { priority: p }); close(); }}
+          className={`flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${subtask.priority === p ? 'bg-zinc-800/50' : ''}`}
+        >
+          <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
+          <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
+          {subtask.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
+        </button>
+      ))}
+      {subtask.priority && (
+        <div className="border-t border-zinc-800/60 mt-1 pt-1">
+          <button
+            className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+            onClick={() => { onUpdate(subtask.id, { priority: undefined }); close(); }}
+          >
+            <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+            <span>Clear Priority</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  const isRowLocked = !!subtask.completed || !canEditTask;
+
   const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
   const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
   const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
@@ -575,13 +816,12 @@ function SubtaskRow({
     <div
       ref={resizeRef}
       style={cardHeight && !isCollapsed ? { minHeight: cardHeight } : undefined}
-      className="relative flex flex-col p-4 bg-card border border-zinc-800/60 rounded-xl hover:border-zinc-700/60 transition-all group group/desc"
+      className={`relative flex flex-col px-4 transition-colors duration-200 group group/desc ${isCollapsed ? 'py-1.5 hover:bg-zinc-800/30' : 'py-4 bg-zinc-800/20'}`}
     >
 
-      {/* Row 1: Title and Collapse Button */}
-      <div className={`flex items-center gap-2.5 shrink-0 min-w-0 max-w-full justify-between transition-all duration-300 ${isCollapsed ? 'mb-0 pb-0 border-transparent' : 'mb-4 pb-3 border-b border-zinc-800/60'}`}>
-        <div className="flex items-center gap-4 shrink-0 min-w-0 flex-1">
-          <div className="flex items-center min-w-0 shrink-0 gap-3">
+      {/* Row 1: Name | Assignee | Priority | Toggle */}
+      <div className={`flex items-center gap-3 shrink-0 min-w-0 max-w-full transition-all duration-300 ${isCollapsed ? '' : 'mb-4 pb-3 border-b border-zinc-800/60'}`}>
+          <div className="flex items-center min-w-0 flex-1 gap-3">
             {isCollapsed && (
               <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
                 <Popover.Trigger asChild>
@@ -673,61 +913,195 @@ function SubtaskRow({
                   if (subtask.completed) return;
                   setIsEditingTitle(true);
                 }}
-                className={`text-[14px] font-bold truncate transition-colors ${subtask.completed ? 'text-zinc-600 line-through cursor-not-allowed' : 'text-zinc-100 hover:text-white cursor-pointer hover:bg-zinc-800/80 px-1.5 py-0.5 -ml-1.5 rounded-md'}`}
+                className={`text-[13px] font-semibold truncate min-w-0 text-left transition-colors ${subtask.completed ? 'text-zinc-600 line-through cursor-not-allowed' : 'text-zinc-100 hover:text-white cursor-pointer hover:bg-zinc-800/80 px-1.5 py-0.5 -ml-1.5 rounded-md'}`}
               >
                 {subtask.title}
               </button>
             )}
           </div>
 
-          {/* Collapsed Inline Properties */}
-            <div className={`flex items-center gap-3 overflow-hidden transition-all duration-300 shrink-0 ${isCollapsed ? 'opacity-100 max-w-[500px] ml-4 border-l border-zinc-800/60 pl-4' : 'opacity-0 max-w-0 ml-0 border-transparent pl-0'}`}>
-
-            
-            <div className="inline-flex items-center gap-1.5 h-6 px-2 bg-transparent rounded-md text-[10px] text-zinc-400 max-w-[150px] shrink-0 truncate">
-              {currentAssignees.length > 0 ? (
-                <>
-                  <div className="flex items-center -space-x-1.5">
-                    {currentAssignees.slice(0, 2).map((u) => (
-                      <div key={u.id} className="relative ring-1 ring-[#141416] rounded-full shrink-0">
-                        {u.avatarUrl ? (
-                          <img src={u.avatarUrl} alt={u.name} className="w-3.5 h-3.5 rounded-full object-cover" />
-                        ) : (
-                          <div className="w-3.5 h-3.5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[8px] font-bold">
-                            {(u.name || 'U').substring(0, 2).toUpperCase()}
+          {/* Table columns (collapsed only — the expanded panel has its own property rows) */}
+          {isCollapsed && (
+            <>
+              {/* Role cell */}
+              <div className="w-28 shrink-0 min-w-0">
+                <Popover.Root open={colRoleOpen && !isRowLocked} onOpenChange={(open) => { if (!isRowLocked) setColRoleOpen(open); }}>
+                  <Popover.Trigger asChild>
+                    <button
+                      type="button"
+                      title={
+                        isRowLocked ? 'Locked'
+                          : localRoleRestrictions.length > 0 ? `Roles: ${localRoleRestrictions.join(', ')}`
+                          : 'Assign Role'
+                      }
+                      className={`group/role flex items-center gap-1.5 h-7 px-2 -ml-2 rounded-md max-w-full min-w-0 text-xs transition-colors ${isRowLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-zinc-800/60'}`}
+                    >
+                      {localRoleRestrictions.length > 0 ? (
+                        <>
+                          <div className="flex items-center -space-x-1 shrink-0">
+                            {localRoleRestrictions.slice(0, 2).map((role: string, i: number) => {
+                              const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                              const bgColor = colors[i % colors.length];
+                              return (
+                                <div
+                                  key={role}
+                                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ring-2 ring-card shadow-sm shrink-0 ${bgColor}`}
+                                  title={role}
+                                >
+                                  {role.substring(0, 2).toUpperCase()}
+                                </div>
+                              );
+                            })}
+                            {localRoleRestrictions.length > 2 && (
+                              <div className="w-5 h-5 rounded-full ring-2 ring-card bg-zinc-800 text-zinc-300 flex items-center justify-center text-[7px] font-bold shrink-0">
+                                +{localRoleRestrictions.length - 2}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    ))}
-                    {currentAssignees.length > 2 && (
-                      <div className="relative ring-1 ring-[#141416] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[7px] font-bold h-3.5 w-3.5 flex items-center justify-center shrink-0">
-                        +{currentAssignees.length - 2}
-                      </div>
-                    )}
-                  </div>
-                  {currentAssignees.length === 1 && (
-                    <span className="truncate">{currentAssignees[0].name}</span>
-                  )}
-                </>
-              ) : (
-                <>
-                  <User className="w-3 h-3 shrink-0" />
-                  <span>Empty</span>
-                </>
-              )}
-            </div>
+                          {localRoleRestrictions.length === 1 && (
+                            <span className="truncate text-zinc-300 text-[11px] font-medium max-w-[60px]">{localRoleRestrictions[0]}</span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 group-hover/role:border-zinc-400 group-hover/role:text-zinc-300 transition-colors shrink-0">
+                            <Shield className="w-2.5 h-2.5" />
+                          </span>
+                          {!isRowLocked && (
+                            <span className="truncate text-zinc-500 opacity-0 group-hover/role:opacity-100 transition-opacity text-[11px]">
+                              Role
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </button>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content
+                      className="z-[100000] w-56 p-1 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none"
+                      side="bottom"
+                      align="start"
+                      sideOffset={6}
+                    >
+                      {roleMenuContent}
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
+              </div>
 
-            <div className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[10px] shrink-0 whitespace-nowrap">
-              <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
-              <span className={`font-medium ${priorityConfig.color}`}>{priorityLabel}</span>
-            </div>
-          </div>
-        </div>
+              {/* Assignee cell */}
+              <div className="w-36 shrink-0 min-w-0">
+                <Popover.Root open={colAssigneeOpen && canAssignMember} onOpenChange={(open) => { if (canAssignMember) setColAssigneeOpen(open); }}>
+                  <Popover.Trigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        // If no team role yet: open the role picker popover right away
+                        if (!hasTeamRole && !isRowLocked) {
+                          e.preventDefault();
+                          setColRoleOpen(true);
+                        }
+                      }}
+                      title={
+                        isRowLocked ? 'Locked'
+                          : !hasTeamRole ? 'Select a team role first — click to assign role'
+                          : currentAssignees.length > 0 ? currentAssignees.map((u) => u.name).join(', ') : 'Assign members'
+                      }
+                      className={`group/assignee flex items-center gap-2 h-7 px-2 -ml-2 rounded-md max-w-full min-w-0 text-xs transition-colors ${isRowLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-zinc-800/60'}`}
+                    >
+                      {currentAssignees.length > 0 ? (
+                        <>
+                          <div className="flex items-center -space-x-1.5 shrink-0">
+                            {currentAssignees.slice(0, 3).map((u) => (
+                              u.avatarUrl ? (
+                                <img key={u.id} src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover ring-2 ring-card shrink-0" />
+                              ) : (
+                                <div key={u.id} className="w-5 h-5 rounded-full ring-2 ring-card bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[8px] font-bold shrink-0">
+                                  {(u.name || 'U').substring(0, 2).toUpperCase()}
+                                </div>
+                              )
+                            ))}
+                            {currentAssignees.length > 3 && (
+                              <div className="w-5 h-5 rounded-full ring-2 ring-card bg-zinc-800 text-zinc-300 flex items-center justify-center text-[8px] font-bold shrink-0">
+                                +{currentAssignees.length - 3}
+                              </div>
+                            )}
+                          </div>
+                          {currentAssignees.length === 1 && (
+                            <span className="truncate text-zinc-300">{currentAssignees[0].name}</span>
+                          )}
+                          {!hasTeamRole && <Lock className="w-3 h-3 shrink-0 text-zinc-500" />}
+                        </>
+                      ) : (
+                        <>
+                          <span className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-zinc-500 group-hover/assignee:border-zinc-400 group-hover/assignee:text-zinc-300 transition-colors shrink-0">
+                            <UserPlus className="w-3 h-3" />
+                          </span>
+                          {!isRowLocked && (
+                            <span className="truncate text-zinc-500 opacity-0 group-hover/assignee:opacity-100 transition-opacity">
+                              {hasTeamRole ? 'Assign' : 'Set role'}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </button>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content
+                      className="z-[100000] w-72 p-0 bg-background border border-zinc-800 rounded-xl shadow-2xl overflow-hidden outline-none"
+                      side="bottom"
+                      align="start"
+                      sideOffset={6}
+                    >
+                      {assigneeMenuContent}
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
+              </div>
+
+              {/* Priority cell */}
+              <div className="w-24 shrink-0">
+                <Popover.Root open={colPriorityOpen} onOpenChange={(open) => { if (!isRowLocked) setColPriorityOpen(open); }}>
+                  <Popover.Trigger asChild>
+                    <button
+                      type="button"
+                      title={isRowLocked ? 'Locked' : (subtask.priority ? `Priority: ${priorityConfig.label}` : 'Set priority')}
+                      className={`group/priority flex items-center gap-1.5 h-7 px-2 -ml-2 rounded-md text-xs whitespace-nowrap transition-colors ${isRowLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-zinc-800/60'}`}
+                    >
+                      {subtask.priority ? (
+                        <>
+                          <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
+                          <span className={`font-medium ${priorityConfig.color}`}>{priorityConfig.label}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-600 group-hover/priority:text-zinc-400 transition-colors" />
+                          {!isRowLocked && (
+                            <span className="text-zinc-500 opacity-0 group-hover/priority:opacity-100 transition-opacity">Set</span>
+                          )}
+                        </>
+                      )}
+                    </button>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content
+                      className="z-[100000] w-36 p-1.5 bg-popover border border-zinc-800 rounded-xl shadow-2xl outline-none"
+                      side="bottom"
+                      align="start"
+                      sideOffset={4}
+                    >
+                      {renderPriorityMenu(() => setColPriorityOpen(false))}
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
+              </div>
+            </>
+          )}
 
         {/* Collapse Toggle Button */}
         <button 
-          onClick={() => setIsCollapsed(!isCollapsed)} 
-          className="p-1 hover:bg-zinc-800/80 rounded-md text-zinc-500 hover:text-zinc-300 transition-colors shrink-0 ml-2 cursor-pointer"
+          onClick={() => onToggleCollapse ? onToggleCollapse() : setIsCollapsed(!isCollapsed)} 
+          className="w-6 h-6 flex items-center justify-center hover:bg-zinc-800/80 rounded-md text-zinc-500 hover:text-zinc-300 transition-opacity duration-200 shrink-0 cursor-pointer opacity-0 group-hover:opacity-100"
           title={isCollapsed ? "Expand subtask" : "Collapse subtask"}
         >
           <ChevronUp className={`w-4 h-4 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : 'rotate-0'}`} />
@@ -804,13 +1178,31 @@ function SubtaskRow({
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
-            <button
-              onClick={(e) => { e.stopPropagation(); if (canEditTask) onUpdate(subtask.id, { completed: !subtask.completed }); }}
-              className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${subtask.completed ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-secondary hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200'}`}
-              disabled={!canEditTask}
-            >
-              <Check className="w-4 h-4" />
-            </button>
+            {(() => {
+              const isSubClosed = !!subtask.completed || (subtask.status || '').toLowerCase() === 'closed' || (subtask.status || '').toLowerCase() === 'done';
+              return (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!canEditTask) return;
+                    const nextCompleted = !isSubClosed;
+                    onUpdate(subtask.id, {
+                      completed: nextCompleted,
+                      status: nextCompleted ? 'Closed' : 'Pending',
+                    });
+                  }}
+                  title={isSubClosed ? "Mark as Open" : "Mark as Closed"}
+                  className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border cursor-pointer ${
+                    isSubClosed
+                      ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700'
+                      : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white'
+                  }`}
+                  disabled={!canEditTask}
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              );
+            })()}
           </div>
 
           {/* Assignees row */}
@@ -822,9 +1214,9 @@ function SubtaskRow({
             <div className="flex items-center gap-2 flex-wrap">
               <Popover.Root>
                 <Popover.Trigger asChild>
-                  {(subtask.assigneeRoleRestrictions && subtask.assigneeRoleRestrictions.length > 0) ? (
+                  {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
                     <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}>
-                      {subtask.assigneeRoleRestrictions.map((role: string, i: number) => {
+                      {localRoleRestrictions.map((role: string, i: number) => {
                         const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                         const bgColor = colors[i % colors.length];
                         return (
@@ -846,89 +1238,19 @@ function SubtaskRow({
                   )}
                 </Popover.Trigger>
                 <Popover.Portal>
-                  <Popover.Content className="z-[100000] w-52 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
-                    <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
-                      <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
-                      {(!teams || teams.length === 0) && (
-                        <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>
-                      )}
-                      {(teams || []).map((team: any) => (
-                        <div key={team.id} className="mb-2">
-                          {(() => {
-                            const teamRoles = team.teamRoles || [];
-                            const current = subtask.assigneeRoleRestrictions || [];
-                            const hasRoles = teamRoles.length > 0;
-                            const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-                            const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
-                            
-                            return (
-                              <div 
-                                onClick={() => {
-                                  if (!hasRoles || !canEditTask) return;
-                                  let next = [...current];
-                                  if (allSelected) {
-                                    next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
-                                  } else {
-                                    const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
-                                    next = [...next, ...toAdd];
-                                  }
-                                  onUpdate(subtask.id, { assigneeRoleRestrictions: next } as any);
-                                }}
-                                className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles && canEditTask ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'} ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
-                              >
-                                {hasRoles && (
-                                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-popover'}`}>
-                                    {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                                    {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
-                                  </div>
-                                )}
-                                <span>{team.name}</span>
-                              </div>
-                            );
-                          })()}
-                          {(!team.teamRoles || team.teamRoles.length === 0) && (
-                            <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
-                          )}
-                          {team.teamRoles && team.teamRoles.length > 0 && (
-                            <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
-                              {team.teamRoles.map((role: any) => {
-                                const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
-                                return (
-                                  <div
-                                    key={role.id}
-                                    onClick={() => {
-                                      if (!canEditTask) return;
-                                      const current = subtask.assigneeRoleRestrictions || [];
-                                      const next = selected
-                                        ? current.filter((r: string) => r !== role.name)
-                                        : [...current, role.name];
-                                      onUpdate(subtask.id, { assigneeRoleRestrictions: next } as any);
-                                    }}
-                                    className={`flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
-                                  >
-                                    <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
-                                      {selected && <Check className="w-2.5 h-2.5 text-white" />}
-                                    </div>
-                                    <span className="truncate">{role.name}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                  <Popover.Content className="z-[100000] w-56 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                    {roleMenuContent}
                   </Popover.Content>
                 </Popover.Portal>
               </Popover.Root>
 
-              <Popover.Root open={assigneeOpen} onOpenChange={(open) => { if (!subtask.completed) setAssigneeOpen(open); }}>
+              <Popover.Root open={assigneeOpen && canAssignMember} onOpenChange={(open) => { if (canAssignMember) setAssigneeOpen(open); }}>
               <Popover.Trigger asChild>
                 <div
-                  title={currentAssignees.map((u) => u.name).join(', ')}
+                  title={!hasTeamRole ? 'Select a team role first to assign members' : currentAssignees.map((u) => u.name).join(', ')}
                   className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-all ${
-                    subtask.completed
-                      ? 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed grayscale'
+                    !canAssignMember
+                      ? 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed'
                       : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
@@ -955,9 +1277,14 @@ function SubtaskRow({
                       {currentAssignees.length === 1 && (
                         <span className="truncate max-w-[90px]">{currentAssignees[0].name}</span>
                       )}
+                      {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
                     </>
                   ) : (
-                    <><Plus className="w-3.5 h-3.5 shrink-0" /><span>Assign</span></>
+                    <>
+                      <Plus className="w-3.5 h-3.5 shrink-0" />
+                      <span>Assign</span>
+                      {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                    </>
                   )}
                 </div>
               </Popover.Trigger>
@@ -968,62 +1295,7 @@ function SubtaskRow({
                   align="start"
                   sideOffset={8}
                 >
-                  <Command className="flex h-full w-full flex-col overflow-hidden bg-transparent">
-                    <div className="flex items-center border-b border-zinc-800/60 px-3">
-                      <Command.Input 
-                        placeholder="Search assignee..." 
-                        className="flex h-9 w-full rounded-md bg-transparent py-3 text-[13px] outline-none placeholder:text-zinc-500 text-zinc-200"
-                        autoFocus
-                      />
-                    </div>
-                    <Command.List className="max-h-[300px] overflow-y-auto p-1.5 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-                      <Command.Empty className="py-4 text-center text-sm text-zinc-500">
-                        No user found.
-                      </Command.Empty>
-                      {currentAssignees.length > 0 && (
-                        <Command.Item
-                          value="clear all unassigned none"
-                          onSelect={() => handleClearAllAssignees()}
-                          className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 mb-1 border-b border-zinc-800/40"
-                        >
-                          <div className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 mr-2 shrink-0">
-                            <X className="w-3 h-3" />
-                          </div>
-                          <span>Clear all assignees</span>
-                        </Command.Item>
-                      )}
-                      {assignableUsers?.map((u: any) => {
-                        const isAssigned = isUserAssigned(u.id);
-                        const initials = (u.name || 'U').substring(0, 2).toUpperCase();
-                        const role = u.roles?.[0] || '';
-                        const avatarColors = ['bg-violet-600','bg-blue-600','bg-emerald-600','bg-rose-600','bg-amber-600','bg-cyan-600','bg-fuchsia-600'];
-                        const avatarBg = avatarColors[(u.name || '').charCodeAt(0) % avatarColors.length];
-                        return (
-                          <Command.Item
-                            key={u.id}
-                            value={`${u.name} ${u.email} ${role}`}
-                            onSelect={() => handleToggleAssignee(u)}
-                            className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
-                          >
-                            {u.avatarUrl ? (
-                              <img src={u.avatarUrl} className="w-8 h-8 rounded-full shrink-0 object-cover" alt="" />
-                            ) : (
-                              <div className={`w-8 h-8 rounded-full ${avatarBg} flex items-center justify-center text-[11px] font-bold text-white shrink-0`}>
-                                {initials}
-                              </div>
-                            )}
-                            <div className="flex flex-col min-w-0 flex-1">
-                              <span className="truncate text-zinc-100 text-[13px] font-medium">{u.name}</span>
-                              {role && <span className="truncate text-[10px] text-zinc-500 uppercase tracking-wide font-medium">{role}</span>}
-                            </div>
-                            <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center transition-all ml-1 ${isAssigned ? 'bg-indigo-600' : 'border border-zinc-700'}`}>
-                              {isAssigned && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-                            </div>
-                          </Command.Item>
-                        );
-                      })}
-                    </Command.List>
-                  </Command>
+                  {assigneeMenuContent}
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
@@ -1066,31 +1338,7 @@ function SubtaskRow({
                   align="start"
                   sideOffset={4}
                 >
-                  <div className="flex flex-col gap-0.5">
-                    <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase">Priority</div>
-                    {(PRIORITY_OPTIONS as readonly Priority[]).map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => { onUpdate(subtask.id, { priority: p }); setPriorityOpen(false); }}
-                        className={`flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${subtask.priority === p ? 'bg-zinc-800/50' : ''}`}
-                      >
-                        <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
-                        <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
-                        {subtask.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
-                      </button>
-                    ))}
-                    {subtask.priority && (
-                      <div className="border-t border-zinc-800/60 mt-1 pt-1">
-                        <button
-                          className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
-                          onClick={() => { onUpdate(subtask.id, { priority: undefined }); setPriorityOpen(false); }}
-                        >
-                          <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
-                          <span>Clear Priority</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  {renderPriorityMenu(() => setPriorityOpen(false))}
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
@@ -1354,23 +1602,27 @@ function SubtaskRow({
         </div>
       </div>
 
-          {/* Resize handle at bottom */}
-          <div
-            onMouseDown={handleResizeMouseDown}
-            className="absolute bottom-0 left-4 right-4 h-2 cursor-ns-resize flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-          >
-            <div className="w-8 h-[3px] rounded-full bg-zinc-700 hover:bg-zinc-500 transition-colors" />
-          </div>
+          {/* Resize handle at bottom (expanded only) */}
+          {!isCollapsed && (
+            <div
+              onMouseDown={handleResizeMouseDown}
+              className="absolute bottom-0 left-4 right-4 h-2 cursor-ns-resize flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <div className="w-8 h-[3px] rounded-full bg-zinc-700 hover:bg-zinc-500 transition-colors" />
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask, listStatuses, teams }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
+export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask, listStatuses, teams, onCollapseSection, expandAllSignal }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isSubmittingSubtask, setIsSubmittingSubtask] = useState(false);
   const [showAllSubtasks, setShowAllSubtasks] = useState(false);
+  const [expandedSubtaskIds, setExpandedSubtaskIds] = useState<Set<string>>(new Set());
+
   // Local optimistic state — seeded from task.subtasks
   const [localSubtasks, setLocalSubtasks] = useState<Subtask[]>(task.subtasks || []);
   // Ref always holds the latest localSubtasks so async callbacks never read stale state
@@ -1472,14 +1724,71 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
 
 
 
+  const areAllExpanded = localSubtasks.length > 0 && expandedSubtaskIds.size === localSubtasks.length;
+
+  const handleToggleExpandAll = useCallback(() => {
+    setExpandedSubtaskIds((prev) => {
+      if (prev.size === localSubtasks.length && localSubtasks.length > 0) {
+        return new Set();
+      } else {
+        setShowAllSubtasks(true);
+        return new Set(localSubtasks.map((s) => s.id));
+      }
+    });
+  }, [localSubtasks]);
+
+  const lastSignalRef = useRef(expandAllSignal);
+  useEffect(() => {
+    if (expandAllSignal !== undefined && expandAllSignal !== lastSignalRef.current && expandAllSignal > 0) {
+      lastSignalRef.current = expandAllSignal;
+      handleToggleExpandAll();
+    }
+  }, [expandAllSignal, handleToggleExpandAll]);
+
+  const handleToggleRow = useCallback((id: string) => {
+    setExpandedSubtaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSetRow = useCallback((id: string, expanded: boolean) => {
+    setExpandedSubtaskIds((prev) => {
+      const next = new Set(prev);
+      if (expanded) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const handleHeaderDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onCollapseSection?.();
+  };
+
   if (!localSubtasks.length && !addingSubtask) return null;
 
   const visibleSubtasks = showAllSubtasks ? localSubtasks : localSubtasks.slice(0, 3);
 
   return (
     <>
-      <div className="mt-8 mb-8">
-        <div className="flex flex-col gap-3">
+      <div className="mt-2 mb-3">
+        <div className="flex flex-col rounded-xl border border-zinc-800/60 bg-card">
+          {/* Column header */}
+          <div 
+            onDoubleClick={handleHeaderDoubleClick}
+            className="flex items-center gap-3 px-4 h-9 rounded-t-xl border-b border-zinc-800/60 bg-zinc-900/40 text-[11px] font-medium text-zinc-500 select-none cursor-pointer"
+          >
+            <span className="flex-1 min-w-0 pl-7">Name</span>
+            <span className="w-28 shrink-0">Role</span>
+            <span className="w-36 shrink-0">Assignee</span>
+            <span className="w-24 shrink-0">Priority</span>
+            <div className="w-6 shrink-0" />
+          </div>
+
+          <div className="flex flex-col divide-y divide-zinc-800/60">
           {/* Subtask rows */}
           {visibleSubtasks.map(subtask => (
             <SubtaskRow
@@ -1505,21 +1814,26 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               }}
               canEditTask={canEditTask}
               teams={teams}
+              isCollapsed={!expandedSubtaskIds.has(subtask.id)}
+              onToggleCollapse={() => handleToggleRow(subtask.id)}
+              onSetCollapsed={(val) => handleSetRow(subtask.id, !val)}
             />
           ))}
+          </div>
 
           {localSubtasks.length > 3 && (
             <button
               onClick={() => setShowAllSubtasks(!showAllSubtasks)}
-              className="text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors w-fit mx-auto mt-2 mb-1"
+              className="flex items-center justify-center gap-1.5 h-8 border-t border-zinc-800/60 text-[11px] font-medium text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/30 transition-colors cursor-pointer"
             >
-              {showAllSubtasks ? 'Show less' : `Show more (${localSubtasks.length - 3})`}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showAllSubtasks ? 'rotate-180' : ''}`} />
+              {showAllSubtasks ? 'Show less' : `Show ${localSubtasks.length - 3} more`}
             </button>
           )}
 
-          {/* Add new task inline input */}
+          {/* Add new subtask — final table row */}
           {(addingSubtask || localSubtasks.length > 0) && (
-            <div className="px-4 py-3 flex items-center gap-3 border border-zinc-800/60 rounded-xl bg-background/50 border-dashed focus-within:border-zinc-700 focus-within:bg-secondary/40 transition-colors">
+            <div className="px-4 h-10 flex items-center gap-3 rounded-b-xl border-t border-zinc-800/60 hover:bg-zinc-800/30 focus-within:bg-zinc-800/30 transition-colors">
               <Plus className="w-4 h-4 text-zinc-600 shrink-0" />
               <input
                 type="text"

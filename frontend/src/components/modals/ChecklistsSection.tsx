@@ -155,9 +155,9 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
   }
 
   return (
-    <div className="w-full">
+    <div className={`w-full ${isExpanded ? 'mb-4' : 'mb-1'}`}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 group cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
+      <div className={`flex items-center justify-between group cursor-pointer select-none ${isExpanded ? 'mb-3' : 'mb-0'}`} onClick={() => setIsExpanded(!isExpanded)}>
         <div className="flex items-center gap-2">
           {isExpanded ? (
             <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0" />

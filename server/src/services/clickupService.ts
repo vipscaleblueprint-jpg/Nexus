@@ -96,9 +96,12 @@ export async function getFolderlessLists(spaceId: string): Promise<any> {
 
 // ---------------------------------------------------------------------------
 
-function htmlToClickupMarkdown(html: string | undefined): string | undefined {
+export function htmlToClickupMarkdown(html: string | undefined): string | undefined {
   if (!html) return html;
   return html
+    // Headings become "# Title" on their own line, not text glued to the next paragraph.
+    .replace(/<h([1-6])[^>]*>/gi, (_m, level) => `\n\n${'#'.repeat(Number(level))} `)
+    .replace(/<\/h[1-6]>/gi, '\n\n')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>\s*<p>/gi, '\n\n')
     .replace(/<p>/gi, '')
@@ -114,6 +117,7 @@ function htmlToClickupMarkdown(html: string | undefined): string | undefined {
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -126,24 +130,47 @@ function escapeHtml(text: string): string {
 }
 
 function inlineMarkdownToHtml(text: string): string {
-  return escapeHtml(text)
+  // Code, escapes, links and URLs are set aside first so emphasis rules can't
+  // mangle them (e.g. the underscores in https://x.com/a_b_c).
+  const stash: string[] = [];
+  const keep = (html: string) => `\u0000${stash.push(html) - 1}\u0000`;
+  const html = escapeHtml(
+    text
+      .replace(/`([^`]+)`/g, (_m, code) => keep(`<code>${escapeHtml(code)}</code>`))
+      // ClickUp escapes markdown characters in plain text ("1\.", "\-", "\*").
+      .replace(/\\([\\`*_{}[\]()#+\-.!>~|<])/g, (_m, ch) => keep(escapeHtml(ch)))
+  )
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_m, alt, url) => keep(`<a href="${url}">${alt || url}</a>`))
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_m, label, url) => keep(`<a href="${url}">${label}</a>`))
+    .replace(/https?:\/\/[^\s<]+/g, (url) => keep(url))
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    .replace(/~~(.+?)~~/g, '<s>$1</s>')
     .replace(/(^|[^*])\*(?!\s)([^*]+?)\*(?!\*)/g, '$1<em>$2</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
+    .replace(/(^|[^\w])_(?!\s)([^_]+?)_(?!\w)/g, '$1<em>$2</em>');
+  return html.replace(/\u0000(\d+)\u0000/g, (_m, i) => stash[Number(i)]);
+}
+
+/** Leading whitespace width, tabs counted as 4. */
+function indentOf(line: string): number {
+  const lead = line.match(/^[ \t]*/)![0];
+  return lead.replace(/\t/g, '    ').length;
 }
 
 /**
  * Converts a ClickUp markdown_description into the HTML the Nexus description
- * editor stores. Covers what ClickUp/n8n descriptions use: headings, bullet and
- * numbered lists, rules, bold/italic/code/links and plain paragraphs.
+ * editor (Tiptap) stores: headings, nested bullet / numbered / checkbox lists,
+ * quotes, code blocks, rules, tables (as text rows), bold/italic/strike/code/links
+ * and plain paragraphs. No whitespace between tags — the editor preserves it.
  */
 export function clickupMarkdownToHtml(markdown: string | undefined | null): string {
   if (!markdown) return '';
   const out: string[] = [];
-  let list: 'ul' | 'ol' | null = null;
   let paragraph: string[] = [];
+  let quote: string[] = [];
+  let code: string[] | null = null;
+  /** Open lists, outermost first; each has an open <li>. */
+  const lists: { type: 'ul' | 'ol' | 'task'; indent: number }[] = [];
 
   const flushParagraph = () => {
     if (paragraph.length) {
@@ -151,33 +178,65 @@ export function clickupMarkdownToHtml(markdown: string | undefined | null): stri
       paragraph = [];
     }
   };
-  const closeList = () => {
-    if (list) {
-      out.push(`</${list}>`);
-      list = null;
+  const flushQuote = () => {
+    if (quote.length) {
+      out.push(`<blockquote>${clickupMarkdownToHtml(quote.join('\n')) || '<p></p>'}</blockquote>`);
+      quote = [];
     }
   };
+  const closeTag = (type: 'ul' | 'ol' | 'task') => (type === 'ol' ? '</ol>' : '</ul>');
+  const popList = () => out.push(`</li>${closeTag(lists.pop()!.type)}`);
+  const closeLists = () => {
+    while (lists.length) popList();
+  };
+  const flushAll = () => {
+    flushParagraph();
+    flushQuote();
+    closeLists();
+  };
 
-  for (const rawLine of markdown.replace(/\r\n/g, '\n').split('\n')) {
+  for (const rawLine of markdown.replace(/\r\n?/g, '\n').split('\n')) {
     const line = rawLine.trimEnd();
-    if (!line.trim()) {
-      flushParagraph();
-      closeList();
+
+    if (code) {
+      if (/^\s*```/.test(line)) {
+        out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+        code = null;
+      } else {
+        code.push(rawLine);
+      }
+      continue;
+    }
+    if (/^\s*```/.test(line)) {
+      flushAll();
+      code = [];
       continue;
     }
 
+    if (!line.trim()) {
+      flushAll();
+      continue;
+    }
+
+    const quoted = line.match(/^\s*>\s?(.*)$/);
+    if (quoted) {
+      flushParagraph();
+      closeLists();
+      quote.push(quoted[1]);
+      continue;
+    }
+    flushQuote();
+
     const heading = line.match(/^\s*(#{1,6})\s+(.*)$/);
     if (heading) {
-      flushParagraph();
-      closeList();
+      flushAll();
       const level = Math.min(heading[1].length, 3);
-      out.push(`<h${level}>${inlineMarkdownToHtml(heading[2])}</h${level}>`);
+      out.push(`<h${level}>${inlineMarkdownToHtml(heading[2].replace(/\s+#+\s*$/, ''))}</h${level}>`);
       continue;
     }
 
     if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
-      flushParagraph();
-      closeList();
+      flushAll();
       out.push('<hr>');
       continue;
     }
@@ -187,23 +246,46 @@ export function clickupMarkdownToHtml(markdown: string | undefined | null): stri
     const item = bullet ?? numbered;
     if (item) {
       flushParagraph();
-      const type = bullet ? 'ul' : 'ol';
-      if (list !== type) {
-        closeList();
-        out.push(`<${type}>`);
-        list = type;
+      const check = bullet ? item[1].match(/^\[([ xX])\]\s*(.*)$/) : null;
+      const type = check ? 'task' : bullet ? 'ul' : 'ol';
+      const indent = indentOf(line);
+      while (lists.length && lists[lists.length - 1].indent > indent) popList();
+      const top = lists[lists.length - 1];
+      if (top && top.indent === indent && top.type !== type) popList();
+      const current = lists[lists.length - 1];
+      if (current && current.indent === indent) {
+        out.push('</li>');
+      } else {
+        out.push(type === 'task' ? '<ul data-type="taskList">' : `<${type}>`);
+        lists.push({ type, indent });
       }
-      // ClickUp checklist bullets ("- [ ] x") read as plain list items here.
-      out.push(`<li>${inlineMarkdownToHtml(item[1].replace(/^\[[ xX]\]\s+/, ''))}</li>`);
+      if (check) {
+        const checked = check[1].toLowerCase() === 'x';
+        out.push(`<li data-type="taskItem" data-checked="${checked}"><p>${inlineMarkdownToHtml(check[2])}</p>`);
+      } else {
+        out.push(`<li><p>${inlineMarkdownToHtml(item[1])}</p>`);
+      }
       continue;
     }
 
-    closeList();
+    // An indented line under a list item continues that item.
+    if (lists.length && indentOf(line) > 0) {
+      out.push(`<p>${inlineMarkdownToHtml(line.trim())}</p>`);
+      continue;
+    }
+
+    closeLists();
+    const cells = line.match(/^\s*\|(.*)\|\s*$/);
+    if (cells) {
+      // Tables: skip the |---|---| divider, keep each row as a line of text.
+      if (!/^[\s|:-]+$/.test(line)) paragraph.push(cells[1].split('|').map((c) => c.trim()).join(' | '));
+      continue;
+    }
     paragraph.push(line.trim());
   }
 
-  flushParagraph();
-  closeList();
+  if (code) out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+  flushAll();
   return out.join('');
 }
 

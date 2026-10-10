@@ -29,7 +29,7 @@ import { TaskDetailModal, STATUS_COLORS } from '@/components/modals/TaskDetailMo
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
 import { toast } from '@/lib/toast';
-import { canUserMoveTask } from '@/lib/permissions';
+import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { getRoles } from '@/api/roles';
 import type { WorkspaceRole } from '@/lib/types';
 
@@ -297,7 +297,26 @@ export default function BoardPage() {
       });
     });
 
+    const handleWindowTaskUpdated = (e: any) => {
+      const updatedTask = e.detail?.task;
+      if (!updatedTask) return;
+      setList((prev: any) => {
+        if (!prev || !prev.tasks) return prev;
+        const newTasks = prev.tasks.map((t: any) => {
+          if (t.id === updatedTask.id) {
+            return { ...t, ...updatedTask };
+          }
+          return t;
+        });
+        return { ...prev, tasks: newTasks };
+      });
+      setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
+    };
+
+    window.addEventListener('task:updated', handleWindowTaskUpdated);
+
     return () => {
+      window.removeEventListener('task:updated', handleWindowTaskUpdated);
       s.emit('leave_list', id);
       s.disconnect();
     };
@@ -345,6 +364,11 @@ export default function BoardPage() {
       const check = canUserMoveTask(task, list?.statuses, currentUser, workspaceRoles);
       if (!check.allowed) {
         toast.error(check.reason || 'You do not have permission to move tasks from this status');
+        return;
+      }
+      const transitionCheck = canTransitionTaskStatus(task, newStatus);
+      if (!transitionCheck.allowed) {
+        toast.error(transitionCheck.reason || 'Cannot move task to this status.');
         return;
       }
     }
@@ -455,6 +479,11 @@ export default function BoardPage() {
               toast.error(check.reason || 'You do not have permission to move tasks from this status');
               return;
             }
+            const transitionCheck = canTransitionTaskStatus(selectedTask, newStatus);
+            if (!transitionCheck.allowed) {
+              toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+              return;
+            }
             handleTaskMove(selectedTask.id, newStatus);
             setSelectedTask({ ...selectedTask, status: newStatus });
           }
@@ -464,6 +493,11 @@ export default function BoardPage() {
             const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
             if (!check.allowed) {
               toast.error(check.reason || 'You do not have permission to move tasks from this status');
+              return;
+            }
+            const transitionCheck = canTransitionTaskStatus(selectedTask, updatedTask.status);
+            if (!transitionCheck.allowed) {
+              toast.error(transitionCheck.reason || 'Cannot move task to this status.');
               return;
             }
           }

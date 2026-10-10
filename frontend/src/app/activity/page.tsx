@@ -4,13 +4,13 @@ import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
 import { notificationsApi, TaskNotification } from '@/api/notifications';
 import { useRouter } from 'next/navigation';
-import { Check, MailOpen, Clock, ChevronDown, Users, MessageSquare, Activity, Globe } from 'lucide-react';
+import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, Users, MessageSquare, Activity, Globe } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { tasksApi } from '@/api/tasks';
 
 type ViewMode = 'for_me' | 'show_all';
-type Category = 'all' | 'status' | 'assigned' | 'comments';
+type Category = 'all' | 'status' | 'checklists' | 'audits' | 'assigned' | 'comments';
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = [
   { value: 'for_me',   label: 'For Me',   description: 'All your notifications' },
@@ -20,6 +20,8 @@ const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = 
 const CATEGORIES: { value: Category; label: string; icon: any }[] = [
   { value: 'all', label: 'All', icon: Activity },
   { value: 'status', label: 'Status Updates', icon: Clock },
+  { value: 'checklists', label: 'Checklists', icon: CheckSquare },
+  { value: 'audits', label: 'Auditor', icon: ShieldCheck },
   { value: 'assigned', label: 'Assigned to Me', icon: Users },
   { value: 'comments', label: 'Comments', icon: MessageSquare },
 ];
@@ -33,6 +35,24 @@ const formatActivityMessage = (log: any) => {
   switch (action?.toUpperCase()) {
     case 'STATUS_CHANGE':
       message = `changed status ${details?.oldStatus ? `from ${details.oldStatus} ` : ''}to ${details?.newStatus}`;
+      break;
+    case 'AUDIT_ITEM_CHECKED': {
+      const lower = (details?.itemName || '').toLowerCase();
+      if (lower.includes('funnel')) {
+        message = 'has checked funnel auditing';
+      } else if (lower.includes('design')) {
+        message = 'has checked design auditing';
+      } else if (lower.includes('ui') && lower.includes('ux')) {
+        message = 'has checked UI/UX auditing';
+      } else if (lower.includes('instructions')) {
+        message = 'has checked instructions auditing';
+      } else {
+        message = `has checked ${details?.itemName || 'auditing'}`;
+      }
+      break;
+    }
+    case 'CHECKLIST_ITEM_CHECKED':
+      message = `has checked ${details?.itemName || 'checklist'}`;
       break;
     case 'PRIORITY_CHANGE':
       message = `changed priority ${details?.oldPriority ? `from ${details.oldPriority} ` : ''}to ${details?.newPriority}`;
@@ -74,7 +94,24 @@ const formatActivityMessage = (log: any) => {
 
 export default function ActivityPage() {
   const router = useRouter();
-  const [viewMode, setViewMode] = useState<ViewMode>('for_me');
+  const { decrementUnreadNotifications, workspaceRoles, currentUser } = useAppStore();
+  const isPM = currentUser?.roles?.some((r: string) => /project\s*manager|^pm$/i.test(r?.trim()));
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const user = useAppStore.getState().currentUser;
+    const isPmUser = user?.roles?.some((r: string) => /project\s*manager|^pm$/i.test(r?.trim()));
+    return isPmUser ? 'show_all' : 'for_me';
+  });
+  const hasInitializedViewMode = useRef(false);
+
+  useEffect(() => {
+    if (currentUser && !hasInitializedViewMode.current) {
+      if (isPM) {
+        setViewMode('show_all');
+      }
+      hasInitializedViewMode.current = true;
+    }
+  }, [currentUser, isPM]);
+
   const [category, setCategory] = useState<Category>('all');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -84,7 +121,6 @@ export default function ActivityPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { decrementUnreadNotifications, workspaceRoles, currentUser } = useAppStore();
   const currentUserIdRef = useRef<string | undefined>(currentUser?.id);
   currentUserIdRef.current = currentUser?.id;
 
@@ -223,6 +259,8 @@ export default function ActivityPage() {
     if (cat === 'all') return true;
     const type = n.type?.toUpperCase();
     if (cat === 'status') return type === 'STATUS_CHANGE';
+    if (cat === 'checklists') return type === 'CHECKLIST_ITEM_CHECKED';
+    if (cat === 'audits') return type === 'AUDIT_ITEM_CHECKED';
     if (cat === 'assigned') return type === 'ASSIGNMENT';
     if (cat === 'comments') return type === 'MENTION' || type === 'COMMENT';
     return false;
@@ -232,6 +270,8 @@ export default function ActivityPage() {
     if (cat === 'all') return true;
     const action = log.action?.toUpperCase();
     if (cat === 'status') return action === 'STATUS_CHANGE';
+    if (cat === 'checklists') return action === 'CHECKLIST_ITEM_CHECKED';
+    if (cat === 'audits') return action === 'AUDIT_ITEM_CHECKED';
     if (cat === 'assigned') return action === 'ASSIGNMENT';
     if (cat === 'comments') return action === 'COMMENT' || action === 'REPLY' || action === 'COMMENT_ADDED';
     return false;
@@ -424,10 +464,12 @@ export default function ActivityPage() {
                   {items.map((log: any, i: number) => {
                     const isAssignment = log.action === 'ASSIGNMENT';
                     const isStatus = log.action === 'STATUS_CHANGE' || log.action === 'TITLE_CHANGE';
-                    const isComment = log.action === 'COMMENT_ADDED';
-                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : Globe;
-                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : 'text-zinc-400';
-                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : 'bg-zinc-500/10';
+                    const isComment = log.action === 'COMMENT_ADDED' || log.action === 'COMMENT' || log.action === 'REPLY';
+                    const isAudit = log.action === 'AUDIT_ITEM_CHECKED';
+                    const isChecklist = log.action === 'CHECKLIST_ITEM_CHECKED';
+                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
+                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : isAudit ? 'text-purple-400' : isChecklist ? 'text-violet-400' : 'text-zinc-400';
+                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : isAudit ? 'bg-purple-500/10' : isChecklist ? 'bg-violet-500/10' : 'bg-zinc-500/10';
 
                     return (
                       <div
@@ -516,9 +558,11 @@ export default function ActivityPage() {
                     const isAssignment = n.type === 'ASSIGNMENT';
                     const isStatus = n.type === 'STATUS_CHANGE';
                     const isComment = n.type === 'COMMENT' || n.type === 'MENTION';
-                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : Globe;
-                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : 'text-zinc-400';
-                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : 'bg-zinc-500/10';
+                    const isAudit = n.type === 'AUDIT_ITEM_CHECKED';
+                    const isChecklist = n.type === 'CHECKLIST_ITEM_CHECKED';
+                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
+                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : isAudit ? 'text-purple-400' : isChecklist ? 'text-violet-400' : 'text-zinc-400';
+                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : isAudit ? 'bg-purple-500/10' : isChecklist ? 'bg-violet-500/10' : 'bg-zinc-500/10';
 
                     return (
                       <div

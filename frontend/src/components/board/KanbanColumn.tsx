@@ -32,6 +32,8 @@ interface Props {
   dragAttributes?: any;
   isOverlay?: boolean;
   isOver?: boolean;
+  onTaskMove?: (taskId: string, newStatus: string) => void;
+  onSubtaskStatusChange?: (parentTaskId: string, subtaskId: string, newStatus: string) => void;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -163,6 +165,8 @@ export const KanbanColumn = memo(function KanbanColumn({
   dragAttributes,
   isOverlay,
   isOver,
+  onTaskMove,
+  onSubtaskStatusChange,
 }: Props) {
 
   const droppableData = useMemo(() => ({
@@ -388,6 +392,8 @@ export const KanbanColumn = memo(function KanbanColumn({
                 isMoveDisabled={isColumnRestrictedForUser}
                 moveLockReason={columnRestrictionReason}
                 listStatuses={listStatuses}
+                onTaskMove={onTaskMove}
+                onSubtaskStatusChange={onSubtaskStatusChange}
                 onUnauthorizedDragAttempt={() => {
                   setIsShaking(true);
                   setTimeout(() => setIsShaking(false), 400);

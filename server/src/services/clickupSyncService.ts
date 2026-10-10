@@ -21,6 +21,7 @@ import {
   getClickUpTaskComments,
   getClickUpCommentReplies,
   resolveClickUpListId,
+  clickupMarkdownToHtml,
 } from './clickupService';
 
 export interface ClickUpSyncSummary {
@@ -339,7 +340,9 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
     const data = await getClickUpListTasks(clickUpListId, page, ctx.includeClosed, updatedSince);
     const tasks: any[] = data?.tasks ?? [];
     cuTasks.push(...tasks);
-    if (data?.last_page === true || tasks.length < CLICKUP_PAGE_SIZE) break;
+    // Trust last_page when ClickUp sends it: with subtasks=true a page can hold
+    // fewer than 100 tasks and still not be the last one.
+    if (tasks.length === 0 || (data?.last_page ?? tasks.length < CLICKUP_PAGE_SIZE)) break;
   }
   const checked = cuTasks.length;
   // Nothing changed in ClickUp since the last pull.
@@ -383,11 +386,22 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
   // group, which is safe because every write matches existing rows first.
   const syncGroup = async (t: any): Promise<string | null> => {
     try {
-      const { taskId, listId, created } = await syncTask(nexusListId, t.id, ctx);
+      const { taskId, listId, created, subtasks } = await syncTask(nexusListId, t.id, ctx);
+      // The list page only has subtasks homed in this list, so also walk each task's
+      // own subtask tree (subtasks in other lists, nested levels). On an incremental
+      // pull, unchanged ones are skipped unless the parent is new to Nexus.
+      const changed = (s: any) =>
+        created || !updatedSince || !s?.date_updated || Number(s.date_updated) > updatedSince;
+      const queue: any[] = [...(subtasksByRoot.get(t.id) ?? []), ...subtasks.filter(changed)];
+      const done = new Set<string>();
       const subErrors: string[] = [];
-      for (const sub of subtasksByRoot.get(t.id) ?? []) {
+      while (queue.length) {
+        const sub = queue.shift();
+        if (!sub?.id || done.has(sub.id)) continue;
+        done.add(sub.id);
         try {
-          await syncSubtask(taskId, sub.id, ctx);
+          const children = await syncSubtask(taskId, sub.id, ctx);
+          queue.push(...children.filter(changed));
         } catch (err: any) {
           subErrors.push(`subtask "${sub.name}": ${err.message}`);
         }
@@ -432,6 +446,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
     id: true,
     listId: true,
     externalId: true,
+    description: true,
     list: { select: { clickUpListId: true, externalId: true } },
   } as const;
   const cu = await getClickUpTask(cuTaskId);
@@ -459,6 +474,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
   const listId = existing && inMappedList ? existing.listId : nexusListId;
   const status = await resolveStatus(listId, cu.status, ctx);
   const assigneeIds = mapUsers(cu.assignees, ctx);
+  const description = descriptionHtml(cu);
 
   let taskId: string;
   if (existing) {
@@ -469,6 +485,10 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
         externalId: existing.externalId ?? cuTaskId,
         ...(listId !== existing.listId && { listId }),
         ...(status && { status }),
+        ...(shouldReplaceDescription(existing.description, description) && { description }),
+        ...(PRIORITY_MAP[cu.priority?.priority] && { priority: PRIORITY_MAP[cu.priority.priority] }),
+        ...(toDate(cu.due_date) && { dueDate: toDate(cu.due_date) }),
+        ...(toDate(cu.start_date) && { startDate: toDate(cu.start_date) }),
         // Only overwrite assignees when ClickUp's resolve to Nexus users,
         // so unmatched emails don't wipe assignments made in Nexus.
         ...(assigneeIds.length > 0 && {
@@ -486,7 +506,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
     const created = await prisma.task.create({
       data: {
         title: cu.name,
-        description: cu.text_content || null,
+        description,
         listId,
         creatorId: userIdFor(cu.creator, ctx) ?? ctx.fallbackUserId,
         status: status ?? 'PENDING',
@@ -511,7 +531,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
   await syncChecklists(cu.checklists, target, ctx);
   await syncAttachments(cu.attachments, { taskId }, ctx);
   await syncComments(cuTaskId, target, ctx);
-  return { taskId, listId, created: !existing };
+  return { taskId, listId, created: !existing, subtasks: (cu.subtasks ?? []) as any[] };
 }
 
 async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncContext) {
@@ -519,13 +539,14 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
   const existing =
     (await prisma.subtask.findFirst({
       where: { OR: [{ externalId: cuSubtaskId }, { externalId: { endsWith: `/${cuSubtaskId}` } }] },
-      select: { id: true, externalId: true, assigneeRoleRestrictions: true },
+      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true },
     })) ??
     // Subtasks created in Nexus before their ClickUp ID was stored.
     (await prisma.subtask.findFirst({
       where: { taskId: nexusTaskId, externalId: null, title: { equals: cu.name, mode: 'insensitive' } },
-      select: { id: true, externalId: true, assigneeRoleRestrictions: true },
+      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true },
     }));
+  const description = descriptionHtml(cu);
 
   // The auditor role drives which audits (Design / UI UX / Funnel) the task requires,
   // the way Galaxy sets it. Never replaces a role already set in Nexus.
@@ -544,6 +565,9 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
         title: cu.name,
         externalId: existing.externalId ?? cuSubtaskId,
         ...(status && { status, completed }),
+        ...(shouldReplaceDescription(existing.description, description) && { description }),
+        ...(PRIORITY_MAP[cu.priority?.priority] && { priority: PRIORITY_MAP[cu.priority.priority] }),
+        ...(toDate(cu.due_date) && { dueDate: toDate(cu.due_date) }),
         ...(auditorRole && existing.assigneeRoleRestrictions.length === 0 && { assigneeRoleRestrictions: [auditorRole] }),
         ...(assigneeIds.length > 0 && {
           assigneeId: assigneeIds[0],
@@ -557,7 +581,7 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
       data: {
         taskId: nexusTaskId,
         title: cu.name,
-        description: cu.text_content || null,
+        description,
         status: status ?? 'PENDING',
         completed,
         priority: PRIORITY_MAP[cu.priority?.priority] ?? Priority.MEDIUM,
@@ -582,6 +606,42 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
   // Attachment has no subtask relation, so subtask files land on the parent task.
   await syncAttachments(cu.attachments, { taskId: nexusTaskId }, ctx);
   await syncComments(cuSubtaskId, target, ctx);
+  // Nested subtasks, flattened under the same Nexus task by the caller.
+  return (cu.subtasks ?? []) as any[];
+}
+
+/** ClickUp's formatted description as Nexus HTML; text_content is only a plain-text fallback. */
+function descriptionHtml(cu: any): string | null {
+  const markdown = [cu.markdown_description, cu.text_content].find(
+    (d): d is string => typeof d === 'string' && d.trim() !== ''
+  );
+  return clickupMarkdownToHtml(markdown) || null;
+}
+
+/** Visible text only, so formatting differences don't count as an edit. */
+function comparableText(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, '');
+}
+
+/**
+ * Whether the pulled description should replace the stored one: when Nexus has none,
+ * when the text changed in ClickUp, or when the stored one is unformatted plain text
+ * from an older pull. Same text in Nexus HTML is kept — the push to ClickUp drops some
+ * formatting (headings, checkboxes), so pulling it back would lose it.
+ */
+function shouldReplaceDescription(current: string | null, next: string | null): next is string {
+  if (!next) return false;
+  if (!current?.trim()) return true;
+  if (comparableText(current) !== comparableText(next)) return true;
+  return !/^\s*</.test(current);
 }
 
 async function syncChecklists(checklists: any[] | undefined, target: Target, ctx: SyncContext) {

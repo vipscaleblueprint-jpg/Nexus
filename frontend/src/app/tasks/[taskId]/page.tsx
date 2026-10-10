@@ -76,6 +76,28 @@ export default function TaskFullPage() {
     return () => clearTimeout(timeout);
   }, [taskId]);
 
+  useEffect(() => {
+    const handleTaskUpdated = (e: any) => {
+      const incoming = e.detail?.task;
+      if (!incoming) return;
+      if (task && incoming.id === task.id) {
+        setTask(prev => prev ? { ...prev, ...incoming } : prev);
+      }
+      if (subtask) {
+        if (incoming.id === subtask.id) {
+          setSubtask((prev: any) => prev ? { ...prev, ...incoming } : prev);
+        } else {
+          const foundSub = incoming.subtasks?.find((st: any) => st.id === subtask.id);
+          if (foundSub) {
+            setSubtask((prev: any) => prev ? { ...prev, ...foundSub } : prev);
+          }
+        }
+      }
+    };
+    window.addEventListener('task:updated', handleTaskUpdated);
+    return () => window.removeEventListener('task:updated', handleTaskUpdated);
+  }, [task?.id, subtask?.id]);
+
   if (loading) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-background">
@@ -106,6 +128,9 @@ export default function TaskFullPage() {
           subtask={subtask}
           parentTask={task}
           onClose={handleClose}
+          onCloseModal={handleClose}
+          setActiveSubtask={setSubtask}
+          onUpdateTask={(updated: any) => setTask(updated)}
           currentUser={currentUser}
           workspaceUsers={workspaceUsers}
           workspaceTeams={workspaceTeams}
@@ -123,6 +148,7 @@ export default function TaskFullPage() {
           isOpen={true}
           onClose={handleClose}
           task={task}
+          onUpdateTask={(updated: any) => setTask(updated)}
           workspaceRoles={workspaceRoles}
           mode="full"
         />

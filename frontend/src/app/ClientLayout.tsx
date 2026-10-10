@@ -77,6 +77,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     });
 
     s.on('task:updated', (task) => {
+      useAppStore.getState().updateTask(task);
       window.dispatchEvent(new CustomEvent('task:updated', { detail: { task } }));
     });
 

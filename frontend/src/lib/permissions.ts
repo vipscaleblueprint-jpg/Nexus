@@ -1,4 +1,5 @@
 import { Task, WorkspaceRole, User } from '@/lib/types';
+import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 
 export function canUserMoveTask(
   task: Task | null | undefined,
@@ -72,4 +73,54 @@ export function canUserEditTask(
     allowed: false,
     reason: `Only users with the "${t.teamAssignAccessRole}" role can edit this task.`,
   };
+}
+
+export const RESTRICTED_GATE_STATUSES = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm'];
+
+/**
+ * Validates whether a task can transition to a restricted status.
+ * Requires all subtasks to be Closed, and all Audit checklist items to be completed.
+ */
+export function canTransitionTaskStatus(
+  task: any,
+  newStatus: string
+): { allowed: boolean; reason?: string } {
+  if (!task || !newStatus) return { allowed: true };
+
+  const currentStatusNorm = (task.status || '').trim().toLowerCase();
+  const targetStatusNorm = newStatus.trim().toLowerCase();
+
+  // If status is not changing, allow
+  if (currentStatusNorm === targetStatusNorm) return { allowed: true };
+
+  if (RESTRICTED_GATE_STATUSES.includes(targetStatusNorm)) {
+    // 1. Subtasks check: all subtasks must be closed
+    if (task.subtasks && task.subtasks.length > 0) {
+      const hasUnclosedSubtasks = task.subtasks.some((st: any) => {
+        const s = (st.status || '').trim().toLowerCase();
+        return s !== 'closed' && !st.completed;
+      });
+      if (hasUnclosedSubtasks) {
+        return {
+          allowed: false,
+          reason: `Cannot move task to ${newStatus} until all subtasks are Closed.`,
+        };
+      }
+    }
+
+    // 2. Audit checklist check: Nexus Audit checklist must be fully completed
+    if (task.checklists && task.checklists.length > 0) {
+      const auditChecklists = task.checklists.filter((c: any) => isNexusAuditChecklist(c));
+      for (const c of auditChecklists) {
+        if (c.items && c.items.length > 0 && c.items.some((i: any) => !i.completed)) {
+          return {
+            allowed: false,
+            reason: `Cannot move to ${newStatus}: Audit checklist "${c.name}" is not fully completed.`,
+          };
+        }
+      }
+    }
+  }
+
+  return { allowed: true };
 }

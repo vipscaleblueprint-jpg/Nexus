@@ -27,6 +27,12 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { isNexusAuditChecklist } from '../utils/auditChecklist';
+import {
+  getStatusChangeRecipients,
+  getChecklistCheckRecipients,
+  isAuditItem,
+  formatChecklistNotificationTitle,
+} from '../utils/roleNotification';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -270,7 +276,11 @@ export async function createTask(req: Request, res: Response) {
       assigneeRoleRestrictions, teamAssignAccessRole, afterTaskId,
     } = req.body;
 
-    const effectiveAssigneeId = (assigneeIds && assigneeIds.length > 0) ? assigneeIds[0] : (assigneeId || null);
+    let computedAssigneeIds = assigneeIds;
+    if (assigneeRoleRestrictions && assigneeRoleRestrictions.length > 0 && (!assigneeIds || assigneeIds.length === 0) && !assigneeId) {
+      computedAssigneeIds = await resolveUsersFromRoles(assigneeRoleRestrictions);
+    }
+    const effectiveAssigneeId = (computedAssigneeIds && computedAssigneeIds.length > 0) ? computedAssigneeIds[0] : (assigneeId || null);
     const position = afterTaskId ? await getPositionAfter(listId, afterTaskId) : null;
 
     const task = await prisma.task.create({
@@ -281,8 +291,8 @@ export async function createTask(req: Request, res: Response) {
         priority: priority || 'MEDIUM',
         listId,
         assigneeId: effectiveAssigneeId,
-        ...(assigneeIds && assigneeIds.length > 0
-          ? { assignees: { connect: assigneeIds.map((id: string) => ({ id })) } }
+        ...(computedAssigneeIds && computedAssigneeIds.length > 0
+          ? { assignees: { connect: computedAssigneeIds.map((id: string) => ({ id })) } }
           : assigneeId
           ? { assignees: { connect: [{ id: assigneeId }] } }
           : {}),
@@ -581,6 +591,7 @@ export async function updateTask(req: Request, res: Response) {
         title: true,
         status: true,
         priority: true,
+        teamId: true,
         assigneeId: true,
         listId: true,
         creatorId: true,
@@ -674,6 +685,12 @@ export async function updateTask(req: Request, res: Response) {
       } else {
         payload.assignees = [];
       }
+      payload.assigneeIds = idsToFetch;
+      payload.assignee = payload.assignees[0] || null;
+    } else {
+      payload.assignees = currentTask.assignees || [];
+      payload.assigneeIds = (currentTask.assignees || []).map((a: any) => a.id);
+      payload.assignee = (currentTask.assignees && currentTask.assignees.length > 0) ? currentTask.assignees[0] : null;
     }
     
     if (teamId !== undefined) {
@@ -797,9 +814,11 @@ export async function updateTask(req: Request, res: Response) {
               },
             });
 
-            const usersToNotify = currentTask.assignees
-              .map((a: any) => a.id)
-              .filter((id: any) => id !== actingUserId);
+            const usersToNotify = await getStatusChangeRecipients(
+              status,
+              { ...currentTask, teamId: teamId || currentTask.teamId },
+              actingUserId
+            );
 
             if (usersToNotify.length > 0) {
               await prisma.taskNotification.createMany({
@@ -978,7 +997,7 @@ export async function moveTask(req: Request, res: Response) {
 
     const currentTask = await prisma.task.findUnique({
       where: { id },
-      select: { id: true, status: true, listId: true, creatorId: true, externalId: true, assignees: { select: { id: true } } },
+      select: { id: true, title: true, status: true, listId: true, creatorId: true, teamId: true, externalId: true, assignees: { select: { id: true } } },
     });
 
     if (!currentTask) {
@@ -1067,10 +1086,8 @@ export async function moveTask(req: Request, res: Response) {
             // Global broadcast so the Activity page and dashboards refresh too
             io.emit('task_activity', { taskId: id, activity });
 
-            // Notify assignees (same as updateTask) so the change shows in their "For Me" feed
-            const usersToNotify = currentTask.assignees
-              .map((a: any) => a.id)
-              .filter((uid: string) => uid !== actingUserId);
+            // Notify role-based recipients + assignees so the change shows in their feed
+            const usersToNotify = await getStatusChangeRecipients(status, currentTask, actingUserId);
             if (usersToNotify.length > 0) {
               await prisma.taskNotification.createMany({
                 data: usersToNotify.map((uid: string) => ({
@@ -1531,6 +1548,29 @@ export async function getTaskActivities(req: Request, res: Response) {
           user: log.user,
         };
       }
+      if (log.action === 'CREATE_SUBTASK') {
+        return {
+          id: log.id,
+          type: 'create_subtask',
+          author: log.user?.name || 'Someone',
+          subtaskTitle: details.subtaskTitle,
+          date: log.createdAt,
+          user: log.user,
+        };
+      }
+      if (log.action === 'AUDIT_ITEM_CHECKED' || log.action === 'CHECKLIST_ITEM_CHECKED') {
+        return {
+          id: log.id,
+          type: log.action.toLowerCase(),
+          author: log.user?.name || 'Someone',
+          itemName: details.itemName,
+          checklistName: details.checklistName,
+          isAudit: details.isAudit,
+          subtaskTitle: details.subtaskTitle,
+          date: log.createdAt,
+          user: log.user,
+        };
+      }
       return {
         id: log.id,
         type: log.action.toLowerCase(),
@@ -1729,6 +1769,29 @@ export async function createSubtask(req: Request, res: Response) {
     if (task) {
       await invalidateCache(`tasks:all:${task.listId}*`);
       io.to(`list:${task.listId}`).emit('task:updated', task);
+
+      const authReq = req as any;
+      const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
+      if (actingUserId) {
+        await prisma.auditLog.create({
+          data: {
+            action: 'CREATE_SUBTASK',
+            entity: 'TASK',
+            entityId: taskId,
+            userId: actingUserId,
+            details: { subtaskTitle: title }
+          }
+        });
+        const actorUser = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
+        const act = {
+          id: Date.now().toString(),
+          type: 'create_subtask',
+          author: actorUser?.name || 'Someone',
+          subtaskTitle: title,
+          date: new Date().toISOString(),
+        };
+        io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
+      }
     }
 
     // --- ClickUp Sync: create subtask (fire-and-forget) ---
@@ -1878,15 +1941,23 @@ export async function updateSubtask(req: Request, res: Response) {
       }
     }
 
-    // Snapshot previous assignees so the activity feed (and ClickUp sync) can tell who was added/removed
     const assigneesChanging = (computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)) || assigneeId !== undefined;
-    const previousAssignees: { id: string; name: string; email?: string | null }[] = assigneesChanging
-      ? ((await prisma.subtask.findUnique({
-          where: { id: subtaskId },
-          // @ts-ignore
-          select: { assignees: { select: { id: true, name: true, email: true } } } as any,
-        })) as any)?.assignees || []
-      : [];
+
+    // Snapshot previous subtask data for audit logs and activity diffs
+    const existingSubtask = (await prisma.subtask.findUnique({
+      where: { id: subtaskId },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        completed: true,
+        priority: true,
+        assignees: { select: { id: true, name: true, email: true } },
+      },
+    })) as any;
+    const previousAssignees: { id: string; name: string; email?: string | null }[] = existingSubtask?.assignees || [];
+    const oldSubtaskStatus: string = (existingSubtask?.status as string) || (existingSubtask?.completed ? 'CLOSED' : 'PENDING');
+    const oldSubtaskPriority: string = (existingSubtask?.priority as string) || 'MEDIUM';
 
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
@@ -1954,9 +2025,44 @@ export async function updateSubtask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { newStatus: status, subtaskTitle: subtask.title }
+            details: { oldStatus: oldSubtaskStatus, newStatus: status, subtaskTitle: subtask.title }
           }
         });
+
+        // Notify role recipients and assignees for subtask status change
+        (async () => {
+          try {
+            const parentTask = await prisma.task.findUnique({
+              where: { id: taskId },
+              select: { id: true, title: true, teamId: true, assigneeId: true, assignees: { select: { id: true } } },
+            });
+            if (parentTask) {
+              const subtaskAssignees = (subtask as any).assignees || [];
+              const combinedTask = {
+                ...parentTask,
+                assignees: [...parentTask.assignees, ...subtaskAssignees],
+              };
+              const roleRecipients = await getStatusChangeRecipients(status, combinedTask, actingUserId);
+              if (roleRecipients.length > 0) {
+                const actor = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
+                await prisma.taskNotification.createMany({
+                  data: roleRecipients.map((uid: string) => ({
+                    userId: uid,
+                    actorId: actingUserId,
+                    taskId,
+                    type: 'STATUS_CHANGE',
+                    title: `${actor?.name || 'Someone'} changed subtask "${subtask.title}" status to ${status}`,
+                  })),
+                });
+                roleRecipients.forEach((uid: string) => {
+                  io.to(`user:${uid}`).emit('notification_received');
+                });
+              }
+            }
+          } catch (err) {
+            console.error('[Subtask Notification Error]:', err);
+          }
+        })();
       }
       if (priority !== undefined) {
         await prisma.auditLog.create({
@@ -1965,7 +2071,7 @@ export async function updateSubtask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { newPriority: priority, subtaskTitle: subtask.title }
+            details: { oldPriority: oldSubtaskPriority, newPriority: priority, subtaskTitle: subtask.title }
           }
         });
       }
@@ -1990,6 +2096,7 @@ export async function updateSubtask(req: Request, res: Response) {
     });
     if (task) {
       io.to(`list:${task.listId}`).emit('task:updated', task);
+      io.emit('task:updated', task);
       
       // Emit socket events for the newly created audit logs so the frontend updates in real-time
       if (actingUserId) {
@@ -2008,20 +2115,30 @@ export async function updateSubtask(req: Request, res: Response) {
             date: new Date().toISOString(),
           };
           io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
-          // removed duplicate emit
         }
         if (status !== undefined) {
           const act = {
             id: (Date.now() + 1).toString(),
             type: 'status_change',
             author: authorName,
-            oldStatus: undefined,
+            oldStatus: oldSubtaskStatus,
             newStatus: status,
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
           };
           io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
-          // removed duplicate emit
+        }
+        if (priority !== undefined) {
+          const act = {
+            id: (Date.now() + 2).toString(),
+            type: 'priority_change',
+            author: authorName,
+            oldPriority: oldSubtaskPriority,
+            newPriority: priority,
+            subtaskTitle: subtask.title,
+            date: new Date().toISOString(),
+          };
+          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
         }
       }
     }
@@ -2354,13 +2471,57 @@ export async function updateChecklistItem(req: Request, res: Response) {
       data,
     });
 
-    // --- ClickUp Sync: update checklist item ---
+    // --- Background Operations: ClickUp Sync, AuditLog & Role Notifications ---
     (async () => {
       try {
         const itemRef = await prisma.checklistItem.findUnique({ 
           where: { id: itemId }, 
-          select: { externalId: true, checklist: { select: { externalId: true } } }
+          select: { 
+            id: true,
+            text: true,
+            externalId: true,
+            checklist: { 
+              select: { 
+                id: true,
+                name: true,
+                externalId: true,
+                taskId: true,
+                subtaskId: true,
+                task: {
+                  select: {
+                    id: true,
+                    title: true,
+                    teamId: true,
+                    assigneeId: true,
+                    listId: true,
+                    assignees: { select: { id: true } }
+                  }
+                },
+                subtask: {
+                  select: {
+                    id: true,
+                    title: true,
+                    taskId: true,
+                    assigneeId: true,
+                    assignees: { select: { id: true } },
+                    task: {
+                      select: {
+                        id: true,
+                        title: true,
+                        teamId: true,
+                        assigneeId: true,
+                        listId: true,
+                        assignees: { select: { id: true } }
+                      }
+                    }
+                  }
+                }
+              } 
+            } 
+          }
         });
+
+        // 1. ClickUp Sync
         if (itemRef?.externalId && itemRef.checklist?.externalId) {
           const cuPayload: { name?: string; resolved?: boolean } = {};
           if (text !== undefined) cuPayload.name = text;
@@ -2369,7 +2530,104 @@ export async function updateChecklistItem(req: Request, res: Response) {
             await safeUpdateClickUpChecklistItem(itemRef.checklist.externalId, itemRef.externalId, cuPayload);
           }
         }
-      } catch (err) { console.error('[ClickUp] updateChecklistItem sync error:', err); }
+
+        // 2. AuditLog & Role Notifications on Item Check (completed === true)
+        if (completed === true && itemRef?.checklist) {
+          const checklist = itemRef.checklist;
+          const targetTask = checklist.task || checklist.subtask?.task;
+          const subtask = checklist.subtask;
+          const isAudit = isAuditItem(checklist.name, itemRef.text, checklist.externalId);
+
+          const actor = userId
+            ? await prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true, name: true, avatarUrl: true, email: true },
+              })
+            : null;
+          const actorName = actor?.name || 'Someone';
+
+          const notifTitle = formatChecklistNotificationTitle(
+            actorName,
+            itemRef.text,
+            targetTask?.title || 'task',
+            isAudit
+          );
+
+          // Create AuditLog entry
+          const log = await prisma.auditLog.create({
+            data: {
+              action: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
+              entity: 'TASK',
+              entityId: targetTask?.id || subtask?.taskId || '',
+              userId: userId || '',
+              details: {
+                isAudit,
+                itemId: itemRef.id,
+                itemName: itemRef.text,
+                checklistId: checklist.id,
+                checklistName: checklist.name,
+                subtaskTitle: subtask?.title,
+              },
+            },
+          });
+
+          // Recipients: PMs, Auditors, Admins (scoped to team first if present, fallback workspace), + assignees
+          if (targetTask) {
+            const combinedAssignees = [
+              ...(targetTask.assignees || []),
+              ...(subtask?.assignees || []),
+            ];
+            const recipients = await getChecklistCheckRecipients(
+              {
+                id: targetTask.id,
+                teamId: targetTask.teamId,
+                assigneeId: targetTask.assigneeId,
+                assignees: combinedAssignees,
+              },
+              userId
+            );
+
+            if (recipients.length > 0) {
+              await prisma.taskNotification.createMany({
+                data: recipients.map((rId: string) => ({
+                  userId: rId,
+                  actorId: userId,
+                  taskId: targetTask.id,
+                  type: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
+                  title: notifTitle,
+                })),
+              });
+
+              recipients.forEach((rId: string) => {
+                io.to(`user:${rId}`).emit('notification_received');
+              });
+            }
+
+            // Realtime socket broadcast for Activity page and board
+            const activity = {
+              id: log.id,
+              type: isAudit ? 'audit_item_checked' : 'checklist_item_checked',
+              author: actorName,
+              itemName: itemRef.text,
+              checklistName: checklist.name,
+              isAudit,
+              date: log.createdAt,
+              user: actor,
+            };
+
+            if (targetTask.listId) {
+              io.to(`list:${targetTask.listId}`).emit('task_activity', {
+                listId: targetTask.listId,
+                taskId: targetTask.id,
+                activity,
+              });
+            }
+            io.emit('task_activity', { taskId: targetTask.id, activity });
+          }
+        }
+      } catch (err) {
+        console.error('[updateChecklistItem background error]:', err);
+      }
     })();
 
     return res.json({ item });

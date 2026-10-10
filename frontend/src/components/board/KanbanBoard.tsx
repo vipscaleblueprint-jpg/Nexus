@@ -23,7 +23,7 @@ import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
 import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
-import { canUserMoveTask, canUserEditTask } from '@/lib/permissions';
+import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
 const EMPTY_ARRAY: any[] = [];
@@ -121,7 +121,9 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   groupRunCount,
   isCollapsedGroupLeader,
   statusesInRun,
-  activeColumn
+  activeColumn,
+  onTaskMove,
+  onSubtaskStatusChange,
 }: any) {
   const dbStatus = listStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
   const permissionCheck = canUserMoveTask({ status } as any, listStatuses, currentUser, workspaceRoles);
@@ -210,6 +212,8 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
         onTaskClick={onTaskClick}
         onRoleChange={handleRoleChange}
         onDeleteColumn={onStatusDelete}
+        onTaskMove={onTaskMove}
+        onSubtaskStatusChange={onSubtaskStatusChange}
         dragListeners={sortable.listeners}
         dragAttributes={sortable.attributes}
         isOver={sortable.isOver}
@@ -229,6 +233,37 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
+
+  // Optimistic handler for task status changes from card dropdown
+  const handleTaskMoveFromCard = useCallback((taskId: string, newStatus: string) => {
+    setLocalTasks((prev) => {
+      const newTasks = [...prev];
+      const idx = newTasks.findIndex(t => t.id === taskId);
+      if (idx > -1) {
+        newTasks[idx] = { ...newTasks[idx], status: newStatus };
+      }
+      return newTasks;
+    });
+    if (onTaskMove) {
+      onTaskMove(taskId, newStatus);
+    }
+  }, [onTaskMove]);
+
+  // Optimistic handler for subtask status changes from card dropdown
+  const handleSubtaskStatusChangeFromBoard = useCallback((parentTaskId: string, subtaskId: string, newStatus: string) => {
+    const isClosed = newStatus.toUpperCase() === 'CLOSED' || newStatus.toUpperCase() === 'DONE';
+    setLocalTasks((prev) => {
+      return prev.map(t => {
+        if (t.id === parentTaskId && t.subtasks) {
+          return {
+            ...t,
+            subtasks: t.subtasks.map(s => s.id === subtaskId ? { ...s, status: newStatus, completed: isClosed } : s)
+          };
+        }
+        return t;
+      });
+    });
+  }, []);
 
   const [openGroupMenu, setOpenGroupMenu] = useState<string | null>(null);
   const [openGroupMenuRect, setOpenGroupMenuRect] = useState<DOMRect | null>(null);
@@ -866,14 +901,11 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     if (!finalStatus) return;
 
     if (finalStatus !== originalTask.status) {
-      const restrictedStatuses = ['in review', 'inreview', 'checking', 'crm'];
-      if (restrictedStatuses.includes(finalStatus.toLowerCase())) {
-        const hasUnclosedSubtasks = originalTask.subtasks && originalTask.subtasks.length > 0 && originalTask.subtasks.some((st: any) => st.status?.toLowerCase() !== 'closed');
-        if (hasUnclosedSubtasks) {
-          toast.error(`Cannot move task to ${finalStatus} until all subtasks are Closed.`);
-          setLocalTasks([...latestTasksRef.current]);
-          return;
-        }
+      const transitionCheck = canTransitionTaskStatus(originalTask, finalStatus);
+      if (!transitionCheck.allowed) {
+        toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+        setLocalTasks([...latestTasksRef.current]);
+        return;
       }
     }
 
@@ -1182,6 +1214,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                     isCollapsedGroupLeader={isCollapsedGroupLeader}
                                     statusesInRun={statusesInRun}
                                     activeColumn={activeColumn}
+                                    onTaskMove={handleTaskMoveFromCard}
+                                    onSubtaskStatusChange={handleSubtaskStatusChangeFromBoard}
                                   />
                                 );
                               })}

@@ -15,6 +15,7 @@ const DEFAULT_STATUSES: { name: string; color: string; groupName: string | null 
   { name: 'In Review', color: '#D97B3A', groupName: 'Workflow & Progress' },
   { name: 'Checking', color: '#A35DB8', groupName: 'Workflow & Progress' },
   { name: 'On-Hold', color: '#8A8F98', groupName: 'Workflow & Progress' },
+  { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
   { name: 'Closed', color: '#2FA37A', groupName: 'Workflow & Progress' },
 ];
 

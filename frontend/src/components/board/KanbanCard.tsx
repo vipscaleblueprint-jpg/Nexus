@@ -2,15 +2,16 @@ import { useSortable } from '@dnd-kit/sortable';
 import { memo, useState, useMemo, useRef, useEffect, useCallback } from 'react';
 
 import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
-import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
-import { canUserEditTask } from '@/lib/permissions';
+import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -24,9 +25,35 @@ interface Props {
   moveLockReason?: string;
   listStatuses?: any[];
   onUnauthorizedDragAttempt?: () => void;
+  onTaskMove?: (taskId: string, newStatus: string) => void;
+  onSubtaskStatusChange?: (parentTaskId: string, subtaskId: string, newStatus: string) => void;
 }
 
-const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDropdownOpenChange, listStatuses = [] }: { task: Task | Subtask, isSubtask?: boolean, children?: React.ReactNode, onDropdownOpenChange?: (isOpen: boolean) => void, listStatuses?: any[] }) => {
+// Closed subtasks are hidden from the card's subtask tree so open work floats to the top.
+const isSubtaskClosed = (s: Subtask) => {
+  const st = (s.status || '').toUpperCase();
+  return st === 'CLOSED' || st === 'DONE' || !!s.completed;
+};
+
+const SUBTASK_ROW_TRANSITION = { duration: 0.28, ease: [0.4, 0, 0.2, 1] as const };
+
+const CardContent = memo(({
+  task: initialTask,
+  isSubtask = false,
+  children,
+  onDropdownOpenChange,
+  listStatuses = [],
+  onTaskMove,
+  onSubtaskStatusChange,
+}: {
+  task: Task | Subtask;
+  isSubtask?: boolean;
+  children?: React.ReactNode;
+  onDropdownOpenChange?: (isOpen: boolean) => void;
+  listStatuses?: any[];
+  onTaskMove?: (taskId: string, newStatus: string) => void;
+  onSubtaskStatusChange?: (subtaskId: string, newStatus: string) => void;
+}) => {
   const [task, setTask] = useState(initialTask);
 
   useEffect(() => {
@@ -44,11 +71,12 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     const list = listObj?.list || listObj;
 
     if (!list?.customGroups || list.customGroups.length === 0) {
-      return sortedInternals.filter(s => {
+      const validStatuses = sortedInternals.filter(s => {
         if (!list?.customGroups) return true;
         const sName = (s.name || s.status || s.title || '').toUpperCase();
         return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
       });
+      return sortStatusesWithClosedAndKycAtEnd(validStatuses);
     }
 
     const finalStatuses: any[] = [];
@@ -73,7 +101,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
       }
     });
 
-    return finalStatuses;
+    return sortStatusesWithClosedAndKycAtEnd(finalStatuses);
   }, [listStatuses, allLists, (task as any)?.listId]);
 
   
@@ -87,19 +115,75 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
     return () => { cancelled = true; };
   }, [openDropdown, workspaceUsers.length, hydrateUsersFromCache, loadUsers]);
 
+  const closeDropdown = useCallback(() => {
+    setOpenDropdown(null);
+    if (onDropdownOpenChange) onDropdownOpenChange(false);
+  }, [onDropdownOpenChange]);
+
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
-    try {
-      if (isSubtask) {
-        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { status: newStatus });
-      } else {
-        await tasksApi.moveTask(task.id, newStatus, 'listId' in task ? task.listId : undefined, currentUser.id);
+
+    if (!isSubtask) {
+      const transitionCheck = canTransitionTaskStatus(task, newStatus);
+      if (!transitionCheck.allowed) {
+        toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+        return;
       }
-      toast.success('Status updated');
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to update status');
     }
+
+    // ⚡ Close dropdown immediately for instant, lag-free UI response
     closeDropdown();
+
+    const previousTask = task;
+    const isClosed = newStatus.toUpperCase() === 'CLOSED' || newStatus.toUpperCase() === 'DONE';
+
+    if (isSubtask) {
+      const subtask = task as Subtask;
+      const optimisticSubtask = { ...subtask, status: newStatus, completed: isClosed };
+
+      // 1. Immediately update this subtask card's internal state
+      setTask(optimisticSubtask);
+
+      // 2. Immediately notify parent KanbanCard to update localSubtasks
+      if (onSubtaskStatusChange) {
+        onSubtaskStatusChange(subtask.id, newStatus);
+      }
+
+      // 3. Simultaneously fire the background DB update
+      try {
+        await tasksApi.updateSubtask(subtask.taskId, subtask.id, { status: newStatus });
+        toast.success('Status updated');
+      } catch (e: any) {
+        toast.error(e.message || 'Failed to update status');
+        setTask(previousTask);
+        if (onSubtaskStatusChange) {
+          const prevStatus = previousTask.status || ('completed' in previousTask && (previousTask as Subtask).completed ? 'CLOSED' : 'PENDING');
+          onSubtaskStatusChange(subtask.id, prevStatus);
+        }
+      }
+    } else {
+      const optimisticTask = { ...task, status: newStatus };
+
+      // 1. Immediately update internal state
+      setTask(optimisticTask);
+
+      // 2. Immediately notify board/list view to move the card optimistically
+      if (onTaskMove) {
+        onTaskMove(task.id, newStatus);
+      } else {
+        useAppStore.getState().updateTask(optimisticTask as Task);
+        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: optimisticTask } }));
+        try {
+          await tasksApi.moveTask(task.id, newStatus, 'listId' in task ? task.listId : undefined, currentUser.id);
+          toast.success('Status updated');
+        } catch (e: any) {
+          toast.error(e.message || 'Failed to update status');
+          setTask(previousTask);
+          useAppStore.getState().updateTask(previousTask as Task);
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: previousTask } }));
+        }
+      }
+    }
   };
 
   const handlePriorityChange = async (p: string | null) => {
@@ -229,8 +313,6 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
       setTask(initialTask);
     }
   };
-
-  const closeDropdown = () => setOpenDropdown(null);
 
   useEffect(() => {
     onDropdownOpenChange?.(openDropdown !== null);
@@ -416,7 +498,7 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
                     );
                   })
                 ) : (
-                  ['PENDING', 'IN PROGRESS', 'COMPLETED', 'CLOSED'].map(s => (
+                  ALL_STATUSES.map(s => (
                     <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium uppercase" onClick={() => handleStatusChange(s)}>
                       {s}
                     </div>
@@ -483,34 +565,51 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
 
           {/* Assignees */}
           <div className="relative flex items-center group/assignee flex-1 min-w-0">
-            <div
-              ref={assigneeTriggerRef}
-              className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
-              onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
-            >
-              {assignees.length > 0 ? (
-                <div className="flex items-center -space-x-1 overflow-hidden">
-                  {assignees.slice(0, 2).map((a: any) => (
-                    <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
-                      {a.avatarUrl ? (
-                        <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
-                          {(a.name || 'U').charAt(0).toUpperCase()}
+            {(() => {
+              const hasTeamRole = Boolean((task as any).assigneeRoleRestrictions && (task as any).assigneeRoleRestrictions.length > 0);
+              return (
+                <div
+                  ref={assigneeTriggerRef}
+                  title={!hasTeamRole ? 'Please assign a team role first' : undefined}
+                  className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 ${!hasTeamRole ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!hasTeamRole) {
+                      toast.error('Please assign a team role first');
+                      return;
+                    }
+                    setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee');
+                  }}
+                >
+                  {assignees.length > 0 ? (
+                    <div className="flex items-center -space-x-1 overflow-hidden">
+                      {assignees.slice(0, 2).map((a: any) => (
+                        <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
+                          {a.avatarUrl ? (
+                            <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
+                              {(a.name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {assignees.length > 2 && (
+                        <div className="relative ring-1 ring-[#18181b] rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
+                          +{assignees.length - 2}
                         </div>
                       )}
+                      {!hasTeamRole && <Lock className="w-2.5 h-2.5 text-zinc-500 ml-1 shrink-0" />}
                     </div>
-                  ))}
-                  {assignees.length > 2 && (
-                    <div className="relative ring-1 ring-[#18181b] rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
-                      +{assignees.length - 2}
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <Users className="w-4 h-4 shrink-0" />
+                      {!hasTeamRole && <Lock className="w-2.5 h-2.5 text-zinc-500 shrink-0" />}
                     </div>
                   )}
                 </div>
-              ) : (
-                <Users className="w-4 h-4 shrink-0" />
-              )}
-            </div>
+              );
+            })()}
             {assignees.length > 0 && (
               <div
                 className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
@@ -682,7 +781,17 @@ const CardContent = memo(({ task: initialTask, isSubtask = false, children, onDr
   );
 });
 
-export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, isMoveDisabled, moveLockReason, listStatuses, onUnauthorizedDragAttempt }: Props) {
+export const KanbanCard = memo(function KanbanCard({
+  task,
+  isOverlay,
+  onClick,
+  isMoveDisabled,
+  moveLockReason,
+  listStatuses,
+  onUnauthorizedDragAttempt,
+  onTaskMove,
+  onSubtaskStatusChange,
+}: Props) {
 
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
@@ -762,7 +871,28 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
     transition,
   };
 
-  const subtasksCount = task.subtasks?.length || 0;
+  const [localSubtasks, setLocalSubtasks] = useState<Subtask[]>(task.subtasks || []);
+  useEffect(() => {
+    setLocalSubtasks(task.subtasks || []);
+  }, [task.subtasks]);
+
+  const subtasksCount = localSubtasks.length;
+  const visibleSubtasks = useMemo(() => localSubtasks.filter((s) => !isSubtaskClosed(s)), [localSubtasks]);
+  const openSubtasksCount = visibleSubtasks.length;
+
+  const handleSubtaskStatusChangeOptimistic = useCallback((subtaskId: string, newStatus: string) => {
+    const isClosed = newStatus.toUpperCase() === 'CLOSED' || newStatus.toUpperCase() === 'DONE';
+    setLocalSubtasks(prev => prev.map(s => s.id === subtaskId ? { ...s, status: newStatus, completed: isClosed } : s));
+    if (onSubtaskStatusChange) {
+      onSubtaskStatusChange(task.id, subtaskId, newStatus);
+    }
+    const updatedSubtasks = (task.subtasks || []).map((s: any) =>
+      s.id === subtaskId ? { ...s, status: newStatus, completed: isClosed } : s
+    );
+    const updatedParent = { ...task, subtasks: updatedSubtasks };
+    useAppStore.getState().updateTask(updatedParent);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
+  }, [task, onSubtaskStatusChange]);
 
   const subtasksToggle = useMemo(() => {
     if (subtasksCount === 0) return null;
@@ -779,10 +909,12 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
           className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${isSubtasksExpanded ? 'rotate-90 block' : 'hidden group-hover/subtasks:block'
             }`}
         />
-        <span>{subtasksCount} subtask{subtasksCount > 1 ? 's' : ''}</span>
+        <span>
+          {openSubtasksCount} subtask{openSubtasksCount === 1 ? '' : 's'}
+        </span>
       </div>
     );
-  }, [subtasksCount, isSubtasksExpanded]);
+  }, [openSubtasksCount, isSubtasksExpanded]);
 
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -869,7 +1001,12 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
           </PortalDropdown>
         )}
         <div className={isDragging ? 'opacity-0 pointer-events-none flex flex-col gap-3 w-full h-full' : 'contents'}>
-          <CardContent task={task} listStatuses={listStatuses} onDropdownOpenChange={setHasOpenDropdown}>
+          <CardContent
+            task={task}
+            listStatuses={listStatuses}
+            onDropdownOpenChange={setHasOpenDropdown}
+            onTaskMove={onTaskMove}
+          >
             {subtasksToggle}
           </CardContent>
         </div>
@@ -878,10 +1015,20 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
       {/* ── Subtasks: tree-indented, outside the draggable card ── */}
       {subtasksCount > 0 && isSubtasksExpanded && !isDragging && (
         <div className="mt-1 ml-3">
-          {task.subtasks.map((sub, idx) => {
+          <AnimatePresence initial={false}>
+          {visibleSubtasks.map((sub) => {
             const isLast = false; // Add Subtask button is always the last item visually
             return (
-              <div key={sub.id} className="relative flex items-start" onClick={(e) => e.stopPropagation()}>
+              <motion.div
+                key={sub.id}
+                className="relative flex items-start"
+                onClick={(e) => e.stopPropagation()}
+                initial={{ opacity: 0, height: 0, overflow: 'hidden' }}
+                animate={{ opacity: 1, height: 'auto', transitionEnd: { overflow: 'visible' } }}
+                // Short delay lets the closed check icon register before the row collapses
+                exit={{ opacity: 0, height: 0, x: 12, overflow: 'hidden', transition: { ...SUBTASK_ROW_TRANSITION, delay: 0.25 } }}
+                transition={SUBTASK_ROW_TRANSITION}
+              >
                 {/* Vertical line — stops at elbow midpoint on last item */}
                 <div
                   className="absolute left-0 w-px bg-zinc-700/50"
@@ -904,11 +1051,17 @@ export const KanbanCard = memo(function KanbanCard({ task, isOverlay, onClick, i
                     if (onClick) onClick(task);
                   }}
                 >
-                  <CardContent task={{ ...sub, list: task.list } as any} isSubtask={true} listStatuses={listStatuses} />
+                  <CardContent
+                    task={{ ...sub, list: task.list } as any}
+                    isSubtask={true}
+                    listStatuses={listStatuses}
+                    onSubtaskStatusChange={handleSubtaskStatusChangeOptimistic}
+                  />
                 </div>
-              </div>
+              </motion.div>
             );
           })}
+          </AnimatePresence>
 
           {isAddingSubtask ? (
             <div className="relative flex items-start" onClick={(e) => e.stopPropagation()}>

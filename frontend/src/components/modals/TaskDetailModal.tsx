@@ -12,7 +12,7 @@ import rehypeRaw from 'rehype-raw';
 import { uploadApi } from '@/api/upload';
 import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
-import { canUserMoveTask } from '@/lib/permissions';
+import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
@@ -71,8 +71,6 @@ interface Props {
 }
 
 export const ALL_STATUSES = [
-  'KYC',
-  'PIN BOARD',
   'DAILY',
   'WEEKLY',
   'MONTHLY',
@@ -83,9 +81,30 @@ export const ALL_STATUSES = [
   'IN REVIEW',
   'CHECKING',
   'CRM',
-  'CLOSED',
   'ON-HOLD',
+  'CLOSED',
+  'KYC',
+  'PIN BOARD',
 ];
+
+export const sortStatusesWithClosedAndKycAtEnd = (statuses: any[]) => {
+  const moveToEnd = ['ON-HOLD', 'CLOSED', 'KYC', 'PIN BOARD', 'PIN_BOARD', 'PINBOARD'];
+  const nonEnd = statuses.filter(s => !moveToEnd.includes((typeof s === 'string' ? s : (s.name || s.status || s.title || '')).toUpperCase().trim()));
+  const ends = statuses.filter(s => moveToEnd.includes((typeof s === 'string' ? s : (s.name || s.status || s.title || '')).toUpperCase().trim())).sort((a, b) => {
+    const orderMap: Record<string, number> = {
+      'ON-HOLD': 1,
+      'CLOSED': 2,
+      'KYC': 3,
+      'PIN BOARD': 4,
+      'PIN_BOARD': 4,
+      'PINBOARD': 4,
+    };
+    const aName = (typeof a === 'string' ? a : (a.name || a.status || a.title || '')).toUpperCase().trim();
+    const bName = (typeof b === 'string' ? b : (b.name || b.status || b.title || '')).toUpperCase().trim();
+    return (orderMap[aName] || 99) - (orderMap[bName] || 99);
+  });
+  return [...nonEnd, ...ends];
+};
 
 export const STATUS_COLORS: Record<string, string> = {
   'KYC': 'bg-[#3A8F55] text-white',
@@ -119,6 +138,46 @@ export const STATUS_COLORS: Record<string, string> = {
   'Closed': 'bg-[#2FA37A] text-white',
   'On-Hold': 'bg-[#8A8F98] text-white',
 };
+
+export function getAssigneeAvatarColor(name: string) {
+  const colors = [
+    'bg-orange-500',
+    'bg-blue-600',
+    'bg-emerald-600',
+    'bg-amber-500',
+    'bg-violet-600',
+    'bg-rose-600',
+    'bg-cyan-600',
+    'bg-indigo-600',
+    'bg-teal-600',
+    'bg-fuchsia-600',
+  ];
+  let hash = 0;
+  for (let i = 0; i < (name || '').length; i++) {
+    hash = (name || '').charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[], teams?: any[]): any[] {
+  if (!roles || roles.length === 0) return [];
+  const teamRoleToTeamId = new Map<string, string>();
+  (teams || []).forEach((team: any) => {
+    (team.teamRoles || []).forEach((tr: any) => {
+      teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
+    });
+  });
+
+  return (users || []).filter((u: any) => {
+    const userRoles = (u.roles || []) as string[];
+    return roles.some((role: string) => {
+      if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
+      const teamId = teamRoleToTeamId.get(role.toLowerCase());
+      if (teamId && (u as any).teamId === teamId) return true;
+      return false;
+    });
+  });
+}
 
 function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
   const [loaded, setLoaded] = useState(false);
@@ -294,6 +353,54 @@ export function TaskDetailModalContent({
 }: Props) {
   const router = useRouter();
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(true);
+  const [subtasksExpandAllSignal, setSubtasksExpandAllSignal] = useState(0);
+  const subtasksHeaderClickTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (subtasksHeaderClickTimerRef.current) {
+        clearTimeout(subtasksHeaderClickTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleSubtasksHeaderClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isSubtasksExpanded) {
+      setIsSubtasksExpanded(true);
+      return;
+    }
+
+    if (e.detail === 2) {
+      if (subtasksHeaderClickTimerRef.current) {
+        clearTimeout(subtasksHeaderClickTimerRef.current);
+        subtasksHeaderClickTimerRef.current = null;
+      }
+      setIsSubtasksExpanded(false);
+      return;
+    }
+
+    if (subtasksHeaderClickTimerRef.current) {
+      clearTimeout(subtasksHeaderClickTimerRef.current);
+      subtasksHeaderClickTimerRef.current = null;
+      setIsSubtasksExpanded(false);
+      return;
+    }
+
+    subtasksHeaderClickTimerRef.current = setTimeout(() => {
+      subtasksHeaderClickTimerRef.current = null;
+      setSubtasksExpandAllSignal((prev) => prev + 1);
+    }, 280);
+  };
+
+  const handleSubtasksHeaderDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (subtasksHeaderClickTimerRef.current) {
+      clearTimeout(subtasksHeaderClickTimerRef.current);
+      subtasksHeaderClickTimerRef.current = null;
+    }
+    setIsSubtasksExpanded(false);
+  };
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -332,7 +439,39 @@ export function TaskDetailModalContent({
         window.history.replaceState(null, '', url.pathname + url.search);
       }
     }
-  }, [activeSubtask, task, router]);
+  }, [activeSubtask, task]);
+
+  useEffect(() => {
+    if (activeSubtask && task?.subtasks) {
+      const found = task.subtasks.find((s: any) => s.id === activeSubtask.id);
+      if (found && found !== activeSubtask) {
+        setActiveSubtask(found);
+      }
+    }
+  }, [task?.subtasks, activeSubtask]);
+
+  useEffect(() => {
+    const handleWindowTaskUpdated = (e: any) => {
+      const incoming = e.detail?.task;
+      if (!incoming) return;
+      if (task && incoming.id === task.id) {
+        if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+          if (incoming.assignees !== undefined) {
+            setLocalAssignees(incoming.assignees);
+            latestAssigneesRef.current = incoming.assignees;
+          }
+        }
+        if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+          if (incoming.assigneeRoleRestrictions !== undefined) {
+            setLocalRoleRestrictions(incoming.assigneeRoleRestrictions);
+            latestRoleRestrictionsRef.current = incoming.assigneeRoleRestrictions;
+          }
+        }
+      }
+    };
+    window.addEventListener('task:updated', handleWindowTaskUpdated);
+    return () => window.removeEventListener('task:updated', handleWindowTaskUpdated);
+  }, [task?.id]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null); // Name of user currently editing
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
@@ -406,6 +545,17 @@ export function TaskDetailModalContent({
     return [...existing, ...oldAttachments];
   });
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const titleTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (isEditingTitle && titleTextareaRef.current) {
+      const el = titleTextareaRef.current;
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }, [isEditingTitle]);
   const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -426,11 +576,28 @@ export function TaskDetailModalContent({
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
   const activityScrollRef = useRef<HTMLDivElement>(null);
+
+  const scrollToLatestComment = useCallback(() => {
+    const scroll = () => {
+      if (activityScrollRef.current) {
+        activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;
+      }
+    };
+    scroll();
+    requestAnimationFrame(scroll);
+    setTimeout(scroll, 50);
+    setTimeout(scroll, 150);
+  }, []);
+
   useEffect(() => {
-    if (activityScrollRef.current) {
-      activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;
+    scrollToLatestComment();
+  }, [activities, richComments, scrollToLatestComment]);
+
+  useEffect(() => {
+    if (!activeSubtask) {
+      scrollToLatestComment();
     }
-  }, [activities, richComments]);
+  }, [activeSubtask, scrollToLatestComment]);
 
 
   const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'];
@@ -503,8 +670,23 @@ export function TaskDetailModalContent({
     return canUserMoveTask(task, listStatuses, currentUser, effectiveRoles).allowed;
   }, [task, currentUser, listStatuses, workspaceRoles, storeWorkspaceRoles]);
 
+  const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(() => task?.assigneeRoleRestrictions || []);
+  const latestRoleRestrictionsRef = useRef<string[]>(task?.assigneeRoleRestrictions || []);
+  const lastRoleUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+      const fromProps = task?.assigneeRoleRestrictions || [];
+      setLocalRoleRestrictions(fromProps);
+      latestRoleRestrictionsRef.current = fromProps;
+    }
+  }, [task?.assigneeRoleRestrictions]);
+
+  const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
+  const canAssignMember = canAssignTask && hasTeamRole;
+
   const assignableUsers = React.useMemo(() => {
-    if (!task?.assigneeRoleRestrictions || task.assigneeRoleRestrictions.length === 0) {
+    if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
       return workspaceUsers;
     }
     // Build a map of TeamRole name -> teamId for fast lookup
@@ -517,7 +699,7 @@ export function TaskDetailModalContent({
 
     const filteredUsers = workspaceUsers.filter((u) => {
       const userRoles = (u.roles || []) as string[];
-      return task.assigneeRoleRestrictions!.some((role) => {
+      return localRoleRestrictions.some((role) => {
         // Check generic role match (TECH, PM, AUDITOR...)
         if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
         // Check TeamRole match — filter by team membership
@@ -536,7 +718,7 @@ export function TaskDetailModalContent({
     }
 
     return filteredUsers;
-  }, [workspaceUsers, workspaceTeams, task?.assigneeRoleRestrictions, currentUser]);
+  }, [workspaceUsers, workspaceTeams, localRoleRestrictions, currentUser]);
 
 
   // Fetch persistent activities and comments from DB
@@ -557,7 +739,7 @@ export function TaskDetailModalContent({
       if (actRes?.activities) {
         const fetchedActivities = isSubtask
           ? actRes.activities.filter((a: any) => a.subtaskTitle === task.title)
-          : actRes.activities.filter((a: any) => !a.subtaskTitle);
+          : actRes.activities;
 
         setActivities((prev) => {
           const optimistic = prev.filter(
@@ -844,11 +1026,9 @@ export function TaskDetailModalContent({
     const handleActivity = (data: any) => {
       const currentTask = taskRef.current;
       if (currentTask && data.taskId === currentTask.id) {
-        // If viewing main task, ignore activities that belong to a subtask
-        const isSubtask = !!(currentTask as any).parentTaskId;
-        if (!isSubtask && data.activity.subtaskTitle) return;
         // If viewing a subtask, ignore activities that don't belong to this subtask
-        if (isSubtask && data.activity.subtaskTitle !== currentTask.title) return;
+        const isSubtask = !!(currentTask as any).parentTaskId;
+        if (isSubtask && data.activity.subtaskTitle && data.activity.subtaskTitle !== currentTask.title) return;
 
         setActivities(prev => {
           // If real ID already exists, skip
@@ -943,16 +1123,6 @@ export function TaskDetailModalContent({
   const [internalListStatuses, setinternalListStatuses] = useState<any[]>(listStatuses || []);
 
   const orderedListStatuses = React.useMemo(() => {
-    const sortStatusesWithClosedAtEnd = (statuses: any[]) => {
-      const moveToEnd = ['ON-HOLD', 'CLOSED'];
-      const nonEnd = statuses.filter(s => !moveToEnd.includes((s.name || s.status || s.title || '').toUpperCase()));
-      const ends = statuses.filter(s => moveToEnd.includes((s.name || s.status || s.title || '').toUpperCase())).sort((a, b) => {
-        const aName = (a.name || a.status || a.title || '').toUpperCase();
-        return aName === 'ON-HOLD' ? -1 : 1;
-      });
-      return [...nonEnd, ...ends];
-    };
-
     const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
     const listObj = allLists.find((l: any) => l.list?.id === task?.listId || l.id === task?.listId);
     const list = listObj?.list || listObj;
@@ -964,7 +1134,7 @@ export function TaskDetailModalContent({
         const sName = (s.name || s.status || s.title || '').toUpperCase();
         return !list.customGroups.some((g: string) => g.toUpperCase() === sName);
       });
-      return sortStatusesWithClosedAtEnd(validStatuses);
+      return sortStatusesWithClosedAndKycAtEnd(validStatuses);
     }
 
     const finalStatuses: any[] = [];
@@ -990,7 +1160,7 @@ export function TaskDetailModalContent({
       }
     });
 
-    return sortStatusesWithClosedAtEnd(finalStatuses);
+    return sortStatusesWithClosedAndKycAtEnd(finalStatuses);
   }, [allLists, task?.listId, internalListStatuses]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showApiSettings, setShowApiSettings] = useState(false);
@@ -1051,15 +1221,10 @@ export function TaskDetailModalContent({
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!task) return;
 
-    if (newStatus.toLowerCase() === 'checking') {
-      // Only Nexus's Audit checklist gates CHECKING; ClickUp checklists don't.
-      const auditChecklists = (task.checklists || []).filter(c => isNexusAuditChecklist(c));
-      for (const c of auditChecklists) {
-        if (c.items && c.items.some(i => !i.completed)) {
-          toast.error(`Cannot move to ${newStatus}: Audit checklist "${c.name}" is not fully completed.`);
-          return;
-        }
-      }
+    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+    if (!transitionCheck.allowed) {
+      toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+      return;
     }
 
     if (newStatus.toLowerCase() === 'revision') {
@@ -1132,9 +1297,25 @@ export function TaskDetailModalContent({
     handleStatusChangeAction(newStatus);
   };
 
-  const currentAssignees: UserModel[] = (task?.assignees && task.assignees.length > 0)
-    ? task.assignees
-    : (task?.assignee ? [task.assignee] : []);
+  const [localAssignees, setLocalAssignees] = useState<UserModel[]>(() => {
+    return (task?.assignees && task.assignees.length > 0)
+      ? task.assignees
+      : (task?.assignee ? [task.assignee] : []);
+  });
+  const latestAssigneesRef = useRef<UserModel[]>(localAssignees);
+  const lastAssigneeUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+      const fromProps = (task?.assignees && task.assignees.length > 0)
+        ? task.assignees
+        : (task?.assignee ? [task.assignee] : []);
+      setLocalAssignees(fromProps);
+      latestAssigneesRef.current = fromProps;
+    }
+  }, [task?.assignees, task?.assignee]);
+
+  const currentAssignees: UserModel[] = localAssignees;
 
   const isUserAssigned = (userId: string) => currentAssignees.some((u) => u.id === userId);
 
@@ -1160,8 +1341,9 @@ export function TaskDetailModalContent({
       setActivities(prev => [...prev, optimisticActivity]);
 
       try {
-        if ((taskToUpdate as any).parentTaskId) {
-          await tasksApi.updateSubtask((taskToUpdate as any).parentTaskId, taskToUpdate.id, {
+        const parentId = (taskToUpdate as any).parentTaskId || (taskToUpdate as any).taskId;
+        if (parentId) {
+          await tasksApi.updateSubtask(parentId, taskToUpdate.id, {
             assigneeIds: updatedIds,
             assigneeId: primaryAssignee?.id || null,
           });
@@ -1173,8 +1355,7 @@ export function TaskDetailModalContent({
             userId: currentUser?.id,
           });
         }
-        // Server will emit task_activity via socket for the other account
-        // Don't reload activities here — optimistic update is sufficient for local user
+        lastAssigneeUpdateTimestampRef.current = Date.now();
       } catch (err: any) {
         // Rollback on error
         setActivities(prev => prev.filter(a => a.id !== optimisticId));
@@ -1187,8 +1368,8 @@ export function TaskDetailModalContent({
   const handleToggleAssignee = (user: UserModel) => {
     if (!task) return;
 
-    // Always read from the mutated task object to survive rapid clicks within the same render cycle
-    const latestAssignees = task.assignees || (task.assignee ? [task.assignee] : []);
+    // Always read from latestAssigneesRef to survive rapid clicks
+    const latestAssignees = latestAssigneesRef.current;
     if (!assigneeBaselineRef.current) assigneeBaselineRef.current = latestAssignees;
 
     const isAssigned = latestAssignees.some(u => u.id === user.id);
@@ -1208,7 +1389,9 @@ export function TaskDetailModalContent({
     };
 
     // 1. Instant local update (0ms lag, immediate visual feedback)
-    // Mutate the original object directly so rapid subsequent clicks before re-render see the latest state
+    lastAssigneeUpdateTimestampRef.current = Date.now();
+    latestAssigneesRef.current = updatedAssignees;
+    setLocalAssignees(updatedAssignees);
     task.assignees = updatedAssignees;
     task.assigneeIds = updatedIds;
     task.assignee = primaryAssignee;
@@ -1217,26 +1400,20 @@ export function TaskDetailModalContent({
     if (onUpdateTask) {
       onUpdateTask(updatedTask);
     }
+    useAppStore.getState().updateTask(updatedTask);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
 
-    // 2. Debounced remote persistence (batches rapid toggles into one clean request)
-    if (assigneeDebounceRef.current) {
-      clearTimeout(assigneeDebounceRef.current);
-    }
-    assigneeDebounceRef.current = setTimeout(() => {
-      const previousAssignees = assigneeBaselineRef.current || [];
-      assigneeBaselineRef.current = null;
-      persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees, previousAssignees);
-    }, 50);
+    // 2. Immediate remote persistence without lag
+    const previousAssignees = assigneeBaselineRef.current || [];
+    assigneeBaselineRef.current = null;
+    persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees, previousAssignees);
   };
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!task) return;
 
-    if (assigneeDebounceRef.current) {
-      clearTimeout(assigneeDebounceRef.current);
-    }
-    const previousAssignees = assigneeBaselineRef.current || task.assignees || (task.assignee ? [task.assignee] : []);
+    const previousAssignees = assigneeBaselineRef.current || latestAssigneesRef.current;
     assigneeBaselineRef.current = null;
 
     const updatedTask: Task = {
@@ -1247,6 +1424,9 @@ export function TaskDetailModalContent({
       assigneeId: null,
     };
 
+    lastAssigneeUpdateTimestampRef.current = Date.now();
+    latestAssigneesRef.current = [];
+    setLocalAssignees([]);
     task.assignees = [];
     task.assigneeIds = [];
     task.assignee = null;
@@ -1255,6 +1435,8 @@ export function TaskDetailModalContent({
     if (onUpdateTask) {
       onUpdateTask(updatedTask);
     }
+    useAppStore.getState().updateTask(updatedTask);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
     setIsAssigneeOpen(false);
 
     persistAssignees(updatedTask, [], null, [], previousAssignees);
@@ -1427,27 +1609,43 @@ export function TaskDetailModalContent({
       commentFileInputRef.current.value = '';
     }
   };
-  if (activeSubtask) {
-    return (
-      <SubtaskDetailView
-        subtask={activeSubtask}
-        parentTask={task}
-        onClose={() => setActiveSubtask(null)}
-        currentUser={currentUser}
-        socket={socket}
-        mode={mode}
-        workspaceUsers={workspaceUsers}
-        onUpdateTask={onUpdateTask}
-        setActiveSubtask={setActiveSubtask}
-        permission={permission}
-        listStatuses={internalListStatuses}
-        workspaceTeams={workspaceTeams}
-      />
-    );
-  }
+  const handleReturnToList = () => {
+    onClose();
+    const targetListId = task?.list?.id || task?.listId;
+    if (typeof window !== 'undefined') {
+      const isCurrentList = !targetListId || window.location.pathname === `/lists/${targetListId}`;
+      if (isCurrentList) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('task');
+        url.searchParams.delete('subtask');
+        window.history.replaceState(null, '', url.pathname + (url.search || ''));
+      } else if (targetListId) {
+        router.push(`/lists/${targetListId}`);
+      }
+    }
+  };
 
   return (
-    <>
+    <div className="w-full h-full relative overflow-hidden flex flex-col">
+      {activeSubtask && (
+        <div className="absolute inset-0 z-50 bg-background flex flex-col">
+          <SubtaskDetailView
+            subtask={activeSubtask}
+            parentTask={task}
+            onClose={() => setActiveSubtask(null)}
+            onCloseModal={onClose}
+            currentUser={currentUser}
+            socket={socket}
+            mode={mode}
+            workspaceUsers={workspaceUsers}
+            onUpdateTask={onUpdateTask}
+            setActiveSubtask={setActiveSubtask}
+            permission={permission}
+            listStatuses={internalListStatuses}
+            workspaceTeams={workspaceTeams}
+          />
+        </div>
+      )}
       <div
         className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
       >
@@ -1469,7 +1667,7 @@ export function TaskDetailModalContent({
                 {task.list.space && (
                   <>
                     <button
-                      onClick={() => { if (mode === 'modal') onClose(); router.push('/'); }}
+                      onClick={() => { onClose(); router.push('/'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -1484,7 +1682,7 @@ export function TaskDetailModalContent({
                 {task.list.folder && (
                   <>
                     <button
-                      onClick={() => { if (mode === 'modal') onClose(); router.push('/'); }}
+                      onClick={() => { onClose(); router.push('/'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <Folder className="w-3.5 h-3.5 shrink-0" />
@@ -1495,7 +1693,7 @@ export function TaskDetailModalContent({
                 )}
 
                 <button
-                  onClick={() => { if (mode === 'modal') onClose(); router.push(`/lists/${task.list?.id}`); }}
+                  onClick={handleReturnToList}
                   className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                 >
                   <ListTodo className="w-3.5 h-3.5 shrink-0" />
@@ -1569,28 +1767,42 @@ export function TaskDetailModalContent({
           <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
             <div className="p-8">
 
-              <div className="mb-8 group w-fit">
+              <div className="mb-8 group max-w-3xl w-full">
                 {isEditingTitle ? (
-                  <input
+                  <textarea
+                    ref={titleTextareaRef}
+                    rows={1}
                     autoFocus
-                    type="text"
                     value={localTitle}
-                    onChange={(e) => setLocalTitle(e.target.value)}
-                    onFocus={(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
+                    onChange={(e) => {
+                      setLocalTitle(e.target.value);
+                      e.target.style.height = 'auto';
+                      e.target.style.height = `${e.target.scrollHeight}px`;
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.height = 'auto';
+                      e.target.style.height = `${e.target.scrollHeight}px`;
+                      e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+                    }}
                     onBlur={() => {
                       setIsEditingTitle(false);
                       handleTitleBlur();
                     }}
-                    onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                    className="text-2xl font-bold bg-card border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] sm:w-[600px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    className="text-2xl font-bold bg-card border border-zinc-700 focus:border-zinc-500 focus:outline-none w-full transition-colors rounded px-2 py-1 -ml-2 text-zinc-100 resize-none overflow-hidden leading-snug break-words block"
                   />
                 ) : (
                   <h1
                     onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
-                    className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit pr-16 ${(task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE') ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
+                    className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors break-words leading-snug group w-fit max-w-full pr-10 ${(task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE') ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                   >
-                    {localTitle}
-                    <Pencil className="w-4 h-4 ml-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    <span>{localTitle}</span>
+                    <Pencil className="w-4 h-4 ml-2.5 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity inline-block align-middle shrink-0" />
                   </h1>
                 )}
               </div>
@@ -1693,13 +1905,22 @@ export function TaskDetailModalContent({
                     })()}
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-1">
-                      <button
-                        onClick={() => handleStatusChangeAction('Closed')}
-                        title="Mark as Closed"
-                        className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
+                      {(() => {
+                        const isTaskClosed = (task as any).completed || (task.status || '').toLowerCase() === 'closed' || (task.status || '').toLowerCase() === 'done';
+                        return (
+                          <button
+                            onClick={() => handleStatusChangeAction(isTaskClosed ? 'Pending' : 'Closed')}
+                            title={isTaskClosed ? "Mark as Open" : "Mark as Closed"}
+                            className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border cursor-pointer ${
+                              isTaskClosed
+                                ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700'
+                                : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white'
+                            }`}
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -1715,10 +1936,10 @@ export function TaskDetailModalContent({
                     {/* Add role button (Assign Team) — moved to left of Assign */}
                     <Popover.Root>
                       <Popover.Trigger asChild>
-                        {(task.assigneeRoleRestrictions && task.assigneeRoleRestrictions.length > 0) ? (
+                        {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
                           <motion.div layout className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
                             <AnimatePresence>
-                              {task.assigneeRoleRestrictions.map((role, i) => {
+                              {localRoleRestrictions.map((role, i) => {
                                 const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                                 const bgColor = colors[i % colors.length];
                                 return (
@@ -1755,7 +1976,7 @@ export function TaskDetailModalContent({
                               <div key={team.id} className="mb-2">
                                 {(() => {
                                   const teamRoles = team.teamRoles || [];
-                                  const current = task.assigneeRoleRestrictions || [];
+                                  const current = latestRoleRestrictionsRef.current;
                                   const hasRoles = teamRoles.length > 0;
                                   const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
                                   const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
@@ -1771,12 +1992,40 @@ export function TaskDetailModalContent({
                                           const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
                                           next = [...next, ...toAdd];
                                         }
-                                        const updatedTask = { ...task, assigneeRoleRestrictions: next };
+                                        const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
+                                        const matchingIds = matchingUsers.map((u: any) => u.id);
+
+                                        latestRoleRestrictionsRef.current = next;
+                                        setLocalRoleRestrictions(next);
+                                        lastRoleUpdateTimestampRef.current = Date.now();
+
+                                        latestAssigneesRef.current = matchingUsers;
+                                        setLocalAssignees(matchingUsers);
+                                        lastAssigneeUpdateTimestampRef.current = Date.now();
+
+                                        task.assigneeRoleRestrictions = next;
+                                        task.assignees = matchingUsers;
+                                        task.assigneeIds = matchingIds;
+                                        task.assignee = matchingUsers.length > 0 ? matchingUsers[0] : null;
+                                        task.assigneeId = matchingUsers.length > 0 ? matchingUsers[0].id : null;
+
+                                        const updatedTask = {
+                                          ...task,
+                                          assigneeRoleRestrictions: next,
+                                          assignees: matchingUsers,
+                                          assigneeIds: matchingIds,
+                                          assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
+                                          assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
+                                        };
                                         if (onUpdateTask) onUpdateTask(updatedTask);
-                                        if ((task as any).parentTaskId) {
-                                          tasksApi.updateSubtask((task as any).parentTaskId, task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                        useAppStore.getState().updateTask(updatedTask);
+                                        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+
+                                        const parentId = (task as any).parentTaskId || (task as any).taskId;
+                                        if (parentId) {
+                                          tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
                                         } else {
-                                          tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                          tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
                                         }
                                       }}
                                       className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
@@ -1797,23 +2046,50 @@ export function TaskDetailModalContent({
                                 {team.teamRoles && team.teamRoles.length > 0 && (
                                   <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
                                     {team.teamRoles.map((role: any) => {
-                                      const selected = (task.assigneeRoleRestrictions || []).includes(role.name);
+                                      const selected = localRoleRestrictions.includes(role.name);
                                       return (
                                         <div
                                           key={role.id}
                                           onClick={() => {
-                                            const current = task.assigneeRoleRestrictions || [];
+                                            const current = latestRoleRestrictionsRef.current;
                                             const next = selected
                                               ? current.filter(r => r !== role.name)
                                               : [...current, role.name];
-                                            // Optimistically update immediately — no mutation of task ref
-                                            const updatedTask = { ...task, assigneeRoleRestrictions: next };
+
+                                            const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
+                                            const matchingIds = matchingUsers.map((u: any) => u.id);
+
+                                            latestRoleRestrictionsRef.current = next;
+                                            setLocalRoleRestrictions(next);
+                                            lastRoleUpdateTimestampRef.current = Date.now();
+
+                                            latestAssigneesRef.current = matchingUsers;
+                                            setLocalAssignees(matchingUsers);
+                                            lastAssigneeUpdateTimestampRef.current = Date.now();
+
+                                            task.assigneeRoleRestrictions = next;
+                                            task.assignees = matchingUsers;
+                                            task.assigneeIds = matchingIds;
+                                            task.assignee = matchingUsers.length > 0 ? matchingUsers[0] : null;
+                                            task.assigneeId = matchingUsers.length > 0 ? matchingUsers[0].id : null;
+
+                                            const updatedTask = {
+                                              ...task,
+                                              assigneeRoleRestrictions: next,
+                                              assignees: matchingUsers,
+                                              assigneeIds: matchingIds,
+                                              assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
+                                              assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
+                                            };
                                             if (onUpdateTask) onUpdateTask(updatedTask);
-                                            // Fire API in background
-                                            if ((task as any).parentTaskId) {
-                                              tasksApi.updateSubtask((task as any).parentTaskId, task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                            useAppStore.getState().updateTask(updatedTask);
+                                            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+
+                                            const parentId = (task as any).parentTaskId || (task as any).taskId;
+                                            if (parentId) {
+                                              tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
                                             } else {
-                                              tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
+                                              tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
                                             }
                                           }}
                                           className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
@@ -1833,11 +2109,11 @@ export function TaskDetailModalContent({
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
-                    <Popover.Root open={isAssigneeOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsAssigneeOpen(open)}>
+                    <Popover.Root open={isAssigneeOpen && canAssignMember} onOpenChange={(open) => canAssignMember && setIsAssigneeOpen(open)}>
                       <Popover.Trigger asChild>
                         <motion.div layout
-                          title={currentAssignees.map((u) => u.name).join(', ')}
-                          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignTask
+                          title={!hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u) => u.name).join(', ')}
+                          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignMember
                             ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
                             : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
                             }`}
@@ -1846,38 +2122,42 @@ export function TaskDetailModalContent({
                             <>
                               <div className="flex items-center -space-x-1.5">
                                 <AnimatePresence>
-                                  {currentAssignees.slice(0, 2).map((u, i) => (
-                                    <motion.div
-                                      key={u.id}
-                                      initial={{ opacity: 0, scale: 0.5 }}
-                                      animate={{ opacity: 1, scale: 1 }}
-                                      exit={{ opacity: 0, scale: 0.5 }}
-                                      transition={{ duration: 0.2 }}
-                                      style={{ zIndex: 10 - i }}
-                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
-                                      title={u.name}
-                                    >
-                                      {u.avatarUrl ? (
-                                        <img src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
-                                      ) : (
-                                        <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
-                                          {(u.name || 'U').substring(0, 2).toUpperCase()}
-                                        </div>
-                                      )}
-                                    </motion.div>
-                                  ))}
+                                  {currentAssignees.slice(0, 3).map((u, i) => {
+                                    const avatarSrc = u.avatarUrl || (u as any).imageUrl;
+                                    return (
+                                      <motion.div
+                                        key={u.id}
+                                        initial={{ opacity: 0, scale: 0.5 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        exit={{ opacity: 0, scale: 0.5 }}
+                                        transition={{ duration: 0.2 }}
+                                        style={{ zIndex: i + 1 }}
+                                        className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                        title={u.name}
+                                      >
+                                        {avatarSrc ? (
+                                          <img src={avatarSrc} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
+                                        ) : (
+                                          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(u.name || u.id || 'U')}`}>
+                                            {(u.name || 'U').substring(0, 2).toUpperCase()}
+                                          </div>
+                                        )}
+                                      </motion.div>
+                                    );
+                                  })}
                                 </AnimatePresence>
                                 <AnimatePresence>
-                                  {currentAssignees.length > 2 && (
+                                  {currentAssignees.length > 3 && (
                                     <motion.div
                                       key="overflow"
                                       initial={{ opacity: 0, scale: 0.5 }}
                                       animate={{ opacity: 1, scale: 1 }}
                                       exit={{ opacity: 0, scale: 0.5 }}
                                       transition={{ duration: 0.2 }}
-                                      className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0"
+                                      style={{ zIndex: 10 }}
+                                      className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
                                     >
-                                      +{currentAssignees.length - 2}
+                                      +{currentAssignees.length - 3}
                                     </motion.div>
                                   )}
                                 </AnimatePresence>
@@ -1885,12 +2165,13 @@ export function TaskDetailModalContent({
                               {currentAssignees.length === 1 && (
                                 <motion.span layout className="truncate max-w-[100px]">{currentAssignees[0].name}</motion.span>
                               )}
+                              {!canAssignMember && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
                             </>
                           ) : (
                             <>
                               <Plus className="w-3.5 h-3.5 shrink-0" />
                               <span>Assign</span>
-                              {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                              {!canAssignMember && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
                             </>
                           )}
                         </motion.div>
@@ -2121,11 +2402,18 @@ export function TaskDetailModalContent({
                     </button>
                   )}
                 </div>
-
-
               </div>
 
-              <div className="flex items-center justify-between mb-2 mt-6 cursor-pointer group" onClick={() => setIsSubtasksExpanded(!isSubtasksExpanded)}>
+              <div 
+                className="flex items-center justify-between mb-1 mt-5 cursor-pointer group select-none" 
+                onClick={handleSubtasksHeaderClick}
+                onDoubleClick={handleSubtasksHeaderDoubleClick}
+                title={
+                  isSubtasksExpanded
+                    ? "Single-click: Toggle expand/collapse all rows • Double-click: Collapse section"
+                    : "Click to expand subtasks section"
+                }
+              >
                 <div className="flex items-center gap-2">
                   {isSubtasksExpanded ? (
                     <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0 group-hover:text-zinc-200 transition-colors" />
@@ -2137,20 +2425,18 @@ export function TaskDetailModalContent({
                     Subtasks
                   </span>
                   {task.subtasks && task.subtasks.length > 0 && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium ml-2">{task.subtasks.length}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium ml-1">
+                      {task.subtasks.filter((s: any) => {
+                        const st = (s.status || '').toUpperCase();
+                        return st !== 'CLOSED' && st !== 'DONE' && !s.completed;
+                      }).length}
+                    </span>
                   )}
                 </div>
               </div>
 
               {isSubtasksExpanded && (
                 <>
-
-
-
-
-
-
-
               <SubtasksSection
                 task={task}
                 onUpdateTask={(updatedTask) => {
@@ -2164,12 +2450,14 @@ export function TaskDetailModalContent({
                 onOpenSubtask={(subtask) => setActiveSubtask(subtask)}
                 listStatuses={orderedListStatuses}
                 teams={workspaceTeams}
+                onCollapseSection={() => setIsSubtasksExpanded(false)}
+                expandAllSignal={subtasksExpandAllSignal}
               />
 
               {(!task.subtasks || task.subtasks.length === 0) && !addingSubtask && (
-                <div className="mt-4 mb-2 max-w-md">
-                  <button onClick={() => setAddingSubtask(true)} className="flex items-center gap-3 text-zinc-400 hover:text-zinc-200 px-3 py-2 hover:bg-zinc-800/40 rounded-lg transition-colors w-full text-left text-sm font-medium cursor-pointer">
-                    <Plus className="w-4 h-4 shrink-0" /> Add subtask
+                <div className="my-1">
+                  <button onClick={() => setAddingSubtask(true)} className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 px-2 py-1 hover:bg-zinc-800/50 rounded-md transition-colors text-xs font-medium cursor-pointer">
+                    <Plus className="w-3.5 h-3.5 shrink-0" /> Add subtask
                   </button>
                 </div>
               )}
@@ -2177,7 +2465,7 @@ export function TaskDetailModalContent({
               )}
 
               {/* Action Buttons (Notes, Attachments, etc) */}
-              <div className="mt-2 flex flex-col gap-2 w-full">
+              <div className="mt-1 flex flex-col gap-1 w-full">
                 <AuditSection
                   task={task}
                   title={task.title}
@@ -2470,15 +2758,30 @@ export function TaskDetailModalContent({
                                     <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                                     <div className="flex-1 leading-relaxed">
                                       <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                        <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
+                                      {act.subtaskTitle ? (
+                                        <>
+                                          changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span>
+                                          {act.oldStatus && (
+                                            <>from <span
+                                              className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
+                                              style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
+                                            >
+                                              {act.oldStatus}
+                                            </span></>
+                                          )}
+                                        </>
                                       ) : (
-                                        <>changed status from <span
-                                          className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
-                                          style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
-                                        >
-                                          {act.oldStatus || 'Unknown'}
-                                        </span></>
+                                        <>
+                                          changed status
+                                          {act.oldStatus && (
+                                            <> from <span
+                                              className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
+                                              style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
+                                            >
+                                              {act.oldStatus}
+                                            </span></>
+                                          )}
+                                        </>
                                       )}
                                       {' '}to <span
                                         className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[(act.newStatus || '').toUpperCase()] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
@@ -2502,6 +2805,9 @@ export function TaskDetailModalContent({
                                       <span className="text-zinc-500 text-lg leading-none mt-[-2px]">&bull;</span>
                                       <span>
                                         {actorName} {describeAssigneeActivity(act, currentUser?.name)}
+                                        {act.subtaskTitle && (
+                                          <span className="text-zinc-400"> on subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></span>
+                                        )}
                                       </span>
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -2519,12 +2825,38 @@ export function TaskDetailModalContent({
                                     <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                                     <div className="flex-1 leading-relaxed">
                                       <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                      {(act.subtaskTitle && !((task as any)?.parentTaskId)) ? (
-                                        <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
+                                      {act.subtaskTitle ? (
+                                        <>
+                                          changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>{' '}
+                                          {act.oldPriority && (
+                                            <>from <span className={`font-medium px-1 ${getPriorityConfig(act.oldPriority).color}`}>{getPriorityConfig(act.oldPriority).label}</span> </>
+                                          )}
+                                          to{' '}
+                                        </>
                                       ) : (
-                                        <>changed priority to{' '}</>
+                                        <>
+                                          changed priority{' '}
+                                          {act.oldPriority && (
+                                            <>from <span className={`font-medium px-1 ${getPriorityConfig(act.oldPriority).color}`}>{getPriorityConfig(act.oldPriority).label}</span> </>
+                                          )}
+                                          to{' '}
+                                        </>
                                       )}
                                       <span className={`font-medium ${getPriorityConfig(act.newPriority).color}`}>{getPriorityConfig(act.newPriority).label}</span>
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
+                                  </div>
+                                );
+                              }
+                              if (act.type === 'create_subtask') {
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                      created subtask <span className="text-zinc-200 font-medium px-1">{act.subtaskTitle}</span>
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                       {timeStr}
@@ -2562,6 +2894,27 @@ export function TaskDetailModalContent({
                                         <>attached a file:{' '}</>
                                       )}
                                       <span className="text-indigo-400 ml-1">{act.fileName}</span>
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
+                                  </div>
+                                );
+                              }
+                              if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked') {
+                                const isAudit = act.type === 'audit_item_checked' || act.isAudit;
+                                const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                                const itemName = act.itemName || 'item';
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                      {act.subtaskTitle && !((task as any)?.parentTaskId) ? (
+                                        <>checked {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span> on subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
+                                      ) : (
+                                        <>checked {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span></>
+                                      )}
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                       {timeStr}
@@ -2735,7 +3088,7 @@ export function TaskDetailModalContent({
           itemName="this comment"
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -2753,6 +3106,7 @@ export function SubtaskDetailView({
   subtask,
   parentTask,
   onClose,
+  onCloseModal,
   currentUser,
   socket,
   workspaceUsers,
@@ -2766,6 +3120,7 @@ export function SubtaskDetailView({
   subtask: any;
   parentTask: any;
   onClose: () => void;
+  onCloseModal?: () => void;
   currentUser?: any;
   socket?: any;
   workspaceUsers?: any[];
@@ -2779,10 +3134,22 @@ export function SubtaskDetailView({
 }) {
   const router = useRouter();
 
+  const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(() => subtask?.assigneeRoleRestrictions || []);
+  const latestRoleRestrictionsRef = useRef<string[]>(subtask?.assigneeRoleRestrictions || []);
+  const lastRoleUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+      const fromProps = subtask?.assigneeRoleRestrictions || [];
+      setLocalRoleRestrictions(fromProps);
+      latestRoleRestrictionsRef.current = fromProps;
+    }
+  }, [subtask?.assigneeRoleRestrictions]);
+
   const subtaskAssignableUsers = React.useMemo(() => {
     const wsUsers = workspaceUsers || [];
     const wsTeams = workspaceTeams || [];
-    if (!subtask?.assigneeRoleRestrictions || subtask.assigneeRoleRestrictions.length === 0) {
+    if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
       return wsUsers;
     }
     const teamRoleToTeamId = new Map<string, string>();
@@ -2794,7 +3161,7 @@ export function SubtaskDetailView({
 
     const filteredUsers = wsUsers.filter((u) => {
       const userRoles = (u.roles || []) as string[];
-      return (subtask.assigneeRoleRestrictions || []).some((role: string) => {
+      return localRoleRestrictions.some((role: string) => {
         if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
         const teamId = teamRoleToTeamId.get(role.toLowerCase());
         if (teamId && (u as any).teamId === teamId) return true;
@@ -2811,7 +3178,7 @@ export function SubtaskDetailView({
     }
 
     return filteredUsers;
-  }, [subtask?.assigneeRoleRestrictions, workspaceUsers, workspaceTeams, currentUser]);
+  }, [localRoleRestrictions, workspaceUsers, workspaceTeams, currentUser]);
 
   const [richComments, setRichComments] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
@@ -2830,13 +3197,35 @@ export function SubtaskDetailView({
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const [localTitle, setLocalTitle] = useState(subtask.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const subtaskTitleTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (isEditingTitle && subtaskTitleTextareaRef.current) {
+      const el = subtaskTitleTextareaRef.current;
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }, [isEditingTitle]);
   const [activities, setActivities] = useState<any[]>([]);
   const activityScrollRef = useRef<HTMLDivElement>(null);
+
+  const scrollToLatestComment = useCallback(() => {
+    const scroll = () => {
+      if (activityScrollRef.current) {
+        activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;
+      }
+    };
+    scroll();
+    requestAnimationFrame(scroll);
+    setTimeout(scroll, 50);
+    setTimeout(scroll, 150);
+  }, []);
+
   useEffect(() => {
-    if (activityScrollRef.current) {
-      activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;
-    }
-  }, [activities, richComments]);
+    scrollToLatestComment();
+  }, [activities, richComments, scrollToLatestComment]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
@@ -2908,6 +3297,8 @@ export function SubtaskDetailView({
   const canEditTask = true;
   // Subtasks bypass column role restrictions for assignment
   const canAssignTask = true;
+  const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
+  const canAssignMember = canAssignTask && hasTeamRole;
 
   const handleDescriptionFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -3119,31 +3510,67 @@ export function SubtaskDetailView({
     };
   }, [socket, subtask?.id, currentUser?.name, parentTask.id, subtask?.title]);
 
-  const currentAssignees = subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
+  const [localAssignees, setLocalAssignees] = useState<any[]>(() => {
+    return subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
+  });
+
+  const currentAssignees = localAssignees;
   const isUserAssigned = (userId: string) => currentAssignees.some((u: any) => u.id === userId);
 
-  // Rapid toggles are batched into one save and one activity entry (like the main task view),
-  // so overlapping requests can't report half-applied changes ("assigned Leo and removed …").
-  const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Assignees before the first toggle of the current batch. */
   const assigneeBaselineRef = useRef<any[] | null>(null);
-  /** Latest assignees, so clicks before the next render build on each other. */
   const latestAssigneesRef = useRef<any[]>(currentAssignees);
+  const lastAssigneeUpdateTimestampRef = useRef<number>(0);
+
   useEffect(() => {
-    if (!assigneeDebounceRef.current) latestAssigneesRef.current = currentAssignees;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- currentAssignees is derived from these
+    if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+      const fromProps = subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
+      setLocalAssignees(fromProps);
+      latestAssigneesRef.current = fromProps;
+    }
   }, [subtask.assignees, subtask.User, subtask.assignee]);
-  useEffect(() => () => {
-    if (assigneeDebounceRef.current) clearTimeout(assigneeDebounceRef.current);
-  }, []);
+
+  useEffect(() => {
+    const handleWindowTaskUpdated = (e: any) => {
+      const incoming = e.detail?.task;
+      if (!incoming) return;
+      let targetSubtask = null;
+      if (incoming.id === subtask.id) {
+        targetSubtask = incoming;
+      } else if (incoming.subtasks) {
+        targetSubtask = incoming.subtasks.find((s: any) => s.id === subtask.id);
+      }
+      if (targetSubtask) {
+        if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+          const fromProps = targetSubtask.assignees || (targetSubtask.User ? [targetSubtask.User] : (targetSubtask.assignee ? [targetSubtask.assignee] : []));
+          setLocalAssignees(fromProps);
+          latestAssigneesRef.current = fromProps;
+        }
+        if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+          if (targetSubtask.assigneeRoleRestrictions !== undefined) {
+            setLocalRoleRestrictions(targetSubtask.assigneeRoleRestrictions);
+            latestRoleRestrictionsRef.current = targetSubtask.assigneeRoleRestrictions;
+          }
+        }
+      }
+    };
+    window.addEventListener('task:updated', handleWindowTaskUpdated);
+    return () => window.removeEventListener('task:updated', handleWindowTaskUpdated);
+  }, [subtask.id]);
 
   const applyAssigneesLocally = (updatedAssignees: any[]) => {
+    lastAssigneeUpdateTimestampRef.current = Date.now();
     latestAssigneesRef.current = updatedAssignees;
+    setLocalAssignees(updatedAssignees);
+    subtask.assignees = updatedAssignees;
+    subtask.assigneeIds = updatedAssignees.map((a: any) => a.id);
     const updatedSubtask = { ...subtask, assignees: updatedAssignees, assigneeIds: updatedAssignees.map((a: any) => a.id) };
     if (setActiveSubtask) setActiveSubtask(updatedSubtask);
     if (onUpdateTask) {
       const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
+      const updatedParent = { ...parentTask, subtasks: newSubtasks };
+      onUpdateTask(updatedParent);
+      useAppStore.getState().updateTask(updatedParent);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
     }
   };
 
@@ -3165,7 +3592,9 @@ export function SubtaskDetailView({
       user: currentUser,
     }]);
 
-    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: next.map(u => u.id) }).catch((err) => {
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: next.map(u => u.id) }).then(() => {
+      lastAssigneeUpdateTimestampRef.current = Date.now();
+    }).catch((err) => {
       console.error(err);
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
     });
@@ -3179,21 +3608,13 @@ export function SubtaskDetailView({
       : [...latest, u];
     applyAssigneesLocally(updatedAssignees);
 
-    if (assigneeDebounceRef.current) clearTimeout(assigneeDebounceRef.current);
-    assigneeDebounceRef.current = setTimeout(() => {
-      assigneeDebounceRef.current = null;
-      const previous = assigneeBaselineRef.current || [];
-      assigneeBaselineRef.current = null;
-      persistAssignees(previous, latestAssigneesRef.current);
-    }, ASSIGNEE_BATCH_MS);
+    const previous = assigneeBaselineRef.current || [];
+    assigneeBaselineRef.current = null;
+    persistAssignees(previous, updatedAssignees);
   };
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (assigneeDebounceRef.current) {
-      clearTimeout(assigneeDebounceRef.current);
-      assigneeDebounceRef.current = null;
-    }
     const previous = assigneeBaselineRef.current || latestAssigneesRef.current;
     assigneeBaselineRef.current = null;
     applyAssigneesLocally([]);
@@ -3370,6 +3791,27 @@ export function SubtaskDetailView({
     }
   };
 
+  const handleReturnToList = () => {
+    if (setActiveSubtask) setActiveSubtask(null);
+    if (onCloseModal) {
+      onCloseModal();
+    } else {
+      onClose();
+    }
+    const targetListId = parentTask?.list?.id || parentTask?.listId;
+    if (typeof window !== 'undefined') {
+      const isCurrentList = !targetListId || window.location.pathname === `/lists/${targetListId}`;
+      if (isCurrentList) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('task');
+        url.searchParams.delete('subtask');
+        window.history.replaceState(null, '', url.pathname + (url.search || ''));
+      } else if (targetListId) {
+        router.push(`/lists/${targetListId}`);
+      }
+    }
+  };
+
   const assignee = subtask.assignee;
 
   return (
@@ -3391,7 +3833,11 @@ export function SubtaskDetailView({
               {parentTask.list.space && (
                 <>
                   <button
-                    onClick={() => { onClose(); router.push('/tasks'); }}
+                    onClick={() => {
+                      if (setActiveSubtask) setActiveSubtask(null);
+                      if (onCloseModal) onCloseModal(); else onClose();
+                      router.push('/');
+                    }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
                     <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -3405,7 +3851,11 @@ export function SubtaskDetailView({
               {parentTask.list.folder && (
                 <>
                   <button
-                    onClick={() => { onClose(); router.push('/tasks'); }}
+                    onClick={() => {
+                      if (setActiveSubtask) setActiveSubtask(null);
+                      if (onCloseModal) onCloseModal(); else onClose();
+                      router.push('/');
+                    }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
                     <Folder className="w-3.5 h-3.5 shrink-0" />
@@ -3415,7 +3865,7 @@ export function SubtaskDetailView({
                 </>
               )}
               <button
-                onClick={() => { onClose(); router.push(`/lists/${parentTask.list?.id}`); }}
+                onClick={handleReturnToList}
                 className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
               >
                 <ListTodo className="w-3.5 h-3.5 shrink-0" />
@@ -3433,7 +3883,7 @@ export function SubtaskDetailView({
                     router.push(`/tasks/${parentTask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
                   }
                 }}
-                className="truncate max-w-[150px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                className="truncate max-w-[150px] font-semibold text-zinc-300 hover:text-white transition-colors cursor-pointer"
               >
                 {parentTask.title || 'Untitled'}
               </button>
@@ -3487,7 +3937,13 @@ export function SubtaskDetailView({
             </button>
           )}
           <button
-            onClick={onClose}
+            onClick={() => {
+              if (onCloseModal) {
+                onCloseModal();
+              } else {
+                onClose();
+              }
+            }}
             className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -3501,39 +3957,53 @@ export function SubtaskDetailView({
         {/* Left Panel: Details & Description */}
         <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
           <div className="p-8">
-            <div className="flex items-center gap-1.5 text-[13px] text-zinc-500 mb-2 cursor-pointer hover:text-zinc-300 transition-colors" onClick={onClose}>
-              Subtask of
-              <div className="flex items-center gap-1.5 ml-1 text-zinc-300">
+            <div className="flex items-center gap-1.5 text-[13px] text-zinc-500 mb-2 cursor-pointer hover:text-zinc-300 transition-colors group/subtask-parent w-fit" onClick={onClose}>
+              <span>Subtask of</span>
+              <div className="flex items-center gap-1.5 ml-1 font-bold text-zinc-100 group-hover/subtask-parent:text-white transition-colors">
                 {(parentTask.completed || parentTask.status === 'DONE' || parentTask.status === 'CLOSED' || parentTask.status === 'Closed') && (
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                 )}
-                {parentTask.title}
+                <span>{parentTask.title}</span>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 mb-8 group w-fit">
-              <CornerDownRight className="w-5 h-5 text-zinc-500 shrink-0" />
+            <div className="flex items-start gap-2 mb-8 group max-w-3xl w-full">
+              <CornerDownRight className="w-5 h-5 text-zinc-500 shrink-0 mt-1.5" />
               {isEditingTitle ? (
-                <input
+                <textarea
+                  ref={subtaskTitleTextareaRef}
+                  rows={1}
                   autoFocus
-                  type="text"
                   value={localTitle}
-                  onChange={(e) => setLocalTitle(e.target.value)}
-                  onFocus={(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
+                  onChange={(e) => {
+                    setLocalTitle(e.target.value);
+                    e.target.style.height = 'auto';
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.height = 'auto';
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                    e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+                  }}
                   onBlur={() => {
                     setIsEditingTitle(false);
                     handleTitleBlur();
                   }}
-                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                  className="text-2xl font-bold bg-card border border-zinc-700 focus:border-zinc-500 focus:outline-none w-[400px] sm:w-[600px] transition-colors rounded px-2 py-1 -ml-2 text-zinc-100"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  className="text-2xl font-bold bg-card border border-zinc-700 focus:border-zinc-500 focus:outline-none w-full transition-colors rounded px-2 py-1 -ml-2 text-zinc-100 resize-none overflow-hidden leading-snug break-words block"
                 />
               ) : (
                 <h1
                   onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
-                  className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors flex items-center group w-fit pr-16 ${(subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.completed) ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
+                  className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors break-words leading-snug group w-fit max-w-full pr-10 ${(subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.completed) ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                 >
-                  {localTitle}
-                  <Pencil className="w-4 h-4 ml-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  <span>{localTitle}</span>
+                  <Pencil className="w-4 h-4 ml-2.5 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity inline-block align-middle shrink-0" />
                 </h1>
               )}
             </div>
@@ -3553,7 +4023,7 @@ export function SubtaskDetailView({
                   <div className="flex items-center gap-1.5">
                     {(() => {
                       const orderedStatuses = (listStatuses && listStatuses.length > 0)
-                        ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+                        ? sortStatusesWithClosedAndKycAtEnd(listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')))
                         : ALL_STATUSES;
 
                       const statusName = subtask.status || 'No Status';
@@ -3680,25 +4150,33 @@ export function SubtaskDetailView({
                       );
                     })()}
 
-                    <div className="flex items-center gap-1.5 shrink-0 ml-1">
-                      <button
-                        onClick={() => {
-                          const s = 'Closed';
-                          if (parentTask?.subtasks) {
-                            const updatedSubtasks = parentTask.subtasks.map((st: any) => 
-                              st.id === subtask.id ? { ...st, status: s, completed: true } : st
-                            );
-                            onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
-                          }
-                          tasksApi.updateSubtask(parentTask.id, subtask.id, { status: s, completed: true }).catch(err => console.error(err));
-                          if (setActiveSubtask) setActiveSubtask({ ...subtask, status: s, completed: true });
-                        }}
-                        title="Mark as Closed"
-                        className="w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white cursor-pointer"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                      {(() => {
+                        const isSubClosed = subtask.completed || (subtask.status || '').toLowerCase() === 'closed' || (subtask.status || '').toLowerCase() === 'done';
+                        return (
+                          <button
+                            onClick={() => {
+                              const s = isSubClosed ? 'Pending' : 'Closed';
+                              const nextCompleted = !isSubClosed;
+                              if (parentTask?.subtasks) {
+                                const updatedSubtasks = parentTask.subtasks.map((st: any) => 
+                                  st.id === subtask.id ? { ...st, status: s, completed: nextCompleted } : st
+                                );
+                                onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
+                              }
+                              tasksApi.updateSubtask(parentTask.id, subtask.id, { status: s, completed: nextCompleted }).catch(err => console.error(err));
+                              if (setActiveSubtask) setActiveSubtask({ ...subtask, status: s, completed: nextCompleted });
+                            }}
+                            title={isSubClosed ? "Mark as Open" : "Mark as Closed"}
+                            className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border cursor-pointer ${
+                              isSubClosed
+                                ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700'
+                                : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white'
+                            }`}
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                        );
+                      })()}
                   </div>
               </div>
 
@@ -3713,9 +4191,9 @@ export function SubtaskDetailView({
                 <div className="flex items-center gap-2 flex-wrap">
                   <Popover.Root>
                     <Popover.Trigger asChild>
-                      {(subtask.assigneeRoleRestrictions && subtask.assigneeRoleRestrictions.length > 0) ? (
+                      {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
                         <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
-                          {subtask.assigneeRoleRestrictions.map((role: string, i: number) => {
+                          {localRoleRestrictions.map((role: string, i: number) => {
                             const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                             const bgColor = colors[i % colors.length];
                             return (
@@ -3745,33 +4223,56 @@ export function SubtaskDetailView({
                             <div key={team.id} className="mb-2">
                               {(() => {
                                 const teamRoles = team.teamRoles || [];
-                                const current = subtask.assigneeRoleRestrictions || [];
+                                const current = latestRoleRestrictionsRef.current;
                                 const hasRoles = teamRoles.length > 0;
                                 const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
                                 const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
 
                                 return (
                                   <div
-                                    onClick={() => {
-                                      if (!hasRoles) return;
-                                      let next = [...current];
-                                      if (allSelected) {
-                                        next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
-                                      } else {
-                                        const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
-                                        next = [...next, ...toAdd];
-                                      }
-                                      const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
-                                      if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-                                      if (onUpdateTask) {
-                                        const updatedTask = {
-                                          ...parentTask,
-                                          subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
+                                      onClick={() => {
+                                        if (!hasRoles) return;
+                                        let next = [...current];
+                                        if (allSelected) {
+                                          next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                        } else {
+                                          const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                          next = [...next, ...toAdd];
+                                        }
+                                        const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers || [], workspaceTeams || []);
+                                        const matchingIds = matchingUsers.map((u: any) => u.id);
+
+                                        latestRoleRestrictionsRef.current = next;
+                                        setLocalRoleRestrictions(next);
+                                        lastRoleUpdateTimestampRef.current = Date.now();
+
+                                        latestAssigneesRef.current = matchingUsers;
+                                        setLocalAssignees(matchingUsers);
+                                        lastAssigneeUpdateTimestampRef.current = Date.now();
+
+                                        subtask.assigneeRoleRestrictions = next;
+                                        subtask.assignees = matchingUsers;
+                                        subtask.assigneeIds = matchingIds;
+                                        const updatedSubtask = {
+                                          ...subtask,
+                                          assigneeRoleRestrictions: next,
+                                          assignees: matchingUsers,
+                                          assigneeIds: matchingIds,
+                                          assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
+                                          assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
                                         };
-                                        onUpdateTask(updatedTask);
-                                      }
-                                      tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any).catch(console.error);
-                                    }}
+                                        if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+                                        if (onUpdateTask) {
+                                          const updatedTask = {
+                                            ...parentTask,
+                                            subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
+                                          };
+                                          onUpdateTask(updatedTask);
+                                          useAppStore.getState().updateTask(updatedTask);
+                                          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+                                        }
+                                        tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
+                                      }}
                                     className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-accent/30 ${hasRoles ? 'cursor-pointer hover:bg-accent/50 hover:text-foreground transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-muted-foreground'}`}
                                   >
                                     {hasRoles && (
@@ -3790,18 +4291,38 @@ export function SubtaskDetailView({
                               {team.teamRoles && team.teamRoles.length > 0 && (
                                 <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-border/50 mt-1 mb-1 relative">
                                   {team.teamRoles.map((role: any) => {
-                                    const selected = (subtask.assigneeRoleRestrictions || []).includes(role.name);
+                                    const selected = localRoleRestrictions.includes(role.name);
                                     return (
                                       <div
                                         key={role.id}
                                         onClick={() => {
-                                          const current = subtask.assigneeRoleRestrictions || [];
+                                          const current = latestRoleRestrictionsRef.current;
                                           const next = selected
                                             ? current.filter((r: string) => r !== role.name)
                                             : [...current, role.name];
 
-                                          // Optimistically update immediately before API call
-                                          const updatedSubtask = { ...subtask, assigneeRoleRestrictions: next };
+                                          const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers || [], workspaceTeams || []);
+                                          const matchingIds = matchingUsers.map((u: any) => u.id);
+
+                                          latestRoleRestrictionsRef.current = next;
+                                          setLocalRoleRestrictions(next);
+                                          lastRoleUpdateTimestampRef.current = Date.now();
+
+                                          latestAssigneesRef.current = matchingUsers;
+                                          setLocalAssignees(matchingUsers);
+                                          lastAssigneeUpdateTimestampRef.current = Date.now();
+
+                                          subtask.assigneeRoleRestrictions = next;
+                                          subtask.assignees = matchingUsers;
+                                          subtask.assigneeIds = matchingIds;
+                                          const updatedSubtask = {
+                                            ...subtask,
+                                            assigneeRoleRestrictions: next,
+                                            assignees: matchingUsers,
+                                            assigneeIds: matchingIds,
+                                            assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
+                                            assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
+                                          };
                                           if (setActiveSubtask) setActiveSubtask(updatedSubtask);
                                           if (onUpdateTask) {
                                             const updatedTask = {
@@ -3809,10 +4330,11 @@ export function SubtaskDetailView({
                                               subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
                                             };
                                             onUpdateTask(updatedTask);
+                                            useAppStore.getState().updateTask(updatedTask);
+                                            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
                                           }
 
-                                          // Fire API in background
-                                          tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next } as any)
+                                          tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any)
                                             .catch((err: any) => {
                                               console.error("Failed to update subtask role restriction", err);
                                             });
@@ -3835,11 +4357,11 @@ export function SubtaskDetailView({
                     </Popover.Portal>
                   </Popover.Root>
 
-                  <Popover.Root open={isAssigneeOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsAssigneeOpen(open)}>
+                  <Popover.Root open={isAssigneeOpen && canAssignMember} onOpenChange={(open) => canAssignMember && setIsAssigneeOpen(open)}>
                     <Popover.Trigger asChild>
                       <motion.div layout
-                        title={currentAssignees.map((u: any) => u.name).join(', ')}
-                        className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignTask
+                        title={!hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u: any) => u.name).join(', ')}
+                        className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignMember
                           ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
                           : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
                           }`}
@@ -3848,38 +4370,42 @@ export function SubtaskDetailView({
                           <>
                             <div className="flex items-center -space-x-1.5">
                               <AnimatePresence>
-                                {currentAssignees.slice(0, 2).map((u: any, i: number) => (
-                                  <motion.div
-                                    key={u.id}
-                                    initial={{ opacity: 0, scale: 0.5 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    exit={{ opacity: 0, scale: 0.5 }}
-                                    transition={{ duration: 0.2 }}
-                                    style={{ zIndex: 10 - i }}
-                                    className="relative ring-2 ring-[#121212] rounded-full shrink-0"
-                                    title={u.name}
-                                  >
-                                    {u.avatarUrl ? (
-                                      <img src={u.avatarUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
-                                    ) : (
-                                      <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold">
-                                        {(u.name || 'U').substring(0, 2).toUpperCase()}
-                                      </div>
-                                    )}
-                                  </motion.div>
-                                ))}
+                                {currentAssignees.slice(0, 3).map((u: any, i: number) => {
+                                  const avatarSrc = u.avatarUrl || u.imageUrl;
+                                  return (
+                                    <motion.div
+                                      key={u.id}
+                                      initial={{ opacity: 0, scale: 0.5 }}
+                                      animate={{ opacity: 1, scale: 1 }}
+                                      exit={{ opacity: 0, scale: 0.5 }}
+                                      transition={{ duration: 0.2 }}
+                                      style={{ zIndex: i + 1 }}
+                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                      title={u.name}
+                                    >
+                                      {avatarSrc ? (
+                                        <img src={avatarSrc} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
+                                      ) : (
+                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(u.name || u.id || 'U')}`}>
+                                          {(u.name || 'U').substring(0, 2).toUpperCase()}
+                                        </div>
+                                      )}
+                                    </motion.div>
+                                  );
+                                })}
                               </AnimatePresence>
                               <AnimatePresence>
-                                {currentAssignees.length > 2 && (
+                                {currentAssignees.length > 3 && (
                                   <motion.div
                                     key="overflow"
                                     initial={{ opacity: 0, scale: 0.5 }}
                                     animate={{ opacity: 1, scale: 1 }}
                                     exit={{ opacity: 0, scale: 0.5 }}
                                     transition={{ duration: 0.2 }}
-                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0"
+                                    style={{ zIndex: 10 }}
+                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
                                   >
-                                    +{currentAssignees.length - 2}
+                                    +{currentAssignees.length - 3}
                                   </motion.div>
                                 )}
                               </AnimatePresence>
@@ -3887,12 +4413,13 @@ export function SubtaskDetailView({
                             {currentAssignees.length === 1 && (
                               <motion.span layout className="truncate max-w-[100px]">{currentAssignees[0].name}</motion.span>
                             )}
+                            {!canAssignMember && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
                           </>
                         ) : (
                           <>
                             <Plus className="w-3.5 h-3.5 shrink-0" />
                             <span>Assign</span>
-                            {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                            {!canAssignMember && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
                           </>
                         )}
                       </motion.div>
@@ -4421,14 +4948,13 @@ export function SubtaskDetailView({
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                      <>changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span></>
-                                    ) : (
-                                      <>changed status from <span
+                                    changed status
+                                    {act.oldStatus && (
+                                      <> from <span
                                           className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
                                           style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
                                         >
-                                          {act.oldStatus || 'Unknown'}
+                                          {act.oldStatus}
                                         </span></>
                                     )}
                                     {' '}to <span
@@ -4467,12 +4993,12 @@ export function SubtaskDetailView({
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                      <>changed priority of subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span> to{' '}</>
-                                    ) : (
-                                      <>changed priority to{' '}</>
+                                    changed priority{' '}
+                                    {act.oldPriority && (
+                                      <>from <span className={`font-medium px-1 ${getPriorityConfig(act.oldPriority).color}`}>{getPriorityConfig(act.oldPriority).label}</span> </>
                                     )}
-                                    <span className="text-amber-400 font-medium">{act.newPriority}</span>
+                                    to{' '}
+                                    <span className={`font-medium ${getPriorityConfig(act.newPriority).color}`}>{getPriorityConfig(act.newPriority).label}</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -4486,11 +5012,7 @@ export function SubtaskDetailView({
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                      <>updated team roles for subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
-                                    ) : (
-                                      <>updated team roles</>
-                                    )}
+                                    updated team roles
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -4504,12 +5026,25 @@ export function SubtaskDetailView({
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    {(act.subtaskTitle && !((parentTask as any)?.parentTaskId)) ? (
-                                      <>attached a file to subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span>:{' '}</>
-                                    ) : (
-                                      <>attached a file:{' '}</>
-                                    )}
+                                    attached a file:{' '}
                                     <span className="text-zinc-300 font-medium">{act.fileName}</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked') {
+                              const isAudit = act.type === 'audit_item_checked' || act.isAudit;
+                              const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                              const itemName = act.itemName || 'item';
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                    checked {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -4704,16 +5239,28 @@ export function TaskDetailModal(props: Props) {
 
   // Sync prop changes (e.g. socket updates) without clobbering local optimistic state
   useEffect(() => {
-    if (props.isOpen && props.task && fullTask && props.task.id === fullTask.id) {
+    const incomingTask = props.task;
+    if (props.isOpen && incomingTask && fullTask && incomingTask.id === fullTask.id) {
       setFullTask(prev => {
-        const merged = { ...prev!, ...props.task! };
-        if (!props.task!.subtasks && prev!.subtasks) merged.subtasks = prev!.subtasks;
-        if (!props.task!.checklists && prev!.checklists) merged.checklists = prev!.checklists;
-        if (!props.task!.comments && prev!.comments) merged.comments = prev!.comments;
+        if (!prev) return incomingTask;
+        const merged = { ...prev, ...incomingTask };
+        if (!incomingTask.subtasks && prev.subtasks) merged.subtasks = prev.subtasks;
+        if (!incomingTask.checklists && prev.checklists) merged.checklists = prev.checklists;
+        if (!incomingTask.comments && prev.comments) merged.comments = prev.comments;
         return merged;
       });
     }
   }, [props.task]);
+
+  useEffect(() => {
+    const handleTaskUpdated = (e: any) => {
+      const incoming = e.detail?.task;
+      if (!incoming || !fullTask || incoming.id !== fullTask.id) return;
+      setFullTask(prev => prev ? { ...prev, ...incoming } : prev);
+    };
+    window.addEventListener('task:updated', handleTaskUpdated);
+    return () => window.removeEventListener('task:updated', handleTaskUpdated);
+  }, [fullTask?.id]);
 
   useEffect(() => {
     const main = document.getElementById('main-scroll-container');

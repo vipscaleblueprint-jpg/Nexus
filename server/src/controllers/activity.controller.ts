@@ -20,9 +20,9 @@ export const getAuditLogs = async (req: Request, res: Response) => {
         orderBy: { createdAt: 'desc' },
         include: logInclude,
       }),
-      // Status/title changes get their own window: bulk assignment logs otherwise push them out
+      // Status/title/checklist/audit changes get their own window: bulk assignment logs otherwise push them out
       prisma.auditLog.findMany({
-        where: { ...userFilter, action: { in: ['STATUS_CHANGE', 'TITLE_CHANGE'] } },
+        where: { ...userFilter, action: { in: ['STATUS_CHANGE', 'TITLE_CHANGE', 'AUDIT_ITEM_CHECKED', 'CHECKLIST_ITEM_CHECKED'] } },
         take: 100,
         orderBy: { createdAt: 'desc' },
         include: logInclude,

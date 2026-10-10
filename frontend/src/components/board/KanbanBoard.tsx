@@ -63,6 +63,11 @@ const GROUP_STYLES: Record<string, { badgeClass: string; borderColor: string; ic
     badgeClass: 'bg-indigo-500/15 text-indigo-300',
     borderColor: 'rgba(99, 102, 241, 0.5)',
     icon: '⚡',
+  },
+  'Closed Task': {
+    badgeClass: 'bg-emerald-500/15 text-emerald-300',
+    borderColor: 'rgba(16, 185, 129, 0.5)',
+    icon: '✅',
   }
 };
 

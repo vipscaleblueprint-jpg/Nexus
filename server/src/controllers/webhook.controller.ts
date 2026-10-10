@@ -66,7 +66,7 @@ const DEFAULT_CLIENT_STATUSES = [
   { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
   { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
   { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
-  { name: 'CLOSED', color: '#2FA37A', groupName: 'Workflow & Progress' },
+  { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task' },
   { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress' },
 ];
 
@@ -144,7 +144,7 @@ export const syncClients = async (req: Request, res: Response) => {
             externalId: client.id,
             folderId: folder.id,
             spaceId: folder.spaceId,
-            customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+            customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management', 'Closed Task']
           }
         });
 

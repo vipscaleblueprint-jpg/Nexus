@@ -32,6 +32,7 @@ import { RoleManagementModal } from '@/components/modals/RoleManagementModal';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { SettingsSkeleton, MemberSkeleton } from '@/components/ui/Skeleton';
+import { ClickUpStatusPanel } from '@/components/layout/ClickUpStatusPanel';
 
 const ROLE_COLORS: Record<string, string> = {
   PM: 'bg-violet-500/20 text-violet-300 border-violet-500/30',
@@ -438,6 +439,8 @@ export default function UsersSettingsPage() {
               </button>
             </>
           )}
+          {/* ClickUp sync status and Pull, for admins (the profile menu only shows it to the DEV role). */}
+          <ClickUpStatusPanel />
           <button
             onClick={() => setIsRoleModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50"

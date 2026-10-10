@@ -100,7 +100,7 @@ const DEFAULT_STATUSES = [
   { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
   { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
   { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
-  { name: 'CLOSED', color: '#2FA37A', groupName: 'Workflow & Progress' },
+  { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task' },
   { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress' },
 ];
 
@@ -113,7 +113,7 @@ export async function createList(req: Request, res: Response) {
         name, 
         spaceId: spaceId || null, 
         folderId: folderId || null,
-        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management', 'Closed Task']
       },
     });
 
@@ -296,17 +296,33 @@ export async function createStatus(req: Request, res: Response) {
       await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
       return res.status(201).json({ status });
     } else {
-      const status = await prisma.listStatus.create({
-        data: {
-          name,
-          color: color || defaultColor,
-          allowedRoles: allowedRoles || [],
-          groupName: groupName || null,
-          listId: req.params.id,
-        },
+      // A list has one column per status name. The board can ask to create a column that
+      // already exists (it places a status it only knows from a task, or its copy of the list
+      // is a moment out of date), so update that column instead of adding a duplicate.
+      const existing = await prisma.listStatus.findFirst({
+        where: { listId: req.params.id, name: { equals: String(name), mode: 'insensitive' } },
+        orderBy: { createdAt: 'asc' },
       });
+      const status = existing
+        ? await prisma.listStatus.update({
+            where: { id: existing.id },
+            data: {
+              ...(color && { color }),
+              ...(allowedRoles !== undefined && { allowedRoles }),
+              ...(groupName !== undefined && { groupName: groupName || null }),
+            },
+          })
+        : await prisma.listStatus.create({
+            data: {
+              name,
+              color: color || defaultColor,
+              allowedRoles: allowedRoles || [],
+              groupName: groupName || null,
+              listId: req.params.id,
+            },
+          });
       await invalidateCache('lists:all', 'spaces:all', 'dashboard:all');
-      return res.status(201).json({ status });
+      return res.status(existing ? 200 : 201).json({ status });
     }
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

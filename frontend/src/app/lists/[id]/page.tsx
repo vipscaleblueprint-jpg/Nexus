@@ -133,16 +133,21 @@ export default function BoardPage() {
     }
   }, [loading, list?.tasks, searchParams]);
 
+  const hadSelectedTask = useRef(false);
+
   // Sync selectedTask to URL so that copy-pasting the address bar works
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       if (selectedTask) {
+        hadSelectedTask.current = true;
         if (url.searchParams.get('task') !== selectedTask.id) {
           url.searchParams.set('task', selectedTask.id);
           window.history.replaceState(null, '', url.pathname + url.search);
         }
-      } else if (url.searchParams.has('task')) {
+        // Only clear on close: on first load the task from the link isn't selected yet,
+        // and clearing here would drop ?subtask= before the task window reads it.
+      } else if (hadSelectedTask.current && url.searchParams.has('task')) {
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
         window.history.replaceState(null, '', url.pathname + url.search);

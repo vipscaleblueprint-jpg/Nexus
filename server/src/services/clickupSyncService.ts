@@ -184,6 +184,34 @@ export function startClickUpSync(options: ClickUpSyncOptions = {}): boolean {
   return true;
 }
 
+const FOLLOW_UP_PULL_DELAY_MS = 2 * 60_000;
+const FOLLOW_UP_PULL_RETRY_MS = 60_000;
+const FOLLOW_UP_PULL_RETRIES = 5;
+const pendingListPulls = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Pulls one list's recent ClickUp changes a little later. Galaxy only tells Nexus about the
+ * main task; n8n adds its ClickUp subtasks and checklists moments afterwards, so this picks
+ * them up without anyone pressing Pull. Repeat calls for the same list restart the wait.
+ */
+export function scheduleListPull(
+  nexusListId: string,
+  emit?: SyncEmit,
+  delayMs = FOLLOW_UP_PULL_DELAY_MS,
+  retriesLeft = FOLLOW_UP_PULL_RETRIES
+): void {
+  clearTimeout(pendingListPulls.get(nexusListId));
+  pendingListPulls.set(
+    nexusListId,
+    setTimeout(() => {
+      pendingListPulls.delete(nexusListId);
+      const started = startClickUpSync({ nexusListIds: [nexusListId], includeClosed: false, emit });
+      // Another pull is running and may already be past this list: try again shortly.
+      if (!started && retriesLeft > 0) scheduleListPull(nexusListId, emit, FOLLOW_UP_PULL_RETRY_MS, retriesLeft - 1);
+    }, delayMs)
+  );
+}
+
 export async function runClickUpSync(options: ClickUpSyncOptions = {}): Promise<ClickUpSyncSummary> {
   const summary: ClickUpSyncSummary = {
     startedAt: new Date().toISOString(),
@@ -400,12 +428,18 @@ function firstLine(message: string | undefined): string {
 }
 
 async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext) {
+  const existingSelect = {
+    id: true,
+    listId: true,
+    externalId: true,
+    list: { select: { clickUpListId: true, externalId: true } },
+  } as const;
   const cu = await getClickUpTask(cuTaskId);
   const listName = (await prisma.list.findUnique({ where: { id: nexusListId }, select: { name: true } }))?.name;
   const existing =
     (await prisma.task.findFirst({
       where: { OR: [{ externalId: cuTaskId }, { externalId: { endsWith: `/${cuTaskId}` } }] },
-      select: { id: true, listId: true, externalId: true },
+      select: existingSelect,
     })) ??
     // Unlinked Nexus task with the same title (Galaxy appends " - <Client>").
     (await prisma.task.findFirst({
@@ -417,10 +451,12 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
           ...(listName ? [{ title: { equals: `${cu.name} - ${listName}`, mode: 'insensitive' as const } }] : []),
         ],
       },
-      select: { id: true, listId: true, externalId: true },
+      select: existingSelect,
     }));
-  // A task already in Nexus stays in its current list.
-  const listId = existing?.listId ?? nexusListId;
+  // A task already in Nexus stays in its current list — unless that list has no ClickUp
+  // mapping (Galaxy filed it under a client-name list), in which case it moves to this one.
+  const inMappedList = !!existing && !!resolveClickUpListId(existing.list);
+  const listId = existing && inMappedList ? existing.listId : nexusListId;
   const status = await resolveStatus(listId, cu.status, ctx);
   const assigneeIds = mapUsers(cu.assignees, ctx);
 
@@ -431,6 +467,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
       data: {
         // Keep Nexus titles (Galaxy adds the client suffix); just link the task.
         externalId: existing.externalId ?? cuTaskId,
+        ...(listId !== existing.listId && { listId }),
         ...(status && { status }),
         // Only overwrite assignees when ClickUp's resolve to Nexus users,
         // so unmatched emails don't wipe assignments made in Nexus.

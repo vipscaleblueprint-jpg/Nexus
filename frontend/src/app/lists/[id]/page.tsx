@@ -631,7 +631,9 @@ export default function BoardPage() {
                 listStatuses={list?.statuses || []}
                 onStatusChange={async (statusName, data) => {
                   try {
-                    const existingStatus = list?.statuses?.find((s: any) => s.name === statusName);
+                    const existingStatus = list?.statuses?.find(
+                      (s: any) => String(s.name).toLowerCase() === String(statusName).toLowerCase()
+                    );
                     const payload: any = {
                       name: data.name || statusName,
                       color: data.color || existingStatus?.color || 'zinc',
@@ -685,9 +687,12 @@ export default function BoardPage() {
                       });
                       if (res.ok) {
                         const created = await res.json();
+                        // The server returns the existing column when there already is one by this name.
                         setList((prev: any) => ({
                           ...prev,
-                          statuses: [...(prev.statuses || []), created.status]
+                          statuses: (prev.statuses || []).some((s: any) => s.id === created.status.id)
+                            ? prev.statuses.map((s: any) => (s.id === created.status.id ? created.status : s))
+                            : [...(prev.statuses || []), created.status]
                         }));
                       } else {
                         const errData = await res.json().catch(() => ({}));

@@ -118,9 +118,103 @@ import {
   MessageSquareWarning,
   Link as LinkIcon,
   Bot,
+  Check,
 } from 'lucide-react';
 
 const VIPSCALE_BASE = 'https://tools.vipscaleph.com';
+
+// ─── Tree preferences (kept in this browser) ─────────────────────────────────
+// Which folders/spaces are open and how each one is sorted survive a reload.
+
+type TreeSort = 'manual' | 'az' | 'oldest' | 'newest';
+
+const TREE_OPEN_KEY = 'nexus-sidebar-open';
+const TREE_SORT_KEY = 'nexus-sidebar-sort';
+
+const TREE_SORT_OPTIONS: { value: TreeSort; label: string }[] = [
+  { value: 'manual', label: 'Manual order' },
+  { value: 'az', label: 'A – Z' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'newest', label: 'Newest first' },
+];
+
+function readTreePrefs<T>(key: string): Record<string, T> {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(localStorage.getItem(key) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeTreePref(key: string, id: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ ...readTreePrefs(key), [id]: value }));
+  } catch {
+    // Storage unavailable (private window, quota): the tree still works, it just won't remember.
+  }
+}
+
+/** Open/closed state for one tree row, remembered across reloads. */
+function usePersistedOpen(id: string, defaultOpen: boolean) {
+  const [isOpen, setOpen] = useState<boolean>(() => {
+    const saved = readTreePrefs<boolean>(TREE_OPEN_KEY)[id];
+    return typeof saved === 'boolean' ? saved : defaultOpen;
+  });
+  const setIsOpen = (next: boolean) => {
+    setOpen(next);
+    writeTreePref(TREE_OPEN_KEY, id, next);
+  };
+  return [isOpen, setIsOpen] as const;
+}
+
+/** Sort mode for the items inside one folder or space, remembered across reloads. */
+function usePersistedSort(id: string) {
+  const [sort, setSortState] = useState<TreeSort>(() => {
+    const saved = readTreePrefs<TreeSort>(TREE_SORT_KEY)[id];
+    return TREE_SORT_OPTIONS.some((o) => o.value === saved) ? saved : 'manual';
+  });
+  const setSort = (next: TreeSort) => {
+    setSortState(next);
+    writeTreePref(TREE_SORT_KEY, id, next);
+  };
+  return [sort, setSort] as const;
+}
+
+/** 'manual' keeps the drag-and-drop order; the others sort by name or creation date. */
+function sortTreeItems<T extends { order?: number; name?: string; title?: string; createdAt?: string }>(
+  items: T[],
+  sort: TreeSort
+): T[] {
+  const byOrder = (a: T, b: T) => (a.order || 0) - (b.order || 0);
+  const label = (i: T) => i.name ?? i.title ?? '';
+  const created = (i: T) => (i.createdAt ? new Date(i.createdAt).getTime() : 0);
+  const sorted = [...items];
+  if (sort === 'az') {
+    return sorted.sort((a, b) => label(a).localeCompare(label(b), undefined, { numeric: true, sensitivity: 'base' }) || byOrder(a, b));
+  }
+  if (sort === 'oldest') return sorted.sort((a, b) => created(a) - created(b) || byOrder(a, b));
+  if (sort === 'newest') return sorted.sort((a, b) => created(b) - created(a) || byOrder(a, b));
+  return sorted.sort(byOrder);
+}
+
+function TreeSortMenuItems({ sort, onChange }: { sort: TreeSort; onChange: (next: TreeSort) => void }) {
+  return (
+    <>
+      <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-zinc-500 border-t border-zinc-700/60 mt-1">Sort</div>
+      {TREE_SORT_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          onClick={() => onChange(option.value)}
+          className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"
+        >
+          <Check className={`size-3.5 ${sort === option.value ? 'text-zinc-200' : 'opacity-0'}`} />
+          {option.label}
+        </button>
+      ))}
+    </>
+  );
+}
 
 interface SidebarProps {
   spaces?: Space[];
@@ -1349,13 +1443,14 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
   onAddList: (spaceId?: string, folderId?: string) => void;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = usePersistedOpen(`space-${space.id}`, true);
+  const [sort, setSort] = usePersistedSort(`space-${space.id}`);
   
-  const combinedItems = [
+  const combinedItems = sortTreeItems([
     ...(space.folders?.map(f => ({ ...f, itemType: 'folder' })) || []),
     ...(space.lists?.filter(l => !l.folderId).map(l => ({ ...l, itemType: 'list' })) || []),
     ...(space.docs?.filter(d => !d.folderId && d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
-  ].sort((a, b) => (a.order || 0) - (b.order || 0));
+  ], sort);
   const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`spacedrop-${space.id}`);
   const { activeId, spaces } = useContext(DropIndicatorContext);
   const activeParsed = activeId ? parseSortableId(activeId) : null;
@@ -1382,10 +1477,11 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
         </div>
         <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
           {space.id !== 'root-space' && (
-            <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
+            <ActionMenu icon={<MoreHorizontal className="size-3.5" />} width="w-40">
               <button onClick={() => onAction('rename', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
               <button onClick={() => onAction('duplicate', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Copy className="size-3.5 text-zinc-400" />Duplicate</button>
               <button onClick={() => onAction('delete', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
+              <TreeSortMenuItems sort={sort} onChange={setSort} />
             </ActionMenu>
           )}
           <ActionMenu icon={<Plus className="size-3.5" />}>
@@ -1437,15 +1533,16 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
   onAddList: (spaceId?: string, folderId?: string) => void;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = usePersistedOpen(`folder-${folder.id}`, true);
+  const [sort, setSort] = usePersistedSort(`folder-${folder.id}`);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(folder.name);
   
-  const combinedItems = [
+  const combinedItems = sortTreeItems([
     ...(folder.subfolders?.map(f => ({ ...f, itemType: 'folder' })) || []),
     ...(folder.lists?.map(l => ({ ...l, itemType: 'list' })) || []),
     ...(folder.docs?.filter(d => d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
-  ].sort((a, b) => (a.order || 0) - (b.order || 0));
+  ], sort);
   const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`folderdrop-${folder.id}`);
   const { activeId, spaces } = useContext(DropIndicatorContext);
   const activeParsed = activeId ? parseSortableId(activeId) : null;
@@ -1511,9 +1608,10 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
           )}
         </div>
         <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-          <ActionMenu icon={<MoreHorizontal className="size-3.5" />}>
+          <ActionMenu icon={<MoreHorizontal className="size-3.5" />} width="w-40">
             <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
             <button onClick={() => onAction('delete', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
+            <TreeSortMenuItems sort={sort} onChange={setSort} />
           </ActionMenu>
           <ActionMenu icon={<Plus className="size-3.5" />}>
             <button onClick={(e) => { e.stopPropagation(); onAddFolder(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>
@@ -1564,7 +1662,7 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
   const searchParams = useSearchParams();
   const isActive = pathname === `/docs/${doc.id}` && !searchParams?.get('page');
 
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = usePersistedOpen(`doc-${doc.id}`, false);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(doc.title);
   const hasPages = doc.pages && doc.pages.length > 0;
@@ -1651,7 +1749,7 @@ function PageTreeItem({ page, onAction }: {
   const searchParams = useSearchParams();
   const isActive = pathname === `/docs/${page.docId}` && searchParams?.get('page') === page.id;
 
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = usePersistedOpen(`page-${page.id}`, false);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(page.title);
   const hasSubpages = page.subpages && page.subpages.length > 0;

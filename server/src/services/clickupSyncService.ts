@@ -806,7 +806,15 @@ async function resolveStatus(listId: string, cuStatus: any, ctx: SyncContext): P
     const stored = name.toUpperCase();
     const known = statuses;
     pending = prisma.listStatus
-      .create({ data: { listId, name: stored, color: cuStatus.color || 'zinc', order: known.size } })
+      .create({
+        data: {
+          listId,
+          name: stored,
+          order: known.size,
+          // Closed tasks live in their own board group, after everything else.
+          ...(isClosed ? { color: '#2FA37A', groupName: 'Closed Task' } : { color: cuStatus.color || 'zinc' }),
+        },
+      })
       .then(() => {
         known.set(name.toLowerCase(), stored);
         ctx.summary.statusesCreated++;

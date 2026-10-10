@@ -129,7 +129,7 @@ export async function createExternalList(req: Request, res: Response) {
         spaceId: targetSpaceId || null,
         folderId: targetFolderId || null,
         externalId: externalId ? String(externalId) : null,
-        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+        customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management', 'Closed Task']
       }
     });
 
@@ -145,7 +145,7 @@ export async function createExternalList(req: Request, res: Response) {
       { name: 'IN PROGRESS', color: '#D04A7C', groupName: 'Workflow & Progress' },
       { name: 'REVISION', color: '#5B6BD6', groupName: 'Workflow & Progress' },
       { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress' },
-      { name: 'CLOSED', color: '#2FA37A', groupName: 'Workflow & Progress' },
+      { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task' },
       { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
       { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
       { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
@@ -361,7 +361,7 @@ export async function createTask(req: Request, res: Response) {
         { name: 'IN PROGRESS', color: '#D04A7C', groupName: 'Workflow & Progress', order: 1 },
         { name: 'REVISION', color: '#5B6BD6', groupName: 'Workflow & Progress', order: 2 },
         { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress', order: 3 },
-        { name: 'CLOSED', color: '#2FA37A', groupName: 'Workflow & Progress', order: 4 },
+        { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task', order: 4 },
         { name: 'WAITING', color: '#D9534F', groupName: 'Management', order: 0 },
         { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management', order: 1 },
         { name: 'CHECKING', color: '#A35DB8', groupName: 'Management', order: 2 },
@@ -371,7 +371,7 @@ export async function createTask(req: Request, res: Response) {
       await prisma.list.update({
         where: { id: list.id },
         data: {
-          customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management']
+          customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management', 'Closed Task']
         }
       });
 

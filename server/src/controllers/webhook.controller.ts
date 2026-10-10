@@ -5,7 +5,8 @@ import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
-import { getClickUpTask, clickupMarkdownToHtml } from '../services/clickupService';
+import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
+import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
 
 
 // Galaxy-created tasks/subtasks are authored by this system account rather than
@@ -249,8 +250,8 @@ function titleFromPrompt(prompt: unknown): string | null {
  */
 async function clickUpTaskContent(
   taskLink: unknown
-): Promise<{ name: string | null; descriptionHtml: string | null }> {
-  const empty = { name: null, descriptionHtml: null };
+): Promise<{ id: string | null; parentId: string | null; name: string | null; descriptionHtml: string | null }> {
+  const empty = { id: null, parentId: null, name: null, descriptionHtml: null };
   if (typeof taskLink !== 'string' || !taskLink.trim()) return empty;
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -263,7 +264,12 @@ async function clickUpTaskContent(
     const name = typeof task?.name === 'string' ? task.name.trim() : '';
     const markdown = [task?.markdown_description, task?.text_content, task?.description]
       .find((d): d is string => typeof d === 'string' && d.trim() !== '');
-    return { name: name || null, descriptionHtml: clickupMarkdownToHtml(markdown) || null };
+    return {
+      id: task?.id ? String(task.id) : null,
+      parentId: task?.parent ? String(task.parent) : null,
+      name: name || null,
+      descriptionHtml: clickupMarkdownToHtml(markdown) || null,
+    };
   } catch (err: any) {
     console.warn(`[Galaxy] Could not read ClickUp task for ${taskLink}: ${err?.message ?? err}`);
     return empty;
@@ -272,11 +278,20 @@ async function clickUpTaskContent(
   }
 }
 
+/** The Nexus task behind a ClickUp link or id. Galaxy stores the full URL, the ClickUp pull the bare id. */
+async function findTaskByClickUpLink(link: string) {
+  const id = extractClickUpTaskId(link.trim().replace(/\/+$/, ''));
+  if (!id) return null;
+  return prisma.task.findFirst({
+    where: { OR: [{ externalId: id }, { externalId: { endsWith: `/${id}` } }] },
+  });
+}
+
 export const handleGalaxyTask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
 
   try {
-    const { clients, prompt, priority, assignee, auditor, task_link, listed_by } = req.body;
+    const { clients, prompt, priority, assignee, task_link, listed_by } = req.body;
 
     const clientName = clients?.name;
     if (!clientName) {
@@ -301,13 +316,22 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
 
     const folder = await getClientDashboardFolder();
 
-    // Look for the client's specific List
-    let list = await prisma.list.findFirst({
-      where: {
-        name: { equals: clientName, mode: 'insensitive' },
-        folderId: folder.id
-      }
-    });
+    // Look for the client's specific List. Galaxy sends the client's ClickUp list id as
+    // clients.id, so prefer the list mapped to it: the client's Galaxy name can differ
+    // from the list name (e.g. "Stacy Brogan" vs "Danni Pomplun | Stacy Brogan").
+    const clientId = clients?.id != null ? String(clients.id).trim() : '';
+    let list =
+      (clientId
+        ? await prisma.list.findFirst({
+            where: { OR: [{ clickUpListId: clientId }, { externalId: `cu:${clientId}` }] },
+          })
+        : null) ??
+      (await prisma.list.findFirst({
+        where: {
+          name: { equals: clientName, mode: 'insensitive' },
+          folderId: folder.id
+        }
+      }));
 
     // If client list doesn't exist, create it on the fly
     if (!list) {
@@ -434,36 +458,14 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
       }
     });
 
-    // Auto-create subtask for the Audit Team
-    // Determine the specific auditor role requested by the AI, fallback to 'AUDITOR'
-    let auditorRoleName = 'AUDITOR';
-    let auditorUserIds: string[] = [];
-    if (auditor && Array.isArray(auditor) && auditor.length > 0) {
-      const selectedAuditor = auditor[0];
-      if (selectedAuditor.name) {
-        auditorRoleName = selectedAuditor.name; // Keep original casing (especially for TeamRoles like "Funnel Auditor")
-      }
-      if (selectedAuditor.userIds && Array.isArray(selectedAuditor.userIds)) {
-        auditorUserIds = selectedAuditor.userIds;
-      }
+    // n8n adds the task's ClickUp subtasks and checklists after it replies to Galaxy,
+    // so pull this client's list shortly to bring them in.
+    if (task_link && resolveClickUpListId(list)) {
+      scheduleListPull(list.id, (room, event, payload) => io.to(room).emit(event, payload));
     }
 
-    const autoSubtaskTitle = `--Audit - ${auditorRoleName} - ${title || clientName}`;
-
-    const subtask = await prisma.subtask.create({
-      data: {
-        title: autoSubtaskTitle,
-        taskId: newTask.id,
-        priority: priority ? priority.toUpperCase() : 'MEDIUM',
-        // Store auditor role as restriction so the role badge shows in UI
-        assigneeRoleRestrictions: [auditorRoleName],
-        // Assign the actual users to the subtask
-        ...(auditorUserIds.length > 0 ? {
-          assigneeId: auditorUserIds[0],
-          assignees: { connect: auditorUserIds.map(id => ({ id })) }
-        } : {})
-      }
-    });
+    // No audit subtask is created here: n8n generates the task's audit subtasks and its
+    // subtask creator sends each one to /galaxy/subtask.
 
     if (listed_by) {
       const dateOptions: Intl.DateTimeFormatOptions = { month: 'numeric', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' };
@@ -482,18 +484,6 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         include: { user: true }
       });
       io.emit('task:comment_added', { taskId: newTask.id, comment });
-
-      // Create comment for the auto-created subtask as well
-      const subtaskComment = await prisma.taskComment.create({
-        data: {
-          taskId: newTask.id,
-          subtaskId: subtask.id,
-          userId: creator.id,
-          content: commentContent
-        },
-        include: { user: true }
-      });
-      io.emit('task:comment_added', { taskId: newTask.id, subtaskId: subtask.id, comment: subtaskComment });
     }
 
     const fullyLoadedTask = await prisma.task.findUnique({
@@ -585,20 +575,14 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
           }
 
           blocks.splice(insertClientIndex, 0, getNewTaskBlock('c'));
-          
-          const newSubtaskBlock = {
-            id: `blk-st-${Date.now()}-${subtask.id}-c`,
-            type: "text",
-            content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
-          };
-          blocks.splice(insertClientIndex + 1, 0, newSubtaskBlock);
 
-          if (insertClientIndex + 2 < blocks.length) {
-            const nextBlock = blocks[insertClientIndex + 2];
+          // Subtasks are added under this line as they arrive (see handleGalaxySubtask).
+          if (insertClientIndex + 1 < blocks.length) {
+            const nextBlock = blocks[insertClientIndex + 1];
             if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
-              blocks.splice(insertClientIndex + 2, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
+              blocks.splice(insertClientIndex + 1, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
             }
-          } else if (insertClientIndex + 1 === blocks.length - 1) {
+          } else if (insertClientIndex === blocks.length - 1) {
              blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
           }
 
@@ -627,13 +611,6 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
           }
 
           blocks.splice(insertNewTasksIndex, 0, getNewTaskBlock('n'));
-          
-          const newSubtaskBlockN = {
-            id: `blk-st-${Date.now()}-${subtask.id}-n`,
-            type: "text",
-            content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
-          };
-          blocks.splice(insertNewTasksIndex + 1, 0, newSubtaskBlockN);
 
           await prisma.page.update({
             where: { id: todayPage.id },
@@ -730,6 +707,10 @@ export const handleGalaxyStatus = async (req: Request, res: Response) => {
   }
 };
 
+/** How long a subtask from n8n waits for its parent task to be created by Galaxy (8 × 5s). */
+const PARENT_WAIT_ATTEMPTS = 8;
+const PARENT_WAIT_MS = 5000;
+
 export const handleGalaxySubtask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
   try {
@@ -737,15 +718,85 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
 
     if (!task_link) return res.status(400).json({ error: 'task_link required' });
 
-    // task_link here is the parent's, so ClickUp can't supply this subtask's name.
-    const title = (typeof req.body.title === 'string' && req.body.title.trim()) || titleFromPrompt(req.body.prompt);
+    let parentTask: Awaited<ReturnType<typeof findTaskByClickUpLink>> = null;
+    let clickUpSubtask: Awaited<ReturnType<typeof clickUpTaskContent>> | null = null;
+    let subtaskClickUpId: string | null = null;
 
-    const parentTask = await prisma.task.findUnique({
-      where: { externalId: task_link }
-    });
+    const parentLink = typeof req.body.parent_task_link === 'string' ? req.body.parent_task_link.trim() : '';
+    if (parentLink) {
+      // n8n's subtask creator: it names the parent and sends the new ClickUp subtask's link.
+      // n8n starts on the subtasks as soon as it has replied to Galaxy, while Galaxy is still
+      // creating the parent here (it runs an AI step first) — so give the parent time to appear.
+      const parentId = extractClickUpTaskId(parentLink.replace(/\/+$/, ''));
+      for (let attempt = 0; attempt < PARENT_WAIT_ATTEMPTS && !parentTask; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, PARENT_WAIT_MS));
+        parentTask = await findTaskByClickUpLink(parentLink);
+        if (!parentTask) {
+          // ClickUp nests subtasks; Nexus has one level, so a nested one hangs off the root task.
+          const parentSubtask = await prisma.subtask.findFirst({
+            where: { OR: [{ externalId: parentId }, { externalId: { endsWith: `/${parentId}` } }] },
+            select: { task: true },
+          });
+          parentTask = parentSubtask?.task ?? null;
+        }
+      }
+      subtaskClickUpId = extractClickUpTaskId(String(task_link).trim().replace(/\/+$/, '')) || null;
+    } else {
+      // Galaxy's subtask form: task_link is the parent's ClickUp link, or — when n8n replies with
+      // the subtask it just created — the new subtask's own link. If it isn't a known task, ask
+      // ClickUp which task it sits under.
+      parentTask = await findTaskByClickUpLink(String(task_link));
+      if (!parentTask) {
+        clickUpSubtask = await clickUpTaskContent(task_link);
+        if (clickUpSubtask.parentId) parentTask = await findTaskByClickUpLink(clickUpSubtask.parentId);
+        subtaskClickUpId = clickUpSubtask.parentId ? clickUpSubtask.id : null;
+      }
+    }
 
     if (!parentTask) {
       return res.status(404).json({ error: 'Parent task not found in Nexus' });
+    }
+
+    const title =
+      (typeof req.body.title === 'string' && req.body.title.trim()) ||
+      clickUpSubtask?.name ||
+      titleFromPrompt(req.body.prompt);
+
+    // n8n may send its generated description as markdown (what it writes to ClickUp) or HTML.
+    const sentDescription = typeof req.body.description === 'string' ? req.body.description.trim() : '';
+    const description =
+      (/^<[a-z]/i.test(sentDescription) ? sentDescription : clickupMarkdownToHtml(sentDescription)) ||
+      clickUpSubtask?.descriptionHtml ||
+      null;
+
+    if (subtaskClickUpId) {
+      // Already here (the ClickUp pull, or the other caller, got there first): nothing to add.
+      const already = await prisma.subtask.findFirst({
+        where: { OR: [{ externalId: subtaskClickUpId }, { externalId: { endsWith: `/${subtaskClickUpId}` } }] },
+      });
+      if (already) return res.status(200).json({ success: true, subtask: already });
+
+      // Same subtask saved earlier without its ClickUp id (titles differ only by ClickUp's "--"): link it.
+      const bare = (title || '').replace(/^--\s*/, '');
+      const unlinked = bare
+        ? await prisma.subtask.findFirst({
+            where: {
+              taskId: parentTask.id,
+              externalId: null,
+              OR: [
+                { title: { equals: bare, mode: 'insensitive' } },
+                { title: { equals: `--${bare}`, mode: 'insensitive' } },
+              ],
+            },
+          })
+        : null;
+      if (unlinked) {
+        const linked = await prisma.subtask.update({
+          where: { id: unlinked.id },
+          data: { externalId: subtaskClickUpId, ...(description && !unlinked.description && { description }) },
+        });
+        return res.status(200).json({ success: true, subtask: linked });
+      }
     }
 
     // Resolve assignee: role assignments set assigneeRoleRestrictions; named users are individual
@@ -809,13 +860,19 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     const finalAssigneeIds = Array.from(assigneeIdsSet);
     const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[0] : null;
     const roleRestrictions = Array.from(roleNamesSet);
-
+    // "--Audit Design — …" subtasks carry their auditor role, the same way the ClickUp pull sets it.
+    const auditorRole = auditorRoleFromTitle(title || undefined);
+    if (roleRestrictions.length === 0 && auditorRole) roleRestrictions.push(auditorRole);
 
     const subtask = await prisma.subtask.create({
       data: {
         title: title || 'New Subtask',
         taskId: parentTask.id,
-        priority: priority ? priority.toUpperCase() : 'MEDIUM',
+        priority: (['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(String(priority ?? '').toUpperCase())
+          ? String(priority).toUpperCase()
+          : 'MEDIUM') as Priority,
+        ...(subtaskClickUpId && { externalId: subtaskClickUpId }),
+        ...(description && { description }),
         // Role assignments show as role badge; individual users connect directly
         ...(roleRestrictions.length > 0 ? { assigneeRoleRestrictions: roleRestrictions } : {}),
         ...(finalAssigneeIds.length > 0 ? {
@@ -906,6 +963,9 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     }
 
     io.emit('subtask_created', subtask);
+
+    // Brings in the subtask's ClickUp checklist, and its ClickUp id when Galaxy sent the parent's link.
+    scheduleListPull(parentTask.listId, (room, event, payload) => io.to(room).emit(event, payload));
     
     const updatedTask = await prisma.task.findUnique({
       where: { id: parentTask.id },

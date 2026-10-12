@@ -634,14 +634,21 @@ function comparableText(html: string): string {
 /**
  * Whether the pulled description should replace the stored one: when Nexus has none,
  * when the text changed in ClickUp, or when the stored one is unformatted plain text
- * from an older pull. Same text in Nexus HTML is kept — the push to ClickUp drops some
- * formatting (headings, checkboxes), so pulling it back would lose it.
+ * from an older pull, or one flat paragraph where the pull now has layout. Same text in
+ * structured Nexus HTML is kept — the push to ClickUp drops some formatting (headings,
+ * checkboxes), so pulling it back would lose it.
  */
 function shouldReplaceDescription(current: string | null, next: string | null): next is string {
   if (!next) return false;
   if (!current?.trim()) return true;
   if (comparableText(current) !== comparableText(next)) return true;
+  if (!hasLayout(current) && hasLayout(next)) return true;
   return !/^\s*</.test(current);
+}
+
+/** More than a single block of text: headings, lists, line breaks or several paragraphs. */
+function hasLayout(html: string): boolean {
+  return /<(h[1-6]|li|br|blockquote|pre)\b|<\/p>\s*<p/i.test(html);
 }
 
 async function syncChecklists(checklists: any[] | undefined, target: Target, ctx: SyncContext) {

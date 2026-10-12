@@ -13,23 +13,35 @@ export const getAuditLogs = async (req: Request, res: Response) => {
         select: { id: true, name: true, email: true, avatarUrl: true }
       }
     };
-    const [recentLogs, statusLogs] = await Promise.all([
+    const [recentLogs, statusLogs, checkLogs] = await Promise.all([
       prisma.auditLog.findMany({
         where: userFilter,
         take: 100,
         orderBy: { createdAt: 'desc' },
         include: logInclude,
       }),
-      // Status/title/checklist/audit changes get their own window: bulk assignment logs otherwise push them out
+      // Status/title changes get their own window: bulk assignment logs otherwise push them out
       prisma.auditLog.findMany({
-        where: { ...userFilter, action: { in: ['STATUS_CHANGE', 'TITLE_CHANGE', 'AUDIT_ITEM_CHECKED', 'CHECKLIST_ITEM_CHECKED'] } },
+        where: { ...userFilter, action: { in: ['STATUS_CHANGE', 'TITLE_CHANGE'] } },
+        take: 100,
+        orderBy: { createdAt: 'desc' },
+        include: logInclude,
+      }),
+      // Checklist/audit checks are rare compared to status changes, so a shared window
+      // only reached back a few days and dropped them; they get their own window too
+      prisma.auditLog.findMany({
+        where: { ...userFilter, action: { in: ['AUDIT_ITEM_CHECKED', 'CHECKLIST_ITEM_CHECKED'] } },
         take: 100,
         orderBy: { createdAt: 'desc' },
         include: logInclude,
       }),
     ]);
-    const recentLogIds = new Set(recentLogs.map(l => l.id));
-    const logs = [...recentLogs, ...statusLogs.filter(l => !recentLogIds.has(l.id))];
+    const seenLogIds = new Set<string>();
+    const logs = [...recentLogs, ...statusLogs, ...checkLogs].filter(l => {
+      if (seenLogIds.has(l.id)) return false;
+      seenLogIds.add(l.id);
+      return true;
+    });
 
     const comments = await prisma.taskComment.findMany({
       where: userFilter,
@@ -70,9 +82,10 @@ export const getAuditLogs = async (req: Request, res: Response) => {
       user: c.user
     }));
 
+    // Each source is already capped at 100, so no overall slice: a global cap would
+    // cut the older entries that the dedicated windows exist to keep
     const allLogs = [...logs, ...commentLogs]
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, 300);
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
     // ---------------------------------------------------------------
     // Batch enrich: collect all unique task/subtask IDs in ONE pass

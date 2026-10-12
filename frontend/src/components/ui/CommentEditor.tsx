@@ -8,6 +8,7 @@ import { Color } from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
 import Placeholder from '@tiptap/extension-placeholder';
 import Link from '@tiptap/extension-link';
+import { normalizeHref } from '@/lib/links';
 import { Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2 } from 'lucide-react';
 
 const colors = [
@@ -42,6 +43,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       Link.configure({
         openOnClick: false,
         protocols: ['mention'],
+        defaultProtocol: 'https',
         HTMLAttributes: {
           class: 'text-blue-400 underline cursor-pointer',
         },
@@ -164,7 +166,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
                     return;
                   }
                   
-                  editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+                  editor.chain().focus().extendMarkRange('link').setLink({ href: normalizeHref(url) }).run();
                 }}
                 className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('link') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
               >

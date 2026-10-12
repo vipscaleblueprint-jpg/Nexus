@@ -27,6 +27,7 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { isNexusAuditChecklist } from '../utils/auditChecklist';
+import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import {
   getStatusChangeRecipients,
   getChecklistCheckRecipients,
@@ -1160,24 +1161,19 @@ export async function createTaskComment(req: Request, res: Response) {
       select: { id: true, name: true, avatarUrl: true, email: true },
     });
 
-    if (mentionedUserIds && Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0) {
-      const usersToNotify = mentionedUserIds.filter((id: any) => id !== effectiveUserId);
-      if (usersToNotify.length > 0) {
-        await prisma.taskNotification.createMany({
-          data: usersToNotify.map((id: string) => ({
-            userId: id,
-            actorId: effectiveUserId,
-            taskId,
-            type: 'MENTION',
-            title: `${user?.name || 'Someone'} mentioned you in a comment`,
-            content: content.trim().substring(0, 100),
-          })),
-        });
-        usersToNotify.forEach((id: string) => {
-          io.to(`user:${id}`).emit('notification_received');
-        });
-      }
-    }
+    // Mentions are derived from the comment content itself (mention:// links) so every
+    // comment path (main task, subtask, replies) notifies, and removed mentions don't.
+    const clientMentionIds: string[] = Array.isArray(mentionedUserIds) ? mentionedUserIds : [];
+    const contentMentionIds = extractMentionedUserIds(content);
+    const mentionIds = contentMentionIds.length > 0 ? contentMentionIds : clientMentionIds;
+    await notifyMentionedUsers({
+      userIds: mentionIds,
+      actorId: effectiveUserId,
+      actorName: user?.name,
+      taskId,
+      content,
+      isSubtask: Boolean(subtaskId),
+    });
 
     // Notify task assignees about the comment (if they weren't mentioned)
     const taskData = await prisma.task.findUnique({
@@ -1187,8 +1183,8 @@ export async function createTaskComment(req: Request, res: Response) {
     if (taskData) {
       const assigneesToNotify = taskData.assignees
         .map((a: any) => a.id)
-        .filter((id: any) => id !== effectiveUserId && !(mentionedUserIds && mentionedUserIds.includes(id)));
-      
+        .filter((id: any) => id !== effectiveUserId && !mentionIds.includes(id));
+
       if (assigneesToNotify.length > 0) {
         await prisma.taskNotification.createMany({
           data: assigneesToNotify.map((id: any) => ({
@@ -1197,7 +1193,7 @@ export async function createTaskComment(req: Request, res: Response) {
             taskId,
             type: 'COMMENT',
             title: `${user?.name || 'Someone'} commented on a task you're assigned to`,
-            content: content.trim().substring(0, 100),
+            content: toNotificationPreview(content),
           })),
         });
         assigneesToNotify.forEach((id: any) => {
@@ -1293,6 +1289,11 @@ export async function updateTaskComment(req: Request, res: Response) {
       return res.status(400).json({ error: 'Content cannot be empty' });
     }
 
+    const previous = await prisma.taskComment.findUnique({
+      where: { id: commentId },
+      select: { content: true },
+    });
+
     const comment = await prisma.taskComment.update({
       where: { id: commentId },
       data: { content: content.trim() },
@@ -1312,6 +1313,20 @@ export async function updateTaskComment(req: Request, res: Response) {
       io.to(`list:${listId}`).emit('task:comment_updated', payload);
     } else {
       io.emit('task:comment_updated', payload);
+    }
+
+    // Only notify users newly mentioned by this edit; runs after the realtime emit
+    const previousMentionIds = new Set(extractMentionedUserIds(previous?.content || ''));
+    const newMentionIds = extractMentionedUserIds(comment.content).filter(id => !previousMentionIds.has(id));
+    if (newMentionIds.length > 0) {
+      notifyMentionedUsers({
+        userIds: newMentionIds,
+        actorId: comment.userId,
+        actorName: comment.user?.name,
+        taskId,
+        content: comment.content,
+        isSubtask: Boolean(comment.subtaskId),
+      }).catch(err => console.error('Failed to send mention notifications', err));
     }
 
     return res.json({ comment });

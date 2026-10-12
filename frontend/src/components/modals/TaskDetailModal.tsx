@@ -23,6 +23,8 @@ import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
 import { CommentEditor } from '../ui/CommentEditor';
+import { UserMentionChip } from '../ui/UserMentionChip';
+import { normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 export const CustomCircleDotted = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
@@ -614,16 +616,10 @@ export function TaskDetailModalContent({
       }
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
-        return (
-          <span
-            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
-          >
-            {rest.children}
-          </span>
-        );
+        return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
       }
       return (
-        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
+        <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
@@ -2602,8 +2598,8 @@ export function TaskDetailModalContent({
                             </button>
                           </div>
                         ) : (
-                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents} urlTransform={(url) => url}>
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
                               {comment.content || ''}
                             </ReactMarkdown>
                           </div>
@@ -3272,16 +3268,10 @@ export function SubtaskDetailView({
       }
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
-        return (
-          <span
-            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
-          >
-            {rest.children}
-          </span>
-        );
+        return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
       }
       return (
-        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer">
+        <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
@@ -4829,8 +4819,8 @@ export function SubtaskDetailView({
                           </button>
                         </div>
                       ) : (
-                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents} urlTransform={(url) => url}>
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
                               {c.content || ''}
                           </ReactMarkdown>
                         </div>

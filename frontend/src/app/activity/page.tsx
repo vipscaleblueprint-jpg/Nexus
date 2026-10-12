@@ -8,6 +8,7 @@ import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, Users, M
 import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { tasksApi } from '@/api/tasks';
+import { CommentContent } from '@/components/ui/CommentContent';
 
 type ViewMode = 'for_me' | 'show_all';
 type Category = 'all' | 'status' | 'checklists' | 'audits' | 'assigned' | 'comments';
@@ -521,9 +522,9 @@ export default function ActivityPage() {
                           </div>
                           
                           {(log.action === 'COMMENT' || log.action === 'REPLY' || log.action === 'COMMENT_ADDED') && log.details?.text && (
-                            <div
-                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0 prose-a:text-indigo-400"
-                              dangerouslySetInnerHTML={{ __html: log.details.text }}
+                            <CommentContent
+                              content={log.details.text}
+                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0"
                             />
                           )}
                           
@@ -615,9 +616,9 @@ export default function ActivityPage() {
                           </div>
                           
                           {n.content && (
-                            <div
-                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0 prose-a:text-indigo-400"
-                              dangerouslySetInnerHTML={{ __html: n.content }}
+                            <CommentContent
+                              content={n.content}
+                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0"
                             />
                           )}
 

@@ -876,7 +876,6 @@ export const KanbanCard = memo(function KanbanCard({
     setLocalSubtasks(task.subtasks || []);
   }, [task.subtasks]);
 
-  const subtasksCount = localSubtasks.length;
   const visibleSubtasks = useMemo(() => localSubtasks.filter((s) => !isSubtaskClosed(s)), [localSubtasks]);
   const openSubtasksCount = visibleSubtasks.length;
 
@@ -895,7 +894,8 @@ export const KanbanCard = memo(function KanbanCard({
   }, [task, onSubtaskStatusChange]);
 
   const subtasksToggle = useMemo(() => {
-    if (subtasksCount === 0) return null;
+    // Closed subtasks are hidden, so with none open the card looks like it has no subtasks
+    if (openSubtasksCount === 0) return null;
     return (
       <div
         className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 hover:bg-black/5 dark:hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
@@ -1013,7 +1013,7 @@ export const KanbanCard = memo(function KanbanCard({
       </div>
 
       {/* ── Subtasks: tree-indented, outside the draggable card ── */}
-      {subtasksCount > 0 && isSubtasksExpanded && !isDragging && (
+      {openSubtasksCount > 0 && isSubtasksExpanded && !isDragging && (
         <div className="mt-1 ml-3">
           <AnimatePresence initial={false}>
           {visibleSubtasks.map((sub) => {

@@ -107,7 +107,7 @@ export const spacesApi = {
     });
   },
 
-  async updatePage(id: string, data: { title?: string; content?: string }): Promise<{ page: Page }> {
+  async updatePage(id: string, data: { title?: string; content?: string; deletedBlockIds?: string[] }): Promise<{ page: Page }> {
     return apiClient<{ page: Page }>(`/api/spaces/pages/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),

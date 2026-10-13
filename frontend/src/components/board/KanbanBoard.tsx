@@ -25,6 +25,7 @@ import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizonta
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 const EMPTY_ARRAY: any[] = [];
 
@@ -233,7 +234,13 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete, onDeleteGroup, onRenameGroup, onStatusReorder }: Props) {
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
-  const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache } = useAppStore();
+  // Select only what the board uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
+  const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache } = useAppStore(useShallow((s) => ({
+    currentUser: s.currentUser,
+    workspaceRoles: s.workspaceRoles,
+    loadRoles: s.loadRoles,
+    hydrateRolesFromCache: s.hydrateRolesFromCache,
+  })));
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
@@ -370,10 +377,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const [addingStatusToGroup, setAddingStatusToGroup] = useState<string | null>(null);
   const [newStatusName, setNewStatusName] = useState('');
   const [columnThemes, setColumnThemes] = useState<Record<string, string>>({});
-  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    setIsMounted(true);
     if (!currentUser) return;
     hydrateRolesFromCache();
     loadRoles();
@@ -945,6 +950,9 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
   return (
     <DndContext
+      // Fixed id keeps dnd-kit's generated accessibility ids stable, so the board can render on first
+      // mount without a placeholder pass (it only mounts client-side after the list loads).
+      id={`kanban-board-${listId || 'default'}`}
       sensors={sensors}
       collisionDetection={customCollisionDetection}
       autoScroll={useMemo(() => ({
@@ -956,12 +964,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      {!isMounted ? (
-        <div className="flex h-full w-full items-center justify-center pt-20 text-zinc-500">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
-        </div>
-      ) : (
-        <div
+      <div
           ref={boardContainerRef}
           onWheel={handleWheelScroll}
           className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 custom-scrollbar transition-all duration-300`}
@@ -1316,7 +1319,6 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
             </div>
           </div>
         </div>
-      )}
 
       <DragOverlay>
         {activeTask ? <KanbanCard task={activeTask} isOverlay /> : null}

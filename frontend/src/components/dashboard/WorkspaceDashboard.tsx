@@ -10,7 +10,7 @@ import React, {
 } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   List as ListIcon,
   FileText,
@@ -55,6 +55,8 @@ import { TaskDetailModal, getAssigneeAvatarColor } from "@/components/modals/Tas
 import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
 import { getPriorityConfig } from "@/lib/priority";
+
+const FOCUS_REFETCH_INTERVAL_MS = 60 * 1000;
 
 const avatarColors = [
   "bg-red-500",
@@ -479,6 +481,7 @@ function WorkspaceDashboardContent({
   onOpenCreate,
 }: WorkspaceDashboardProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache, workspaceUsers, loadUsers, hasLoadedUsers } = useAppStore();
 
@@ -502,6 +505,7 @@ function WorkspaceDashboardContent({
 
   // Track local updates to prevent socket echoes from causing UI bouncing
   const pendingTaskUpdatesRef = useRef<Record<string, number>>({});
+  const lastTasksFetchRef = useRef(0);
 
   const toggleGroup = (groupKey: string) => {
     setCollapsedGroups((prev) => {
@@ -555,7 +559,9 @@ function WorkspaceDashboardContent({
   // 1. Fetch all tasks from API and Hydrate from Cache
   useEffect(() => {
     hydrateTasksFromCache();
-    loadTasks();
+    // With cached tasks already on screen, refresh quietly instead of swapping them for a spinner
+    loadTasks(useAppStore.getState().tasks.length > 0);
+    lastTasksFetchRef.current = Date.now();
     if (!hasLoadedUsers) loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -595,22 +601,24 @@ function WorkspaceDashboardContent({
     };
   }, []);
 
-  // Refresh tasks on window focus (guarantees instant sync if coming back from another tab)
+  // Refresh tasks on window focus (guarantees sync if coming back from another tab).
+  // Sockets keep tasks live while the page is open, so refetch at most once per minute.
   useEffect(() => {
     const handleFocus = () => {
+      if (Date.now() - lastTasksFetchRef.current < FOCUS_REFETCH_INTERVAL_MS) return;
+      lastTasksFetchRef.current = Date.now();
       loadTasks(true);
     };
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [loadTasks]);
 
+  // Stay on the current route ("/" or "/tasks" render this same dashboard) and only change ?filter=.
+  // Switching between the two routes remounted the whole dashboard and refetched everything.
   const handleTabChange = (tab: "all" | "my" | "clients" | "priorities") => {
     setCurrentTab(tab);
-    if (tab === "all") {
-      router.replace("/");
-    } else {
-      router.replace(`/tasks?filter=${tab}`);
-    }
+    const basePath = pathname === "/tasks" ? "/tasks" : "/";
+    router.replace(tab === "all" ? basePath : `${basePath}?filter=${tab}`);
   };
 
   // Filter & sort lists
@@ -1097,7 +1105,9 @@ function WorkspaceDashboardContent({
     return [];
   }, [currentTab, groupedAllTasksByStatus, groupedAllTasksByPriority, groupedAllTasksByClient]);
 
-  if (loading) {
+  // Only show the skeleton when there is nothing to show yet; a background spaces refresh
+  // (sidebar rename, create modals) must not blank the dashboard or close an open task.
+  if (loading && spaces.length === 0) {
     return <DashboardSkeleton />;
   }
 

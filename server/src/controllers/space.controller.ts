@@ -498,32 +498,64 @@ export async function createDoc(req: Request, res: Response) {
 }
 
 // GET /api/spaces/docs/:id
+// ?includeContent=false returns the page tree without page content (the editor loads the open page via
+// GET /pages/:id). Journal docs gain a page every day, so sending every page's content grows forever.
 export async function getDoc(req: Request, res: Response) {
   try {
-    console.time(`[API] getDoc db query - ${req.params.id}`);
+    const includeContent = req.query.includeContent !== 'false';
+    const pagesQuery = includeContent
+      ? {
+          where: { parentPageId: null },
+          orderBy: { createdAt: 'asc' as const },
+          include: {
+            subpages: {
+              orderBy: { createdAt: 'asc' as const },
+              include: {
+                subpages: { orderBy: { createdAt: 'asc' as const } },
+              },
+            },
+          },
+        }
+      : {
+          where: { parentPageId: null },
+          orderBy: { createdAt: 'asc' as const },
+          select: {
+            ...pageSelectConfig,
+            subpages: {
+              orderBy: { createdAt: 'asc' as const },
+              select: {
+                ...pageSelectConfig,
+                subpages: { orderBy: { createdAt: 'asc' as const }, select: pageSelectConfig },
+              },
+            },
+          },
+        };
+
     const doc = await prisma.doc.findUnique({
       where: { id: req.params.id },
       include: {
         space: { select: { id: true, name: true, color: true } },
         folder: { select: { id: true, name: true } },
         team: { select: { id: true, name: true, color: true } },
-        pages: {
-          where: { parentPageId: null },
-          orderBy: { createdAt: 'asc' },
-          include: {
-            subpages: {
-              orderBy: { createdAt: 'asc' },
-              include: {
-                subpages: { orderBy: { createdAt: 'asc' } },
-              },
-            },
-          },
-        },
+        pages: pagesQuery,
       },
     });
-    console.timeEnd(`[API] getDoc db query - ${req.params.id}`);
     if (!doc) return res.status(404).json({ error: 'Doc not found' });
     return res.json({ doc });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/spaces/pages/:id - a single page with its content
+export async function getPage(req: Request, res: Response) {
+  try {
+    const page = await prisma.page.findUnique({
+      where: { id: req.params.id },
+      select: { ...pageSelectConfig, content: true },
+    });
+    if (!page) return res.status(404).json({ error: 'Page not found' });
+    return res.json({ page });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -611,6 +643,13 @@ export async function updatePage(req: Request, res: Response) {
     const authReq = req as any;
     const userId = authReq.user?.id;
 
+    // Read the stored values first so unchanged saves (e.g. clicking out of a block) don't create a
+    // version or bust the hierarchy cache. The doc editor sends the title with every save.
+    const previous = await prisma.page.findUnique({
+      where: { id: req.params.id },
+      select: { content: true, title: true },
+    });
+
     const page = await prisma.page.update({
       where: { id: req.params.id },
       data: {
@@ -619,7 +658,7 @@ export async function updatePage(req: Request, res: Response) {
       },
     });
 
-    if (content !== undefined && userId) {
+    if (content !== undefined && userId && previous?.content !== content) {
       await prisma.pageVersion.create({
         data: {
           pageId: page.id,
@@ -629,7 +668,10 @@ export async function updatePage(req: Request, res: Response) {
       });
     }
 
-    await invalidateCache('spaces:all', 'dashboard:all');
+    // The cached hierarchy only holds page titles, so content-only saves don't need to invalidate it
+    if (title && title !== previous?.title) {
+      await invalidateCache('spaces:all', 'dashboard:all');
+    }
     return res.json({ page });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Page not found' });

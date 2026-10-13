@@ -11,6 +11,7 @@ import { notificationsApi } from '@/api/notifications';
 import { ToastContainer } from '@/components/ui/ToastContainer';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
+import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -24,6 +25,15 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     setCurrentUser,
     setUnreadNotifications,
   } = useAppStore();
+
+  // Opt-in performance monitor (?perf=1): logs request timings, freezes and memory to the console
+  useEffect(() => {
+    initPerfMonitor();
+  }, []);
+
+  useEffect(() => {
+    markNavigation(pathname);
+  }, [pathname]);
 
   useEffect(() => {
     // Instantly populate from localStorage cache (no flash)
@@ -58,6 +68,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     s.on('connect', () => {
       s.emit('join_user', currentUser.id);
     });
+    if (isPerfEnabled()) s.onAny((event) => recordSocketEvent(event));
 
     s.on('notification_received', () => {
       setUnreadNotifications(useAppStore.getState().unreadNotifications + 1);

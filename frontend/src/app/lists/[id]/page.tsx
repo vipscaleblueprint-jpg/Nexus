@@ -47,6 +47,24 @@ function setListCache(id: string, data: any) {
   try { localStorage.setItem(`nexus_list_cache_${id}`, JSON.stringify(data)); } catch {}
 }
 
+/**
+ * Merges a fetched task list into the one on screen:
+ * - a task changed locally after the request was sent (e.g. a card just dragged) keeps its local
+ *   copy — the response was read from the DB before that change, so applying it would snap the card
+ *   back until the socket update arrives;
+ * - a task identical to its on-screen copy keeps that object, so memoized cards skip re-rendering.
+ */
+function mergeFetchedTasks(prev: any[] | undefined, next: any[] | undefined, requestedAt: number, localEdits: Map<string, number>) {
+  if (!prev?.length || !next) return next;
+  const prevById = new Map(prev.map((t) => [t.id, t]));
+  return next.map((t) => {
+    const old = prevById.get(t.id);
+    if (!old) return t;
+    if ((localEdits.get(t.id) ?? 0) >= requestedAt) return old;
+    return JSON.stringify(old) === JSON.stringify(t) ? old : t;
+  });
+}
+
 export default function BoardPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -83,11 +101,15 @@ export default function BoardPage() {
       .catch((err) => console.warn('Failed to load roles in page:', err));
   }, [currentUser]);
 
+  // When each task was last changed optimistically on this page (see mergeFetchedTasks)
+  const localTaskEditsRef = useRef<Map<string, number>>(new Map());
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       // Start both requests in parallel if auth is missing
       const userPromise = !currentUser ? authApi.getMe().catch(() => null) : Promise.resolve(null);
+      const requestedAt = Date.now();
       const listPromise = spacesApi.getList(id);
 
       try {
@@ -99,7 +121,10 @@ export default function BoardPage() {
 
         if (!cancelled && listRes.list) {
           setListCache(id, listRes.list);
-          setList(listRes.list);
+          setList((prev: any) => ({
+            ...listRes.list,
+            tasks: mergeFetchedTasks(prev?.tasks, listRes.list.tasks, requestedAt, localTaskEditsRef.current),
+          }));
           if (listRes.list?.customGroups) {
             setCustomGroups(listRes.list.customGroups);
           }
@@ -166,6 +191,8 @@ export default function BoardPage() {
 
     // Real-time: task created by another user
     s.on('task:created', (newTask: any) => {
+      // task:created is broadcast globally — ignore tasks that belong to other lists
+      if (newTask?.listId && newTask.listId !== id) return;
       setList((prev: any) => {
         if (!prev || !prev.tasks) return prev;
         // Don't add if we already have it by real ID (API response arrived first)
@@ -373,7 +400,8 @@ export default function BoardPage() {
       }
     }
 
-    // Optimistically update UI
+    // Optimistically update UI, and remember it so an older in-flight list fetch can't undo it
+    localTaskEditsRef.current.set(taskId, Date.now());
     setList((prev: any) => ({
       ...prev,
       tasks: prev.tasks.map((t: any) =>
@@ -503,6 +531,7 @@ export default function BoardPage() {
           }
 
           // Sync board and modal state
+          localTaskEditsRef.current.set(updatedTask.id, Date.now());
           setSelectedTask(updatedTask);
           setList((prev: any) => ({
             ...prev,

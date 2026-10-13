@@ -49,6 +49,7 @@ import {
   CaseSensitive
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
+import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from '@/lib/pageContentCache';
 import {
   PageStylesPanel,
   usePageStyles,
@@ -114,6 +115,19 @@ export interface DocBlock {
   lockedByName?: string;
 }
 
+const isCurrentMonth = (title?: string): boolean => {
+  if (!title) return false;
+  const now = new Date();
+  const currentMonthStr = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now);
+  if (title.trim().toLowerCase() === currentMonthStr.toLowerCase()) return true;
+
+  const d = new Date(title);
+  if (!isNaN(d.getTime())) {
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }
+  return false;
+};
+
 interface SidebarPageItemProps {
   page: any;
   activePageId: string | null;
@@ -135,7 +149,34 @@ function SidebarPageItem({
   depth = 0,
   isJournal = false,
 }: SidebarPageItemProps) {
-  const [expanded, setExpanded] = useState(true);
+  const isMonthFolder = isJournal && depth === 0;
+  const isCurrent = isMonthFolder ? isCurrentMonth(page.title) : false;
+
+  const containsActive = useMemo(() => {
+    if (!activePageId) return false;
+    if (page.id === activePageId) return true;
+    const checkSub = (subpages?: any[]): boolean => {
+      if (!subpages) return false;
+      return subpages.some((s: any) => s.id === activePageId || checkSub(s.subpages));
+    };
+    return checkSub(page.subpages);
+  }, [page, activePageId]);
+
+  const [expanded, setExpanded] = useState(() => {
+    if (isMonthFolder) {
+      return isCurrent || containsActive;
+    }
+    return true;
+  });
+
+  const [sidebarSubpageLimit, setSidebarSubpageLimit] = useState(5);
+
+  useEffect(() => {
+    if (containsActive) {
+      setExpanded(true);
+    }
+  }, [containsActive]);
+
   const hasChildren = page.subpages && page.subpages.length > 0;
   const isActive = activePageId === page.id;
 
@@ -147,6 +188,21 @@ function SidebarPageItem({
     }
     return (a.order || 0) - (b.order || 0);
   }) : [];
+
+  useEffect(() => {
+    if (isMonthFolder && !isCurrent && activePageId && hasChildren) {
+      const idx = sortedSubpages.findIndex((s: any) => s.id === activePageId);
+      if (idx >= 0 && idx >= sidebarSubpageLimit) {
+        setSidebarSubpageLimit(idx + 5);
+      }
+    }
+  }, [activePageId, isMonthFolder, isCurrent, hasChildren, sortedSubpages, sidebarSubpageLimit]);
+
+  const visibleSubpages = isMonthFolder && !isCurrent
+    ? sortedSubpages.slice(0, sidebarSubpageLimit)
+    : sortedSubpages;
+
+  const hasMoreSubpages = isMonthFolder && !isCurrent && sortedSubpages.length > sidebarSubpageLimit;
 
   return (
     <div className="select-none">
@@ -227,7 +283,7 @@ function SidebarPageItem({
             transition={{ duration: 0.2, ease: "easeInOut" }}
             className="space-y-0.5 mt-0.5 overflow-hidden"
           >
-            {sortedSubpages.map((sub: any) => (
+            {visibleSubpages.map((sub: any) => (
               <SidebarPageItem
                 key={sub.id}
                 page={sub}
@@ -240,6 +296,20 @@ function SidebarPageItem({
                 isJournal={isJournal}
               />
             ))}
+
+            {hasMoreSubpages && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSidebarSubpageLimit((prev) => prev + 15);
+                }}
+                className="w-full text-left py-1 px-2 text-[11px] font-medium text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50 rounded flex items-center gap-1.5 transition-colors cursor-pointer group/seemore"
+                style={{ paddingLeft: `${8 + (depth + 1) * 14}px` }}
+              >
+                <ChevronDown className="w-3 h-3 text-zinc-500 group-hover/seemore:text-zinc-300 transition-colors" />
+                <span>See more ({sortedSubpages.length - sidebarSubpageLimit} left)</span>
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -867,8 +937,12 @@ export default function DocPage({ docId }: { docId?: string }) {
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    setSubpageLimit(10);
-  }, [activePage?.id]);
+    if (doc?.isDailyRollover && isCurrentMonth(activePage?.title)) {
+      setSubpageLimit(100);
+    } else {
+      setSubpageLimit(10);
+    }
+  }, [activePage?.id, doc?.isDailyRollover, activePage?.title]);
 
   useEffect(() => {
     const handleMouseOver = (e: MouseEvent) => {
@@ -1051,29 +1125,59 @@ export default function DocPage({ docId }: { docId?: string }) {
       if (leaving !== lastSyncedContentRef.current) handleSavePage(blocksRef.current);
     }
     let content: string | undefined = page.content;
+    let cached: CachedPage | undefined;
     if (content === undefined) {
-      setPageContentState('loading');
-      resetUndoForPageSwitch();
-      setActivePage({ ...page });
-      setPageTitle(page.title || 'Untitled Page');
-      setBlocks([]);
-      try {
-        const res = await spacesApi.getPage(page.id);
-        content = res.page?.content ?? '';
-      } catch (err) {
-        console.error('Failed to load page:', err);
-        if (seq === pageLoadSeqRef.current) setPageContentState('error');
-        return;
+      // A recently opened page (e.g. a journal date) shows from cache at once and is revalidated below
+      cached = getCachedPage(page.id);
+      if (cached) {
+        content = cached.content;
+      } else {
+        setPageContentState('loading');
+        resetUndoForPageSwitch();
+        setActivePage({ ...page });
+        setPageTitle(page.title || 'Untitled Page');
+        setBlocks([]);
+        try {
+          const res = await spacesApi.getPage(page.id);
+          content = res.page?.content ?? '';
+          setCachedPage(page.id, content, res.page?.updatedAt);
+        } catch (err) {
+          console.error('Failed to load page:', err);
+          if (seq === pageLoadSeqRef.current) setPageContentState('error');
+          return;
+        }
       }
     }
     if (seq !== pageLoadSeqRef.current) return;
-    if (page.content !== undefined) resetUndoForPageSwitch();
+    if (page.content !== undefined || cached) resetUndoForPageSwitch();
     pageOpenedAtRef.current = Date.now();
     lastSyncedContentRef.current = content;
     setActivePage({ ...page, content });
     setPageTitle(page.title || 'Untitled Page');
     setBlocks(markdownToBlocks(content));
     setPageContentState('ready');
+    if (cached) revalidateCachedPage(page.id, cached, seq);
+  };
+
+  // Asks the server whether a page shown from cache changed since it was cached (cheap: no content unless
+  // it did). A changed page — e.g. tasks auto-appended to the journal — replaces the cached blocks when
+  // nothing was edited yet; otherwise only the blocks this editor hasn't seen are merged in.
+  const revalidateCachedPage = async (pageId: string, cached: CachedPage, seq: number) => {
+    try {
+      const res = await spacesApi.getPage(pageId, { since: cached.updatedAt });
+      if (res.notModified || res.page?.content === undefined) return;
+      const fresh = res.page.content;
+      setCachedPage(pageId, fresh, res.page.updatedAt);
+      if (seq !== pageLoadSeqRef.current || activePageRef.current?.id !== pageId || pageContentStateRef.current !== 'ready') return;
+      if (blocksToMarkdown(blocksRef.current) === lastSyncedContentRef.current) {
+        lastSyncedContentRef.current = fresh;
+        setBlocks(markdownToBlocks(fresh));
+      } else {
+        mergeUnseenServerBlocks(pageId, fresh);
+      }
+    } catch (err) {
+      console.error('Failed to refresh cached page:', err);
+    }
   };
 
   // Adds blocks from the stored page that this editor has never held (e.g. tasks the server appended under a
@@ -1201,8 +1305,12 @@ export default function DocPage({ docId }: { docId?: string }) {
         fetchDoc();
         const pageId = activePageRef.current?.id;
         if (openPageChanged && pageId) {
-          spacesApi.getPage(pageId)
-            .then((res) => mergeUnseenServerBlocks(pageId, res.page?.content))
+          spacesApi.getPage(pageId, { since: getCachedPage(pageId)?.updatedAt })
+            .then((res) => {
+              if (res.notModified || res.page?.content === undefined) return;
+              setCachedPage(pageId, res.page.content, res.page.updatedAt);
+              mergeUnseenServerBlocks(pageId, res.page.content);
+            })
             .catch((err) => console.error('Failed to refresh page:', err));
         }
         openPageChanged = false;
@@ -1276,6 +1384,8 @@ export default function DocPage({ docId }: { docId?: string }) {
       });
       // The server kept blocks this editor hadn't seen yet; show them
       if (res?.page?.content && res.page.content !== content) mergeUnseenServerBlocks(savedPageId, res.page.content);
+      // The server's copy is now what was sent (or the merged copy it returned)
+      setCachedPage(savedPageId, res?.page?.content ?? content, res?.page?.updatedAt);
       if (activePageRef.current?.id === savedPageId) lastSyncedContentRef.current = content;
       setLastSave({ pageId: savedPageId, at: new Date().toISOString() });
       if (socket) {
@@ -1291,6 +1401,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const handleDeletePage = async (pageId: string) => {
     if (!pageId) return;
+    forgetCachedPage(pageId);
     try {
       await spacesApi.deletePage(pageId);
     } catch (err) {

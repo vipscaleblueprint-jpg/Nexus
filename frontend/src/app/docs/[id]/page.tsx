@@ -801,7 +801,10 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   // Versions that actually changed content, newest first, each paired with the version before it
-  const versionEntries = useMemo(() => buildVersionEntries(pageVersions), [pageVersions]);
+  const versionEntries = useMemo(
+    () => buildVersionEntries(pageVersions.filter((v) => v.pageId === activePage?.id)),
+    [pageVersions, activePage?.id],
+  );
   const isBrowsingHistory = rightPanel === 'history' && versionEntries.length > 0;
   const selectedVersionEntry = isBrowsingHistory
     ? (versionEntries.find(e => e.version.id === selectedVersionId) ?? versionEntries[0])
@@ -821,31 +824,39 @@ export default function DocPage({ docId }: { docId?: string }) {
   // Last successful save in this session, tied to its page; otherwise the page's server timestamp.
   const [lastSave, setLastSave] = useState<{ pageId: string; at: string } | null>(null);
   const lastModifiedAt = lastSave && lastSave.pageId === activePage?.id ? lastSave.at : (activePage?.updatedAt ?? null);
+  // Who saved when, without content (owner/contributors). Full versions are fetched only for the History
+  // panel and for undo, since a journal day's 50 versions are tens of megabytes.
+  const [allPageVersionMeta, setPageVersionMeta] = useState<any[]>([]);
+  const pageVersionMeta = useMemo(
+    () => allPageVersionMeta.filter((v) => v.pageId === activePage?.id),
+    [allPageVersionMeta, activePage?.id],
+  );
   // Versions are newest-first (max 50): the oldest loaded one approximates the page owner.
-  const pageOwner = pageVersions[pageVersions.length - 1]?.user || currentUser;
+  const pageOwner = pageVersionMeta[pageVersionMeta.length - 1]?.user || currentUser;
   const pageContributors = useMemo(() => {
     const seen = new Map<string, { id: string; name?: string; avatarUrl?: string }>();
-    pageVersions.forEach((v) => {
+    pageVersionMeta.forEach((v) => {
       if (v.user?.id && !seen.has(v.user.id)) seen.set(v.user.id, v.user);
     });
     return Array.from(seen.values());
-  }, [pageVersions]);
+  }, [pageVersionMeta]);
+
+  // Page whose saved versions (from earlier sessions) have been loaded into the undo stack. They are
+  // fetched on the first undo rather than on every page open.
+  const undoHistoryPageRef = useRef<string | null>(null);
+  /** Per-page undo state; called wherever the open page is switched so undo never crosses pages. */
+  const resetUndoForPageSwitch = () => {
+    undoHistoryPageRef.current = null;
+    setUndoStack([]);
+    setRedoStack([]);
+  };
 
   useEffect(() => {
-    if (activePage?.id && currentUser?.id) {
-      spacesApi.getPageVersions(activePage.id).then(res => {
-        if (res.versions) {
-          setPageVersions(res.versions);
-          if (res.versions.length > 0) {
-            const history = res.versions
-              .filter((v: any) => v.userId === currentUser.id)
-              .map((v: any) => v.content).reverse();
-            setUndoStack(history);
-            setRedoStack([]);
-          }
-        }
-      }).catch(err => console.error("Failed to load versions:", err));
-    }
+    const pageId = activePage?.id;
+    if (!pageId || !currentUser?.id) return;
+    spacesApi.getPageVersions(pageId, { includeContent: false }).then(res => {
+      if (res.versions && activePageRef.current?.id === pageId) setPageVersionMeta(res.versions);
+    }).catch(err => console.error("Failed to load versions:", err));
   }, [activePage?.id, currentUser?.id]);
 
 
@@ -1017,28 +1028,58 @@ export default function DocPage({ docId }: { docId?: string }) {
   // switch happens only once it has loaded, so the editor never shows (or saves) one page's blocks under
   // another page. A newer selection wins if requests overlap.
   const pageLoadSeqRef = useRef(0);
+  // While a page's content is in flight its frame (title, toolbar) is already shown with skeleton rows.
+  // Nothing may be saved meanwhile: the editor holds no blocks yet, and a save would wipe the page.
+  const [pageContentState, setPageContentStateValue] = useState<'ready' | 'loading' | 'error'>('ready');
+  const pageContentStateRef = useRef<'ready' | 'loading' | 'error'>('ready');
+  const setPageContentState = (state: 'ready' | 'loading' | 'error') => {
+    pageContentStateRef.current = state;
+    setPageContentStateValue(state);
+  };
+  // When the open page's content arrived; saved versions older than this predate the session's undo stack
+  const pageOpenedAtRef = useRef(0);
+
+  // Content of the open page as last loaded or saved, to tell whether it has unsaved edits
+  const lastSyncedContentRef = useRef<string | null>(null);
+
   const openPage = async (page: any) => {
     const seq = ++pageLoadSeqRef.current;
+    // Edits are saved on blur, which fires after this click; save the page being left now, while it is
+    // still the open page, since the blur save would otherwise run against the page being loaded.
+    if (activePageRef.current && activePageRef.current.id !== page.id && pageContentStateRef.current === 'ready') {
+      const leaving = blocksToMarkdown(blocksRef.current);
+      if (leaving !== lastSyncedContentRef.current) handleSavePage(blocksRef.current);
+    }
     let content: string | undefined = page.content;
     if (content === undefined) {
+      setPageContentState('loading');
+      resetUndoForPageSwitch();
+      setActivePage({ ...page });
+      setPageTitle(page.title || 'Untitled Page');
+      setBlocks([]);
       try {
         const res = await spacesApi.getPage(page.id);
         content = res.page?.content ?? '';
       } catch (err) {
         console.error('Failed to load page:', err);
+        if (seq === pageLoadSeqRef.current) setPageContentState('error');
         return;
       }
     }
     if (seq !== pageLoadSeqRef.current) return;
+    if (page.content !== undefined) resetUndoForPageSwitch();
+    pageOpenedAtRef.current = Date.now();
+    lastSyncedContentRef.current = content;
     setActivePage({ ...page, content });
     setPageTitle(page.title || 'Untitled Page');
     setBlocks(markdownToBlocks(content));
+    setPageContentState('ready');
   };
 
   // Adds blocks from the stored page that this editor has never held (e.g. tasks the server appended under a
   // client / New Tasks), each after its nearest stored predecessor. Local edits and local deletions win.
   const mergeUnseenServerBlocks = (pageId: string, serverContent: string | undefined) => {
-    if (!serverContent || activePageRef.current?.id !== pageId) return;
+    if (!serverContent || activePageRef.current?.id !== pageId || pageContentStateRef.current !== 'ready') return;
     const serverBlocks = markdownToBlocks(serverContent);
     const seen = seenBlockIdsRef.current.pageId === pageId ? seenBlockIdsRef.current.ids : new Set<string>();
     setBlocks((prev) => {
@@ -1096,7 +1137,8 @@ export default function DocPage({ docId }: { docId?: string }) {
           firstPage = sortedPages[0];
         }
 
-        await openPage(firstPage);
+        // Not awaited: the doc frame renders now and the page's blocks fill in when they arrive
+        openPage(firstPage);
       }
     } catch (e: any) {
       setError(e.message || 'Failed to load document');
@@ -1195,16 +1237,20 @@ export default function DocPage({ docId }: { docId?: string }) {
 
       await fetchDoc();
       pageLoadSeqRef.current++; // cancel any in-flight page load so it can't replace the new page
+      resetUndoForPageSwitch();
+      lastSyncedContentRef.current = res.page.content ?? null;
       setActivePage(res.page);
       setPageTitle(res.page.title || 'Untitled Page');
       setBlocks(cleanBlocks);
+      setPageContentState('ready');
     } catch (err) {
       console.error('Failed to create page:', err);
     }
   };
 
   const handleSavePage = async (updatedBlocks = blocksRef.current, skipHistory = false) => {
-    if (!activePageRef.current) return;
+    // No saves while the open page's content is loading (or failed to load): the editor has no blocks yet
+    if (!activePageRef.current || pageContentStateRef.current !== 'ready') return;
     setSavingPage(true);
     try {
       const content = blocksToMarkdown(updatedBlocks);
@@ -1230,9 +1276,11 @@ export default function DocPage({ docId }: { docId?: string }) {
       });
       // The server kept blocks this editor hadn't seen yet; show them
       if (res?.page?.content && res.page.content !== content) mergeUnseenServerBlocks(savedPageId, res.page.content);
+      if (activePageRef.current?.id === savedPageId) lastSyncedContentRef.current = content;
       setLastSave({ pageId: savedPageId, at: new Date().toISOString() });
       if (socket) {
-        socket.emit('page_updated', { docId: id, pageId: activePageRef.current.id });
+        // The page that was saved — the open page may have changed while the request was in flight
+        socket.emit('page_updated', { docId: id, pageId: savedPageId });
       }
     } catch (err) {
       console.error('Failed to save page:', err);
@@ -1971,7 +2019,23 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   }, [selectedBlockIds, socket, id]);
 
-  const handleUndo = useCallback(() => {
+  const handleUndo = useCallback(async () => {
+    // First undo on this page: put the caller's earlier saved versions underneath this session's history
+    const pageId = activePageRef.current?.id;
+    if (pageId && undoHistoryPageRef.current !== pageId) {
+      undoHistoryPageRef.current = pageId;
+      try {
+        const res = await spacesApi.getPageVersions(pageId, { mine: true });
+        if (activePageRef.current?.id !== pageId) return;
+        const earlier = (res.versions || [])
+          .filter((v: any) => new Date(v.createdAt).getTime() < pageOpenedAtRef.current)
+          .map((v: any) => v.content as string)
+          .reverse();
+        if (earlier.length > 0) setUndoStack(session => [...earlier, ...session].slice(-50));
+      } catch (err) {
+        console.error('Failed to load undo history:', err);
+      }
+    }
     setUndoStack(prevUndo => {
       if (prevUndo.length <= 1) return prevUndo; // Need at least current + previous
       
@@ -2579,7 +2643,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       {/* Hidden (not unmounted) in page focus mode so the tree keeps its expand state */}
       <aside className={`w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none ${activePage && pageStyles.focusPage ? 'hidden' : ''}`}>
         <div
-          onClick={() => { pageLoadSeqRef.current++; setActivePage(null); }}
+          onClick={() => { pageLoadSeqRef.current++; setPageContentState('ready'); resetUndoForPageSwitch(); setActivePage(null); }}
           className="mb-5 pb-3 border-b border-zinc-800/60 cursor-pointer group hover:opacity-90 transition-all"
         >
           <div className="flex items-center gap-2 text-zinc-400 mb-1">
@@ -2839,6 +2903,29 @@ export default function DocPage({ docId }: { docId?: string }) {
                 : ''
             }`}>
               {(() => {
+                if (pageContentState === 'loading') {
+                  return (
+                    <div className="space-y-3 px-2 py-1 animate-pulse" aria-busy="true" aria-label="Loading page">
+                      {[40, 72, 64, 80, 56, 68, 48, 76].map((width, i) => (
+                        <div key={i} className="h-4 rounded bg-zinc-800/60" style={{ width: `${width}%` }} />
+                      ))}
+                    </div>
+                  );
+                }
+                if (pageContentState === 'error') {
+                  return (
+                    <div className="px-2 py-6 text-sm text-zinc-400 flex items-center gap-3">
+                      <span>This page couldn&apos;t be loaded.</span>
+                      <button
+                        type="button"
+                        onClick={() => activePageRef.current && openPage({ ...activePageRef.current, content: undefined })}
+                        className="px-3 py-1 rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  );
+                }
                 if (blocks.length === 0) {
                   return (
                     <div

@@ -10,8 +10,6 @@ export const dailyRolloverWorker = new Worker(
 
     // Custom status priority order (lower index = higher priority in the list)
     const STATUS_ORDER: Record<string, number> = {
-      'KYC':          1,
-      'PIN BOARD':    2,
       'DAILY':        3,
       'WEEKLY':       4,
       'MONTHLY':      5,
@@ -28,11 +26,41 @@ export const dailyRolloverWorker = new Worker(
 
     const getStatusOrder = (status: string) => STATUS_ORDER[(status || '').toUpperCase()] ?? 99;
 
+    // KYC, Closed, and Pin Board items never roll over (status is free text, so match any casing)
+    const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
+    const notClosed = { NOT: { status: { equals: 'CLOSED', mode: 'insensitive' as const } } };
+    const notPinboard = {
+      NOT: {
+        OR: [
+          { status: { equals: 'PIN BOARD', mode: 'insensitive' as const } },
+          { status: { equals: 'PINBOARD', mode: 'insensitive' as const } },
+          { status: { equals: 'PIN_BOARD', mode: 'insensitive' as const } },
+        ],
+      },
+    };
+
+    const isExcludedStatus = (status?: string | null) => {
+      const s = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      return s === 'KYC' || s === 'CLOSED' || s === 'PINBOARD';
+    };
+
     const activeTasks = await prisma.task.findMany({
-      where: { status: { notIn: ['Closed', 'CLOSED'] } },
+      where: {
+        AND: [
+          { status: { notIn: ['Closed', 'CLOSED'] } },
+          notKyc,
+          notClosed,
+          notPinboard,
+        ],
+      },
       include: {
         list: { select: { id: true, name: true } },
-        subtasks: { orderBy: { createdAt: 'asc' } },
+        // Closed/completed subtasks don't roll over either.
+        // Subtask.status is nullable; keep null-status subtasks (a bare NOT would drop them in SQL)
+        subtasks: {
+          where: { completed: false, OR: [{ status: null }, { AND: [notKyc, notClosed, notPinboard] }] },
+          orderBy: { createdAt: 'asc' },
+        },
       },
       // Fetch newest first so new tasks appear at the top of their status group
       orderBy: { createdAt: 'desc' }
@@ -40,9 +68,11 @@ export const dailyRolloverWorker = new Worker(
 
     const clients: Record<string, any[]> = {};
     for (const task of activeTasks) {
+      if (isExcludedStatus(task.status)) continue;
       if (task.list) {
         if (!clients[task.list.name]) clients[task.list.name] = [];
-        clients[task.list.name].push(task);
+        const validSubtasks = (task.subtasks || []).filter((sub: any) => !sub.completed && !isExcludedStatus(sub.status));
+        clients[task.list.name].push({ ...task, subtasks: validSubtasks });
       }
     }
 
@@ -203,14 +233,6 @@ export const dailyRolloverWorker = new Worker(
       // Create hierarchy for today (or overridden date)
       const dateToRun = job.data?.dateOverride ? new Date(job.data.dateOverride) : new Date();
       await createHierarchyForDate(dateToRun);
-
-      // (Optional) For testing purposes, generate previous days to populate the folder
-      await createHierarchyForDate(new Date('2026-09-08T00:00:00Z'));
-      await createHierarchyForDate(new Date('2026-09-09T00:00:00Z'));
-      
-      // Force test dates
-      await createHierarchyForDate(new Date('2026-09-16T15:00:00Z')); // Sep 17 in Asia/Singapore
-      await createHierarchyForDate(new Date('2026-09-17T15:00:00Z')); // Sep 18 in Asia/Singapore
     }
 
     logger.info('Finished DailyRollover job.');

@@ -183,7 +183,9 @@ export interface Subtask {
   assigneeRoleRestrictions?: string[];
   teamAssignAccessRole?: string | null;
   createdAt: string;
+  /** Loaded on demand; task payloads carry only `_count.comments`. */
   comments?: TaskComment[];
+  _count?: { comments?: number };
   checklists?: Checklist[];
 }
 

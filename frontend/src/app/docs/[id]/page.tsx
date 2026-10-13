@@ -49,6 +49,7 @@ import {
   CaseSensitive
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
+import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from '@/lib/pageContentCache';
 import {
   PageStylesPanel,
   usePageStyles,
@@ -114,6 +115,19 @@ export interface DocBlock {
   lockedByName?: string;
 }
 
+const isCurrentMonth = (title?: string): boolean => {
+  if (!title) return false;
+  const now = new Date();
+  const currentMonthStr = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now);
+  if (title.trim().toLowerCase() === currentMonthStr.toLowerCase()) return true;
+
+  const d = new Date(title);
+  if (!isNaN(d.getTime())) {
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }
+  return false;
+};
+
 interface SidebarPageItemProps {
   page: any;
   activePageId: string | null;
@@ -135,7 +149,34 @@ function SidebarPageItem({
   depth = 0,
   isJournal = false,
 }: SidebarPageItemProps) {
-  const [expanded, setExpanded] = useState(true);
+  const isMonthFolder = isJournal && depth === 0;
+  const isCurrent = isMonthFolder ? isCurrentMonth(page.title) : false;
+
+  const containsActive = useMemo(() => {
+    if (!activePageId) return false;
+    if (page.id === activePageId) return true;
+    const checkSub = (subpages?: any[]): boolean => {
+      if (!subpages) return false;
+      return subpages.some((s: any) => s.id === activePageId || checkSub(s.subpages));
+    };
+    return checkSub(page.subpages);
+  }, [page, activePageId]);
+
+  const [expanded, setExpanded] = useState(() => {
+    if (isMonthFolder) {
+      return isCurrent || containsActive;
+    }
+    return true;
+  });
+
+  const [sidebarSubpageLimit, setSidebarSubpageLimit] = useState(5);
+
+  useEffect(() => {
+    if (containsActive) {
+      setExpanded(true);
+    }
+  }, [containsActive]);
+
   const hasChildren = page.subpages && page.subpages.length > 0;
   const isActive = activePageId === page.id;
 
@@ -147,6 +188,21 @@ function SidebarPageItem({
     }
     return (a.order || 0) - (b.order || 0);
   }) : [];
+
+  useEffect(() => {
+    if (isMonthFolder && !isCurrent && activePageId && hasChildren) {
+      const idx = sortedSubpages.findIndex((s: any) => s.id === activePageId);
+      if (idx >= 0 && idx >= sidebarSubpageLimit) {
+        setSidebarSubpageLimit(idx + 5);
+      }
+    }
+  }, [activePageId, isMonthFolder, isCurrent, hasChildren, sortedSubpages, sidebarSubpageLimit]);
+
+  const visibleSubpages = isMonthFolder && !isCurrent
+    ? sortedSubpages.slice(0, sidebarSubpageLimit)
+    : sortedSubpages;
+
+  const hasMoreSubpages = isMonthFolder && !isCurrent && sortedSubpages.length > sidebarSubpageLimit;
 
   return (
     <div className="select-none">
@@ -227,7 +283,7 @@ function SidebarPageItem({
             transition={{ duration: 0.2, ease: "easeInOut" }}
             className="space-y-0.5 mt-0.5 overflow-hidden"
           >
-            {sortedSubpages.map((sub: any) => (
+            {visibleSubpages.map((sub: any) => (
               <SidebarPageItem
                 key={sub.id}
                 page={sub}
@@ -240,6 +296,20 @@ function SidebarPageItem({
                 isJournal={isJournal}
               />
             ))}
+
+            {hasMoreSubpages && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSidebarSubpageLimit((prev) => prev + 15);
+                }}
+                className="w-full text-left py-1 px-2 text-[11px] font-medium text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50 rounded flex items-center gap-1.5 transition-colors cursor-pointer group/seemore"
+                style={{ paddingLeft: `${8 + (depth + 1) * 14}px` }}
+              >
+                <ChevronDown className="w-3 h-3 text-zinc-500 group-hover/seemore:text-zinc-300 transition-colors" />
+                <span>See more ({sortedSubpages.length - sidebarSubpageLimit} left)</span>
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -261,6 +331,172 @@ const getTaskStatusBadgeColor = (status?: string) => {
       return 'bg-zinc-800 text-zinc-400 border border-zinc-700';
   }
 };
+
+// ── Lazy block editors
+// A journal day can hold hundreds of blocks; mounting a Tiptap editor (plus a React node view per task
+// mention) for every one froze the page for seconds after opening it. Each block shows its plain text
+// until it comes within MOUNT_MARGIN of the visible area, then mounts its editor; once it scrolls past
+// UNMOUNT_MARGIN the editor is released again, so memory stays bounded by what is near the viewport
+// instead of growing with every block scrolled past. The gap between the two margins stops blocks near
+// the edge from flapping between states.
+const MOUNT_MARGIN = '800px 0px';
+const UNMOUNT_MARGIN = '2400px 0px';
+// Editors mounted per animation frame; a fast scroll would otherwise mount dozens in one long task
+const MOUNTS_PER_FRAME = 3;
+
+type VisibilityCallback = (isIntersecting: boolean) => void;
+// One IntersectionObserver per (scroll root, margin) shared by every block, instead of one per block
+const sharedObservers = new Map<string, { observer: IntersectionObserver; callbacks: Map<Element, VisibilityCallback> }>();
+const observerRootIds = new WeakMap<Element, number>();
+let nextObserverRootId = 1;
+
+function observeVisibility(el: Element, root: HTMLElement | null, rootMargin: string, callback: VisibilityCallback) {
+  let rootId = 0;
+  if (root) {
+    rootId = observerRootIds.get(root) ?? nextObserverRootId++;
+    observerRootIds.set(root, rootId);
+  }
+  const key = `${rootId}|${rootMargin}`;
+  let shared = sharedObservers.get(key);
+  if (!shared) {
+    const callbacks = new Map<Element, VisibilityCallback>();
+    const observer = new IntersectionObserver(
+      (entries) => entries.forEach((entry) => callbacks.get(entry.target)?.(entry.isIntersecting)),
+      { root, rootMargin },
+    );
+    shared = { observer, callbacks };
+    sharedObservers.set(key, shared);
+  }
+  const { observer, callbacks } = shared;
+  callbacks.set(el, callback);
+  observer.observe(el);
+  return () => {
+    observer.unobserve(el);
+    callbacks.delete(el);
+    if (callbacks.size === 0) {
+      observer.disconnect();
+      sharedObservers.delete(key);
+    }
+  };
+}
+
+const mountQueue = new Set<() => void>();
+let mountFrame: number | null = null;
+
+function runQueuedMounts() {
+  mountFrame = null;
+  let mounted = 0;
+  for (const mount of mountQueue) {
+    mountQueue.delete(mount);
+    mount();
+    if (++mounted >= MOUNTS_PER_FRAME) break;
+  }
+  if (mountQueue.size > 0) mountFrame = requestAnimationFrame(runQueuedMounts);
+}
+
+/** Queues an editor mount; returns a function that cancels it if it hasn't run yet. */
+function scheduleMount(mount: () => void) {
+  mountQueue.add(mount);
+  if (mountFrame === null) mountFrame = requestAnimationFrame(runQueuedMounts);
+  return () => { mountQueue.delete(mount); };
+}
+
+const decodeEntities = (text: string) =>
+  text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+
+function getScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === 'auto' || overflowY === 'scroll') return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/** Stand-in for a not-yet-mounted editor: the block's text, at roughly the same size. */
+const BlockTextPlaceholder = memo(function BlockTextPlaceholder({ content }: { content: string }) {
+  const { text, sizeClass } = useMemo(() => {
+    // Tiptap JSON content has no cheap text form; leave it blank until the editor mounts
+    const raw = (content || '').startsWith('{"type":"doc"') ? '' : content || '';
+    const heading = raw.match(/^\s*<h([1-3])/i)?.[1];
+    return {
+      text: decodeEntities(raw.replace(/<br\s*\/?>|<\/(p|div|li|h[1-6])>/gi, '\n').replace(/<[^>]+>/g, '')).trim(),
+      sizeClass: heading === '1' ? 'text-3xl font-bold' : heading === '2' ? 'text-2xl font-bold' : heading === '3' ? 'text-xl font-semibold' : 'text-sm',
+    };
+  }, [content]);
+  return <div className={`min-h-[24px] whitespace-pre-wrap break-words text-zinc-900 dark:text-zinc-100 ${sizeClass}`}>{text}</div>;
+});
+
+function LazyBlockEditor({ forceMount, onEditorUnmount, ...editorProps }: React.ComponentProps<typeof BlockEditor> & {
+  /** Focused/selected blocks always keep a live editor (keyboard navigation and merges need it). */
+  forceMount: boolean;
+  /** Called when the editor is released, so callers can drop references to the destroyed instance. */
+  onEditorUnmount?: () => void;
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [nearView, setNearView] = useState(false);
+  // Last rendered editor height, kept on the placeholder so releasing an editor doesn't shift the scroll
+  const [releasedHeight, setReleasedHeight] = useState<number>();
+  const mounted = nearView || forceMount;
+
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') return scheduleMount(() => setNearView(true));
+
+    // The doc scrolls inside <main>, so observe relative to that container for the margins to apply
+    const root = getScrollParent(el);
+    let cancelMount: (() => void) | null = null;
+    const stopNear = observeVisibility(el, root, MOUNT_MARGIN, (visible) => {
+      if (!visible) {
+        cancelMount?.();
+        cancelMount = null;
+      } else if (!cancelMount) {
+        cancelMount = scheduleMount(() => {
+          cancelMount = null;
+          setNearView(true);
+        });
+      }
+    });
+    const stopFar = observeVisibility(el, root, UNMOUNT_MARGIN, (visible) => {
+      if (visible) return;
+      if (el.offsetHeight > 0) setReleasedHeight(el.offsetHeight);
+      setNearView(false);
+    });
+    return () => {
+      cancelMount?.();
+      stopNear();
+      stopFar();
+    };
+  }, []);
+
+  const onEditorUnmountRef = useRef(onEditorUnmount);
+  useEffect(() => { onEditorUnmountRef.current = onEditorUnmount; });
+  useEffect(() => {
+    if (!mounted) return;
+    return () => onEditorUnmountRef.current?.();
+  }, [mounted]);
+
+  return (
+    <div ref={wrapperRef}>
+      {mounted ? (
+        <BlockEditor {...editorProps} />
+      ) : (
+        // A click before the queued mount ran mounts this block right away
+        <div style={{ minHeight: releasedHeight }} onPointerDown={() => setNearView(true)}>
+          <BlockTextPlaceholder content={editorProps.content} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 const DocBlockRow = memo(({
   block,
@@ -447,7 +683,8 @@ const DocBlockRow = memo(({
                   Write, press 'space' for AI, '/' for commands
                 </div>
               )}
-              <BlockEditor
+              <LazyBlockEditor
+                forceMount={isSelected || focusedBlockId === block.id}
                 editable={!isLockedBySomeoneElse}
                 content={block.content}
                 onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
@@ -456,6 +693,7 @@ const DocBlockRow = memo(({
                 onSplit={(contents) => handleSplitBlock(block.id, index, contents)}
                 onFocus={() => handleFocusBlock(block.id)}
                 onEditorReady={(editor) => { editorRegistryRef.current[block.id] = editor; }}
+                onEditorUnmount={() => { delete editorRegistryRef.current[block.id]; }}
               />
             </>
           )}
@@ -559,6 +797,14 @@ export default function DocPage({ docId }: { docId?: string }) {
   // Stable ref so event-handler closures registered with deps:[] never read stale blocks
   const blocksRef = useRef<DocBlock[]>([]);
   useEffect(() => { blocksRef.current = blocks; }, [blocks]);
+  // Every block id this editor has held on the open page. Saves report seen-but-gone ids as deleted, so the
+  // server keeps blocks this editor never had (tasks it appended, other users' blocks) instead of wiping them.
+  const seenBlockIdsRef = useRef<{ pageId: string | null; ids: Set<string> }>({ pageId: null, ids: new Set() });
+  useEffect(() => {
+    const pageId = activePage?.id ?? null;
+    if (seenBlockIdsRef.current.pageId !== pageId) seenBlockIdsRef.current = { pageId, ids: new Set() };
+    blocks.forEach((b) => seenBlockIdsRef.current.ids.add(b.id));
+  }, [blocks, activePage?.id]);
   const [savingPage, setSavingPage] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
 
@@ -625,7 +871,10 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   // Versions that actually changed content, newest first, each paired with the version before it
-  const versionEntries = useMemo(() => buildVersionEntries(pageVersions), [pageVersions]);
+  const versionEntries = useMemo(
+    () => buildVersionEntries(pageVersions.filter((v) => v.pageId === activePage?.id)),
+    [pageVersions, activePage?.id],
+  );
   const isBrowsingHistory = rightPanel === 'history' && versionEntries.length > 0;
   const selectedVersionEntry = isBrowsingHistory
     ? (versionEntries.find(e => e.version.id === selectedVersionId) ?? versionEntries[0])
@@ -645,31 +894,39 @@ export default function DocPage({ docId }: { docId?: string }) {
   // Last successful save in this session, tied to its page; otherwise the page's server timestamp.
   const [lastSave, setLastSave] = useState<{ pageId: string; at: string } | null>(null);
   const lastModifiedAt = lastSave && lastSave.pageId === activePage?.id ? lastSave.at : (activePage?.updatedAt ?? null);
+  // Who saved when, without content (owner/contributors). Full versions are fetched only for the History
+  // panel and for undo, since a journal day's 50 versions are tens of megabytes.
+  const [allPageVersionMeta, setPageVersionMeta] = useState<any[]>([]);
+  const pageVersionMeta = useMemo(
+    () => allPageVersionMeta.filter((v) => v.pageId === activePage?.id),
+    [allPageVersionMeta, activePage?.id],
+  );
   // Versions are newest-first (max 50): the oldest loaded one approximates the page owner.
-  const pageOwner = pageVersions[pageVersions.length - 1]?.user || currentUser;
+  const pageOwner = pageVersionMeta[pageVersionMeta.length - 1]?.user || currentUser;
   const pageContributors = useMemo(() => {
     const seen = new Map<string, { id: string; name?: string; avatarUrl?: string }>();
-    pageVersions.forEach((v) => {
+    pageVersionMeta.forEach((v) => {
       if (v.user?.id && !seen.has(v.user.id)) seen.set(v.user.id, v.user);
     });
     return Array.from(seen.values());
-  }, [pageVersions]);
+  }, [pageVersionMeta]);
+
+  // Page whose saved versions (from earlier sessions) have been loaded into the undo stack. They are
+  // fetched on the first undo rather than on every page open.
+  const undoHistoryPageRef = useRef<string | null>(null);
+  /** Per-page undo state; called wherever the open page is switched so undo never crosses pages. */
+  const resetUndoForPageSwitch = () => {
+    undoHistoryPageRef.current = null;
+    setUndoStack([]);
+    setRedoStack([]);
+  };
 
   useEffect(() => {
-    if (activePage?.id && currentUser?.id) {
-      spacesApi.getPageVersions(activePage.id).then(res => {
-        if (res.versions) {
-          setPageVersions(res.versions);
-          if (res.versions.length > 0) {
-            const history = res.versions
-              .filter((v: any) => v.userId === currentUser.id)
-              .map((v: any) => v.content).reverse();
-            setUndoStack(history);
-            setRedoStack([]);
-          }
-        }
-      }).catch(err => console.error("Failed to load versions:", err));
-    }
+    const pageId = activePage?.id;
+    if (!pageId || !currentUser?.id) return;
+    spacesApi.getPageVersions(pageId, { includeContent: false }).then(res => {
+      if (res.versions && activePageRef.current?.id === pageId) setPageVersionMeta(res.versions);
+    }).catch(err => console.error("Failed to load versions:", err));
   }, [activePage?.id, currentUser?.id]);
 
 
@@ -680,8 +937,12 @@ export default function DocPage({ docId }: { docId?: string }) {
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    setSubpageLimit(10);
-  }, [activePage?.id]);
+    if (doc?.isDailyRollover && isCurrentMonth(activePage?.title)) {
+      setSubpageLimit(100);
+    } else {
+      setSubpageLimit(10);
+    }
+  }, [activePage?.id, doc?.isDailyRollover, activePage?.title]);
 
   useEffect(() => {
     const handleMouseOver = (e: MouseEvent) => {
@@ -837,9 +1098,119 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   };
 
+  // The page tree arrives without content, so a page's content is fetched before switching to it. The
+  // switch happens only once it has loaded, so the editor never shows (or saves) one page's blocks under
+  // another page. A newer selection wins if requests overlap.
+  const pageLoadSeqRef = useRef(0);
+  // While a page's content is in flight its frame (title, toolbar) is already shown with skeleton rows.
+  // Nothing may be saved meanwhile: the editor holds no blocks yet, and a save would wipe the page.
+  const [pageContentState, setPageContentStateValue] = useState<'ready' | 'loading' | 'error'>('ready');
+  const pageContentStateRef = useRef<'ready' | 'loading' | 'error'>('ready');
+  const setPageContentState = (state: 'ready' | 'loading' | 'error') => {
+    pageContentStateRef.current = state;
+    setPageContentStateValue(state);
+  };
+  // When the open page's content arrived; saved versions older than this predate the session's undo stack
+  const pageOpenedAtRef = useRef(0);
+
+  // Content of the open page as last loaded or saved, to tell whether it has unsaved edits
+  const lastSyncedContentRef = useRef<string | null>(null);
+
+  const openPage = async (page: any) => {
+    const seq = ++pageLoadSeqRef.current;
+    // Edits are saved on blur, which fires after this click; save the page being left now, while it is
+    // still the open page, since the blur save would otherwise run against the page being loaded.
+    if (activePageRef.current && activePageRef.current.id !== page.id && pageContentStateRef.current === 'ready') {
+      const leaving = blocksToMarkdown(blocksRef.current);
+      if (leaving !== lastSyncedContentRef.current) handleSavePage(blocksRef.current);
+    }
+    let content: string | undefined = page.content;
+    let cached: CachedPage | undefined;
+    if (content === undefined) {
+      // A recently opened page (e.g. a journal date) shows from cache at once and is revalidated below
+      cached = getCachedPage(page.id);
+      if (cached) {
+        content = cached.content;
+      } else {
+        setPageContentState('loading');
+        resetUndoForPageSwitch();
+        setActivePage({ ...page });
+        setPageTitle(page.title || 'Untitled Page');
+        setBlocks([]);
+        try {
+          const res = await spacesApi.getPage(page.id);
+          content = res.page?.content ?? '';
+          setCachedPage(page.id, content, res.page?.updatedAt);
+        } catch (err) {
+          console.error('Failed to load page:', err);
+          if (seq === pageLoadSeqRef.current) setPageContentState('error');
+          return;
+        }
+      }
+    }
+    if (seq !== pageLoadSeqRef.current) return;
+    if (page.content !== undefined || cached) resetUndoForPageSwitch();
+    pageOpenedAtRef.current = Date.now();
+    lastSyncedContentRef.current = content;
+    setActivePage({ ...page, content });
+    setPageTitle(page.title || 'Untitled Page');
+    setBlocks(markdownToBlocks(content));
+    setPageContentState('ready');
+    if (cached) revalidateCachedPage(page.id, cached, seq);
+  };
+
+  // Asks the server whether a page shown from cache changed since it was cached (cheap: no content unless
+  // it did). A changed page — e.g. tasks auto-appended to the journal — replaces the cached blocks when
+  // nothing was edited yet; otherwise only the blocks this editor hasn't seen are merged in.
+  const revalidateCachedPage = async (pageId: string, cached: CachedPage, seq: number) => {
+    try {
+      const res = await spacesApi.getPage(pageId, { since: cached.updatedAt });
+      if (res.notModified || res.page?.content === undefined) return;
+      const fresh = res.page.content;
+      setCachedPage(pageId, fresh, res.page.updatedAt);
+      if (seq !== pageLoadSeqRef.current || activePageRef.current?.id !== pageId || pageContentStateRef.current !== 'ready') return;
+      if (blocksToMarkdown(blocksRef.current) === lastSyncedContentRef.current) {
+        lastSyncedContentRef.current = fresh;
+        setBlocks(markdownToBlocks(fresh));
+      } else {
+        mergeUnseenServerBlocks(pageId, fresh);
+      }
+    } catch (err) {
+      console.error('Failed to refresh cached page:', err);
+    }
+  };
+
+  // Adds blocks from the stored page that this editor has never held (e.g. tasks the server appended under a
+  // client / New Tasks), each after its nearest stored predecessor. Local edits and local deletions win.
+  const mergeUnseenServerBlocks = (pageId: string, serverContent: string | undefined) => {
+    if (!serverContent || activePageRef.current?.id !== pageId || pageContentStateRef.current !== 'ready') return;
+    const serverBlocks = markdownToBlocks(serverContent);
+    const seen = seenBlockIdsRef.current.pageId === pageId ? seenBlockIdsRef.current.ids : new Set<string>();
+    setBlocks((prev) => {
+      if (activePageRef.current?.id !== pageId) return prev;
+      const localIds = new Set(prev.map((b) => b.id));
+      const isUnseen = (b: DocBlock) => !localIds.has(b.id) && !seen.has(b.id);
+      if (!serverBlocks.some(isUnseen)) return prev;
+      const next = [...prev];
+      serverBlocks.forEach((block, i) => {
+        if (!isUnseen(block)) return;
+        let insertAt = 0;
+        for (let j = i - 1; j >= 0; j--) {
+          const idx = next.findIndex((b) => b.id === serverBlocks[j].id);
+          if (idx !== -1) {
+            insertAt = idx + 1;
+            break;
+          }
+        }
+        next.splice(insertAt, 0, block);
+      });
+      return next;
+    });
+  };
+
   const fetchDoc = async () => {
     try {
-      const docRes = await spacesApi.getDoc(id as string);
+      const docRes = await spacesApi.getDoc(id as string, { includeContent: false });
       setDoc(docRes.doc);
       if (docRes.doc?.pages?.length > 0 && !activePageRef.current) {
         let firstPage = docRes.doc.pages[0];
@@ -870,9 +1241,8 @@ export default function DocPage({ docId }: { docId?: string }) {
           firstPage = sortedPages[0];
         }
 
-        setActivePage(firstPage);
-        setPageTitle(firstPage.title || 'Untitled Page');
-        setBlocks(markdownToBlocks(firstPage.content));
+        // Not awaited: the doc frame renders now and the page's blocks fill in when they arrive
+        openPage(firstPage);
       }
     } catch (e: any) {
       setError(e.message || 'Failed to load document');
@@ -922,23 +1292,42 @@ export default function DocPage({ docId }: { docId?: string }) {
       setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, content } : b));
     });
 
-    s.on('page_updated', () => {
-      // Allow other users to see structure changes (new blocks/deleted blocks) by re-fetching
-      fetchDoc();
+    // Refresh the page tree when someone else saves or the server adds a page. Bursts (e.g. several
+    // tasks created at once) are coalesced into one request; the tree no longer carries page content.
+    // If the open page changed, pull in the blocks this editor hasn't got (e.g. auto-appended tasks).
+    let pageUpdatedTimer: ReturnType<typeof setTimeout> | null = null;
+    let openPageChanged = false;
+    s.on('page_updated', (data?: { pageId?: string }) => {
+      if (data?.pageId && data.pageId === activePageRef.current?.id) openPageChanged = true;
+      if (pageUpdatedTimer) clearTimeout(pageUpdatedTimer);
+      pageUpdatedTimer = setTimeout(() => {
+        pageUpdatedTimer = null;
+        fetchDoc();
+        const pageId = activePageRef.current?.id;
+        if (openPageChanged && pageId) {
+          spacesApi.getPage(pageId, { since: getCachedPage(pageId)?.updatedAt })
+            .then((res) => {
+              if (res.notModified || res.page?.content === undefined) return;
+              setCachedPage(pageId, res.page.content, res.page.updatedAt);
+              mergeUnseenServerBlocks(pageId, res.page.content);
+            })
+            .catch((err) => console.error('Failed to refresh page:', err));
+        }
+        openPageChanged = false;
+      }, 1000);
     });
 
     setSocket(s);
 
     return () => {
+      if (pageUpdatedTimer) clearTimeout(pageUpdatedTimer);
       s.emit('leave_doc', id);
       s.disconnect();
     };
   }, [id]);
 
   const handleSelectPage = (page: any) => {
-    setActivePage(page);
-    setPageTitle(page.title || 'Untitled Page');
-    setBlocks(markdownToBlocks(page.content));
+    openPage(page);
   };
 
   const handleCreatePage = async (parentPageId?: string) => {
@@ -955,16 +1344,21 @@ export default function DocPage({ docId }: { docId?: string }) {
       });
 
       await fetchDoc();
+      pageLoadSeqRef.current++; // cancel any in-flight page load so it can't replace the new page
+      resetUndoForPageSwitch();
+      lastSyncedContentRef.current = res.page.content ?? null;
       setActivePage(res.page);
       setPageTitle(res.page.title || 'Untitled Page');
       setBlocks(cleanBlocks);
+      setPageContentState('ready');
     } catch (err) {
       console.error('Failed to create page:', err);
     }
   };
 
   const handleSavePage = async (updatedBlocks = blocksRef.current, skipHistory = false) => {
-    if (!activePageRef.current) return;
+    // No saves while the open page's content is loading (or failed to load): the editor has no blocks yet
+    if (!activePageRef.current || pageContentStateRef.current !== 'ready') return;
     setSavingPage(true);
     try {
       const content = blocksToMarkdown(updatedBlocks);
@@ -980,13 +1374,23 @@ export default function DocPage({ docId }: { docId?: string }) {
       }
 
       const savedPageId = activePageRef.current.id;
-      await spacesApi.updatePage(savedPageId, {
+      const seen = seenBlockIdsRef.current;
+      const savedIds = new Set(updatedBlocks.map((b) => b.id));
+      const deletedBlockIds = seen.pageId === savedPageId ? [...seen.ids].filter((blockId) => !savedIds.has(blockId)) : undefined;
+      const res = await spacesApi.updatePage(savedPageId, {
         title: pageTitleRef.current,
         content: content,
+        deletedBlockIds,
       });
+      // The server kept blocks this editor hadn't seen yet; show them
+      if (res?.page?.content && res.page.content !== content) mergeUnseenServerBlocks(savedPageId, res.page.content);
+      // The server's copy is now what was sent (or the merged copy it returned)
+      setCachedPage(savedPageId, res?.page?.content ?? content, res?.page?.updatedAt);
+      if (activePageRef.current?.id === savedPageId) lastSyncedContentRef.current = content;
       setLastSave({ pageId: savedPageId, at: new Date().toISOString() });
       if (socket) {
-        socket.emit('page_updated', { docId: id, pageId: activePageRef.current.id });
+        // The page that was saved — the open page may have changed while the request was in flight
+        socket.emit('page_updated', { docId: id, pageId: savedPageId });
       }
     } catch (err) {
       console.error('Failed to save page:', err);
@@ -997,6 +1401,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const handleDeletePage = async (pageId: string) => {
     if (!pageId) return;
+    forgetCachedPage(pageId);
     try {
       await spacesApi.deletePage(pageId);
     } catch (err) {
@@ -1725,7 +2130,23 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   }, [selectedBlockIds, socket, id]);
 
-  const handleUndo = useCallback(() => {
+  const handleUndo = useCallback(async () => {
+    // First undo on this page: put the caller's earlier saved versions underneath this session's history
+    const pageId = activePageRef.current?.id;
+    if (pageId && undoHistoryPageRef.current !== pageId) {
+      undoHistoryPageRef.current = pageId;
+      try {
+        const res = await spacesApi.getPageVersions(pageId, { mine: true });
+        if (activePageRef.current?.id !== pageId) return;
+        const earlier = (res.versions || [])
+          .filter((v: any) => new Date(v.createdAt).getTime() < pageOpenedAtRef.current)
+          .map((v: any) => v.content as string)
+          .reverse();
+        if (earlier.length > 0) setUndoStack(session => [...earlier, ...session].slice(-50));
+      } catch (err) {
+        console.error('Failed to load undo history:', err);
+      }
+    }
     setUndoStack(prevUndo => {
       if (prevUndo.length <= 1) return prevUndo; // Need at least current + previous
       
@@ -2333,7 +2754,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       {/* Hidden (not unmounted) in page focus mode so the tree keeps its expand state */}
       <aside className={`w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none ${activePage && pageStyles.focusPage ? 'hidden' : ''}`}>
         <div
-          onClick={() => setActivePage(null)}
+          onClick={() => { pageLoadSeqRef.current++; setPageContentState('ready'); resetUndoForPageSwitch(); setActivePage(null); }}
           className="mb-5 pb-3 border-b border-zinc-800/60 cursor-pointer group hover:opacity-90 transition-all"
         >
           <div className="flex items-center gap-2 text-zinc-400 mb-1">
@@ -2593,6 +3014,29 @@ export default function DocPage({ docId }: { docId?: string }) {
                 : ''
             }`}>
               {(() => {
+                if (pageContentState === 'loading') {
+                  return (
+                    <div className="space-y-3 px-2 py-1 animate-pulse" aria-busy="true" aria-label="Loading page">
+                      {[40, 72, 64, 80, 56, 68, 48, 76].map((width, i) => (
+                        <div key={i} className="h-4 rounded bg-zinc-800/60" style={{ width: `${width}%` }} />
+                      ))}
+                    </div>
+                  );
+                }
+                if (pageContentState === 'error') {
+                  return (
+                    <div className="px-2 py-6 text-sm text-zinc-400 flex items-center gap-3">
+                      <span>This page couldn&apos;t be loaded.</span>
+                      <button
+                        type="button"
+                        onClick={() => activePageRef.current && openPage({ ...activePageRef.current, content: undefined })}
+                        className="px-3 py-1 rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  );
+                }
                 if (blocks.length === 0) {
                   return (
                     <div

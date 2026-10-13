@@ -8,6 +8,8 @@ import { Color } from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
+import Link from '@tiptap/extension-link';
+import { openExternalLink } from '@/lib/links';
 import { TaskMention } from '../editor/extensions/TaskMention';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
 import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
@@ -74,6 +76,16 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       TaskMention.configure({
         suggestion: taskSuggestion,
       }),
+      // Clicks are handled in editorProps.handleDOMEvents so hrefs without a protocol open correctly
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+        linkOnPaste: true,
+        defaultProtocol: 'https',
+        HTMLAttributes: {
+          class: 'text-blue-400 underline cursor-pointer hover:text-blue-300',
+        },
+      }),
       LiveKanbanBlock,
       Toggle,
       ToggleSummary,
@@ -108,7 +120,11 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
           return;
         }
       }
-      
+
+      // Attribute-only changes that don't reach the HTML (e.g. a mention refreshing its in-memory task
+      // snapshot) are not edits — skip them so they aren't broadcast to other viewers or saved.
+      if (html === propsRef.current.content) return;
+
       propsRef.current.onChange(html);
     },
     onBlur: ({ event }) => {
@@ -132,6 +148,17 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       // Task 2: Preserve all data-* attributes on mention spans during paste.
       transformPastedHTML(html: string) {
         return html;
+      },
+      handleDOMEvents: {
+        click: (view, event) => {
+          if (event.button !== 0) return false;
+          const anchor = (event.target as HTMLElement | null)?.closest?.('a[href]');
+          if (!anchor || !view.dom.contains(anchor) || anchor.closest('[data-node-view-wrapper]')) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          openExternalLink(anchor.getAttribute('href'));
+          return true;
+        },
       },
       handleKeyDown: (view, event) => {
         // Intercept Backspace and Delete at boundaries to merge blocks

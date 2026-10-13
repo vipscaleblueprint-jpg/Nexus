@@ -12,6 +12,7 @@ import rehypeRaw from 'rehype-raw';
 import { uploadApi } from '@/api/upload';
 import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
 import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
@@ -23,6 +24,8 @@ import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
 import { CommentEditor } from '../ui/CommentEditor';
+import { UserMentionChip } from '../ui/UserMentionChip';
+import { normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 export const CustomCircleDotted = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
@@ -614,16 +617,10 @@ export function TaskDetailModalContent({
       }
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
-        return (
-          <span
-            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
-          >
-            {rest.children}
-          </span>
-        );
+        return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
       }
       return (
-        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
+        <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
@@ -634,7 +631,18 @@ export function TaskDetailModalContent({
     }
   }), []);
 
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists, workspaceRoles: storeWorkspaceRoles } = useAppStore();
+  // Select only what the modal uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists, workspaceRoles: storeWorkspaceRoles } = useAppStore(useShallow((s) => ({
+    currentUser: s.currentUser,
+    workspaceUsers: s.workspaceUsers,
+    loadUsers: s.loadUsers,
+    hydrateUsersFromCache: s.hydrateUsersFromCache,
+    workspaceTeams: s.workspaceTeams,
+    loadTeams: s.loadTeams,
+    hydrateTeamsFromCache: s.hydrateTeamsFromCache,
+    allLists: s.allLists,
+    workspaceRoles: s.workspaceRoles,
+  })));
 
   // Fetch real users from DB for assignee picker
   useEffect(() => {
@@ -895,7 +903,10 @@ export function TaskDetailModalContent({
       setAttachments([...existing, ...oldAttachments]);
       setEditingUser(null);
     }
-  }, [task]);
+    // Only when what this derives from changes — not on every merged task object (status echoes,
+    // the background full-task fetch), which reset the description and rebuilt attachments each time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id, task?.description, task?.attachments]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -2602,8 +2613,8 @@ export function TaskDetailModalContent({
                             </button>
                           </div>
                         ) : (
-                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents} urlTransform={(url) => url}>
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
                               {comment.content || ''}
                             </ReactMarkdown>
                           </div>
@@ -3272,16 +3283,10 @@ export function SubtaskDetailView({
       }
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
-        return (
-          <span
-            className="bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded cursor-default select-none inline-flex items-center mx-0.5 align-baseline"
-          >
-            {rest.children}
-          </span>
-        );
+        return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
       }
       return (
-        <a {...rest} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer">
+        <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
@@ -3738,7 +3743,11 @@ export function SubtaskDetailView({
       if (res?.comments) setRichComments(res.comments);
 
       // Reflect comment count in the parent task modal's SubtasksSection
-      const updatedSubtask = { ...subtask, comments: [...(subtask.comments || []), { id: Date.now().toString() }] };
+      // If the subtask's comments were never loaded, bump the server count instead of inventing a
+      // one-item comments array (which would also stop the comments tab from fetching the real ones).
+      const updatedSubtask = subtask.comments
+        ? { ...subtask, comments: [...subtask.comments, { id: Date.now().toString() }] }
+        : { ...subtask, _count: { ...(subtask._count || {}), comments: (subtask._count?.comments ?? 0) + 1 } };
       if (setActiveSubtask) setActiveSubtask(updatedSubtask);
       if (onUpdateTask) {
         const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
@@ -4829,8 +4838,8 @@ export function SubtaskDetailView({
                           </button>
                         </div>
                       ) : (
-                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents} urlTransform={(url) => url}>
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
                               {c.content || ''}
                           </ReactMarkdown>
                         </div>
@@ -5205,6 +5214,9 @@ export function SubtaskDetailView({
 export function TaskDetailModal(props: Props) {
   const [fullTask, setFullTask] = useState<Task | null>(props.task ?? null);
   const lastTaskIdRef = useRef<string | null>(null);
+  // Fields the user changed while the background fetch below was in flight; its (older) copy must not
+  // overwrite them, or the edit appears to revert.
+  const locallyEditedKeysRef = useRef<Set<string>>(new Set());
 
   // Show modal instantly with prop data; then silently refresh in background
   useEffect(() => {
@@ -5214,6 +5226,7 @@ export function TaskDetailModal(props: Props) {
         lastTaskIdRef.current = props.task.id;
         setFullTask(props.task);
       }
+      locallyEditedKeysRef.current = new Set();
       // Background refresh — don't block the modal with a loading state
       const loadFull = async () => {
         try {
@@ -5222,8 +5235,11 @@ export function TaskDetailModal(props: Props) {
             setFullTask(prev => {
               if (!prev) return res.task;
               // The DB copy wins: the seeded prop may be a stale/partial cache (e.g. an old status
-              // from a doc mention or dashboard). Only fill in fields the response didn't include.
-              return { ...prev, ...res.task };
+              // from a doc mention or dashboard). Only fill in fields the response didn't include,
+              // and keep fields the user edited after the request was sent.
+              const merged: any = { ...prev, ...res.task };
+              locallyEditedKeysRef.current.forEach((key) => { merged[key] = (prev as any)[key]; });
+              return merged;
             });
           }
         } catch (err) {
@@ -5279,6 +5295,11 @@ export function TaskDetailModal(props: Props) {
 
 
   const handleUpdateTask = (updatedTask: Task) => {
+    if (fullTask) {
+      for (const key of Object.keys(updatedTask)) {
+        if ((updatedTask as any)[key] !== (fullTask as any)[key]) locallyEditedKeysRef.current.add(key);
+      }
+    }
     setFullTask(updatedTask);
     if (props.onUpdateTask) props.onUpdateTask(updatedTask);
   };

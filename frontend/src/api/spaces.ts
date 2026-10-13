@@ -67,9 +67,22 @@ export const spacesApi = {
     });
   },
 
-  async getDoc(id: string): Promise<{ doc: any }> {
-    return apiClient<{ doc: any }>(`/api/spaces/docs/${id}`, {
+  // includeContent: false returns only the page tree (titles, ids, dates) — load content via getPage
+  async getDoc(id: string, options?: { includeContent?: boolean }): Promise<{ doc: any }> {
+    const qs = options?.includeContent === false ? '?includeContent=false' : '';
+    return apiClient<{ doc: any }>(`/api/spaces/docs/${id}${qs}`, {
       method: 'GET',
+    });
+  },
+
+  /**
+   * With `since` (the updatedAt of a cached copy) an unchanged page answers `{ notModified: true }` and
+   * carries no content.
+   */
+  async getPage(id: string, options?: { since?: string }): Promise<{ page: Page & { content?: string }; notModified?: boolean }> {
+    return apiClient<{ page: Page & { content?: string }; notModified?: boolean }>(`/api/spaces/pages/${id}`, {
+      method: 'GET',
+      params: { since: options?.since },
     });
   },
 
@@ -99,15 +112,21 @@ export const spacesApi = {
     });
   },
 
-  async updatePage(id: string, data: { title?: string; content?: string }): Promise<{ page: Page }> {
+  async updatePage(id: string, data: { title?: string; content?: string; deletedBlockIds?: string[] }): Promise<{ page: Page }> {
     return apiClient<{ page: Page }>(`/api/spaces/pages/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   },
 
-  async getPageVersions(id: string): Promise<{ versions: any[] }> {
-    return apiClient<{ versions: any[] }>(`/api/spaces/pages/${id}/versions`);
+  /** `includeContent: false` returns only who saved when; `mine` limits the list to the caller's versions. */
+  async getPageVersions(id: string, options?: { includeContent?: boolean; mine?: boolean }): Promise<{ versions: any[] }> {
+    return apiClient<{ versions: any[] }>(`/api/spaces/pages/${id}/versions`, {
+      params: {
+        includeContent: options?.includeContent === false ? 'false' : undefined,
+        mine: options?.mine ? 'true' : undefined,
+      },
+    });
   },
 
   async deletePage(id: string): Promise<{ message: string }> {

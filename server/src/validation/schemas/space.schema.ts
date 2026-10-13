@@ -45,6 +45,8 @@ export const updatePageSchema = z
   .object({
     title: shortText('title').optional(),
     content: longText(50_000_000).optional(),
+    // Blocks the saving editor removed; any other stored block missing from `content` is kept (see updatePage)
+    deletedBlockIds: z.array(z.string().max(200)).max(20_000).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

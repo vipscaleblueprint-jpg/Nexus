@@ -82,6 +82,9 @@ export const TaskMention = Mention.extend({
           return { 'data-task-list-name': attributes.taskListName };
         },
       },
+      // In-memory snapshot of the full task for the node view. It is deliberately NOT written back to
+      // HTML: embedding the whole task (subtasks, comments, checklists) in every mention made saved pages
+      // grow without bound. Older content that still carries data-task-data is read once for display.
       frozenTaskData: {
         default: null,
         parseHTML: element => {
@@ -89,10 +92,7 @@ export const TaskMention = Mention.extend({
           if (!attr) return null;
           try { return JSON.parse(attr); } catch(e) { return null; }
         },
-        renderHTML: attributes => {
-          if (!attributes.frozenTaskData) return {};
-          return { 'data-task-data': typeof attributes.frozenTaskData === 'object' ? JSON.stringify(attributes.frozenTaskData) : attributes.frozenTaskData };
-        }
+        renderHTML: () => ({}),
       }
     };
   },
@@ -125,7 +125,6 @@ export const TaskMention = Mention.extend({
           'data-task-team': node.attrs.taskTeam || '',
           'data-task-has-description': node.attrs.taskHasDescription ? 'true' : '',
           'data-task-list-name': node.attrs.taskListName || '',
-          'data-task-data': node.attrs.frozenTaskData ? (typeof node.attrs.frozenTaskData === 'object' ? JSON.stringify(node.attrs.frozenTaskData) : node.attrs.frozenTaskData) : ''
         }
       ),
       node.attrs.label || node.attrs.id

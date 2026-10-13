@@ -10,7 +10,6 @@ export const dailyRolloverWorker = new Worker(
 
     // Custom status priority order (lower index = higher priority in the list)
     const STATUS_ORDER: Record<string, number> = {
-      'KYC':          1,
       'PIN BOARD':    2,
       'DAILY':        3,
       'WEEKLY':       4,
@@ -28,11 +27,15 @@ export const dailyRolloverWorker = new Worker(
 
     const getStatusOrder = (status: string) => STATUS_ORDER[(status || '').toUpperCase()] ?? 99;
 
+    // KYC items never roll over (status is free text, so match any casing)
+    const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
+
     const activeTasks = await prisma.task.findMany({
-      where: { status: { notIn: ['Closed', 'CLOSED'] } },
+      where: { status: { notIn: ['Closed', 'CLOSED'] }, ...notKyc },
       include: {
         list: { select: { id: true, name: true } },
-        subtasks: { orderBy: { createdAt: 'asc' } },
+        // Subtask.status is nullable; keep null-status subtasks (a bare NOT would drop them in SQL)
+        subtasks: { where: { OR: [{ status: null }, notKyc] }, orderBy: { createdAt: 'asc' } },
       },
       // Fetch newest first so new tasks appear at the top of their status group
       orderBy: { createdAt: 'desc' }
@@ -203,14 +206,6 @@ export const dailyRolloverWorker = new Worker(
       // Create hierarchy for today (or overridden date)
       const dateToRun = job.data?.dateOverride ? new Date(job.data.dateOverride) : new Date();
       await createHierarchyForDate(dateToRun);
-
-      // (Optional) For testing purposes, generate previous days to populate the folder
-      await createHierarchyForDate(new Date('2026-09-08T00:00:00Z'));
-      await createHierarchyForDate(new Date('2026-09-09T00:00:00Z'));
-      
-      // Force test dates
-      await createHierarchyForDate(new Date('2026-09-16T15:00:00Z')); // Sep 17 in Asia/Singapore
-      await createHierarchyForDate(new Date('2026-09-17T15:00:00Z')); // Sep 18 in Asia/Singapore
     }
 
     logger.info('Finished DailyRollover job.');

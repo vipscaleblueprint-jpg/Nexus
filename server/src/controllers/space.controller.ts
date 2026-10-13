@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
-import { keepUnseenBlocks } from '../utils/pageBlocks';
+import { keepUnseenBlocks, stripMentionSnapshots } from '../utils/pageBlocks';
 import { syncClients } from './webhook.controller';
 
 export async function triggerSyncClients(req: Request, res: Response) {
@@ -556,7 +556,7 @@ export async function getPage(req: Request, res: Response) {
       select: { ...pageSelectConfig, content: true },
     });
     if (!page) return res.status(404).json({ error: 'Page not found' });
-    return res.json({ page });
+    return res.json({ page: { ...page, content: stripMentionSnapshots(page.content) } });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -638,6 +638,8 @@ export async function createPage(req: Request, res: Response) {
 }
 
 // PATCH /api/spaces/pages/:id
+const VERSION_COALESCE_MS = 30_000;
+
 export async function updatePage(req: Request, res: Response) {
   try {
     const { title, deletedBlockIds } = req.body;
@@ -652,12 +654,20 @@ export async function updatePage(req: Request, res: Response) {
       select: { content: true, title: true },
     });
 
-    // Only editors that report their deletions get the merge; older clients keep last-write-wins
-    if (content !== undefined && Array.isArray(deletedBlockIds)) {
-      content = keepUnseenBlocks(previous?.content, content, deletedBlockIds);
+    let keptUnseenBlocks = false;
+    if (content !== undefined) {
+      content = stripMentionSnapshots(content);
+      // Only editors that report their deletions get the merge; older clients keep last-write-wins
+      if (Array.isArray(deletedBlockIds)) {
+        const merged = keepUnseenBlocks(previous?.content, content, deletedBlockIds);
+        keptUnseenBlocks = merged !== content;
+        content = merged;
+      }
     }
 
-    const page = await prisma.page.update({
+    // The page content can be megabytes: send it back only when the server changed it (kept blocks the
+    // editor hadn't seen), since otherwise the editor already has exactly what it sent.
+    const { content: savedContent, ...page } = await prisma.page.update({
       where: { id: req.params.id },
       data: {
         ...(title && { title }),
@@ -666,20 +676,25 @@ export async function updatePage(req: Request, res: Response) {
     });
 
     if (content !== undefined && userId && previous?.content !== content) {
-      await prisma.pageVersion.create({
-        data: {
-          pageId: page.id,
-          userId: userId,
-          content: content,
-        }
+      // A burst of saves (typing, mention chips refreshing) folds into one version per user instead of a
+      // full page copy per keystroke; a pause longer than the window starts a new version.
+      const recent = await prisma.pageVersion.findFirst({
+        where: { pageId: page.id, createdAt: { gte: new Date(Date.now() - VERSION_COALESCE_MS) } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, userId: true },
       });
+      if (recent && recent.userId === userId) {
+        await prisma.pageVersion.update({ where: { id: recent.id }, data: { content } });
+      } else {
+        await prisma.pageVersion.create({ data: { pageId: page.id, userId, content } });
+      }
     }
 
     // The cached hierarchy only holds page titles, so content-only saves don't need to invalidate it
     if (title && title !== previous?.title) {
       await invalidateCache('spaces:all', 'dashboard:all');
     }
-    return res.json({ page });
+    return res.json({ page: keptUnseenBlocks ? { ...page, content: savedContent } : page });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Page not found' });
     return res.status(500).json({ error: err.message });
@@ -693,13 +708,21 @@ export async function getPageVersions(req: Request, res: Response) {
     const userId = authReq.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
+    // ?includeContent=false lists who saved when (page owner / contributors) without the full page copies,
+    // which for a journal day page add up to tens of megabytes. ?mine=true limits it to the caller's versions.
+    const includeContent = req.query.includeContent !== 'false';
     const versions = await prisma.pageVersion.findMany({
-      where: { pageId: req.params.id },
+      where: { pageId: req.params.id, ...(req.query.mine === 'true' && { userId }) },
       orderBy: { createdAt: 'desc' },
       take: 50,
-      include: {
-        user: { select: { id: true, name: true, avatarUrl: true, email: true } }
-      }
+      select: {
+        id: true,
+        pageId: true,
+        userId: true,
+        createdAt: true,
+        ...(includeContent && { content: true }),
+        user: { select: { id: true, name: true, avatarUrl: true, email: true } },
+      },
     });
     return res.json({ versions });
   } catch (err: any) {

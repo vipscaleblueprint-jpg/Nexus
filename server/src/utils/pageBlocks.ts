@@ -1,3 +1,81 @@
+type Block = { id: string; type: string; content: string; [key: string]: any };
+
+// Old editors wrote a full JSON copy of each mentioned task into `data-task-data` (most of a journal page's
+// size). Current editors neither write nor need it, so it is dropped on save and on load.
+const MENTION_SNAPSHOT_ATTR = /\s+data-task-data=\\?"[^"]*"/g;
+
+export function stripMentionSnapshots(content: string): string {
+  if (!content || !content.includes('data-task-data=')) return content;
+  const stripped = content.replace(MENTION_SNAPSHOT_ATTR, '');
+  // Block-JSON pages must stay valid JSON; leave anything the pattern would break untouched
+  if (content.trimStart().startsWith('[')) {
+    try {
+      JSON.parse(stripped);
+    } catch {
+      return content;
+    }
+  }
+  return stripped;
+}
+
+const isEmptyBlock = (b: any) =>
+  b?.type === 'text' && /^(<p>(\s|&nbsp;|<br\s*\/?>)*<\/p>)?$/i.test(String(b.content ?? '').trim());
+// Sections of the journal day page are delimited by h2/h3 headings (client names, "New Tasks")
+const isSectionHeading = (b: any) => b?.type === 'text' && /^<h[23]/i.test(String(b.content ?? ''));
+const findHeading = (blocks: Block[], name: string) =>
+  blocks.findIndex((b) =>
+    b?.type === 'text' &&
+    /<h[1-6]/i.test(b.content || '') &&
+    b.content.replace(/<[^>]+>/g, '').trim().toLowerCase() === name.toLowerCase());
+
+let spacerSeq = 0;
+const spacerBlock = (tag: string): Block => ({ id: `blk-space-${Date.now()}-${++spacerSeq}-${tag}`, type: 'text', content: '<p></p>' });
+
+/**
+ * Puts `block` at the end of the section under `headerIndex`. The section's trailing blank line is taken
+ * over when there is one (a single blank stays as the spacer below the new line, extra blanks are used up);
+ * otherwise a blank spacer is added after it. Subtask lines are later inserted between the task and that
+ * spacer.
+ */
+function appendToSection(blocks: Block[], headerIndex: number, block: Block, tag: string) {
+  let end = headerIndex + 1;
+  while (end < blocks.length && !isSectionHeading(blocks[end])) end++;
+  let firstBlank = end;
+  while (firstBlank > headerIndex + 1 && isEmptyBlock(blocks[firstBlank - 1])) firstBlank--;
+
+  const trailingBlanks = end - firstBlank;
+  if (trailingBlanks >= 2) {
+    blocks.splice(firstBlank, 1, block);
+  } else {
+    blocks.splice(firstBlank, 0, block);
+    if (trailingBlanks === 0) blocks.splice(firstBlank + 1, 0, spacerBlock(tag));
+  }
+}
+
+/**
+ * Appends a new task to the journal day page: once under its client's heading and once under "New Tasks".
+ * A missing client heading is created just above "New Tasks" (with the other clients) rather than at the
+ * very bottom of the page. Mutates `blocks`.
+ */
+export function appendTaskToJournal(blocks: Block[], clientName: string, makeTaskBlock: (section: 'c' | 'n') => Block) {
+  const tag = clientName.replace(/\s+/g, '');
+
+  let clientIndex = findHeading(blocks, clientName);
+  if (clientIndex === -1) {
+    const newTasksIndex = findHeading(blocks, 'new tasks');
+    clientIndex = newTasksIndex === -1 ? blocks.length : newTasksIndex;
+    blocks.splice(clientIndex, 0, { id: `blk-h-${Date.now()}-${tag}`, type: 'text', content: `<h2>${clientName}</h2>` });
+  }
+  appendToSection(blocks, clientIndex, makeTaskBlock('c'), tag);
+
+  let newTasksIndex = findHeading(blocks, 'new tasks');
+  if (newTasksIndex === -1) {
+    blocks.push({ id: `blk-h-${Date.now()}-NewTasks`, type: 'text', content: '<h3>New Tasks</h3>' });
+    newTasksIndex = blocks.length - 1;
+  }
+  appendToSection(blocks, newTasksIndex, makeTaskBlock('n'), 'NewTasks');
+}
+
 /**
  * An editor saves its whole copy of the page, so blocks added to the stored page after it loaded (tasks the
  * server appends to the journal, blocks from other users) would be wiped by its next save. Keep every stored

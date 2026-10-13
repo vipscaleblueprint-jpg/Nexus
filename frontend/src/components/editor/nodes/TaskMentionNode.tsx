@@ -465,6 +465,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
   const isSubtask = mentionType === 'subtask';
   const isClosedNode = (parsedStatusName || '').toUpperCase() === 'CLOSED' || (parsedStatusName || '').toUpperCase() === 'DONE';
+  // Chip surface comes from theme variables (globals.css) so it follows light mode; avatar rings
+  // use the same colour so stacked avatars read as cut-outs instead of outlined circles.
+  const chipBg = isSubtask ? 'bg-[var(--task-chip-sub)] hover:bg-[var(--task-chip-sub)]/80' : 'bg-[var(--task-chip)] hover:bg-[var(--task-chip)]/80';
+  const chipRing = isSubtask ? 'border-[var(--task-chip-sub)]' : 'border-[var(--task-chip)]';
 
   return (
     <NodeViewWrapper 
@@ -479,7 +483,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         }
       }}
     >
-      <motion.span layout className={`relative inline align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 box-decoration-clone leading-relaxed ${isSubtask ? 'bg-[#111113] hover:bg-[#111113]/80' : 'bg-[#17171A] hover:bg-[#17171A]/80'} ${isClosedNode ? 'opacity-75' : ''}`}>
+      <motion.span layout className={`relative inline align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 box-decoration-clone leading-relaxed ${chipBg} ${isClosedNode ? 'opacity-75' : ''}`}>
         
         {isClosedNode && (
           <div className="absolute top-1/2 left-1.5 right-1.5 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
@@ -504,7 +508,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         <span 
           className={`cursor-pointer border-b border-transparent hover:border-zinc-500 pb-[1px] transition-all duration-300 mr-1.5 align-middle ${
-            isSubtask ? 'text-[13px] font-normal text-[#A1A1AA]' : 'text-[15px] font-medium text-[#F4F4F5]'
+            isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'
           }`}
           onClick={(e) => {
             e.stopPropagation();
@@ -532,7 +536,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         {parsedStatusName && (
           <span 
             ref={statusRef}
-            className={`px-2 py-[3px] rounded text-[10px] font-bold uppercase tracking-wider text-white shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 inline-flex items-center align-middle leading-none ${isSubtask ? 'opacity-60' : ''}`}
+            className={`px-2 py-[3px] rounded text-[10px] font-bold uppercase tracking-wider text-[#fff] shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 inline-flex items-center align-middle leading-none ${isSubtask ? 'opacity-60' : ''}`}
             style={{ backgroundColor: parsedStatusColor }}
             onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'status' ? null : 'status'); }}
           >
@@ -570,7 +574,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.5 }}
                     transition={{ duration: 0.2 }}
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 border-white dark:border-zinc-900 ${i > 0 ? '-ml-2' : ''} shadow-sm relative ${bgColor}`}
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 ${chipRing} ${i > 0 ? '-ml-2' : ''} relative ${bgColor}`}
                     style={{ zIndex: 10 - i }}
                     title={role}
                   >
@@ -585,7 +589,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                 initial={{ opacity: 0, scale: 0.5 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.5 }}
-                className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
+                className="w-5 h-5 rounded border border-zinc-700 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
               >
                 <Shield className="w-3 h-3" />
               </motion.span>
@@ -608,7 +612,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.5 }}
                   transition={{ duration: 0.2 }}
-                  className="w-5 h-5 rounded-full overflow-hidden border-2 border-white dark:border-zinc-900 z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center relative shadow-sm"
+                  className={`w-5 h-5 rounded-full overflow-hidden border-2 ${chipRing} z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center relative`}
                   style={{ zIndex: 10 - i, marginLeft: i > 0 ? '-4px' : '0' }}
                 >
                   {user.avatarUrl ? (
@@ -627,7 +631,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                 initial={{ opacity: 0, scale: 0.5 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.5 }}
-                className="w-5 h-5 rounded border-2 border-white dark:border-zinc-800 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
+                className="w-5 h-5 rounded border border-zinc-700 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
               >
                 <Users2 className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" />
               </motion.span>

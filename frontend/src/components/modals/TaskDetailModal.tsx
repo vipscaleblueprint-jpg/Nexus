@@ -1844,7 +1844,7 @@ export function TaskDetailModalContent({
                       return (
                         <div
                           style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
-                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} shadow-sm group/status`}
+                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-[#fff]' : defaultClasses} shadow-sm group/status`}
                         >
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
                             <Popover.Trigger asChild>
@@ -1960,7 +1960,7 @@ export function TaskDetailModalContent({
                                     animate={{ opacity: 1, scale: 1 }}
                                     exit={{ opacity: 0, scale: 0.5 }}
                                     transition={{ duration: 0.2 }}
-                                    className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative ${bgColor}`}
+                                    className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-card ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative ${bgColor}`}
                                     style={{ zIndex: 10 - i }}
                                     title={role}
                                   >
@@ -2143,7 +2143,7 @@ export function TaskDetailModalContent({
                                         exit={{ opacity: 0, scale: 0.5 }}
                                         transition={{ duration: 0.2 }}
                                         style={{ zIndex: i + 1 }}
-                                        className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                        className="relative ring-2 ring-background rounded-full shrink-0"
                                         title={u.name}
                                       >
                                         {avatarSrc ? (
@@ -2166,7 +2166,7 @@ export function TaskDetailModalContent({
                                       exit={{ opacity: 0, scale: 0.5 }}
                                       transition={{ duration: 0.2 }}
                                       style={{ zIndex: 10 }}
-                                      className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
+                                      className="relative ring-2 ring-background rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
                                     >
                                       +{currentAssignees.length - 3}
                                     </motion.div>
@@ -4054,7 +4054,7 @@ export function SubtaskDetailView({
                       return (
                         <div
                           style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
-                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-white' : defaultClasses} shadow-sm group/status`}
+                          className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-[#fff]' : defaultClasses} shadow-sm group/status`}
                         >
                           <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
                             <Popover.Trigger asChild>
@@ -4208,7 +4208,7 @@ export function SubtaskDetailView({
                             return (
                               <div
                                 key={role}
-                                className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10 - i}] ${bgColor} transition-transform`}
+                                className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-card ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10 - i}] ${bgColor} transition-transform`}
                                 title={role}
                               >
                                 {role.substring(0, 2).toUpperCase()}
@@ -4389,7 +4389,7 @@ export function SubtaskDetailView({
                                       exit={{ opacity: 0, scale: 0.5 }}
                                       transition={{ duration: 0.2 }}
                                       style={{ zIndex: i + 1 }}
-                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                      className="relative ring-2 ring-background rounded-full shrink-0"
                                       title={u.name}
                                     >
                                       {avatarSrc ? (
@@ -4412,7 +4412,7 @@ export function SubtaskDetailView({
                                     exit={{ opacity: 0, scale: 0.5 }}
                                     transition={{ duration: 0.2 }}
                                     style={{ zIndex: 10 }}
-                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
+                                    className="relative ring-2 ring-background rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
                                   >
                                     +{currentAssignees.length - 3}
                                   </motion.div>

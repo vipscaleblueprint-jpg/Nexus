@@ -593,7 +593,7 @@ const CardContent = memo(({
                   {assignees.length > 0 ? (
                     <div className="flex items-center -space-x-1 overflow-hidden">
                       {assignees.slice(0, 2).map((a: any) => (
-                        <div key={a.id} className="relative ring-1 ring-[#18181b] rounded-full shrink-0" title={a.name}>
+                        <div key={a.id} className="relative ring-1 ring-card rounded-full shrink-0" title={a.name}>
                           {a.avatarUrl ? (
                             <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
                           ) : (
@@ -604,7 +604,7 @@ const CardContent = memo(({
                         </div>
                       ))}
                       {assignees.length > 2 && (
-                        <div className="relative ring-1 ring-[#18181b] rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
+                        <div className="relative ring-1 ring-card rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
                           +{assignees.length - 2}
                         </div>
                       )}

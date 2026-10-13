@@ -410,7 +410,7 @@ export const TaskListDropdown = forwardRef((props: any, ref) => {
                           {task.assignees.slice(0, 3).map((u, i) => (
                             <div 
                               key={u.id} 
-                              className="w-5 h-5 rounded-full bg-zinc-800 border border-[#131315] flex items-center justify-center overflow-hidden z-10"
+                              className="w-5 h-5 rounded-full bg-zinc-800 border border-background flex items-center justify-center overflow-hidden z-10"
                               style={{ zIndex: 3 - i }}
                             >
                               {u.avatarUrl ? (

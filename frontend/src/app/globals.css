@@ -56,6 +56,10 @@
   --input: #242429;
   --ring: #3f3f46;
   --radius: 0.375rem;
+
+  /* Inline task chips in docs (TaskMentionNode) */
+  --task-chip: #17171A;
+  --task-chip-sub: #111113;
 }
 
 :root.theme-light, .theme-light {
@@ -93,6 +97,9 @@
   --border: #E8E8E8;
   --input: #E8E8E8;
   --ring: #BBBBBB;
+
+  --task-chip: #F0F0F0;
+  --task-chip-sub: #F6F6F6;
 
   /* Pale indigo text (used for selected/active states on dark) → readable on light */
   --color-indigo-100: #3730a3;

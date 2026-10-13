@@ -1424,7 +1424,7 @@ function WorkspaceDashboardContent({
                                                     <div
                                                       key={a.id || i}
                                                       style={{ zIndex: i + 1 }}
-                                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                                      className="relative ring-2 ring-background rounded-full shrink-0"
                                                       title={a.name}
                                                     >
                                                       {avatarSrc ? (
@@ -1440,7 +1440,7 @@ function WorkspaceDashboardContent({
                                                 {taskAssignees.length > 3 && (
                                                   <div
                                                     style={{ zIndex: 10 }}
-                                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
+                                                    className="relative ring-2 ring-background rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
                                                   >
                                                     +{taskAssignees.length - 3}
                                                   </div>
@@ -1492,7 +1492,7 @@ function WorkspaceDashboardContent({
                     <div key={key} className="space-y-0.5">
                       <div className="flex items-center justify-between px-1 pb-2 pt-2 group">
                         <div 
-                          className="flex items-center gap-2 cursor-pointer select-none bg-[#17171A] hover:bg-[#1C1C20] rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
+                          className="flex items-center gap-2 cursor-pointer select-none bg-[var(--task-chip)] hover:bg-zinc-800 rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
                           onClick={() => toggleGroup(key)}
                         >
                           <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
@@ -1530,7 +1530,7 @@ function WorkspaceDashboardContent({
                                 <div key={sgKey} className="space-y-0.5">
                                   <div className="flex items-center justify-between px-1 pb-2 pt-1 group">
                                     <div 
-                                      className="flex items-center gap-2 cursor-pointer select-none bg-[#17171A] hover:bg-[#1C1C20] rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
+                                      className="flex items-center gap-2 cursor-pointer select-none bg-[var(--task-chip)] hover:bg-zinc-800 rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
                                       onClick={() => toggleGroup(sgKey)}
                                     >
                                       <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isSgCollapsed ? "-rotate-90" : ""}`} />
@@ -1616,7 +1616,7 @@ function WorkspaceDashboardContent({
                     {/* Status Group Header Bar */}
                     <div className="flex items-center justify-between px-1 pb-2 pt-2 group">
                       <div 
-                        className="flex items-center gap-2 cursor-pointer select-none bg-[#17171A] hover:bg-[#1C1C20] rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
+                        className="flex items-center gap-2 cursor-pointer select-none bg-[var(--task-chip)] hover:bg-zinc-800 rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
                         onClick={() => toggleGroup(status)}
                       >
                         <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
@@ -1734,7 +1734,7 @@ function WorkspaceDashboardContent({
                                                     <div
                                                       key={a.id || i}
                                                       style={{ zIndex: i + 1 }}
-                                                      className="relative ring-2 ring-[#121212] rounded-full shrink-0"
+                                                      className="relative ring-2 ring-background rounded-full shrink-0"
                                                       title={a.name}
                                                     >
                                                       {avatarSrc ? (
@@ -1750,7 +1750,7 @@ function WorkspaceDashboardContent({
                                                 {taskAssignees.length > 3 && (
                                                   <div
                                                     style={{ zIndex: 10 }}
-                                                    className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
+                                                    className="relative ring-2 ring-background rounded-full bg-zinc-800 text-zinc-300 text-[8px] font-bold h-5 w-5 flex items-center justify-center shrink-0"
                                                   >
                                                     +{taskAssignees.length - 3}
                                                   </div>

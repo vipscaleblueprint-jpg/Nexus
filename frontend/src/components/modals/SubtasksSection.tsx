@@ -1222,7 +1222,7 @@ function SubtaskRow({
                         return (
                           <div 
                             key={role} 
-                            className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-[#18181b] ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-card ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
                             title={role}
                           >
                             {role.substring(0, 2).toUpperCase()}
@@ -1258,7 +1258,7 @@ function SubtaskRow({
                     <>
                       <div className="flex items-center -space-x-1.5">
                         {currentAssignees.slice(0, 2).map((u) => (
-                          <div key={u.id} className="relative ring-2 ring-[#121212] rounded-full shrink-0">
+                          <div key={u.id} className="relative ring-2 ring-background rounded-full shrink-0">
                             {u.avatarUrl ? (
                               <img src={u.avatarUrl} alt={u.name} className="w-4 h-4 rounded-full object-cover shrink-0" />
                             ) : (
@@ -1269,7 +1269,7 @@ function SubtaskRow({
                           </div>
                         ))}
                         {currentAssignees.length > 2 && (
-                          <div className="relative ring-2 ring-[#121212] rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0">
+                          <div className="relative ring-2 ring-background rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0">
                             +{currentAssignees.length - 2}
                           </div>
                         )}

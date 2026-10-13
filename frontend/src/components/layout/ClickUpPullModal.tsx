@@ -335,8 +335,8 @@ export function PullModal({ state }: { state: PullState }) {
             {!busy && failed > 0 && !interrupted && (
               <div className="flex items-start gap-1.5 text-[11px] text-rose-300 bg-rose-500/10 rounded-lg px-2.5 py-2">
                 <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
-                {failed} task{failed !== 1 ? "s" : ""} still failed after 3 tries. Press Pull again. Lists with
-                failures are re-checked automatically.
+                {failed} task{failed !== 1 ? "s" : ""} still failed after 3 tries. Press Pull again: it only
+                retries the failed {failed !== 1 ? "ones" : "one"}, and skips the tasks that already finished.
               </div>
             )}
 

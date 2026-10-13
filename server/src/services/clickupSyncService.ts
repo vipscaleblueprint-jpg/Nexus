@@ -120,6 +120,7 @@ const MAX_ACTIVITY = 300;
 /** Overlap with the previous pull so edits made while it ran aren't missed. */
 const INCREMENTAL_OVERLAP_MS = 5 * 60_000;
 const LAST_PULLED_KEY = (listId: string) => `clickup:lastPulled:${listId}`;
+const FAILED_IDS_KEY = (listId: string) => `clickup:failedTasks:${listId}`;
 const REDIS_TIMEOUT_MS = 3000;
 function isReservedChecklistName(name: string | undefined): boolean {
   return (name ?? '').trim().toLowerCase() === 'audit';
@@ -266,9 +267,12 @@ export async function runClickUpSync(options: ClickUpSyncOptions = {}): Promise<
     try {
       const lastPulled = options.full ? null : await getLastPulled(list.id);
       const updatedSince = lastPulled ? lastPulled - INCREMENTAL_OVERLAP_MS : undefined;
-      Object.assign(result, await syncList(list.id, clickUpListId, ctx, updatedSince));
-      // Only a clean pull moves the marker, so failed tasks are fetched again next time.
-      if (result.failed === 0) await setLastPulled(list.id, listStartedAt);
+      const { failedIds, ...counts } = await syncList(list.id, clickUpListId, ctx, updatedSince, await getFailedIds(list.id));
+      Object.assign(result, counts);
+      // The marker moves even when some tasks failed: those are remembered by id and retried
+      // on the next pull, so the tasks that did finish aren't pulled all over again.
+      await setLastPulled(list.id, listStartedAt);
+      await setFailedIds(list.id, failedIds);
     } catch (err: any) {
       result.failed++;
       summary.errors.push(`${list.name}: ${firstLine(err.message)}`);
@@ -305,6 +309,22 @@ async function setLastPulled(listId: string, ms: number): Promise<void> {
   await withTimeout(redis.set(LAST_PULLED_KEY(listId), String(ms)).then(() => undefined), undefined);
 }
 
+/** ClickUp task ids that failed on this list's last pull and still need retrying. */
+async function getFailedIds(listId: string): Promise<string[]> {
+  const value = await withTimeout(redis.get(FAILED_IDS_KEY(listId)), null);
+  try {
+    const ids = value ? JSON.parse(value) : [];
+    return Array.isArray(ids) ? ids.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function setFailedIds(listId: string, ids: string[]): Promise<void> {
+  const write = ids.length ? redis.set(FAILED_IDS_KEY(listId), JSON.stringify(ids)) : redis.del(FAILED_IDS_KEY(listId));
+  await withTimeout(write.then(() => undefined), undefined);
+}
+
 function recordActivity(ctx: SyncContext, action: ClickUpSyncActivity['action'], kind: ClickUpSyncActivity['kind'], title: string) {
   const feed = ctx.summary.activity;
   feed.push({ at: new Date().toISOString(), list: ctx.listName, action, kind, title });
@@ -334,7 +354,14 @@ async function getOrCreateClickUpUser() {
   return prisma.user.create({ data: { name: 'ClickUp', email, password } });
 }
 
-async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncContext, updatedSince?: number) {
+async function syncList(
+  nexusListId: string,
+  clickUpListId: string,
+  ctx: SyncContext,
+  updatedSince?: number,
+  /** Tasks that failed on the previous pull: pulled again in full even if unchanged since. */
+  retryIds: string[] = []
+) {
   const cuTasks: any[] = [];
   for (let page = 0; page < MAX_TASK_PAGES; page++) {
     const data = await getClickUpListTasks(clickUpListId, page, ctx.includeClosed, updatedSince);
@@ -344,9 +371,22 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
     // fewer than 100 tasks and still not be the last one.
     if (tasks.length === 0 || (data?.last_page ?? tasks.length < CLICKUP_PAGE_SIZE)) break;
   }
+
+  const retrying = new Set(retryIds);
+  const unreachable: string[] = [];
+  for (const id of retryIds) {
+    if (cuTasks.some((t) => t.id === id)) continue;
+    try {
+      cuTasks.push(await getClickUpTask(id));
+    } catch (err: any) {
+      // Gone from ClickUp: nothing left to retry. Anything else: keep it for the next pull.
+      if (!/ 404\b/.test(String(err?.message))) unreachable.push(id);
+    }
+  }
+
   const checked = cuTasks.length;
   // Nothing changed in ClickUp since the last pull.
-  if (checked === 0) return { checked, retried: 0, failed: 0 };
+  if (checked === 0) return { checked, retried: 0, failed: 0, failedIds: unreachable };
 
   // Nexus has one subtask level, so nested ClickUp subtasks hang off their root task.
   const byId = new Map(cuTasks.map((t) => [t.id, t]));
@@ -382,16 +422,21 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
     subtasksByRoot.set(rootId, [...(subtasksByRoot.get(rootId) ?? []), t]);
   }
 
-  // A task and its subtasks are pulled together; any failure retries the whole
-  // group, which is safe because every write matches existing rows first.
+  // A task and its subtasks are pulled together and a failure retries the group — but the
+  // parts that already finished in this pull are remembered, so a retry only redoes what failed.
+  const finishedTasks = new Map<string, Awaited<ReturnType<typeof syncTask>>>();
+  const finishedSubtasks = new Map<string, any[]>(); // subtask id → its own subtasks
   const syncGroup = async (t: any): Promise<string | null> => {
     try {
-      const { taskId, listId, created, subtasks } = await syncTask(nexusListId, t.id, ctx);
+      const taskResult = finishedTasks.get(t.id) ?? (await syncTask(nexusListId, t.id, ctx));
+      finishedTasks.set(t.id, taskResult);
+      const { taskId, listId, created, subtasks } = taskResult;
       // The list page only has subtasks homed in this list, so also walk each task's
       // own subtask tree (subtasks in other lists, nested levels). On an incremental
-      // pull, unchanged ones are skipped unless the parent is new to Nexus.
+      // pull, unchanged ones are skipped unless the parent is new to Nexus or is being
+      // retried after failing last time.
       const changed = (s: any) =>
-        created || !updatedSince || !s?.date_updated || Number(s.date_updated) > updatedSince;
+        created || retrying.has(t.id) || !updatedSince || !s?.date_updated || Number(s.date_updated) > updatedSince;
       const queue: any[] = [...(subtasksByRoot.get(t.id) ?? []), ...subtasks.filter(changed)];
       const done = new Set<string>();
       const subErrors: string[] = [];
@@ -400,7 +445,8 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
         if (!sub?.id || done.has(sub.id)) continue;
         done.add(sub.id);
         try {
-          const children = await syncSubtask(taskId, sub.id, ctx);
+          const children = finishedSubtasks.get(sub.id) ?? (await syncSubtask(taskId, sub.id, ctx));
+          finishedSubtasks.set(sub.id, children);
           queue.push(...children.filter(changed));
         } catch (err: any) {
           subErrors.push(`subtask "${sub.name}": ${err.message}`);
@@ -432,7 +478,12 @@ async function syncList(nexusListId: string, clickUpListId: string, ctx: SyncCon
   for (const t of pending) {
     ctx.summary.errors.push(`"${t.name}" (${t.id}): ${firstLine(lastErrors.get(t.id))}`);
   }
-  return { checked, retried: firstFailures.size - pending.length, failed: pending.length };
+  return {
+    checked,
+    retried: firstFailures.size - pending.length,
+    failed: pending.length,
+    failedIds: [...pending.map((t) => String(t.id)), ...unreachable],
+  };
 }
 
 /** Prisma errors span many lines; the last non-empty line is the readable cause. */

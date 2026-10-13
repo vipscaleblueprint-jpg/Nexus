@@ -29,13 +29,18 @@ export const dailyRolloverWorker = new Worker(
 
     // KYC items never roll over (status is free text, so match any casing)
     const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
+    const notClosed = { NOT: { status: { equals: 'CLOSED', mode: 'insensitive' as const } } };
 
     const activeTasks = await prisma.task.findMany({
       where: { status: { notIn: ['Closed', 'CLOSED'] }, ...notKyc },
       include: {
         list: { select: { id: true, name: true } },
+        // Closed/completed subtasks don't roll over either.
         // Subtask.status is nullable; keep null-status subtasks (a bare NOT would drop them in SQL)
-        subtasks: { where: { OR: [{ status: null }, notKyc] }, orderBy: { createdAt: 'asc' } },
+        subtasks: {
+          where: { completed: false, OR: [{ status: null }, { AND: [notKyc, notClosed] }] },
+          orderBy: { createdAt: 'asc' },
+        },
       },
       // Fetch newest first so new tasks appear at the top of their status group
       orderBy: { createdAt: 'desc' }

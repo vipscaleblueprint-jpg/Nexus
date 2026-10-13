@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
+import { keepUnseenBlocks } from '../utils/pageBlocks';
 import { syncClients } from './webhook.controller';
 
 export async function triggerSyncClients(req: Request, res: Response) {
@@ -639,7 +640,8 @@ export async function createPage(req: Request, res: Response) {
 // PATCH /api/spaces/pages/:id
 export async function updatePage(req: Request, res: Response) {
   try {
-    const { title, content } = req.body;
+    const { title, deletedBlockIds } = req.body;
+    let { content } = req.body;
     const authReq = req as any;
     const userId = authReq.user?.id;
 
@@ -649,6 +651,11 @@ export async function updatePage(req: Request, res: Response) {
       where: { id: req.params.id },
       select: { content: true, title: true },
     });
+
+    // Only editors that report their deletions get the merge; older clients keep last-write-wins
+    if (content !== undefined && Array.isArray(deletedBlockIds)) {
+      content = keepUnseenBlocks(previous?.content, content, deletedBlockIds);
+    }
 
     const page = await prisma.page.update({
       where: { id: req.params.id },

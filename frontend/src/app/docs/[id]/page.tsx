@@ -727,6 +727,14 @@ export default function DocPage({ docId }: { docId?: string }) {
   // Stable ref so event-handler closures registered with deps:[] never read stale blocks
   const blocksRef = useRef<DocBlock[]>([]);
   useEffect(() => { blocksRef.current = blocks; }, [blocks]);
+  // Every block id this editor has held on the open page. Saves report seen-but-gone ids as deleted, so the
+  // server keeps blocks this editor never had (tasks it appended, other users' blocks) instead of wiping them.
+  const seenBlockIdsRef = useRef<{ pageId: string | null; ids: Set<string> }>({ pageId: null, ids: new Set() });
+  useEffect(() => {
+    const pageId = activePage?.id ?? null;
+    if (seenBlockIdsRef.current.pageId !== pageId) seenBlockIdsRef.current = { pageId, ids: new Set() };
+    blocks.forEach((b) => seenBlockIdsRef.current.ids.add(b.id));
+  }, [blocks, activePage?.id]);
   const [savingPage, setSavingPage] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
 
@@ -1027,6 +1035,34 @@ export default function DocPage({ docId }: { docId?: string }) {
     setBlocks(markdownToBlocks(content));
   };
 
+  // Adds blocks from the stored page that this editor has never held (e.g. tasks the server appended under a
+  // client / New Tasks), each after its nearest stored predecessor. Local edits and local deletions win.
+  const mergeUnseenServerBlocks = (pageId: string, serverContent: string | undefined) => {
+    if (!serverContent || activePageRef.current?.id !== pageId) return;
+    const serverBlocks = markdownToBlocks(serverContent);
+    const seen = seenBlockIdsRef.current.pageId === pageId ? seenBlockIdsRef.current.ids : new Set<string>();
+    setBlocks((prev) => {
+      if (activePageRef.current?.id !== pageId) return prev;
+      const localIds = new Set(prev.map((b) => b.id));
+      const isUnseen = (b: DocBlock) => !localIds.has(b.id) && !seen.has(b.id);
+      if (!serverBlocks.some(isUnseen)) return prev;
+      const next = [...prev];
+      serverBlocks.forEach((block, i) => {
+        if (!isUnseen(block)) return;
+        let insertAt = 0;
+        for (let j = i - 1; j >= 0; j--) {
+          const idx = next.findIndex((b) => b.id === serverBlocks[j].id);
+          if (idx !== -1) {
+            insertAt = idx + 1;
+            break;
+          }
+        }
+        next.splice(insertAt, 0, block);
+      });
+      return next;
+    });
+  };
+
   const fetchDoc = async () => {
     try {
       const docRes = await spacesApi.getDoc(id as string, { includeContent: false });
@@ -1112,12 +1148,22 @@ export default function DocPage({ docId }: { docId?: string }) {
 
     // Refresh the page tree when someone else saves or the server adds a page. Bursts (e.g. several
     // tasks created at once) are coalesced into one request; the tree no longer carries page content.
+    // If the open page changed, pull in the blocks this editor hasn't got (e.g. auto-appended tasks).
     let pageUpdatedTimer: ReturnType<typeof setTimeout> | null = null;
-    s.on('page_updated', () => {
+    let openPageChanged = false;
+    s.on('page_updated', (data?: { pageId?: string }) => {
+      if (data?.pageId && data.pageId === activePageRef.current?.id) openPageChanged = true;
       if (pageUpdatedTimer) clearTimeout(pageUpdatedTimer);
       pageUpdatedTimer = setTimeout(() => {
         pageUpdatedTimer = null;
         fetchDoc();
+        const pageId = activePageRef.current?.id;
+        if (openPageChanged && pageId) {
+          spacesApi.getPage(pageId)
+            .then((res) => mergeUnseenServerBlocks(pageId, res.page?.content))
+            .catch((err) => console.error('Failed to refresh page:', err));
+        }
+        openPageChanged = false;
       }, 1000);
     });
 
@@ -1174,10 +1220,16 @@ export default function DocPage({ docId }: { docId?: string }) {
       }
 
       const savedPageId = activePageRef.current.id;
-      await spacesApi.updatePage(savedPageId, {
+      const seen = seenBlockIdsRef.current;
+      const savedIds = new Set(updatedBlocks.map((b) => b.id));
+      const deletedBlockIds = seen.pageId === savedPageId ? [...seen.ids].filter((blockId) => !savedIds.has(blockId)) : undefined;
+      const res = await spacesApi.updatePage(savedPageId, {
         title: pageTitleRef.current,
         content: content,
+        deletedBlockIds,
       });
+      // The server kept blocks this editor hadn't seen yet; show them
+      if (res?.page?.content && res.page.content !== content) mergeUnseenServerBlocks(savedPageId, res.page.content);
       setLastSave({ pageId: savedPageId, at: new Date().toISOString() });
       if (socket) {
         socket.emit('page_updated', { docId: id, pageId: activePageRef.current.id });

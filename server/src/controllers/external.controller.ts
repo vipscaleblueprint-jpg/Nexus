@@ -556,8 +556,7 @@ export async function createTask(req: Request, res: Response) {
 
     // --- REALTIME WEBSOCKET AND CACHE INVALIDATION ---
     // Emit task:created so KanbanBoard live-updates without refresh!
-    io.to(`list:${listId}`).emit('task:created', task);
-    io.emit('task:created', task); // Global broadcast fallback if needed
+    io.emit('task:created', task); // Global broadcast reaches list-room members too
     
     // Invalidate Redis caches so manual refresh shows the new tasks
     await invalidateCache('lists:all', 'dashboard:all');

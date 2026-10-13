@@ -1,5 +1,6 @@
 import pinoHttp from 'pino-http';
 import { logger } from '../config/logger';
+import { getElapsedMs } from './serverTiming.middleware';
 import type { AuthenticatedUserPayload } from '../types';
 
 /**
@@ -31,10 +32,11 @@ function clientIp(req: { headers: Record<string, any>; socket: { remoteAddress?:
   return raw.replace(/^::ffff:/, '').replace(/^::1$/, '127.0.0.1');
 }
 
-// pino-http records responseTime on the response once it finishes.
+// pino-http doesn't put responseTime on the response object, so the start time recorded by the
+// serverTiming middleware (mounted before this logger) is used instead.
 function duration(res: any) {
-  const ms = res.responseTime;
-  return typeof ms === 'number' ? `${ms}ms` : '-';
+  const ms = getElapsedMs(res);
+  return typeof ms === 'number' ? `${Math.round(ms)}ms` : '-';
 }
 
 /**
@@ -56,7 +58,7 @@ export const httpLogger = pinoHttp({
   customLogLevel(_req, res, err) {
     if (err || res.statusCode >= 500) return 'error';
     if (res.statusCode >= 400) return 'warn';
-    if ((res as any).responseTime >= SLOW_REQUEST_MS) return 'warn';
+    if ((getElapsedMs(res) ?? 0) >= SLOW_REQUEST_MS) return 'warn';
     return 'info';
   },
 

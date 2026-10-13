@@ -262,6 +262,172 @@ const getTaskStatusBadgeColor = (status?: string) => {
   }
 };
 
+// ── Lazy block editors
+// A journal day can hold hundreds of blocks; mounting a Tiptap editor (plus a React node view per task
+// mention) for every one froze the page for seconds after opening it. Each block shows its plain text
+// until it comes within MOUNT_MARGIN of the visible area, then mounts its editor; once it scrolls past
+// UNMOUNT_MARGIN the editor is released again, so memory stays bounded by what is near the viewport
+// instead of growing with every block scrolled past. The gap between the two margins stops blocks near
+// the edge from flapping between states.
+const MOUNT_MARGIN = '800px 0px';
+const UNMOUNT_MARGIN = '2400px 0px';
+// Editors mounted per animation frame; a fast scroll would otherwise mount dozens in one long task
+const MOUNTS_PER_FRAME = 3;
+
+type VisibilityCallback = (isIntersecting: boolean) => void;
+// One IntersectionObserver per (scroll root, margin) shared by every block, instead of one per block
+const sharedObservers = new Map<string, { observer: IntersectionObserver; callbacks: Map<Element, VisibilityCallback> }>();
+const observerRootIds = new WeakMap<Element, number>();
+let nextObserverRootId = 1;
+
+function observeVisibility(el: Element, root: HTMLElement | null, rootMargin: string, callback: VisibilityCallback) {
+  let rootId = 0;
+  if (root) {
+    rootId = observerRootIds.get(root) ?? nextObserverRootId++;
+    observerRootIds.set(root, rootId);
+  }
+  const key = `${rootId}|${rootMargin}`;
+  let shared = sharedObservers.get(key);
+  if (!shared) {
+    const callbacks = new Map<Element, VisibilityCallback>();
+    const observer = new IntersectionObserver(
+      (entries) => entries.forEach((entry) => callbacks.get(entry.target)?.(entry.isIntersecting)),
+      { root, rootMargin },
+    );
+    shared = { observer, callbacks };
+    sharedObservers.set(key, shared);
+  }
+  const { observer, callbacks } = shared;
+  callbacks.set(el, callback);
+  observer.observe(el);
+  return () => {
+    observer.unobserve(el);
+    callbacks.delete(el);
+    if (callbacks.size === 0) {
+      observer.disconnect();
+      sharedObservers.delete(key);
+    }
+  };
+}
+
+const mountQueue = new Set<() => void>();
+let mountFrame: number | null = null;
+
+function runQueuedMounts() {
+  mountFrame = null;
+  let mounted = 0;
+  for (const mount of mountQueue) {
+    mountQueue.delete(mount);
+    mount();
+    if (++mounted >= MOUNTS_PER_FRAME) break;
+  }
+  if (mountQueue.size > 0) mountFrame = requestAnimationFrame(runQueuedMounts);
+}
+
+/** Queues an editor mount; returns a function that cancels it if it hasn't run yet. */
+function scheduleMount(mount: () => void) {
+  mountQueue.add(mount);
+  if (mountFrame === null) mountFrame = requestAnimationFrame(runQueuedMounts);
+  return () => { mountQueue.delete(mount); };
+}
+
+const decodeEntities = (text: string) =>
+  text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+
+function getScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === 'auto' || overflowY === 'scroll') return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/** Stand-in for a not-yet-mounted editor: the block's text, at roughly the same size. */
+const BlockTextPlaceholder = memo(function BlockTextPlaceholder({ content }: { content: string }) {
+  const { text, sizeClass } = useMemo(() => {
+    // Tiptap JSON content has no cheap text form; leave it blank until the editor mounts
+    const raw = (content || '').startsWith('{"type":"doc"') ? '' : content || '';
+    const heading = raw.match(/^\s*<h([1-3])/i)?.[1];
+    return {
+      text: decodeEntities(raw.replace(/<br\s*\/?>|<\/(p|div|li|h[1-6])>/gi, '\n').replace(/<[^>]+>/g, '')).trim(),
+      sizeClass: heading === '1' ? 'text-3xl font-bold' : heading === '2' ? 'text-2xl font-bold' : heading === '3' ? 'text-xl font-semibold' : 'text-sm',
+    };
+  }, [content]);
+  return <div className={`min-h-[24px] whitespace-pre-wrap break-words text-zinc-900 dark:text-zinc-100 ${sizeClass}`}>{text}</div>;
+});
+
+function LazyBlockEditor({ forceMount, onEditorUnmount, ...editorProps }: React.ComponentProps<typeof BlockEditor> & {
+  /** Focused/selected blocks always keep a live editor (keyboard navigation and merges need it). */
+  forceMount: boolean;
+  /** Called when the editor is released, so callers can drop references to the destroyed instance. */
+  onEditorUnmount?: () => void;
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [nearView, setNearView] = useState(false);
+  // Last rendered editor height, kept on the placeholder so releasing an editor doesn't shift the scroll
+  const [releasedHeight, setReleasedHeight] = useState<number>();
+  const mounted = nearView || forceMount;
+
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') return scheduleMount(() => setNearView(true));
+
+    // The doc scrolls inside <main>, so observe relative to that container for the margins to apply
+    const root = getScrollParent(el);
+    let cancelMount: (() => void) | null = null;
+    const stopNear = observeVisibility(el, root, MOUNT_MARGIN, (visible) => {
+      if (!visible) {
+        cancelMount?.();
+        cancelMount = null;
+      } else if (!cancelMount) {
+        cancelMount = scheduleMount(() => {
+          cancelMount = null;
+          setNearView(true);
+        });
+      }
+    });
+    const stopFar = observeVisibility(el, root, UNMOUNT_MARGIN, (visible) => {
+      if (visible) return;
+      if (el.offsetHeight > 0) setReleasedHeight(el.offsetHeight);
+      setNearView(false);
+    });
+    return () => {
+      cancelMount?.();
+      stopNear();
+      stopFar();
+    };
+  }, []);
+
+  const onEditorUnmountRef = useRef(onEditorUnmount);
+  useEffect(() => { onEditorUnmountRef.current = onEditorUnmount; });
+  useEffect(() => {
+    if (!mounted) return;
+    return () => onEditorUnmountRef.current?.();
+  }, [mounted]);
+
+  return (
+    <div ref={wrapperRef}>
+      {mounted ? (
+        <BlockEditor {...editorProps} />
+      ) : (
+        // A click before the queued mount ran mounts this block right away
+        <div style={{ minHeight: releasedHeight }} onPointerDown={() => setNearView(true)}>
+          <BlockTextPlaceholder content={editorProps.content} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 const DocBlockRow = memo(({
   block,
   index,
@@ -447,7 +613,8 @@ const DocBlockRow = memo(({
                   Write, press 'space' for AI, '/' for commands
                 </div>
               )}
-              <BlockEditor
+              <LazyBlockEditor
+                forceMount={isSelected || focusedBlockId === block.id}
                 editable={!isLockedBySomeoneElse}
                 content={block.content}
                 onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
@@ -456,6 +623,7 @@ const DocBlockRow = memo(({
                 onSplit={(contents) => handleSplitBlock(block.id, index, contents)}
                 onFocus={() => handleFocusBlock(block.id)}
                 onEditorReady={(editor) => { editorRegistryRef.current[block.id] = editor; }}
+                onEditorUnmount={() => { delete editorRegistryRef.current[block.id]; }}
               />
             </>
           )}
@@ -837,9 +1005,31 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
   };
 
+  // The page tree arrives without content, so a page's content is fetched before switching to it. The
+  // switch happens only once it has loaded, so the editor never shows (or saves) one page's blocks under
+  // another page. A newer selection wins if requests overlap.
+  const pageLoadSeqRef = useRef(0);
+  const openPage = async (page: any) => {
+    const seq = ++pageLoadSeqRef.current;
+    let content: string | undefined = page.content;
+    if (content === undefined) {
+      try {
+        const res = await spacesApi.getPage(page.id);
+        content = res.page?.content ?? '';
+      } catch (err) {
+        console.error('Failed to load page:', err);
+        return;
+      }
+    }
+    if (seq !== pageLoadSeqRef.current) return;
+    setActivePage({ ...page, content });
+    setPageTitle(page.title || 'Untitled Page');
+    setBlocks(markdownToBlocks(content));
+  };
+
   const fetchDoc = async () => {
     try {
-      const docRes = await spacesApi.getDoc(id as string);
+      const docRes = await spacesApi.getDoc(id as string, { includeContent: false });
       setDoc(docRes.doc);
       if (docRes.doc?.pages?.length > 0 && !activePageRef.current) {
         let firstPage = docRes.doc.pages[0];
@@ -870,9 +1060,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           firstPage = sortedPages[0];
         }
 
-        setActivePage(firstPage);
-        setPageTitle(firstPage.title || 'Untitled Page');
-        setBlocks(markdownToBlocks(firstPage.content));
+        await openPage(firstPage);
       }
     } catch (e: any) {
       setError(e.message || 'Failed to load document');
@@ -922,23 +1110,28 @@ export default function DocPage({ docId }: { docId?: string }) {
       setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, content } : b));
     });
 
+    // Refresh the page tree when someone else saves or the server adds a page. Bursts (e.g. several
+    // tasks created at once) are coalesced into one request; the tree no longer carries page content.
+    let pageUpdatedTimer: ReturnType<typeof setTimeout> | null = null;
     s.on('page_updated', () => {
-      // Allow other users to see structure changes (new blocks/deleted blocks) by re-fetching
-      fetchDoc();
+      if (pageUpdatedTimer) clearTimeout(pageUpdatedTimer);
+      pageUpdatedTimer = setTimeout(() => {
+        pageUpdatedTimer = null;
+        fetchDoc();
+      }, 1000);
     });
 
     setSocket(s);
 
     return () => {
+      if (pageUpdatedTimer) clearTimeout(pageUpdatedTimer);
       s.emit('leave_doc', id);
       s.disconnect();
     };
   }, [id]);
 
   const handleSelectPage = (page: any) => {
-    setActivePage(page);
-    setPageTitle(page.title || 'Untitled Page');
-    setBlocks(markdownToBlocks(page.content));
+    openPage(page);
   };
 
   const handleCreatePage = async (parentPageId?: string) => {
@@ -955,6 +1148,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       });
 
       await fetchDoc();
+      pageLoadSeqRef.current++; // cancel any in-flight page load so it can't replace the new page
       setActivePage(res.page);
       setPageTitle(res.page.title || 'Untitled Page');
       setBlocks(cleanBlocks);
@@ -2333,7 +2527,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       {/* Hidden (not unmounted) in page focus mode so the tree keeps its expand state */}
       <aside className={`w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none ${activePage && pageStyles.focusPage ? 'hidden' : ''}`}>
         <div
-          onClick={() => setActivePage(null)}
+          onClick={() => { pageLoadSeqRef.current++; setActivePage(null); }}
           className="mb-5 pb-3 border-b border-zinc-800/60 cursor-pointer group hover:opacity-90 transition-all"
         >
           <div className="flex items-center gap-2 text-zinc-400 mb-1">

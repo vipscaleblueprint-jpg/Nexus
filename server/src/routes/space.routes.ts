@@ -17,6 +17,7 @@ import {
   deleteDoc,
   duplicateDoc,
   createPage,
+  getPage,
   updatePage,
   getPageVersions,
   deletePage,
@@ -64,6 +65,7 @@ spaceRouter.post('/docs/:id/duplicate', validate({ params: idParams }), duplicat
 spaceRouter.delete('/docs/:id', validate({ params: idParams }), deleteDoc);
 
 spaceRouter.post('/pages', validate({ body: createPageSchema }), createPage);
+spaceRouter.get('/pages/:id', validate({ params: idParams }), getPage);
 spaceRouter.patch('/pages/:id', authenticateToken, validate({ params: idParams, body: updatePageSchema }), updatePage);
 spaceRouter.get('/pages/:id/versions', authenticateToken, validate({ params: idParams }), getPageVersions);
 spaceRouter.post('/pages/:id/duplicate', validate({ params: idParams }), duplicatePage);

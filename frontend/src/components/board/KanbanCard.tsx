@@ -9,6 +9,7 @@ import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
@@ -63,7 +64,15 @@ const CardContent = memo(({
   const [isDescOpen, setIsDescOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'teamRole' | 'date' | 'priority' | null>(null);
 
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles } = useAppStore();
+  // Select only what the card uses, so unrelated store changes (e.g. other tasks updating) don't re-render every card
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles } = useAppStore(useShallow((s) => ({
+    currentUser: s.currentUser,
+    workspaceUsers: s.workspaceUsers,
+    loadUsers: s.loadUsers,
+    hydrateUsersFromCache: s.hydrateUsersFromCache,
+    allLists: s.allLists,
+    workspaceRoles: s.workspaceRoles,
+  })));
 
   const orderedListStatuses = useMemo(() => {
     const sortedInternals = [...(listStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));

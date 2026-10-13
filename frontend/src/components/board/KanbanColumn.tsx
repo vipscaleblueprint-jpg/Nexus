@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useMemo } from 'react';
+import { useState, useEffect, memo, useMemo, useCallback } from 'react';
 
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -215,9 +215,23 @@ export const KanbanColumn = memo(function KanbanColumn({
     }
   }, [renderLimit, tasks.length]);
 
-  const sortableItems = useMemo(() => 
-    Array.from(new Set(tasks.slice(0, renderLimit).map(t => t.id))), 
-  [tasks, renderLimit]);
+  // Visible tasks, de-duplicated by id (first occurrence wins)
+  const visibleTasks = useMemo(() => {
+    const seen = new Set<string>();
+    return tasks.slice(0, renderLimit).filter((t) => {
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+  }, [tasks, renderLimit]);
+
+  const sortableItems = useMemo(() => visibleTasks.map(t => t.id), [visibleTasks]);
+
+  // Stable so memoized cards don't all re-render whenever the column does
+  const handleUnauthorizedDragAttempt = useCallback(() => {
+    setIsShaking(true);
+    setTimeout(() => setIsShaking(false), 400);
+  }, []);
 
   const colors = getStatusTheme(status, customTheme);
   
@@ -384,7 +398,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           onWheel={(e) => e.stopPropagation()}
         >
           <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
-            {tasks.slice(0, renderLimit).filter((t, index, self) => index === self.findIndex((task) => task.id === t.id)).map((task) => (
+            {visibleTasks.map((task) => (
               <KanbanCard
                 key={task.id}
                 task={task}
@@ -394,10 +408,7 @@ export const KanbanColumn = memo(function KanbanColumn({
                 listStatuses={listStatuses}
                 onTaskMove={onTaskMove}
                 onSubtaskStatusChange={onSubtaskStatusChange}
-                onUnauthorizedDragAttempt={() => {
-                  setIsShaking(true);
-                  setTimeout(() => setIsShaking(false), 400);
-                }}
+                onUnauthorizedDragAttempt={handleUnauthorizedDragAttempt}
               />
             ))}
           </SortableContext>

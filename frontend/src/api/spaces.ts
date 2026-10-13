@@ -67,8 +67,16 @@ export const spacesApi = {
     });
   },
 
-  async getDoc(id: string): Promise<{ doc: any }> {
-    return apiClient<{ doc: any }>(`/api/spaces/docs/${id}`, {
+  // includeContent: false returns only the page tree (titles, ids, dates) — load content via getPage
+  async getDoc(id: string, options?: { includeContent?: boolean }): Promise<{ doc: any }> {
+    const qs = options?.includeContent === false ? '?includeContent=false' : '';
+    return apiClient<{ doc: any }>(`/api/spaces/docs/${id}${qs}`, {
+      method: 'GET',
+    });
+  },
+
+  async getPage(id: string): Promise<{ page: Page & { content: string } }> {
+    return apiClient<{ page: Page & { content: string } }>(`/api/spaces/pages/${id}`, {
       method: 'GET',
     });
   },

@@ -120,7 +120,11 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
           return;
         }
       }
-      
+
+      // Attribute-only changes that don't reach the HTML (e.g. a mention refreshing its in-memory task
+      // snapshot) are not edits — skip them so they aren't broadcast to other viewers or saved.
+      if (html === propsRef.current.content) return;
+
       propsRef.current.onChange(html);
     },
     onBlur: ({ event }) => {

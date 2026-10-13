@@ -1805,7 +1805,8 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               listStatuses={listStatuses}
               listId={task.listId}
               taskId={task.id}
-              commentCount={subtask.comments?.length || 0}
+              // comments are loaded on demand; until then the server-provided count stands in
+              commentCount={subtask.comments?.length ?? subtask._count?.comments ?? 0}
               onAddCommentLocally={(subtaskId, comments) => {
                 const currentLocal = localSubtasksRef.current;
                 const optimisticSubtasks = currentLocal.map(s => s.id === subtaskId ? { ...s, comments } : s);

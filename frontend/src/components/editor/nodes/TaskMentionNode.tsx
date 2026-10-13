@@ -187,18 +187,20 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         }
       } catch (e) {}
 
-      const oldFrozen = typeof frozenTaskData === 'string' ? frozenTaskData : JSON.stringify(frozenTaskData);
-      const newFrozen = JSON.stringify(task);
-
       const currentPriority = taskPriority || null;
       const currentTeam = node.attrs.taskTeam === 'null' ? null : node.attrs.taskTeam;
-      
-      const shouldUpdate = currentStatusName !== task.status || 
-        currentPriority !== task.priority || 
-        (!taskAssignees && task.assignees && task.assignees.length > 0) ||
+
+      // Only rewrite the node when a value it actually renders/saves has changed. Every rewrite is a doc
+      // edit that gets broadcast to other viewers, so comparing the full task (timestamps, comments...)
+      // made every mention rewrite itself on each page load.
+      const shouldUpdate = currentStatusName !== task.status ||
+        currentPriority !== task.priority ||
+        (taskAssignees || '[]') !== JSON.stringify(task.assignees || []) ||
         taskHasDescription !== !!task.description ||
         currentTeam !== (task.team ? JSON.stringify({ id: task.team.id, name: task.team.name, color: task.team.color }) : null) ||
-        oldFrozen !== newFrozen;
+        label !== task.title ||
+        (node.attrs.taskDueDate || '') !== (task.dueDate || '') ||
+        (taskListName || '') !== (task.list?.name || '');
 
       if (shouldUpdate) {
         setTimeout(() => {
@@ -237,7 +239,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, mentionType, globalTask]);
 
-  // Pre-populate statuses from store cache immediately — zero network latency
+  // List statuses are only used by the status dropdown. Take them from the store when it has them;
+  // otherwise fetch when the dropdown is first opened — fetching on mount fired one request per
+  // distinct list for every mention on the page (~40 at once on a journal day).
   useEffect(() => {
     if (!taskData?.listId || fallbackListStatuses.length > 0) return;
     const entry = allLists.find((l: any) => l.list?.id === taskData.listId || l.id === taskData.listId);
@@ -246,12 +250,13 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       setFallbackListStatuses(cached.statuses);
       return;
     }
+    if (openDropdown !== 'status') return;
     let cancelled = false;
     fetchListStatuses(taskData.listId).then(statuses => {
       if (!cancelled && statuses.length > 0) setFallbackListStatuses(statuses);
     }).catch(console.error);
     return () => { cancelled = true; };
-  }, [taskData?.listId, allLists]);
+  }, [taskData?.listId, allLists, openDropdown]);
 
   useEffect(() => {
     let cancelled = false;

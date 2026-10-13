@@ -1,3 +1,5 @@
+import { isPerfEnabled, recordApi } from '@/lib/perfMonitor';
+
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 
 export const API_BASE_URL = apiBaseUrl;
@@ -29,6 +31,9 @@ export async function apiClient<T = any>(
     }
   }
 
+  const method = (restOptions.method || 'GET').toUpperCase();
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : 0;
+
   let res: Response;
   try {
     res = await fetch(url, {
@@ -40,6 +45,7 @@ export async function apiClient<T = any>(
       ...restOptions,
     });
   } catch (err: any) {
+    if (isPerfEnabled()) recordApi(method, url, 0, performance.now() - startedAt, null);
     console.warn(`[apiClient] Network request failed for ${url}:`, err?.message || err);
     throw new Error(`Unable to connect to backend server at ${url}. Please make sure the server is running.`);
   }
@@ -51,6 +57,9 @@ export async function apiClient<T = any>(
     }
     return {};
   });
+
+  // Measured after the body is parsed, so large payloads show up in the timing
+  if (isPerfEnabled()) recordApi(method, url, res.status, performance.now() - startedAt, res.headers.get('server-timing'));
 
   if (!res.ok) {
     if (res.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/login') {

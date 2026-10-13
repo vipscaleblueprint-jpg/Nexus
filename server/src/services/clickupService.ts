@@ -148,7 +148,36 @@ function inlineMarkdownToHtml(text: string): string {
     .replace(/~~(.+?)~~/g, '<s>$1</s>')
     .replace(/(^|[^*])\*(?!\s)([^*]+?)\*(?!\*)/g, '$1<em>$2</em>')
     .replace(/(^|[^\w])_(?!\s)([^_]+?)_(?!\w)/g, '$1<em>$2</em>');
-  return html.replace(/\u0000(\d+)\u0000/g, (_m, i) => stash[Number(i)]);
+  // Kept pieces can hold other kept pieces (an escaped "\_" inside a link label).
+  const restore = (s: string): string => s.replace(/\u0000(\d+)\u0000/g, (_m, i) => restore(stash[Number(i)]));
+  return restore(html);
+}
+
+/** Section labels of the task description template, shown as headings. */
+const SECTION_LABELS = [
+  'Task Link', 'Deliverables', 'Notes', 'Resources', 'Updates', 'Overview', 'Objectives',
+  'Scope', 'Requirements', 'Instructions', 'Timeline', 'Next Steps', 'Action Items', 'References',
+];
+/** Prompt template fields, each started on its own line. */
+const FIELD_LABELS = ['CONTENT PILLAR', 'Content Pillar', 'Goal', 'Format'];
+const FLATTENED_MIN_LENGTH = 200;
+
+/**
+ * ClickUp's API returns some descriptions as a single line, with every line break
+ * dropped. Rebuild the template layout from the text itself: section labels become
+ * headings, "•" items and dated updates become bullets, prompt fields and
+ * [placeholders] start new lines, and each link ends its line.
+ */
+export function restoreFlattenedMarkdown(markdown: string): string {
+  return markdown
+    .replace(new RegExp(`(^|\\s)(${SECTION_LABELS.join('|')}):\\s*`, 'g'), '\n\n## $2\n\n')
+    .replace(/(^|\s)((?:[A-Z][\w-]*\s){1,2}Prompt):?\s+/g, '\n\n## $2\n\n')
+    .replace(new RegExp(`\\s+(${FIELD_LABELS.join('|')}):`, 'g'), '\n$1:')
+    .replace(/\s*•\s*/g, '\n- ')
+    .replace(/\s+(\d{1,2}\/\d{1,2}\/\d{2,4}\s+[-–]\s)/g, '\n- $1')
+    .replace(/\s*(\\\[)/g, '\n$1')
+    .replace(/(\]\(https?:\/\/[^)\s]+\))(?!\\\])\s*/g, '$1\n')
+    .trim();
 }
 
 /** Leading whitespace width, tabs counted as 4. */
@@ -165,6 +194,9 @@ function indentOf(line: string): number {
  */
 export function clickupMarkdownToHtml(markdown: string | undefined | null): string {
   if (!markdown) return '';
+  if (!markdown.includes('\n') && markdown.length >= FLATTENED_MIN_LENGTH) {
+    markdown = restoreFlattenedMarkdown(markdown);
+  }
   const out: string[] = [];
   let paragraph: string[] = [];
   let quote: string[] = [];

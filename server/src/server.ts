@@ -8,6 +8,8 @@ import { Hocuspocus } from '@hocuspocus/server';
 import { requireEnv } from './config/env';
 import { logger, createLogger, errMsg } from './config/logger';
 import { httpLogger } from './middleware/logging.middleware';
+import { serverTiming, getInFlightRequests } from './middleware/serverTiming.middleware';
+import { startRuntimeMetrics } from './config/runtimeMetrics';
 import { rateLimiter, botBlocker, corsOptions } from './middleware/security.middleware';
 import { authRouter } from './routes/auth.routes';
 import { userRouter } from './routes/user.routes';
@@ -83,6 +85,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 // Global Security, Logging & CORS Middlewares
+app.use(serverTiming);
 app.use(httpLogger);
 app.use(cors(corsOptions));
 app.use(botBlocker);
@@ -138,6 +141,8 @@ const io = new Server(server, {
 });
 
 const socketLog = createLogger('socket.io');
+
+startRuntimeMetrics(() => ({ sockets: io.engine.clientsCount, inFlight: getInFlightRequests() }));
 
 io.on('connection', (socket) => {
   socketLog.info({ socketId: socket.id }, 'Client connected');

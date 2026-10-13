@@ -27,6 +27,8 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { isNexusAuditChecklist } from '../utils/auditChecklist';
+import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
+import { appendTaskToJournal } from '../utils/pageBlocks';
 import {
   getStatusChangeRecipients,
   getChecklistCheckRecipients,
@@ -84,13 +86,10 @@ const taskInclude = {
       User: { select: { id: true, name: true, email: true, avatarUrl: true } },
       assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
       team: { select: { id: true, name: true, color: true } },
-      comments: { 
-        include: {
-          user: { select: { id: true, name: true, avatarUrl: true } }
-        },
-        orderBy: { createdAt: 'asc' } as any
-      },
-      checklists: { 
+      // Only the count: every subtask's full comment thread made each task payload (and the
+      // all-tasks list) huge. The UI loads a subtask's comments on demand via GET /:id/comments.
+      _count: { select: { comments: true } },
+      checklists: {
         include: { 
           items: {
             include: { checkedBy: { select: { id: true, name: true, avatarUrl: true } } }
@@ -122,6 +121,10 @@ const taskInclude = {
   attachments: true,
 };
 
+// Identical listTasks queries already running, keyed by cache key. The all-tasks query is slow, and
+// several pages (dashboard, docs) plus their reloads request it at once — they share one query.
+const listTasksInFlight = new Map<string, Promise<any[]>>();
+
 // GET /api/tasks - Redis Cache-Aside
 export async function listTasks(req: Request, res: Response) {
   try {
@@ -133,7 +136,26 @@ export async function listTasks(req: Request, res: Response) {
       return res.json({ tasks: cachedTasks, cached: true });
     }
 
-    console.time('[API] listTasks db query');
+    let pending = listTasksInFlight.get(cacheKey);
+    if (!pending) {
+      pending = queryListTasks({ listId, assigneeId, status, lightweight }, cacheKey).finally(() => {
+        listTasksInFlight.delete(cacheKey);
+      });
+      listTasksInFlight.set(cacheKey, pending);
+    }
+    const tasks = await pending;
+
+    return res.json({ tasks, cached: false });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function queryListTasks(
+  { listId, assigneeId, status, lightweight }: Record<string, string | undefined>,
+  cacheKey: string,
+) {
+    const startedAt = Date.now();
     const tasks = await prisma.task.findMany({
       where: {
         ...(listId ? { listId } : {}),
@@ -157,14 +179,10 @@ export async function listTasks(req: Request, res: Response) {
         : taskInclude,
       orderBy: { createdAt: 'desc' },
     });
-    console.timeEnd('[API] listTasks db query');
+    console.log(`[API] listTasks db query: ${((Date.now() - startedAt) / 1000).toFixed(3)}s (${tasks.length} tasks)`);
 
     await setCache(cacheKey, tasks, 300);
-
-    return res.json({ tasks, cached: false });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
+    return tasks;
 }
 
 // GET /api/tasks/:id - Redis Cache-Aside
@@ -331,90 +349,18 @@ export async function createTask(req: Request, res: Response) {
           blocks = JSON.parse(dayPage.content);
         } catch(e) {}
 
-        let clientName = task.list?.name || 'Unknown Client';
-        let clientHeaderIndex = blocks.findIndex((b: any) => {
-          if (b.type !== 'text') return false;
-          const stripped = b.content.replace(/<[^>]+>/g, '').trim();
-          return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === clientName.toLowerCase();
-        });
-        if (clientHeaderIndex === -1) {
-          blocks.push({
-            id: `blk-h-${Date.now()}-${clientName.replace(/\s+/g, '')}`,
-            type: 'text',
-            content: `<h2>${clientName}</h2>`
-          });
-          clientHeaderIndex = blocks.length - 1;
-        }
-
-        let insertClientIndex = clientHeaderIndex + 1;
-        while (insertClientIndex < blocks.length) {
-          const nextBlock = blocks[insertClientIndex];
-          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
-            break;
-          }
-          insertClientIndex++;
-        }
-
-        // Backtrack to skip over trailing empty spaces so we insert BEFORE the gap
-        while (insertClientIndex > clientHeaderIndex + 1) {
-          const prevBlock = blocks[insertClientIndex - 1];
-          if (prevBlock.type === 'text' && (prevBlock.content === '<p></p>' || prevBlock.content === '<p><br></p>' || prevBlock.content.trim() === '')) {
-            insertClientIndex--;
-          } else {
-            break;
-          }
-        }
-
-                const escapedTitle = task.title.replace(/"/g, '&quot;');
+        const clientName = task.list?.name || 'Unknown Client';
+        const escapedTitle = task.title.replace(/"/g, '&quot;');
         const statusColor = '#3b82f6';
         const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
         const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
 
-        blocks.splice(insertClientIndex, 0, {
-          id: `blk-t-${Date.now()}-${task.id}`,
+        appendTaskToJournal(blocks, clientName, (section) => ({
+          id: section === 'c' ? `blk-t-${Date.now()}-${task.id}` : `blk-t-${Date.now()}-${task.id}-n`,
           type: 'text',
           content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
-        });
+        }));
 
-        // Ensure a trailing spacer below the new task if there isn't one
-        if (insertClientIndex + 1 < blocks.length) {
-          const nextBlock = blocks[insertClientIndex + 1];
-          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
-            blocks.splice(insertClientIndex + 1, 0, { id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
-          }
-        } else if (insertClientIndex === blocks.length - 1) {
-           blocks.push({ id: `blk-space-${Date.now()}-${clientName.replace(/\s+/g, '')}`, type: 'text', content: '<p></p>' });
-        }
-
-        let newTasksHeaderIndex = blocks.findIndex((b: any) => {
-          if (b.type !== 'text') return false;
-          const stripped = b.content.replace(/<[^>]+>/g, '').trim();
-          return b.content.match(/<h[1-6]/) && stripped.toLowerCase() === 'new tasks';
-        });
-        if (newTasksHeaderIndex === -1) {
-          blocks.push({
-            id: `blk-h-${Date.now()}-NewTasks`,
-            type: 'text',
-            content: '<h3>New Tasks</h3>'
-          });
-          newTasksHeaderIndex = blocks.length - 1;
-        }
-
-        let insertNewTasksIndex = newTasksHeaderIndex + 1;
-        while (insertNewTasksIndex < blocks.length) {
-          const nextBlock = blocks[insertNewTasksIndex];
-          if (nextBlock.type === 'text' && (nextBlock.content.startsWith('<h2') || nextBlock.content.startsWith('<h3'))) {
-            break;
-          }
-          insertNewTasksIndex++;
-        }
-
-        blocks.splice(insertNewTasksIndex, 0, {
-          id: `blk-t-${Date.now()}-${task.id}-n`,
-          type: 'text',
-          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
-        });
-        
         await prisma.page.update({
           where: { id: dayPage.id },
           data: { content: JSON.stringify(blocks) }
@@ -426,8 +372,7 @@ export async function createTask(req: Request, res: Response) {
       console.error('Failed to inject task into daily rollover:', err);
     }
 
-    // Broadcast new task to the list room and globally for real-time sync
-    io.to(`list:${listId}`).emit('task:created', task);
+    // Global broadcast reaches list-room members too, so a separate room emit would deliver it twice
     io.emit('task:created', task);
 
     // --- ClickUp Sync (fire-and-forget) ---
@@ -702,10 +647,7 @@ export async function updateTask(req: Request, res: Response) {
 
     // Broadcast IMMEDIATELY after update
     const roomListId = listId || currentListId || currentTask.listId;
-    if (roomListId) {
-      io.to(`list:${roomListId}`).emit('task:updated', payload);
-    }
-    // Global broadcast so dashboards and other lists update in real-time
+    // Global broadcast so dashboards and other lists update in real-time (list-room members receive it too)
     io.emit('task:updated', payload);
 
     // Return the response immediately so the client doesn't wait
@@ -756,10 +698,7 @@ export async function updateTask(req: Request, res: Response) {
           let activity: any = null;
 
           const emitActivity = (act: any) => {
-            if (roomListId) {
-              io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId, activity: act });
-            }
-            io.emit('task_activity', { taskId, activity: act });
+            io.emit('task_activity', { listId: roomListId, taskId, activity: act });
           };
 
           // Title changes are logged independently so they still show up when sent alongside other fields
@@ -967,9 +906,6 @@ export async function deleteTask(req: Request, res: Response) {
     });
     await prisma.task.delete({ where: { id: taskId } });
 
-    if (taskToDelete?.listId) {
-      io.to(`list:${taskToDelete.listId}`).emit('task:deleted', { id: taskId });
-    }
     io.emit('task:deleted', { id: taskId });
 
     await invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
@@ -1029,9 +965,6 @@ export async function moveTask(req: Request, res: Response) {
 
     // Broadcast IMMEDIATELY after update
     const roomListId = currentListId || currentTask.listId;
-    if (roomListId) {
-      io.to(`list:${roomListId}`).emit('task:updated', updated);
-    }
     io.emit('task:updated', updated);
 
     // --- ClickUp Sync: status change (fire-and-forget) ---
@@ -1080,11 +1013,8 @@ export async function moveTask(req: Request, res: Response) {
               date: log.createdAt,
               user,
             };
-            if (roomListId) {
-              io.to(`list:${roomListId}`).emit('task_activity', { listId: roomListId, taskId: id, activity });
-            }
-            // Global broadcast so the Activity page and dashboards refresh too
-            io.emit('task_activity', { taskId: id, activity });
+            // Global broadcast so the Activity page and dashboards refresh too (list-room members receive it as well)
+            io.emit('task_activity', { listId: roomListId, taskId: id, activity });
 
             // Notify role-based recipients + assignees so the change shows in their feed
             const usersToNotify = await getStatusChangeRecipients(status, currentTask, actingUserId);
@@ -1160,24 +1090,19 @@ export async function createTaskComment(req: Request, res: Response) {
       select: { id: true, name: true, avatarUrl: true, email: true },
     });
 
-    if (mentionedUserIds && Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0) {
-      const usersToNotify = mentionedUserIds.filter((id: any) => id !== effectiveUserId);
-      if (usersToNotify.length > 0) {
-        await prisma.taskNotification.createMany({
-          data: usersToNotify.map((id: string) => ({
-            userId: id,
-            actorId: effectiveUserId,
-            taskId,
-            type: 'MENTION',
-            title: `${user?.name || 'Someone'} mentioned you in a comment`,
-            content: content.trim().substring(0, 100),
-          })),
-        });
-        usersToNotify.forEach((id: string) => {
-          io.to(`user:${id}`).emit('notification_received');
-        });
-      }
-    }
+    // Mentions are derived from the comment content itself (mention:// links) so every
+    // comment path (main task, subtask, replies) notifies, and removed mentions don't.
+    const clientMentionIds: string[] = Array.isArray(mentionedUserIds) ? mentionedUserIds : [];
+    const contentMentionIds = extractMentionedUserIds(content);
+    const mentionIds = contentMentionIds.length > 0 ? contentMentionIds : clientMentionIds;
+    await notifyMentionedUsers({
+      userIds: mentionIds,
+      actorId: effectiveUserId,
+      actorName: user?.name,
+      taskId,
+      content,
+      isSubtask: Boolean(subtaskId),
+    });
 
     // Notify task assignees about the comment (if they weren't mentioned)
     const taskData = await prisma.task.findUnique({
@@ -1187,8 +1112,8 @@ export async function createTaskComment(req: Request, res: Response) {
     if (taskData) {
       const assigneesToNotify = taskData.assignees
         .map((a: any) => a.id)
-        .filter((id: any) => id !== effectiveUserId && !(mentionedUserIds && mentionedUserIds.includes(id)));
-      
+        .filter((id: any) => id !== effectiveUserId && !mentionIds.includes(id));
+
       if (assigneesToNotify.length > 0) {
         await prisma.taskNotification.createMany({
           data: assigneesToNotify.map((id: any) => ({
@@ -1197,7 +1122,7 @@ export async function createTaskComment(req: Request, res: Response) {
             taskId,
             type: 'COMMENT',
             title: `${user?.name || 'Someone'} commented on a task you're assigned to`,
-            content: content.trim().substring(0, 100),
+            content: toNotificationPreview(content),
           })),
         });
         assigneesToNotify.forEach((id: any) => {
@@ -1293,6 +1218,11 @@ export async function updateTaskComment(req: Request, res: Response) {
       return res.status(400).json({ error: 'Content cannot be empty' });
     }
 
+    const previous = await prisma.taskComment.findUnique({
+      where: { id: commentId },
+      select: { content: true },
+    });
+
     const comment = await prisma.taskComment.update({
       where: { id: commentId },
       data: { content: content.trim() },
@@ -1312,6 +1242,20 @@ export async function updateTaskComment(req: Request, res: Response) {
       io.to(`list:${listId}`).emit('task:comment_updated', payload);
     } else {
       io.emit('task:comment_updated', payload);
+    }
+
+    // Only notify users newly mentioned by this edit; runs after the realtime emit
+    const previousMentionIds = new Set(extractMentionedUserIds(previous?.content || ''));
+    const newMentionIds = extractMentionedUserIds(comment.content).filter(id => !previousMentionIds.has(id));
+    if (newMentionIds.length > 0) {
+      notifyMentionedUsers({
+        userIds: newMentionIds,
+        actorId: comment.userId,
+        actorName: comment.user?.name,
+        taskId,
+        content: comment.content,
+        isSubtask: Boolean(comment.subtaskId),
+      }).catch(err => console.error('Failed to send mention notifications', err));
     }
 
     return res.json({ comment });
@@ -2095,7 +2039,6 @@ export async function updateSubtask(req: Request, res: Response) {
       select: { id: true, listId: true, subtasks: taskInclude.subtasks }
     });
     if (task) {
-      io.to(`list:${task.listId}`).emit('task:updated', task);
       io.emit('task:updated', task);
       
       // Emit socket events for the newly created audit logs so the frontend updates in real-time
@@ -2615,14 +2558,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
               user: actor,
             };
 
-            if (targetTask.listId) {
-              io.to(`list:${targetTask.listId}`).emit('task_activity', {
-                listId: targetTask.listId,
-                taskId: targetTask.id,
-                activity,
-              });
-            }
-            io.emit('task_activity', { taskId: targetTask.id, activity });
+            io.emit('task_activity', { listId: targetTask.listId, taskId: targetTask.id, activity });
           }
         }
       } catch (err) {

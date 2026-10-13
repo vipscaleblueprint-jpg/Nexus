@@ -9,6 +9,7 @@ import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
@@ -63,7 +64,15 @@ const CardContent = memo(({
   const [isDescOpen, setIsDescOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'teamRole' | 'date' | 'priority' | null>(null);
 
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles } = useAppStore();
+  // Select only what the card uses, so unrelated store changes (e.g. other tasks updating) don't re-render every card
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles } = useAppStore(useShallow((s) => ({
+    currentUser: s.currentUser,
+    workspaceUsers: s.workspaceUsers,
+    loadUsers: s.loadUsers,
+    hydrateUsersFromCache: s.hydrateUsersFromCache,
+    allLists: s.allLists,
+    workspaceRoles: s.workspaceRoles,
+  })));
 
   const orderedListStatuses = useMemo(() => {
     const sortedInternals = [...(listStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -876,7 +885,6 @@ export const KanbanCard = memo(function KanbanCard({
     setLocalSubtasks(task.subtasks || []);
   }, [task.subtasks]);
 
-  const subtasksCount = localSubtasks.length;
   const visibleSubtasks = useMemo(() => localSubtasks.filter((s) => !isSubtaskClosed(s)), [localSubtasks]);
   const openSubtasksCount = visibleSubtasks.length;
 
@@ -895,7 +903,8 @@ export const KanbanCard = memo(function KanbanCard({
   }, [task, onSubtaskStatusChange]);
 
   const subtasksToggle = useMemo(() => {
-    if (subtasksCount === 0) return null;
+    // Closed subtasks are hidden, so with none open the card looks like it has no subtasks
+    if (openSubtasksCount === 0) return null;
     return (
       <div
         className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 hover:bg-black/5 dark:hover:bg-zinc-700/50 -mx-1.5 px-1.5 py-1 rounded cursor-pointer transition-colors group/subtasks"
@@ -1013,7 +1022,7 @@ export const KanbanCard = memo(function KanbanCard({
       </div>
 
       {/* ── Subtasks: tree-indented, outside the draggable card ── */}
-      {subtasksCount > 0 && isSubtasksExpanded && !isDragging && (
+      {openSubtasksCount > 0 && isSubtasksExpanded && !isDragging && (
         <div className="mt-1 ml-3">
           <AnimatePresence initial={false}>
           {visibleSubtasks.map((sub) => {

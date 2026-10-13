@@ -98,4 +98,9 @@ export const corsOptions: cors.CorsOptions = {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  // Lets the frontend perf monitor read how long each request spent on the server
+  exposedHeaders: ['Server-Timing'],
+  // Let browsers cache preflight (OPTIONS) results for 2 hours (Chrome's cap) instead of sending one
+  // before every request — each preflight is an extra full round trip.
+  maxAge: 7200,
 };

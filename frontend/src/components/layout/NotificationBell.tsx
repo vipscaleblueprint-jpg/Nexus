@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { notificationsApi, TaskNotification } from "@/api/notifications";
 import { useAppStore } from "@/lib/store";
+import { CommentContent } from "@/components/ui/CommentContent";
 
 export function NotificationBell() {
   const router = useRouter();
@@ -22,6 +23,8 @@ export function NotificationBell() {
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      // Mention profile cards render in a portal outside the dropdown; clicks inside them shouldn't close it
+      if ((event.target as Element)?.closest?.('[data-radix-popper-content-wrapper]')) return;
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
@@ -263,9 +266,9 @@ export function NotificationBell() {
                         </div>
                         
                         {n.content && (
-                          <div
-                            className="mt-1 text-xs text-zinc-600 dark:text-zinc-300 line-clamp-2"
-                            dangerouslySetInnerHTML={{ __html: n.content }}
+                          <CommentContent
+                            content={n.content}
+                            className="mt-1 text-xs text-zinc-600 dark:text-zinc-300 line-clamp-2 [&_p]:inline"
                           />
                         )}
                         

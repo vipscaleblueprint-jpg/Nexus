@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
+import { keepUnseenBlocks, stripMentionSnapshots } from '../utils/pageBlocks';
 import { syncClients } from './webhook.controller';
 
 export async function triggerSyncClients(req: Request, res: Response) {
@@ -498,32 +499,74 @@ export async function createDoc(req: Request, res: Response) {
 }
 
 // GET /api/spaces/docs/:id
+// ?includeContent=false returns the page tree without page content (the editor loads the open page via
+// GET /pages/:id). Journal docs gain a page every day, so sending every page's content grows forever.
 export async function getDoc(req: Request, res: Response) {
   try {
-    console.time(`[API] getDoc db query - ${req.params.id}`);
+    const includeContent = req.query.includeContent !== 'false';
+    const pagesQuery = includeContent
+      ? {
+          where: { parentPageId: null },
+          orderBy: { createdAt: 'asc' as const },
+          include: {
+            subpages: {
+              orderBy: { createdAt: 'asc' as const },
+              include: {
+                subpages: { orderBy: { createdAt: 'asc' as const } },
+              },
+            },
+          },
+        }
+      : {
+          where: { parentPageId: null },
+          orderBy: { createdAt: 'asc' as const },
+          select: {
+            ...pageSelectConfig,
+            subpages: {
+              orderBy: { createdAt: 'asc' as const },
+              select: {
+                ...pageSelectConfig,
+                subpages: { orderBy: { createdAt: 'asc' as const }, select: pageSelectConfig },
+              },
+            },
+          },
+        };
+
     const doc = await prisma.doc.findUnique({
       where: { id: req.params.id },
       include: {
         space: { select: { id: true, name: true, color: true } },
         folder: { select: { id: true, name: true } },
         team: { select: { id: true, name: true, color: true } },
-        pages: {
-          where: { parentPageId: null },
-          orderBy: { createdAt: 'asc' },
-          include: {
-            subpages: {
-              orderBy: { createdAt: 'asc' },
-              include: {
-                subpages: { orderBy: { createdAt: 'asc' } },
-              },
-            },
-          },
-        },
+        pages: pagesQuery,
       },
     });
-    console.timeEnd(`[API] getDoc db query - ${req.params.id}`);
     if (!doc) return res.status(404).json({ error: 'Doc not found' });
     return res.json({ doc });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/spaces/pages/:id - a single page with its content
+export async function getPage(req: Request, res: Response) {
+  try {
+    // ?since=<updatedAt the client has cached>: answer "not modified" from the timestamp alone instead of
+    // reading and sending the (possibly megabytes of) content again. Every content write — editor saves and
+    // the journal auto-append alike — bumps updatedAt, so a changed page is always sent in full.
+    const since = typeof req.query.since === 'string' ? new Date(req.query.since) : null;
+    if (since && !Number.isNaN(since.getTime())) {
+      const meta = await prisma.page.findUnique({ where: { id: req.params.id }, select: { id: true, updatedAt: true } });
+      if (!meta) return res.status(404).json({ error: 'Page not found' });
+      if (meta.updatedAt.getTime() <= since.getTime()) return res.json({ notModified: true, page: meta });
+    }
+
+    const page = await prisma.page.findUnique({
+      where: { id: req.params.id },
+      select: { ...pageSelectConfig, content: true },
+    });
+    if (!page) return res.status(404).json({ error: 'Page not found' });
+    return res.json({ page: { ...page, content: stripMentionSnapshots(page.content) } });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -605,13 +648,36 @@ export async function createPage(req: Request, res: Response) {
 }
 
 // PATCH /api/spaces/pages/:id
+const VERSION_COALESCE_MS = 30_000;
+
 export async function updatePage(req: Request, res: Response) {
   try {
-    const { title, content } = req.body;
+    const { title, deletedBlockIds } = req.body;
+    let { content } = req.body;
     const authReq = req as any;
     const userId = authReq.user?.id;
 
-    const page = await prisma.page.update({
+    // Read the stored values first so unchanged saves (e.g. clicking out of a block) don't create a
+    // version or bust the hierarchy cache. The doc editor sends the title with every save.
+    const previous = await prisma.page.findUnique({
+      where: { id: req.params.id },
+      select: { content: true, title: true },
+    });
+
+    let keptUnseenBlocks = false;
+    if (content !== undefined) {
+      content = stripMentionSnapshots(content);
+      // Only editors that report their deletions get the merge; older clients keep last-write-wins
+      if (Array.isArray(deletedBlockIds)) {
+        const merged = keepUnseenBlocks(previous?.content, content, deletedBlockIds);
+        keptUnseenBlocks = merged !== content;
+        content = merged;
+      }
+    }
+
+    // The page content can be megabytes: send it back only when the server changed it (kept blocks the
+    // editor hadn't seen), since otherwise the editor already has exactly what it sent.
+    const { content: savedContent, ...page } = await prisma.page.update({
       where: { id: req.params.id },
       data: {
         ...(title && { title }),
@@ -619,18 +685,26 @@ export async function updatePage(req: Request, res: Response) {
       },
     });
 
-    if (content !== undefined && userId) {
-      await prisma.pageVersion.create({
-        data: {
-          pageId: page.id,
-          userId: userId,
-          content: content,
-        }
+    if (content !== undefined && userId && previous?.content !== content) {
+      // A burst of saves (typing, mention chips refreshing) folds into one version per user instead of a
+      // full page copy per keystroke; a pause longer than the window starts a new version.
+      const recent = await prisma.pageVersion.findFirst({
+        where: { pageId: page.id, createdAt: { gte: new Date(Date.now() - VERSION_COALESCE_MS) } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, userId: true },
       });
+      if (recent && recent.userId === userId) {
+        await prisma.pageVersion.update({ where: { id: recent.id }, data: { content } });
+      } else {
+        await prisma.pageVersion.create({ data: { pageId: page.id, userId, content } });
+      }
     }
 
-    await invalidateCache('spaces:all', 'dashboard:all');
-    return res.json({ page });
+    // The cached hierarchy only holds page titles, so content-only saves don't need to invalidate it
+    if (title && title !== previous?.title) {
+      await invalidateCache('spaces:all', 'dashboard:all');
+    }
+    return res.json({ page: keptUnseenBlocks ? { ...page, content: savedContent } : page });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Page not found' });
     return res.status(500).json({ error: err.message });
@@ -644,13 +718,21 @@ export async function getPageVersions(req: Request, res: Response) {
     const userId = authReq.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
+    // ?includeContent=false lists who saved when (page owner / contributors) without the full page copies,
+    // which for a journal day page add up to tens of megabytes. ?mine=true limits it to the caller's versions.
+    const includeContent = req.query.includeContent !== 'false';
     const versions = await prisma.pageVersion.findMany({
-      where: { pageId: req.params.id },
+      where: { pageId: req.params.id, ...(req.query.mine === 'true' && { userId }) },
       orderBy: { createdAt: 'desc' },
       take: 50,
-      include: {
-        user: { select: { id: true, name: true, avatarUrl: true, email: true } }
-      }
+      select: {
+        id: true,
+        pageId: true,
+        userId: true,
+        createdAt: true,
+        ...(includeContent && { content: true }),
+        user: { select: { id: true, name: true, avatarUrl: true, email: true } },
+      },
     });
     return res.json({ versions });
   } catch (err: any) {

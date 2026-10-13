@@ -48,6 +48,18 @@ function setCachedTasks(tasks: Task[]) {
   } catch {}
 }
 
+// Serialising the whole task list blocks the main thread, so socket-driven updates are batched
+// into one write instead of one per event.
+const TASKS_CACHE_WRITE_DELAY_MS = 2000;
+let tasksCacheWriteTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleCachedTasksWrite(getTasks: () => Task[]) {
+  if (tasksCacheWriteTimer) clearTimeout(tasksCacheWriteTimer);
+  tasksCacheWriteTimer = setTimeout(() => {
+    tasksCacheWriteTimer = null;
+    setCachedTasks(getTasks());
+  }, TASKS_CACHE_WRITE_DELAY_MS);
+}
+
 function getCachedRoles(): WorkspaceRole[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -220,7 +232,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const exists = state.tasksIndex[updatedTask.id];
     if (!exists) return state; // Only update if it exists, or maybe add it? Let's update index and tasks
     const newTasks = state.tasks.map(t => t.id === updatedTask.id ? { ...t, ...updatedTask } : t);
-    setCachedTasks(newTasks);
+    scheduleCachedTasksWrite(() => get().tasks);
     return {
       tasks: newTasks,
       tasksIndex: { ...state.tasksIndex, [updatedTask.id]: { ...exists, ...updatedTask } }
@@ -229,7 +241,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   addTask: (newTask) => set((state) => {
     if (state.tasksIndex[newTask.id]) return state; // Avoid duplicate
     const newTasks = [newTask, ...state.tasks];
-    setCachedTasks(newTasks);
+    scheduleCachedTasksWrite(() => get().tasks);
     return {
       tasks: newTasks,
       tasksIndex: { ...state.tasksIndex, [newTask.id]: newTask }
@@ -237,7 +249,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
   removeTask: (taskId) => set((state) => {
     const newTasks = state.tasks.filter(t => t.id !== taskId);
-    setCachedTasks(newTasks);
+    scheduleCachedTasksWrite(() => get().tasks);
     const newIndex = { ...state.tasksIndex };
     delete newIndex[taskId];
     return {

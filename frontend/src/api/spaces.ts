@@ -75,9 +75,14 @@ export const spacesApi = {
     });
   },
 
-  async getPage(id: string): Promise<{ page: Page & { content: string } }> {
-    return apiClient<{ page: Page & { content: string } }>(`/api/spaces/pages/${id}`, {
+  /**
+   * With `since` (the updatedAt of a cached copy) an unchanged page answers `{ notModified: true }` and
+   * carries no content.
+   */
+  async getPage(id: string, options?: { since?: string }): Promise<{ page: Page & { content?: string }; notModified?: boolean }> {
+    return apiClient<{ page: Page & { content?: string }; notModified?: boolean }>(`/api/spaces/pages/${id}`, {
       method: 'GET',
+      params: { since: options?.since },
     });
   },
 

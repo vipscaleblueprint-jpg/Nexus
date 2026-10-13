@@ -551,6 +551,16 @@ export async function getDoc(req: Request, res: Response) {
 // GET /api/spaces/pages/:id - a single page with its content
 export async function getPage(req: Request, res: Response) {
   try {
+    // ?since=<updatedAt the client has cached>: answer "not modified" from the timestamp alone instead of
+    // reading and sending the (possibly megabytes of) content again. Every content write — editor saves and
+    // the journal auto-append alike — bumps updatedAt, so a changed page is always sent in full.
+    const since = typeof req.query.since === 'string' ? new Date(req.query.since) : null;
+    if (since && !Number.isNaN(since.getTime())) {
+      const meta = await prisma.page.findUnique({ where: { id: req.params.id }, select: { id: true, updatedAt: true } });
+      if (!meta) return res.status(404).json({ error: 'Page not found' });
+      if (meta.updatedAt.getTime() <= since.getTime()) return res.json({ notModified: true, page: meta });
+    }
+
     const page = await prisma.page.findUnique({
       where: { id: req.params.id },
       select: { ...pageSelectConfig, content: true },

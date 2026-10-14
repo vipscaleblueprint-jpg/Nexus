@@ -23,6 +23,9 @@ import {
 import React, { useEffect, useRef, memo } from 'react';
 
 
+/** Typography of the editable area; static previews of a block use it too so they render identically. */
+export const BLOCK_EDITOR_CONTENT_CLASS = 'prose dark:prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-900 dark:text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap block w-full';
+
 interface BlockEditorProps {
   content: string;
   onChange: (content: string) => void;
@@ -33,10 +36,12 @@ interface BlockEditorProps {
   autoFocus?: boolean;
   editable?: boolean;
   onEditorReady?: (editor: any) => void;
+  /** Shown during the frame(s) before the Tiptap instance exists (it is created after mount). */
+  loadingFallback?: React.ReactNode;
 }
 
 export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorProps) {
-  const { content, autoFocus, editable = true, onEditorReady } = props;
+  const { content, autoFocus, editable = true, onEditorReady, loadingFallback } = props;
   const propsRef = useRef(props);
   useEffect(() => {
     propsRef.current = props;
@@ -143,7 +148,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
     },
     editorProps: {
       attributes: {
-        class: 'prose dark:prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-900 dark:text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap block w-full',
+        class: BLOCK_EDITOR_CONTENT_CLASS,
       },
       // Task 2: Preserve all data-* attributes on mention spans during paste.
       transformPastedHTML(html: string) {
@@ -330,6 +335,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
   }, [editor]);
 
   if (!editor) {
+    if (loadingFallback) return <div className="w-full relative">{loadingFallback}</div>;
     return <div className="flex-1 min-w-0 min-h-6" />;
   }
 

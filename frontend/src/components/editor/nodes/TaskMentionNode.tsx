@@ -22,7 +22,7 @@ const STATUS_HEX_MAP: Record<string, string> = {
   CLOSED: '#2FA37A',
 };
 
-const getStatusColor = (status: string) => {
+export const getStatusColor = (status: string) => {
   if (!status) return '#3b82f6';
   
   // Directly map from known hex codes first

@@ -51,6 +51,8 @@ export const dailyRolloverWorker = new Worker(
           notKyc,
           notClosed,
           notPinboard,
+          // Erased from a day page by a user: stays off (with its subtasks) until mentioned there again
+          { rolloverExcluded: false },
         ],
       },
       include: {
@@ -107,7 +109,7 @@ export const dailyRolloverWorker = new Worker(
           type: 'text',
           content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task">@${task.title}</span></p>`
         });
-        
+
         if (task.subtasks && task.subtasks.length > 0) {
           for (const sub of task.subtasks) {
             tiptapNodes.push({
@@ -169,7 +171,7 @@ export const dailyRolloverWorker = new Worker(
 
     for (const doc of docs) {
       const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
-      
+
       const createHierarchyForDate = async (dateObj: Date) => {
         // Formatter for Month Folder (e.g. "September 2026")
         const monthFormatter = new Intl.DateTimeFormat('en-US', {
@@ -190,8 +192,8 @@ export const dailyRolloverWorker = new Worker(
 
         // 1. Ensure the Month Folder Page exists
         let monthPage = await prisma.page.findFirst({
-          where: { 
-            docId: doc.id, 
+          where: {
+            docId: doc.id,
             title: monthTitle,
             parentPageId: null // Top level page acts as folder
           }
@@ -210,8 +212,8 @@ export const dailyRolloverWorker = new Worker(
 
         // 2. Ensure the Day Subpage exists under the Month Folder
         const existingDayPage = await prisma.page.findFirst({
-          where: { 
-            docId: doc.id, 
+          where: {
+            docId: doc.id,
             title: dayTitle,
             parentPageId: monthPage.id
           }

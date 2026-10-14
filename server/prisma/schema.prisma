@@ -203,7 +203,8 @@ model Page {
   subpages     Page[]    @relation("PageHierarchy")
   versions     PageVersion[]
 
-  @@index([docId])
+  /// Journal day/month page lookups by { docId, parentPageId, title } (also serves docId-only lookups)
+  @@index([docId, parentPageId, title])
   @@index([parentPageId])
   @@index([reportDate])
 }
@@ -253,6 +254,8 @@ model Task {
   teamAssignAccessRole     String?
   /// Manual board order; null falls back to createdAt (see taskSortKey)
   position                 Float?
+  /// Erased from today's daily rollover page: left off (with its subtasks) until mentioned there again
+  rolloverExcluded         Boolean            @default(false)
   attachments              Attachment[]
   checklists               Checklist[]
   subtasks                 Subtask[]
@@ -264,7 +267,8 @@ model Task {
   notifications            TaskNotification[]
   assignees                User[]             @relation("TaskMultiAssignees")
 
-  @@index([listId])
+  /// Board load: tasks of one list ordered by createdAt (also serves listId-only lookups)
+  @@index([listId, createdAt])
   @@index([status])
   @@index([priority])
   @@index([assigneeId])

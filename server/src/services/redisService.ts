@@ -123,7 +123,17 @@ export async function removeOTP(email: string) {
 }
 
 // Generic Redis Cache-Aside & Cache Invalidation Helpers
-export async function setCache(key: string, value: any, ttlSeconds: number = 300) {
+
+// Bumped by every invalidation. A cache-aside read takes it before querying the DB and passes it to setCache,
+// which then skips the write if an invalidation ran meanwhile — otherwise a slow query that started before a
+// change would store pre-change data for the whole TTL. (Single API process, so an in-memory counter suffices.)
+let cacheGeneration = 0;
+export function getCacheGeneration() {
+  return cacheGeneration;
+}
+
+export async function setCache(key: string, value: any, ttlSeconds: number = 300, generation?: number) {
+  if (generation !== undefined && generation !== cacheGeneration) return;
   try {
     const stringVal = JSON.stringify(value);
     await redis.set(`cache:${key}`, stringVal, 'EX', ttlSeconds);
@@ -156,8 +166,9 @@ export async function getCache<T>(key: string): Promise<T | null> {
 
 /** Wipes every cache:* entry, leaving refresh tokens, OTPs, and blacklisted tokens untouched. */
 export async function clearAllCache(): Promise<number> {
+  cacheGeneration++;
   try {
-    const keys = await redis.keys('cache:*');
+    const keys = await scanKeys('cache:*');
     if (keys.length > 0) {
       await redis.del(...keys);
     }
@@ -170,13 +181,27 @@ export async function clearAllCache(): Promise<number> {
   }
 }
 
+// SCAN instead of KEYS: KEYS walks the whole keyspace in one blocking call, stalling every other Redis client
+async function scanKeys(pattern: string): Promise<string[]> {
+  const found: string[] = [];
+  let cursor = '0';
+  do {
+    const [next, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 500);
+    cursor = next;
+    found.push(...batch);
+  } while (cursor !== '0');
+  return found;
+}
+
 export async function invalidateCache(...keys: string[]) {
-  for (const key of keys) {
+  cacheGeneration++;
+  // Keys are cleared in parallel: callers await this before broadcasting, so its latency delays realtime events
+  await Promise.all(keys.map(async (key) => {
     try {
       await redis.del(`cache:${key}`);
       if (key.endsWith(':all') || key.includes('*') || key.startsWith('tasks')) {
         const prefix = key.replace(/:all$/, '').replace(/\*$/, '');
-        const matching = await redis.keys(`cache:${prefix}*`);
+        const matching = await scanKeys(`cache:${prefix}*`);
         if (matching.length > 0) {
           await redis.del(...matching);
         }
@@ -190,5 +215,5 @@ export async function invalidateCache(...keys: string[]) {
         inMemoryCacheStore.delete(memKey);
       }
     }
-  }
+  }));
 }

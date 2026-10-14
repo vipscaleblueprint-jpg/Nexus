@@ -18,6 +18,26 @@ export function stripMentionSnapshots(content: string): string {
   return stripped;
 }
 
+const MENTION_TAG = /<span\b[^>]*\bdata-type="mention"[^>]*>/g;
+
+/** Ids of the tasks (not subtasks or status columns) mentioned anywhere on a page. */
+export function taskMentionIds(content: string | null | undefined): Set<string> {
+  let html = content || '';
+  try {
+    const blocks = JSON.parse(html);
+    if (Array.isArray(blocks)) html = blocks.map((b: any) => String(b?.content ?? '')).join('\n');
+  } catch {
+    // not block JSON (legacy markdown page): scan the raw text
+  }
+  const ids = new Set<string>();
+  for (const [tag] of html.matchAll(MENTION_TAG)) {
+    const id = tag.match(/\bdata-id="([^"]+)"/)?.[1];
+    const type = tag.match(/\bdata-mention-type="([^"]*)"/)?.[1] || 'task';
+    if (id && type === 'task') ids.add(id);
+  }
+  return ids;
+}
+
 const isEmptyBlock = (b: any) =>
   b?.type === 'text' && /^(<p>(\s|&nbsp;|<br\s*\/?>)*<\/p>)?$/i.test(String(b.content ?? '').trim());
 // Sections of the journal day page are delimited by h2/h3 headings (client names, "New Tasks")

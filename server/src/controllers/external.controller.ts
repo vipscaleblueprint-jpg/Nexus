@@ -5,6 +5,7 @@ import { timingSafeEqual } from 'crypto';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { appendTaskToJournal } from '../utils/pageBlocks';
+import { updatePageBlocks } from '../services/pageContentService';
 
 
 async function getOrCreateVipScaleUser() {
@@ -459,8 +460,6 @@ export async function createTask(req: Request, res: Response) {
         });
 
         if (todayPage && todayPage.content) {
-          const blocks = JSON.parse(todayPage.content);
-          
           const clientName = list.name || 'Unknown Client';
           const getNewTaskBlock = (suffix: string) => ({
             id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
@@ -468,14 +467,11 @@ export async function createTask(req: Request, res: Response) {
             content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span></p>`
           });
 
-          appendTaskToJournal(blocks, clientName, getNewTaskBlock);
-
-          await prisma.page.update({
-            where: { id: todayPage.id },
-            data: { content: JSON.stringify(blocks) }
+          const written = await updatePageBlocks(todayPage, (blocks) => {
+            appendTaskToJournal(blocks, clientName, getNewTaskBlock);
           });
 
-          io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+          if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
         }
       }
     } catch (error) {
@@ -546,28 +542,21 @@ export async function updateTask(req: Request, res: Response) {
           });
 
           if (todayPage && todayPage.content) {
-            const blocks = JSON.parse(todayPage.content);
-            
             const taskMention = `data-id="${task.id}"`;
-            const isAlreadyInJournal = blocks.some((b: any) => b.type === 'text' && b.content.includes(taskMention));
+            const clientName = existingTask.list?.name || 'Unknown Client';
+            const getNewTaskBlock = (suffix: string) => ({
+              id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
+              type: "text",
+              content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span></p>`
+            });
 
-            if (!isAlreadyInJournal) {
-              const clientName = existingTask.list?.name || 'Unknown Client';
-              const getNewTaskBlock = (suffix: string) => ({
-                id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
-                type: "text",
-                content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span></p>`
-              });
-
+            const written = await updatePageBlocks(todayPage, (blocks) => {
+              const isAlreadyInJournal = blocks.some((b: any) => b.type === 'text' && b.content.includes(taskMention));
+              if (isAlreadyInJournal) return false;
               appendTaskToJournal(blocks, clientName, getNewTaskBlock);
+            });
 
-              await prisma.page.update({
-                where: { id: todayPage.id },
-                data: { content: JSON.stringify(blocks) }
-              });
-
-              io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
-            }
+            if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
           }
         }
       } catch (error) {
@@ -855,12 +844,11 @@ export async function createSubtask(req: Request, res: Response) {
         });
 
         if (todayPage && todayPage.content) {
-          const blocks = JSON.parse(todayPage.content);
-          
           const parentTaskMention = `data-id="${task.id}"`;
-          const parentTaskIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content.includes(parentTaskMention));
+          const written = await updatePageBlocks(todayPage, (blocks) => {
+            const parentTaskIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content.includes(parentTaskMention));
+            if (parentTaskIndex === -1) return false;
 
-          if (parentTaskIndex !== -1) {
             const newSubtaskBlock = {
               id: `blk-st-${Date.now()}-${subtask.id}`,
               type: "text",
@@ -876,16 +864,11 @@ export async function createSubtask(req: Request, res: Response) {
                 break;
               }
             }
-            
+
             blocks.splice(insertIndex, 0, newSubtaskBlock);
+          });
 
-            await prisma.page.update({
-              where: { id: todayPage.id },
-              data: { content: JSON.stringify(blocks) }
-            });
-
-            io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
-          }
+          if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
         }
       }
     } catch (error) {

@@ -3,7 +3,6 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import { requireEnv } from '../config/env';
 import { logger, errMsg } from '../config/logger';
 import { prisma } from '../config/prisma';
-import path from 'path';
 
 
 const accountId = requireEnv('R2_ACCOUNT_ID');
@@ -22,6 +21,29 @@ const s3 = new S3Client({
   forcePathStyle: true,
 });
 
+// The bucket is public and the browser-supplied type is untrusted. Only these types are served for viewing in
+// place; anything else is a download, so an uploaded HTML or SVG file can't run as a web page on the bucket's domain.
+const INLINE_TYPES = /^(image\/(png|jpeg|gif|webp|avif|bmp)|application\/pdf|video\/(mp4|webm|quicktime)|audio\/(mpeg|wav|ogg|webm|mp4)|text\/plain)$/;
+// Types a browser can execute aren't kept even for downloads (SVG keeps its type so <img> previews still work)
+const ACTIVE_TYPES = /^(text\/html|application\/xhtml\+xml|text\/xml|application\/xml|text\/javascript|application\/javascript)$/;
+
+function storageHeaders(mimetype: string, safeFilename: string) {
+  const type = mimetype.split(';')[0].trim().toLowerCase();
+  if (INLINE_TYPES.test(type)) return { ContentType: type };
+  return {
+    ContentType: ACTIVE_TYPES.test(type) ? 'application/octet-stream' : type || 'application/octet-stream',
+    ContentDisposition: `attachment; filename="${safeFilename}"`,
+  };
+}
+
+const AVATAR_EXTENSIONS: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/avif': '.avif',
+};
+
 export const uploadFile = async (req: Request, res: Response) => {
   try {
     if (!req.file) {
@@ -29,7 +51,8 @@ export const uploadFile = async (req: Request, res: Response) => {
     }
 
     const { originalname, buffer, mimetype } = req.file;
-    const { folder = 'general' } = req.body; // e.g. "comments" or "description"
+    // e.g. "comments" or "description"; client-supplied, so kept to a plain folder name
+    const folder = String(req.body.folder || 'general').replace(/[^a-zA-Z0-9_-]/g, '_') || 'general';
 
     // Generate a unique key
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
@@ -41,7 +64,7 @@ export const uploadFile = async (req: Request, res: Response) => {
       Bucket: bucketName,
       Key: objectKey,
       Body: buffer,
-      ContentType: mimetype,
+      ...storageHeaders(mimetype, safeFilename),
     });
 
     await s3.send(command);
@@ -73,9 +96,14 @@ export const uploadAvatar = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { originalname, buffer, mimetype } = req.file;
-    const ext = path.extname(originalname) || '';
-    
+    const { buffer, mimetype } = req.file;
+    // Raster images only (no SVG: it can carry scripts), with the extension taken from the type, not the file name
+    const contentType = mimetype.split(';')[0].trim().toLowerCase();
+    const ext = AVATAR_EXTENSIONS[contentType];
+    if (!ext) {
+      return res.status(400).json({ error: 'Avatar must be a PNG, JPEG, GIF, WEBP or AVIF image' });
+    }
+
     // 1. Generate versioned key: nexus-avatars/{userId}-{timestamp}{ext}
     const objectKey = `nexus-avatars/${userId}-${Math.floor(Date.now() / 1000)}${ext}`;
 
@@ -84,7 +112,7 @@ export const uploadAvatar = async (req: Request, res: Response) => {
       Bucket: bucketName,
       Key: objectKey,
       Body: buffer,
-      ContentType: mimetype,
+      ContentType: contentType,
       CacheControl: 'public, max-age=31536000, immutable',
     });
 
@@ -113,7 +141,12 @@ export const uploadAvatar = async (req: Request, res: Response) => {
       });
     }
 
-    res.status(200).json({ url: newAvatarUrl, user: updatedUser });
+    // Never send the password hash or Google ID back; credits is a BigInt, which JSON can't serialize
+    const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
+    res.status(200).json({
+      url: newAvatarUrl,
+      user: { ...safeUser, credits: safeUser.credits != null ? Number(safeUser.credits) : null },
+    });
   } catch (error: any) {
     logger.error({ err: error }, `Error uploading avatar to R2: ${error?.name}: ${errMsg(error)}`);
     res.status(500).json({ error: error.message || 'Failed to upload avatar' });

@@ -30,3 +30,6 @@ tests/
 *.test.ts
 *.spec.ts
 tmp/
+
+# Real user data (emails, password hashes): local only, never commit
+prisma/backup.json

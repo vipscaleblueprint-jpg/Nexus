@@ -1,20 +1,15 @@
 import { z } from 'zod';
-import { EMPLOYMENT_TYPES, SYSTEM_ROLES } from '../../types';
-import { httpUrl, shortText, uuid } from './common';
+import { httpUrl, shortText } from './common';
 
 const email = z.string().trim().toLowerCase().email('must be a valid email address');
 const password = z.string().min(6, 'password must be at least 6 characters').max(128);
 
+// Only what a self-registering user may choose. Role, job roles, team, rating and employment type are set by an
+// admin or the VIPScale sync; accepting them here let anyone sign up straight into ADMIN.
 export const signupSchema = z.object({
   email,
   password,
   name: shortText('name').min(2, 'name must be at least 2 characters'),
-  systemRole: z.enum(SYSTEM_ROLES).optional(),
-  roles: z.array(z.string()).optional(),
-  employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
-  dailySheetUrl: httpUrl.optional(),
-  starRating: z.number().int().min(1).max(3).optional(),
-  teamId: uuid.optional(),
   rememberMe: z.boolean().optional(),
 });
 

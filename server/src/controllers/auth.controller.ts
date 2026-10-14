@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 type SystemRole = 'ADMIN' | 'MEMBER';
@@ -18,6 +19,7 @@ import {
   storeOTP,
   getOTP,
   removeOTP,
+  recordFailedOTPAttempt,
 } from '../services/redisService';
 import { sendOTPEmail, sendPasswordChangeEmail } from '../services/emailService';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -41,6 +43,9 @@ const GOOGLE_CALLBACK_URL = requireEnv('GOOGLE_CALLBACK_URL');
 const FRONTEND_URL = optionalEnv('FRONTEND_URL') || requireEnv('CORS_ORIGIN');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
+
+// Wrong guesses allowed per password-reset code before it's discarded
+const MAX_OTP_ATTEMPTS = 5;
 
 function setAuthCookies(
   res: Response,
@@ -90,6 +95,12 @@ function generateTokens(user: {
 }
 
 export async function signup(req: Request, res: Response) {
+  // Accounts come from the VIPScale sync, SSO, Google login (existing or invited users) and admins.
+  // Open self-signup would hand anyone on the internet full workspace access, so it's off unless enabled.
+  if (optionalEnv('ALLOW_PUBLIC_SIGNUP') !== 'true') {
+    return res.status(403).json({ error: 'Public signup is disabled. Ask an admin for an invitation.' });
+  }
+
   try {
     const data = req.body as SignupInput;
     const rememberMe = data.rememberMe ?? true;
@@ -106,12 +117,10 @@ export async function signup(req: Request, res: Response) {
         email: data.email,
         password: hashedPassword,
         name: data.name,
-        systemRole: data.systemRole || 'MEMBER',
-        roles: data.roles || [],
-        employmentType: data.employmentType || 'FULL_TIME',
-        dailySheetUrl: data.dailySheetUrl,
-        starRating: data.starRating || 1,
-        teamId: data.teamId,
+        systemRole: 'MEMBER',
+        roles: [],
+        employmentType: 'FULL_TIME',
+        starRating: 1,
       },
       include: { team: true },
     });
@@ -241,22 +250,52 @@ export async function googleCallback(req: Request, res: Response) {
 
     const googleUser = await userRes.json();
 
+    // An unverified address may not belong to whoever holds the Google account, and it would log them in as the
+    // existing Nexus user with that email
+    if (!googleUser.email || googleUser.email_verified !== true) {
+      return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent('Your Google email address is not verified')}`);
+    }
+
     let user = await prisma.user.findUnique({ where: { email: googleUser.email } });
 
+    if (user && !user.isActive) {
+      return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent('This account has been deactivated')}`);
+    }
+
     if (!user) {
-      const randomPassword = await bcrypt.hash(Math.random().toString(36), 10);
-      user = await prisma.user.create({
-        data: {
-          email: googleUser.email,
-          name: googleUser.name || googleUser.email.split('@')[0],
-          avatarUrl: googleUser.picture,
-          imageUrl: googleUser.picture,
-          googleId: googleUser.sub,
-          password: randomPassword,
-          systemRole: 'MEMBER',
-          employmentType: 'FULL_TIME',
-          starRating: 1,
+      // Any Google account can reach this, and every account sees the whole workspace, so new accounts are only
+      // created for emails with a pending invitation (which sets their role)
+      const invitation = await prisma.invitation.findFirst({
+        where: {
+          email: { equals: googleUser.email, mode: 'insensitive' },
+          status: 'PENDING',
+          expiresAt: { gt: new Date() },
         },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!invitation) {
+        return res.redirect(
+          `${FRONTEND_URL}?error=${encodeURIComponent('No Nexus account exists for this Google account. Ask an admin for an invitation.')}`
+        );
+      }
+
+      const randomPassword = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+      user = await prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            email: googleUser.email,
+            name: googleUser.name || googleUser.email.split('@')[0],
+            avatarUrl: googleUser.picture,
+            imageUrl: googleUser.picture,
+            googleId: googleUser.sub,
+            password: randomPassword,
+            systemRole: invitation.role,
+            employmentType: invitation.employmentType,
+            starRating: 1,
+          },
+        });
+        await tx.invitation.update({ where: { id: invitation.id }, data: { status: 'ACCEPTED' } });
+        return created;
       });
     } else {
       await prisma.user.update({
@@ -386,8 +425,10 @@ export async function updateProfile(req: AuthRequest, res: Response) {
     // Name and daily sheet are mirrored in the tools' assistant row.
     queueUserPush(updatedUser.email);
 
+    // Never send the password hash or Google ID back.
     // credits is a BigInt column — JSON.stringify (via res.json) can't serialize it directly.
-    return res.json({ user: { ...updatedUser, credits: updatedUser.credits != null ? Number(updatedUser.credits) : null } });
+    const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
+    return res.json({ user: { ...safeUser, credits: safeUser.credits != null ? Number(safeUser.credits) : null } });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -436,12 +477,15 @@ export async function forgotPassword(req: Request, res: Response) {
   try {
     const { email } = req.body as ForgotPasswordInput;
 
+    // Same answer whether or not the email has an account, so this can't be used to find out who has one
+    const sentResponse = { message: 'If an account exists for this email, a verification code has been sent to it' };
+
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
     if (!user) {
-      return res.status(404).json({ error: 'No account registered with this email address' });
+      return res.json(sentResponse);
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     await storeOTP(user.email, otpCode, 600);
 
@@ -450,7 +494,7 @@ export async function forgotPassword(req: Request, res: Response) {
       return res.status(500).json({ error: 'Failed to dispatch verification email. Please try again.' });
     }
 
-    return res.json({ message: 'Verification OTP code sent to your email address' });
+    return res.json(sentResponse);
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Forgot password request failed' });
   }
@@ -463,6 +507,11 @@ export async function resetPassword(req: Request, res: Response) {
 
     const storedOTP = await getOTP(normalizedEmail);
     if (!storedOTP || storedOTP !== otp.trim()) {
+      // A 6-digit code falls to brute force, so it's thrown away after a few wrong guesses
+      if (storedOTP && (await recordFailedOTPAttempt(normalizedEmail)) >= MAX_OTP_ATTEMPTS) {
+        await removeOTP(normalizedEmail);
+        return res.status(400).json({ error: 'Too many incorrect codes. Please request a new verification code.' });
+      }
       return res.status(400).json({ error: 'Invalid or expired OTP verification code' });
     }
 
@@ -526,7 +575,7 @@ export async function ssoAuth(req: Request, res: Response) {
     let user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
-      const randomPassword = await bcrypt.hash(Math.random().toString(36), 10);
+      const randomPassword = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
       user = await prisma.user.create({
         data: {
           email,
@@ -537,6 +586,9 @@ export async function ssoAuth(req: Request, res: Response) {
           starRating: 1,
         },
       });
+    } else if (!user.isActive) {
+      // Not back to the tools' SSO: it would hand us a fresh token and loop
+      return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent('This account has been deactivated')}`);
     } else {
       await prisma.user.update({
         where: { id: user.id },

@@ -75,13 +75,16 @@ export async function isTokenBlacklisted(token: string): Promise<boolean> {
 
 // In-Memory Fallback Store
 const inMemoryOTPStore = new Map<string, { otp: string; expiresAt: number }>();
+const inMemoryOTPAttempts = new Map<string, { count: number; expiresAt: number }>();
 const inMemoryCacheStore = new Map<string, { value: string; expiresAt: number }>();
 
 // OTP (One-Time Password) Storage for Forgot Password Flow (10-min default TTL)
 export async function storeOTP(email: string, otp: string, ttlSeconds: number = 600) {
   const normalizedEmail = email.toLowerCase().trim();
+  inMemoryOTPAttempts.delete(normalizedEmail);
   try {
-    await redis.set(`otp:${normalizedEmail}`, otp, 'EX', ttlSeconds);
+    // A new code starts with a clean wrong-guess count
+    await redis.multi().set(`otp:${normalizedEmail}`, otp, 'EX', ttlSeconds).del(`otp-attempts:${normalizedEmail}`).exec();
   } catch (err) {
     log.warn({ err }, `storeOTP failed, falling back to in-memory store: ${errMsg(err)}`);
     inMemoryOTPStore.set(normalizedEmail, {
@@ -115,28 +118,74 @@ export async function getOTP(email: string): Promise<string | null> {
 export async function removeOTP(email: string) {
   const normalizedEmail = email.toLowerCase().trim();
   try {
-    await redis.del(`otp:${normalizedEmail}`);
+    await redis.del(`otp:${normalizedEmail}`, `otp-attempts:${normalizedEmail}`);
   } catch (err) {
     log.error({ err }, `removeOTP failed: ${errMsg(err)}`);
   }
   inMemoryOTPStore.delete(normalizedEmail);
+  inMemoryOTPAttempts.delete(normalizedEmail);
+}
+
+/** Counts a wrong reset-code guess for this email and returns the total so far (for the current code). */
+export async function recordFailedOTPAttempt(email: string, ttlSeconds: number = 600): Promise<number> {
+  const normalizedEmail = email.toLowerCase().trim();
+  try {
+    const key = `otp-attempts:${normalizedEmail}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, ttlSeconds);
+    return count;
+  } catch (err) {
+    const record = inMemoryOTPAttempts.get(normalizedEmail);
+    const count = record && record.expiresAt > Date.now() ? record.count + 1 : 1;
+    inMemoryOTPAttempts.set(normalizedEmail, { count, expiresAt: Date.now() + ttlSeconds * 1000 });
+    return count;
+  }
 }
 
 // Generic Redis Cache-Aside & Cache Invalidation Helpers
 
-// Bumped by every invalidation. A cache-aside read takes it before querying the DB and passes it to setCache,
-// which then skips the write if an invalidation ran meanwhile — otherwise a slow query that started before a
-// change would store pre-change data for the whole TTL. (Single API process, so an in-memory counter suffices.)
-let cacheGeneration = 0;
-export function getCacheGeneration() {
-  return cacheGeneration;
+// A key's family is its first segment: "tasks:all:<listId>:..." -> "tasks", "task:<id>" -> "task".
+function cacheFamily(key: string) {
+  return key.split(':')[0];
 }
 
-export async function setCache(key: string, value: any, ttlSeconds: number = 300, generation?: number) {
-  if (generation !== undefined && generation !== cacheGeneration) return;
+// Each family keeps a sorted set of its cached keys (score = expiry time), so a prefix invalidation reads that
+// small set instead of SCANning the whole keyspace, which also holds the BullMQ queues, refresh tokens, OTPs and
+// blacklisted tokens. Lives under cache:* so clearAllCache wipes it with everything else.
+function familyIndexKey(family: string) {
+  return `cache:__index:${family}`;
+}
+
+// Bumped per family by every invalidation. A cache-aside read takes its key's generation before querying the DB
+// and passes it to setCache, which then skips the write if that family was invalidated meanwhile — otherwise a
+// slow query that started before a change would store pre-change data for the whole TTL. Per family, so a write to
+// one kind of data (a comment, a team) doesn't stop every other in-flight read from being cached.
+// (Single API process, so in-memory counters suffice.)
+let cacheEpoch = 0; // bumped by clearAllCache, which invalidates every family
+const familyGenerations = new Map<string, number>();
+
+export function getCacheGeneration(key: string): string {
+  return `${cacheEpoch}.${familyGenerations.get(cacheFamily(key)) ?? 0}`;
+}
+
+function bumpFamilyGeneration(key: string) {
+  const family = cacheFamily(key);
+  familyGenerations.set(family, (familyGenerations.get(family) ?? 0) + 1);
+}
+
+export async function setCache(key: string, value: any, ttlSeconds: number = 300, generation?: string) {
+  if (generation !== undefined && generation !== getCacheGeneration(key)) return;
   try {
     const stringVal = JSON.stringify(value);
-    await redis.set(`cache:${key}`, stringVal, 'EX', ttlSeconds);
+    const now = Date.now();
+    const index = familyIndexKey(cacheFamily(key));
+    // One round trip: store the value, record it in its family index, and drop index entries that have expired
+    await redis
+      .multi()
+      .set(`cache:${key}`, stringVal, 'EX', ttlSeconds)
+      .zadd(index, now + ttlSeconds * 1000, key)
+      .zremrangebyscore(index, '-inf', now)
+      .exec();
   } catch (err) {
     inMemoryCacheStore.set(key, {
       value: JSON.stringify(value),
@@ -166,7 +215,7 @@ export async function getCache<T>(key: string): Promise<T | null> {
 
 /** Wipes every cache:* entry, leaving refresh tokens, OTPs, and blacklisted tokens untouched. */
 export async function clearAllCache(): Promise<number> {
-  cacheGeneration++;
+  cacheEpoch++;
   try {
     const keys = await scanKeys('cache:*');
     if (keys.length > 0) {
@@ -194,17 +243,22 @@ async function scanKeys(pattern: string): Promise<string[]> {
 }
 
 export async function invalidateCache(...keys: string[]) {
-  cacheGeneration++;
+  keys.forEach(bumpFamilyGeneration);
   // Keys are cleared in parallel: callers await this before broadcasting, so its latency delays realtime events
   await Promise.all(keys.map(async (key) => {
     try {
-      await redis.del(`cache:${key}`);
+      const index = familyIndexKey(cacheFamily(key));
       if (key.endsWith(':all') || key.includes('*') || key.startsWith('tasks')) {
+        // Prefix invalidation: every cached key in the family that starts with the prefix
         const prefix = key.replace(/:all$/, '').replace(/\*$/, '');
-        const matching = await scanKeys(`cache:${prefix}*`);
-        if (matching.length > 0) {
-          await redis.del(...matching);
-        }
+        const matching = (await redis.zrange(index, 0, -1)).filter((cached) => cached.startsWith(prefix));
+        await redis
+          .multi()
+          .del(`cache:${key}`, ...matching.map((cached) => `cache:${cached}`))
+          .zrem(index, key, ...matching)
+          .exec();
+      } else {
+        await redis.multi().del(`cache:${key}`).zrem(index, key).exec();
       }
     } catch (err) {
       // ignore

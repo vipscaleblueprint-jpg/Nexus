@@ -42,7 +42,11 @@ export function downloadFile(fileName: string, contents: string, mime: string) {
 
 // ── Sanitizing (imported files are untrusted) ───────────────────────────────
 
-const DROP_TAGS = 'script,style,iframe,object,embed,link,meta,noscript,template,form,input:not([type="checkbox"]),button,select,textarea,svg,canvas,video,audio';
+// <base> would redirect every relative link on the page it's shown in. (<frameset> itself stays: it can be the
+// document's body, and removing it leaves body null; its <frame>s are dropped.)
+const DROP_TAGS = 'script,style,iframe,frame,object,embed,applet,base,link,meta,noscript,template,form,input:not([type="checkbox"]),button,select,textarea,svg,canvas,video,audio';
+
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'background', 'poster', 'data', 'cite']);
 
 /** Parses untrusted HTML without executing it and strips scripts, handlers and unsafe URLs. */
 export function sanitizeHtml(html: string): Document {
@@ -51,10 +55,11 @@ export function sanitizeHtml(html: string): Document {
   parsed.querySelectorAll('*').forEach(el => {
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
-      const value = attr.value.trim().toLowerCase();
+      // Browsers ignore tabs, newlines and control characters in URLs, so "java&#9;script:" still runs: drop them first
+      const value = attr.value.toLowerCase().replace(/[\u0000- ]/g, '');
       if (name.startsWith('on') || name === 'style' || name === 'srcset') {
         el.removeAttribute(attr.name);
-      } else if ((name === 'href' || name === 'src') && /^(javascript|data|vbscript):/.test(value)) {
+      } else if (URL_ATTRS.has(name) && /^(javascript|data|vbscript):/.test(value)) {
         el.removeAttribute(attr.name);
       }
     }

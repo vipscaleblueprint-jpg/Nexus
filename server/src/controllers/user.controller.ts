@@ -4,6 +4,7 @@ import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache, clearAllCache } from '../services/redisService';
 import { syncUsers } from './webhook.controller';
 import { queueUserPush } from '../services/toolsSync';
+import type { AuthRequest } from '../types';
 
 export async function triggerSyncUsers(req: Request, res: Response) {
   req.headers['x-api-key'] = process.env.VIPSCALE_API_KEY;
@@ -154,9 +155,16 @@ export async function deleteUser(req: Request, res: Response) {
 // API KEYS
 // -----------------------------------------------------------------------------
 
+// A key acts as its owner on the external API (an admin's key can delete users and change roles),
+// so a user can only list, create and delete their own
+function ownsKeysOf(req: Request, userId: string) {
+  return (req as AuthRequest).user?.id === userId;
+}
+
 export async function getApiKeys(req: Request, res: Response) {
   try {
     const { id } = req.params;
+    if (!ownsKeysOf(req, id)) return res.status(403).json({ error: 'You can only manage your own API keys' });
     const apiKeys = await db.apiKey.findMany({
       where: { userId: id },
       orderBy: { createdAt: 'desc' },
@@ -171,6 +179,7 @@ export async function createApiKey(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const { name } = req.body;
+    if (!ownsKeysOf(req, id)) return res.status(403).json({ error: 'You can only manage your own API keys' });
 
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
@@ -191,6 +200,7 @@ export async function createApiKey(req: Request, res: Response) {
 export async function deleteApiKey(req: Request, res: Response) {
   try {
     const { id, keyId } = req.params;
+    if (!ownsKeysOf(req, id)) return res.status(403).json({ error: 'You can only manage your own API keys' });
     await db.apiKey.delete({
       where: { id: keyId, userId: id },
     });

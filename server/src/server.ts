@@ -5,12 +5,13 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { WebSocketServer } from 'ws';
 import { Hocuspocus } from '@hocuspocus/server';
-import { requireEnv } from './config/env';
+import { requireEnv, optionalEnv } from './config/env';
 import { logger, createLogger, errMsg } from './config/logger';
 import { httpLogger } from './middleware/logging.middleware';
 import { serverTiming, getInFlightRequests } from './middleware/serverTiming.middleware';
 import { startRuntimeMetrics } from './config/runtimeMetrics';
 import { rateLimiter, botBlocker, corsOptions } from './middleware/security.middleware';
+import { requireLoginExcept, verifyAccessToken, readCookie } from './middleware/auth.middleware';
 import { authRouter } from './routes/auth.routes';
 import { userRouter } from './routes/user.routes';
 import { spaceRouter } from './routes/space.routes';
@@ -59,23 +60,32 @@ hocuspocus.configure({
   async onConnect(data) {
     logger.info(`Hocuspocus Client connecting to document: ${data.documentName}`);
   },
+  // Fires on every edit (each keystroke), so debug only: at info it floods the production log
   async onChange(data) {
-    logger.info(`Hocuspocus Document changed: ${data.documentName}`);
+    logger.debug(`Hocuspocus Document changed: ${data.documentName}`);
   },
 });
 const wss = new WebSocketServer({ noServer: true });
 
-server.on('upgrade', (request, socket, head) => {
+server.on('upgrade', async (request, socket, head) => {
   const url = request.url || '';
-  logger.info(`WebSocket Upgrade request to: ${url}`);
+  logger.debug(`WebSocket Upgrade request to: ${url}`);
   if (url.startsWith('/collaboration')) {
+    // Same session as the HTTP API: the browser sends the accessToken cookie with the WebSocket handshake
+    const user = await verifyAccessToken(readCookie(request.headers.cookie, 'accessToken'));
+    if (!user) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
     // HocuspocusProvider appends the document name to the URL path.
     // e.g. ws://host/collaboration/task-abc123 → document name = "task-abc123"
     // Strip /collaboration prefix so Hocuspocus sees "/<docName>" and parses it correctly.
     const docPath = url.replace(/^\/collaboration/, '') || '/default';
     const documentName = docPath.split('?')[0].replace(/^\//, '') || 'default';
     
-    logger.info(`Accepting Hocuspocus connection for document: ${documentName}`);
+    logger.debug(`Accepting Hocuspocus connection for document: ${documentName}`);
     wss.handleUpgrade(request, socket, head, (ws) => {
       // Rewrite request.url so Hocuspocus internal parsing reads the correct document name
       request.url = '/' + documentName;
@@ -84,15 +94,28 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
+// Behind a reverse proxy, req.ip is the proxy's address unless Express trusts it, so every user would share one
+// rate-limit bucket. TRUST_PROXY = how many proxies sit in front of this server (e.g. 1); unset trusts none.
+const trustProxyHops = Number(optionalEnv('TRUST_PROXY'));
+if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
+  app.set('trust proxy', trustProxyHops);
+}
+
 // Global Security, Logging & CORS Middlewares
 app.use(serverTiming);
 app.use(httpLogger);
 app.use(cors(corsOptions));
 app.use(botBlocker);
 app.use(rateLimiter);
+app.use(cookieParser());
+// Every API section needs a logged-in user except these, which authenticate themselves: the login flows, and the
+// integrations that use an API key (/external) or the shared VIPScale key (/webhooks).
+// Before body parsing, so anonymous requests never get a large body parsed.
+app.use('/api', requireLoginExcept(['health', 'auth', 'external', 'webhooks']));
+// Login, signup and password-reset bodies are tiny: anonymous callers don't get the 50 MB limit
+app.use('/api/auth', express.json({ limit: '100kb' }), express.urlencoded({ limit: '100kb', extended: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(cookieParser());
 
 // Health Check API
 app.get('/api/health', (req, res) => {
@@ -142,6 +165,15 @@ const io = new Server(server, {
 
 const socketLog = createLogger('socket.io');
 
+// Sockets need the same login as the HTTP API (the accessToken cookie, sent with the handshake via withCredentials).
+// Without this anyone could connect, join any user/list/doc room, and receive every global broadcast.
+io.use(async (socket, next) => {
+  const user = await verifyAccessToken(readCookie(socket.request.headers.cookie, 'accessToken'));
+  if (!user) return next(new Error('Unauthorized'));
+  socket.data.user = user;
+  next();
+});
+
 startRuntimeMetrics(() => ({ sockets: io.engine.clientsCount, inFlight: getInFlightRequests() }));
 
 io.on('connection', (socket) => {
@@ -154,7 +186,8 @@ io.on('connection', (socket) => {
   // Real-time Urgent Task Notification broadcast
   socket.on('urgent_task_created', (data: { taskId: string; assigneeUserId: string; title: string }) => {
     socketLog.debug({ taskId: data.taskId, assigneeUserId: data.assigneeUserId }, 'Broadcasting urgent task');
-    io.emit(`urgent_popup:${data.assigneeUserId}`, data);
+    // Only to the assignee's own room, not to every connected client
+    io.to(`user:${data.assigneeUserId}`).emit(`urgent_popup:${data.assigneeUserId}`, data);
   });
 
   // Kanban Real-time Sync
@@ -165,6 +198,8 @@ io.on('connection', (socket) => {
 
   // User Real-time Notifications
   socket.on('join_user', (userId: string) => {
+    // Only your own notification room
+    if (userId !== socket.data.user.id) return;
     socket.join(`user:${userId}`);
     socketLog.debug({ socketId: socket.id, userId }, 'Client joined user room');
   });

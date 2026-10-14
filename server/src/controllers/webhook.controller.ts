@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { Priority } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import bcrypt from 'bcryptjs';
@@ -33,10 +34,18 @@ export async function getOrCreateVipScaleUser() {
   return vipScaleUser;
 }
 
+// Constant-time, so response timing doesn't reveal how much of the key a guess got right
+function sameSecret(given: string | undefined, expected: string | undefined) {
+  if (!given || !expected) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export const requireApiKey = (req: Request, res: Response) => {
   const apiKey = req.headers['x-api-key'];
   const expected = process.env.VIPSCALE_API_KEY;
-  if (!apiKey || apiKey !== expected) {
+  if (typeof apiKey !== 'string' || !sameSecret(apiKey, expected)) {
     // Never log the actual key values — just enough shape to tell apart
     // "not set", "wrong value", and "right value with stray whitespace"
     // without a live diff between the two deployments' dashboards.

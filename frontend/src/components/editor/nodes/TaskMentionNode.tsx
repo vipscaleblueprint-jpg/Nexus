@@ -12,6 +12,7 @@ import { useAppStore } from '@/lib/store';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Command } from 'cmdk';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
+import { sanitizeHtml } from '@/components/docs/docTransfer';
 
 const STATUS_HEX_MAP: Record<string, string> = {
   PENDING: '#D4A02A',
@@ -710,7 +711,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
             <div className="font-semibold mb-1.5 text-xs text-zinc-100 uppercase tracking-wider">Deliverables:</div>
             <div 
               className="text-sm text-zinc-300 prose prose-invert prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: taskData?.description || 'No deliverables specified.' }} 
+              // Descriptions come from users, ClickUp and the external API: sanitize before rendering as HTML
+              dangerouslySetInnerHTML={{ __html: taskData?.description ? sanitizeHtml(taskData.description).body.innerHTML : 'No deliverables specified.' }}
             />
           </div>
         </PortalDropdown>

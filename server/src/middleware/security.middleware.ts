@@ -35,6 +35,15 @@ const rateLimitMap = new Map<string, { count: number; expiresAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS_PER_WINDOW = 120;
 
+// Expired entries are otherwise only replaced when the same IP comes back, so one-off visitors and scanners
+// would accumulate forever
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of rateLimitMap) {
+    if (now > record.expiresAt) rateLimitMap.delete(ip);
+  }
+}, RATE_LIMIT_WINDOW_MS).unref();
+
 export function rateLimiter(req: Request, res: Response, next: NextFunction) {
   if (process.env.NODE_ENV === 'development') return next();
 

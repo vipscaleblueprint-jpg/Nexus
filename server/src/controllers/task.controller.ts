@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { prisma } from '../config/prisma';
 import { getR2PresignedUrl } from '../services/r2Service';
 import { getCache, setCache, invalidateCache, getCacheGeneration } from '../services/redisService';
@@ -1061,87 +1062,63 @@ export async function createTaskComment(req: Request, res: Response) {
       return res.status(400).json({ error: 'Content cannot be empty' });
     }
 
-    const comment = await prisma.taskComment.create({
-      data: {
-        content: content.trim(),
-        taskId,
-        userId: effectiveUserId,
-        ...(parentCommentId ? { parentCommentId } : {}),
-        ...(subtaskId ? { subtaskId } : {}),
-      },
-      include: {
-        reactions: { include: { user: { select: { id: true, name: true } } } },
-        replies: {
-          include: {
-            reactions: { include: { user: { select: { id: true, name: true } } } },
-          },
+    // The comment, its audit log, the author lookup and the parent's reply count are independent writes/reads,
+    // so they run in parallel: one ~190 ms DB round trip before the broadcast instead of one per step. Ids are
+    // made here so the audit log can reference the comment without waiting for it.
+    const commentId = randomUUID();
+    const logId = randomUUID();
+    const loggedAt = new Date();
+    const results = await Promise.allSettled([
+      prisma.taskComment.create({
+        data: {
+          id: commentId,
+          content: content.trim(),
+          taskId,
+          userId: effectiveUserId,
+          ...(parentCommentId ? { parentCommentId } : {}),
+          ...(subtaskId ? { subtaskId } : {}),
         },
-      },
-    });
-
-    // Increment replyCount on parent comment
-    if (parentCommentId) {
-      await prisma.taskComment.update({
-        where: { id: parentCommentId },
-        data: { replyCount: { increment: 1 } },
-      });
+      }),
+      prisma.user.findUnique({
+        where: { id: effectiveUserId },
+        select: { id: true, name: true, avatarUrl: true, email: true },
+      }),
+      prisma.auditLog.create({
+        data: {
+          id: logId,
+          createdAt: loggedAt,
+          action: parentCommentId ? 'REPLY' : 'COMMENT',
+          entity: 'TASK',
+          entityId: taskId,
+          userId: effectiveUserId,
+          details: { text: content.trim(), commentId, parentCommentId: parentCommentId || null, subtaskId: subtaskId || null },
+        },
+      }),
+      // Increment replyCount on parent comment
+      parentCommentId
+        ? prisma.taskComment.update({ where: { id: parentCommentId }, data: { replyCount: { increment: 1 } } })
+        : Promise.resolve(null),
+    ]);
+    const [createdRes, userRes, logRes, parentRes] = results;
+    if (createdRes.status === 'rejected') {
+      // No comment, so nothing else may stand: undo whatever of the parallel writes did land
+      if (logRes.status === 'fulfilled') prisma.auditLog.delete({ where: { id: logId } }).catch(() => {});
+      if (parentCommentId && parentRes.status === 'fulfilled') {
+        prisma.taskComment.update({ where: { id: parentCommentId }, data: { replyCount: { decrement: 1 } } }).catch(() => {});
+      }
+      throw createdRes.reason;
     }
-
-    const user = await prisma.user.findUnique({
-      where: { id: effectiveUserId },
-      select: { id: true, name: true, avatarUrl: true, email: true },
-    });
+    if (logRes.status === 'rejected') console.error('createTaskComment: audit log failed:', logRes.reason);
+    const user = userRes.status === 'fulfilled' ? userRes.value : null;
+    // Same shape the old include returned (a new comment has no reactions or replies yet), plus its author
+    const comment = { ...createdRes.value, reactions: [], replies: [], user };
+    const log = { id: logId, createdAt: loggedAt };
 
     // Mentions are derived from the comment content itself (mention:// links) so every
     // comment path (main task, subtask, replies) notifies, and removed mentions don't.
     const clientMentionIds: string[] = Array.isArray(mentionedUserIds) ? mentionedUserIds : [];
     const contentMentionIds = extractMentionedUserIds(content);
     const mentionIds = contentMentionIds.length > 0 ? contentMentionIds : clientMentionIds;
-    await notifyMentionedUsers({
-      userIds: mentionIds,
-      actorId: effectiveUserId,
-      actorName: user?.name,
-      taskId,
-      content,
-      isSubtask: Boolean(subtaskId),
-    });
-
-    // Notify task assignees about the comment (if they weren't mentioned)
-    const taskData = await prisma.task.findUnique({
-      where: { id: taskId },
-      select: { assignees: { select: { id: true } } }
-    });
-    if (taskData) {
-      const assigneesToNotify = taskData.assignees
-        .map((a: any) => a.id)
-        .filter((id: any) => id !== effectiveUserId && !mentionIds.includes(id));
-
-      if (assigneesToNotify.length > 0) {
-        await prisma.taskNotification.createMany({
-          data: assigneesToNotify.map((id: any) => ({
-            userId: id,
-            actorId: effectiveUserId,
-            taskId,
-            type: 'COMMENT',
-            title: `${user?.name || 'Someone'} commented on a task you're assigned to`,
-            content: toNotificationPreview(content),
-          })),
-        });
-        assigneesToNotify.forEach((id: any) => {
-          io.to(`user:${id}`).emit('notification_received');
-        });
-      }
-    }
-
-    const log = await prisma.auditLog.create({
-      data: {
-        action: parentCommentId ? 'REPLY' : 'COMMENT',
-        entity: 'TASK',
-        entityId: taskId,
-        userId: effectiveUserId,
-        details: { text: content.trim(), commentId: comment.id, parentCommentId: parentCommentId || null, subtaskId: subtaskId || null },
-      },
-    });
 
     const activity = {
       id: log.id,
@@ -1164,6 +1141,46 @@ export async function createTaskComment(req: Request, res: Response) {
       io.emit('task:comment_added', payload);
       io.emit('task_activity', { taskId, activity });
     }
+
+    // Notifications after the broadcast (their own notification_received emits follow each write), so the
+    // comment shows for everyone without waiting on the notification queries.
+    (async () => {
+      await notifyMentionedUsers({
+        userIds: mentionIds,
+        actorId: effectiveUserId,
+        actorName: user?.name,
+        taskId,
+        content,
+        isSubtask: Boolean(subtaskId),
+      });
+
+      // Notify task assignees about the comment (if they weren't mentioned)
+      const taskData = await prisma.task.findUnique({
+        where: { id: taskId },
+        select: { assignees: { select: { id: true } } }
+      });
+      if (taskData) {
+        const assigneesToNotify = taskData.assignees
+          .map((a: any) => a.id)
+          .filter((id: any) => id !== effectiveUserId && !mentionIds.includes(id));
+
+        if (assigneesToNotify.length > 0) {
+          await prisma.taskNotification.createMany({
+            data: assigneesToNotify.map((id: any) => ({
+              userId: id,
+              actorId: effectiveUserId,
+              taskId,
+              type: 'COMMENT',
+              title: `${user?.name || 'Someone'} commented on a task you're assigned to`,
+              content: toNotificationPreview(content),
+            })),
+          });
+          assigneesToNotify.forEach((id: any) => {
+            io.to(`user:${id}`).emit('notification_received');
+          });
+        }
+      }
+    })().catch((err) => console.error('createTaskComment: notifications failed:', err));
 
     // --- ClickUp Sync: mirror comment to ClickUp (fire-and-forget) ---
     (async () => {

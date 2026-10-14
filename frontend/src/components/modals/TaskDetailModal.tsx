@@ -575,7 +575,6 @@ export function TaskDetailModalContent({
   const [richComments, setRichComments] = useState<any[]>([]);
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
-  const [isSubmittingReply, setIsSubmittingReply] = useState(false);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
   const activityScrollRef = useRef<HTMLDivElement>(null);
@@ -797,22 +796,38 @@ export function TaskDetailModalContent({
   };
 
   const handleSubmitReply = async (parentCommentId: string) => {
-    if (!replyText.trim() || !task?.id || !currentUser?.id || isSubmittingReply) return;
-    setIsSubmittingReply(true);
+    if (!replyText.trim() || !task?.id || !currentUser?.id) return;
+    const isSubtask = !!(task as any).parentTaskId;
+    const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+    const subtaskId = isSubtask ? task.id : undefined;
+    const text = replyText.trim();
+    const tempId = `temp-reply-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const withReplies = (map: (replies: any[]) => any[]) => (prev: any[]) =>
+      prev.map(c => c.id === parentCommentId ? { ...c, replies: map(c.replies || []) } : c);
+
+    // Shown in the thread at once; the saved reply replaces it when the server answers
+    setRichComments(withReplies(replies => [...replies, {
+      id: tempId,
+      content: text,
+      createdAt: new Date().toISOString(),
+      userId: currentUser.id,
+      user: { id: currentUser.id, name: currentUser.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
+      parentCommentId,
+      reactions: [],
+    }]));
+    setReplyText('');
+    setReplyingToId(null);
     try {
-      const isSubtask = !!(task as any).parentTaskId;
-      const targetId = isSubtask ? (task as any).parentTaskId : task.id;
-      const subtaskId = isSubtask ? task.id : undefined;
-      await tasksApi.addComment(targetId, replyText.trim(), currentUser.id, undefined, [], parentCommentId, subtaskId);
-      setReplyText('');
-      setReplyingToId(null);
-      // Refresh comments
-      const res = await tasksApi.getComments(targetId, subtaskId);
-      if (res?.comments) setRichComments(res.comments);
-    } catch (err) {
+      const res = await tasksApi.addComment(targetId, text, currentUser.id, undefined, [], parentCommentId, subtaskId);
+      if (res?.comment) {
+        setRichComments(withReplies(replies => replies.some(r => r.id === res.comment.id)
+          ? replies.filter(r => r.id !== tempId)
+          : replies.map(r => r.id === tempId ? { ...r, ...res.comment } : r)));
+      }
+    } catch (err: any) {
       console.warn('Reply failed:', err);
-    } finally {
-      setIsSubmittingReply(false);
+      setRichComments(withReplies(replies => replies.filter(r => r.id !== tempId)));
+      toast.error(err?.message || 'Failed to post reply');
     }
   };
 
@@ -1500,12 +1515,15 @@ export function TaskDetailModalContent({
     if (!task) return;
     if (isUploading || isSubmittingComment) return;
 
-    setIsSubmittingComment(true);
-    setIsUploading(true);
     let finalComment = trimmed;
+    const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const draftHtml = comment;
 
     try {
+      // Only uploads hold the editor: files need their URLs before the comment can be shown or sent
       if (stagedFiles.length > 0) {
+        setIsSubmittingComment(true);
+        setIsUploading(true);
         for (const file of stagedFiles) {
           const res = await uploadApi.uploadFile(file, 'comments');
           if (file.type.startsWith('image/')) {
@@ -1526,20 +1544,17 @@ export function TaskDetailModalContent({
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
-      // Optimistic update
-      const tempId = 'temp-comment-' + Date.now();
-      const optimisticActivity = {
+      // Optimistic update — into richComments, which is what the feed renders (comment activities are filtered out)
+      setRichComments(prev => [...prev, {
         id: tempId,
-        type: 'comment',
         content: finalComment,
         createdAt: new Date().toISOString(),
         userId: currentUser?.id,
-        user: { name: currentUser?.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
-        isActivityType: false,
-        sortDate: Date.now(),
-        reactions: []
-      };
-      setActivities(prev => [...prev, optimisticActivity]);
+        user: { id: currentUser?.id, name: currentUser?.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
+        subtaskId,
+        reactions: [],
+        replies: [],
+      }]);
 
       setComment('');
       setTimeout(() => {
@@ -1548,6 +1563,8 @@ export function TaskDetailModalContent({
       }, 10);
       setStagedFiles([]);
       setMentionedUsers([]);
+      setIsUploading(false);
+      setIsSubmittingComment(false);
 
       const res = await tasksApi.addComment(
         targetId,
@@ -1559,12 +1576,19 @@ export function TaskDetailModalContent({
         subtaskId
       );
 
-      if (res?.activity) {
-        setActivities(prev => prev.map(a => a.id === tempId ? res.activity : a));
+      if (res?.comment) {
+        // A reload that landed meanwhile may already hold the saved comment; then just drop the placeholder
+        setRichComments(prev => prev.some(c => c.id === res.comment.id)
+          ? prev.filter(c => c.id !== tempId)
+          : prev.map(c => c.id === tempId ? { ...c, ...res.comment } : c));
       }
-      // Silently reload to get fresh richComments + reactions
-      loadActivities(true);
+      if (res?.activity) {
+        setActivities(prev => prev.some(a => a.id === res.activity.id) ? prev : [...prev, res.activity]);
+      }
     } catch (err: any) {
+      // Take the unsent comment back out of the feed and give the text back if nothing new was typed
+      setRichComments(prev => prev.filter(c => c.id !== tempId));
+      setComment(prev => (prev.trim() && prev !== '<p></p>' ? prev : draftHtml));
       toast.error(err.message || 'Failed to post comment');
     } finally {
       setIsUploading(false);
@@ -2676,12 +2700,11 @@ export function TaskDetailModalContent({
                             <input
                               value={replyText}
                               onChange={e => setReplyText(e.target.value)}
-                              disabled={isSubmittingReply}
                               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); } }}
                               placeholder="Write a reply..."
                               className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
                             />
-                            <button onClick={() => handleSubmitReply(comment.id)} disabled={isSubmittingReply || !replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
+                            <button onClick={() => handleSubmitReply(comment.id)} disabled={!replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
                               <Send className="w-3.5 h-3.5" />
                             </button>
                           </div>
@@ -3702,10 +3725,13 @@ export function SubtaskDetailView({
     if (!trimmed && stagedFiles.length === 0) return;
     if (!currentUser?.id || isSubmitting || isUploading) return;
 
-    setIsSubmitting(true);
+    const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const draftHtml = comment;
     try {
       let content = trimmed;
+      // Only uploads hold the editor: files need their URLs before the comment can be shown or sent
       if (stagedFiles.length > 0) {
+        setIsSubmitting(true);
         setIsUploading(true);
         for (const file of stagedFiles) {
           const res = await uploadApi.uploadFile(file, 'comment');
@@ -3718,13 +3744,13 @@ export function SubtaskDetailView({
         setIsUploading(false);
       }
 
-      const tempId = 'temp-comment-' + Date.now();
       const optimisticComment = {
         id: tempId,
         content,
         createdAt: new Date().toISOString(),
         userId: currentUser?.id,
-        user: { name: currentUser?.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
+        user: { id: currentUser?.id, name: currentUser?.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
+        subtaskId: subtask.id,
         reactions: [],
         replies: []
       };
@@ -3736,25 +3762,34 @@ export function SubtaskDetailView({
         if (el) el.style.height = '80px';
       }, 10);
       setStagedFiles([]);
+      setIsSubmitting(false);
 
-      await tasksApi.addComment(parentTask.id, content, currentUser.id, parentTask.listId, [], undefined, subtask.id);
-
-      const res = await tasksApi.getComments(parentTask.id, subtask.id);
-      if (res?.comments) setRichComments(res.comments);
+      const res = await tasksApi.addComment(parentTask.id, content, currentUser.id, parentTask.listId, [], undefined, subtask.id);
+      const saved = res?.comment;
+      if (saved) {
+        // A reload that landed meanwhile may already hold the saved comment; then just drop the placeholder
+        setRichComments((prev: any[]) => prev.some(c => c.id === saved.id)
+          ? prev.filter(c => c.id !== tempId)
+          : prev.map(c => c.id === tempId ? { ...c, ...saved } : c));
+      }
 
       // Reflect comment count in the parent task modal's SubtasksSection
       // If the subtask's comments were never loaded, bump the server count instead of inventing a
       // one-item comments array (which would also stop the comments tab from fetching the real ones).
       const updatedSubtask = subtask.comments
-        ? { ...subtask, comments: [...subtask.comments, { id: Date.now().toString() }] }
+        ? { ...subtask, comments: [...subtask.comments, saved || { id: Date.now().toString() }] }
         : { ...subtask, _count: { ...(subtask._count || {}), comments: (subtask._count?.comments ?? 0) + 1 } };
       if (setActiveSubtask) setActiveSubtask(updatedSubtask);
       if (onUpdateTask) {
         const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
         onUpdateTask({ ...parentTask, subtasks: newSubtasks });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to post comment:', err);
+      // Take the unsent comment back out and give the text back if nothing new was typed
+      setRichComments((prev: any[]) => prev.filter(c => c.id !== tempId));
+      setComment((prev: string) => (prev.trim() && prev !== '<p></p>' ? prev : draftHtml));
+      toast.error(err?.message || 'Failed to post comment');
       setIsUploading(false);
     } finally {
       setIsSubmitting(false);

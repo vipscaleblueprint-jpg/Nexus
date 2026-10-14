@@ -1978,11 +1978,11 @@ export default function DocPage({ docId }: { docId?: string }) {
           let html = b.content;
           html = html.replace(/<p[^>]*>/g, '').replace(/<\/p>/g, '\n');
           html = html.replace(/<br\s*[/]?>/gi, '\n');
-          const div = document.createElement('div');
-          div.innerHTML = html;
-          return div.textContent?.trim() || '';
+          // DOMParser builds an inert document: unlike innerHTML on a live element, nothing in it loads or runs
+          // (an <img onerror> in stored page content would otherwise execute on copy)
+          return new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim() || '';
         }).filter(t => t.length > 0).join('\n\n');
-        
+
         navigator.clipboard.writeText(textToCopy);
         return;
       }
@@ -1995,9 +1995,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           let html = b.content;
           html = html.replace(/<p[^>]*>/g, '').replace(/<\/p>/g, '\n');
           html = html.replace(/<br\s*[/]?>/gi, '\n');
-          const div = document.createElement('div');
-          div.innerHTML = html;
-          return div.textContent?.trim() || '';
+          return new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim() || '';
         }).filter(t => t.length > 0).join('\n\n');        navigator.clipboard.writeText(textToCopy);
         // Remove cut blocks
         const remainingBlocks = blocks.filter(b => !selectedBlockIds.has(b.id));

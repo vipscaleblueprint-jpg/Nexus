@@ -12,7 +12,36 @@ export type { AuthRequest, AuthenticatedUserPayload };
 
 const JWT_SECRET = requireEnv('JWT_SECRET');
 
+/** Reads one cookie from a raw Cookie header (WebSocket handshakes don't go through cookie-parser). */
+export function readCookie(cookieHeader: string | undefined, name: string): string | undefined {
+  for (const part of (cookieHeader || '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0 && part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The user of a valid, non-revoked access token, or null. Shared by the HTTP and WebSocket auth checks. */
+export async function verifyAccessToken(token: string | undefined): Promise<AuthenticatedUserPayload | null> {
+  if (!token) return null;
+  if (await isTokenBlacklisted(token)) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload;
+  } catch {
+    return null;
+  }
+}
+
 export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+  // Already verified earlier in this request (the /api login gate in server.ts runs before route-level checks)
+  if (req.user) return next();
+
   // Read token from HttpOnly cookie first, or fallback to Authorization header
   let token = req.cookies?.accessToken;
 
@@ -43,7 +72,21 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
   }
 }
 
+/**
+ * Login gate for a mount point (e.g. app.use('/api', ...)): every first path segment needs a valid session except
+ * `publicSections`. Unknown or oddly written paths fall through to the login check, so it fails closed.
+ */
+export function requireLoginExcept(publicSections: string[]) {
+  const open = new Set(publicSections);
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    // req.path is relative to the mount: "/tasks/123" -> "tasks"
+    if (open.has(req.path.split('/')[1])) return next();
+    return authenticateToken(req, res, next);
+  };
+}
+
 export async function optionalAuthenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+  if (req.user) return next();
   let token = req.cookies?.accessToken;
   if (!token) {
     const authHeader = req.headers['authorization'];
@@ -65,17 +108,14 @@ export function requireSystemRole(...allowedSystemRoles: SystemRole[]) {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (allowedSystemRoles.includes(req.user.systemRole)) {
-      return next();
-    }
-
-    // Check fresh systemRole from database in case role was recently updated
+    // Always the current role from the database: the token's copy can be up to a day old, so trusting it
+    // would let a demoted (or deactivated) admin keep admin access until it expires
     try {
       const dbUser = await prisma.user.findUnique({
         where: { id: req.user.id },
-        select: { systemRole: true },
+        select: { systemRole: true, isActive: true },
       });
-      if (dbUser && allowedSystemRoles.includes(dbUser.systemRole)) {
+      if (dbUser?.isActive && allowedSystemRoles.includes(dbUser.systemRole)) {
         req.user.systemRole = dbUser.systemRole;
         return next();
       }

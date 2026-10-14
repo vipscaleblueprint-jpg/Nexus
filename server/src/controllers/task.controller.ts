@@ -139,7 +139,7 @@ export async function listTasks(req: Request, res: Response) {
     }
 
     // Keyed by cache generation too: a request made after a change must not join a query that started before it
-    const generation = getCacheGeneration();
+    const generation = getCacheGeneration(cacheKey);
     const inFlightKey = `${cacheKey}@${generation}`;
     let pending = listTasksInFlight.get(inFlightKey);
     if (!pending) {
@@ -159,7 +159,7 @@ export async function listTasks(req: Request, res: Response) {
 async function queryListTasks(
   { listId, assigneeId, status, lightweight }: Record<string, string | undefined>,
   cacheKey: string,
-  generation: number,
+  generation: string,
 ) {
     const startedAt = Date.now();
     const tasks = await prisma.task.findMany({
@@ -202,7 +202,7 @@ export async function getTask(req: Request, res: Response) {
       return res.json({ task: cachedTask, cached: true });
     }
 
-    const generation = getCacheGeneration();
+    const generation = getCacheGeneration(cacheKey);
     let task = await prisma.task.findUnique({
       where: { id: taskId },
       include: taskInclude,
@@ -252,7 +252,7 @@ export async function batchGetTasks(req: Request, res: Response) {
     });
 
     if (missing.length > 0) {
-      const generation = getCacheGeneration();
+      const generation = getCacheGeneration('task:');
       // 2. Missing IDs as tasks, in one query
       const tasks = await prisma.task.findMany({ where: { id: { in: missing } }, include: taskInclude });
       const taskById = new Map(tasks.map(t => [t.id, t]));

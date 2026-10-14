@@ -23,13 +23,14 @@ interface CommentEditorProps {
   id?: string;
   disabled?: boolean;
   onSubmit?: () => void;
+  onPasteFiles?: (files: File[]) => void;
 }
 
 export interface CommentEditorRef {
   insertMention: (name: string, matchLength: number, userId: string) => void;
 }
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles }, ref) => {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -71,6 +72,30 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     }
   });
 
+  // Pasted images/files go to the parent's staged attachments instead of being inlined.
+  // Runs in the capture phase so it sees the paste before ProseMirror does.
+  const handlePasteCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if (!onPasteFiles || disabled) return;
+    const data = event.clipboardData;
+    if (!data) return;
+    let files = Array.from(data.files || []);
+    if (files.length === 0) {
+      files = Array.from(data.items || [])
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter((f): f is File => !!f);
+    }
+    if (files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onPasteFiles(files.map((file, i) => {
+      // Clipboard screenshots arrive unnamed or as "image.png" — give them unique names
+      if (file.name && file.name !== 'image.png') return file;
+      const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      return new File([file], `pasted-image-${Date.now()}${i ? `-${i}` : ''}.${ext}`, { type: file.type });
+    }));
+  };
+
   React.useImperativeHandle(ref, () => ({
     insertMention: (name: string, matchLength: number, userId: string) => {
       if (!editor) return;
@@ -97,7 +122,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
   if (!editor) return null;
 
   return (
-    <div className="relative w-full rounded-md border border-zinc-700/60 bg-zinc-800/60 p-3 text-sm focus-within:border-indigo-500/60 transition-colors custom-scrollbar">
+    <div onPasteCapture={handlePasteCapture} className="relative w-full rounded-md border border-zinc-700/60 bg-zinc-800/60 p-3 text-sm focus-within:border-indigo-500/60 transition-colors custom-scrollbar">
       {editor && (
         <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
           <div className="pointer-events-auto">

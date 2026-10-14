@@ -121,7 +121,7 @@ export function htmlToClickupMarkdown(html: string | undefined): string | undefi
     .trim();
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -318,6 +318,170 @@ export function clickupMarkdownToHtml(markdown: string | undefined | null): stri
 
   if (code) out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
   flushAll();
+  return out.join('');
+}
+
+/** ClickUp's named text/highlight colors, mapped to the comment editor's palette. */
+const CLICKUP_COLORS: Record<string, string> = {
+  red: '#ef4444',
+  orange: '#f97316',
+  yellow: '#eab308',
+  green: '#22c55e',
+  teal: '#14b8a6',
+  blue: '#3b82f6',
+  purple: '#6366f1',
+  pink: '#d946ef',
+  grey: '#52525b',
+  gray: '#52525b',
+};
+
+function clickupColor(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  if (/^#[0-9a-f]{3,8}$/i.test(value)) return value;
+  const name = value.toLowerCase().replace(/^(dark|light)-/, '').replace(/-.*$/, '');
+  return CLICKUP_COLORS[name] ?? null;
+}
+
+function safeUrl(url: unknown): string | null {
+  return typeof url === 'string' && /^(https?:|mailto:)/i.test(url) ? escapeHtml(url) : null;
+}
+
+/** "https://app.kajabi.com/admin/..." -> "app.kajabi.com/admin/..." */
+function displayUrl(url: string): string {
+  return url.replace(/^https?:\/\/(www\.)?/i, '');
+}
+
+/** Bookmarks carry their unfurled preview (title like "Kajabi") as base64 JSON. */
+function bookmarkTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const title = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'))?.preview?.title;
+    return typeof title === 'string' && title.trim() ? title.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatInline(text: string, attrs: any): string {
+  let html = escapeHtml(text);
+  if (!html) return '';
+  if (attrs.code) html = `<code>${html}</code>`;
+  if (attrs.bold) html = `<strong>${html}</strong>`;
+  if (attrs.italic) html = `<em>${html}</em>`;
+  if (attrs.underline) html = `<u>${html}</u>`;
+  if (attrs.strike) html = `<s>${html}</s>`;
+  const color = clickupColor(attrs['color-class'] ?? attrs.color);
+  if (color) html = `<span style="color: ${color}">${html}</span>`;
+  const highlight = clickupColor(attrs['background-class'] ?? attrs['background-color']);
+  // Same markup the comment editor's Highlight produces, so the comment stays editable
+  if (highlight) html = `<mark data-color="${highlight}" style="background-color: ${highlight}; color: inherit">${html}</mark>`;
+  const link = safeUrl(attrs.link);
+  if (link) html = `<a href="${link}">${html}</a>`;
+  return html;
+}
+
+/**
+ * Converts a ClickUp rich comment (the `comment` segment array, Quill-delta style) to the
+ * HTML the Nexus comment editor stores. Keeps formatting, highlights, lists, links, link
+ * cards, mentions and inline images, all of which `comment_text` drops.
+ * `mentionUserId` maps a tagged ClickUp user to a Nexus user id (null if unknown).
+ */
+export function clickupCommentToHtml(segments: any[], mentionUserId: (cuUser: any) => string | null): string {
+  const lines: { html: string; block: any }[] = [];
+  let line = '';
+
+  for (const seg of segments ?? []) {
+    const attrs = seg?.attributes ?? {};
+    switch (seg?.type) {
+      case 'tag': {
+        const name = seg.user?.username || seg.user?.email || 'user';
+        const userId = mentionUserId(seg.user);
+        line += userId ? `<a href="mention://${escapeHtml(userId)}">@${escapeHtml(name)}</a>` : `@${escapeHtml(name)}`;
+        continue;
+      }
+      case 'emoticon': {
+        const code = String(seg.emoticon?.code ?? '');
+        let emoji = seg.text || '';
+        if (!emoji && /^[0-9a-f]+(-[0-9a-f]+)*$/i.test(code)) {
+          emoji = String.fromCodePoint(...code.split('-').map((cp) => parseInt(cp, 16)));
+        }
+        line += escapeHtml(emoji);
+        continue;
+      }
+      case 'bookmark':
+      case 'link_mention': {
+        const raw = seg.bookmark?.url ?? seg.link_mention?.url;
+        const url = safeUrl(raw);
+        if (!url) continue;
+        const title = bookmarkTitle(attrs.raw);
+        const label = escapeHtml(displayUrl(raw));
+        line += title ? `<a href="${url}">${escapeHtml(title)}: ${label}</a>` : `<a href="${url}">${label}</a>`;
+        continue;
+      }
+      case 'task_mention': {
+        const taskId = String(seg.task_mention?.task_id ?? '');
+        if (!taskId) continue;
+        line += `<a href="https://app.clickup.com/t/${escapeHtml(taskId)}">${escapeHtml(seg.text || `#${taskId}`)}</a>`;
+        continue;
+      }
+      case 'image': {
+        const url = safeUrl(seg.image?.url);
+        if (url) line += `<img src="${url}" alt="${escapeHtml(seg.image?.title || seg.image?.name || 'image')}">`;
+        continue;
+      }
+      case 'attachment': {
+        const url = safeUrl(seg.attachment?.url);
+        if (url) line += `<a href="${url}">${escapeHtml(seg.attachment?.title || seg.attachment?.name || 'attachment')}</a>`;
+        continue;
+      }
+    }
+
+    // Plain text; a "\n" ends a line and carries that line's block format (list, header...)
+    const parts = String(seg?.text ?? '').split('\n');
+    parts.forEach((part, i) => {
+      line += formatInline(part, attrs);
+      if (i < parts.length - 1) {
+        lines.push({ html: line, block: attrs });
+        line = '';
+      }
+    });
+  }
+  if (line) lines.push({ html: line, block: {} });
+
+  const out: string[] = [];
+  let openList: 'ul' | 'ol' | null = null;
+  const closeList = () => {
+    if (openList) out.push(`</${openList}>`);
+    openList = null;
+  };
+  for (const { html, block } of lines) {
+    const list = typeof block.list === 'object' ? block.list?.list : block.list;
+    if (list) {
+      const type = list === 'ordered' ? 'ol' : 'ul';
+      if (openList !== type) {
+        closeList();
+        out.push(`<${type}>`);
+        openList = type;
+      }
+      const check = list === 'checked' ? '☑ ' : list === 'unchecked' ? '☐ ' : '';
+      out.push(`<li><p>${check}${html}</p></li>`);
+      continue;
+    }
+    closeList();
+    if (block.header) {
+      const level = Math.min(Math.max(Number(block.header) || 1, 1), 3);
+      out.push(`<h${level}>${html}</h${level}>`);
+    } else if (block['code-block']) {
+      out.push(`<pre><code>${html}</code></pre>`);
+    } else if (block.blockquote) {
+      out.push(`<blockquote><p>${html}</p></blockquote>`);
+    } else {
+      out.push(`<p>${html}</p>`);
+    }
+  }
+  closeList();
+  // Drop trailing blank lines
+  while (out.length && out[out.length - 1] === '<p></p>') out.pop();
   return out.join('');
 }
 

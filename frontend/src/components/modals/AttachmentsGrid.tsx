@@ -102,8 +102,8 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
       {/* Lightbox Preview */}
       <Dialog.Root open={!!previewAttachment} onOpenChange={(open) => !open && setPreviewAttachment(null)}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/90 z-[9999] animate-in fade-in backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[10000] w-full max-w-[95vw] h-full max-h-[95vh] flex flex-col items-center justify-center outline-none">
+          <Dialog.Overlay className="fixed inset-0 bg-black/90 z-[200000] animate-in fade-in backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[200001] w-full max-w-[95vw] h-full max-h-[95vh] flex flex-col items-center justify-center outline-none">
             {previewAttachment && (
               <>
                 <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
@@ -112,13 +112,13 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
                     download={previewAttachment.fileName}
                     target="_blank"
                     rel="noreferrer"
-                    className="p-2 bg-zinc-800/80 hover:bg-zinc-700 text-white rounded-full transition-colors backdrop-blur-md"
+                    className="p-2 bg-card/90 hover:bg-muted border border-border text-muted-foreground hover:text-foreground rounded-full shadow-lg transition-colors backdrop-blur-md"
                     title="Download"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                   </a>
                   <Dialog.Close asChild>
-                    <button className="p-2 bg-zinc-800/80 hover:bg-zinc-700 text-white rounded-full transition-colors backdrop-blur-md">
+                    <button title="Close" className="p-2 bg-card/90 hover:bg-muted border border-border text-muted-foreground hover:text-foreground rounded-full shadow-lg transition-colors backdrop-blur-md cursor-pointer">
                       <X className="w-5 h-5" />
                     </button>
                   </Dialog.Close>

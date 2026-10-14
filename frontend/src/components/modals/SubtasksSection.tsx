@@ -578,23 +578,61 @@ function SubtaskRow({
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
 
+  // Latest comments, for the async handler below (its `subtask` is the one from when it was called)
+  const commentsRef = useRef(subtask.comments);
+  commentsRef.current = subtask.comments;
+
   const handleAddComment = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!commentText.trim() || !currentUser?.id || !taskId) return;
-    setIsSubmittingComment(true);
+    const text = commentText.trim();
+    if (!text || !currentUser?.id || !taskId) return;
+    // Comments are stored locally only (onAddCommentLocally): onUpdate would also PATCH them to the subtask
+    const setComments = (next: any[]) => onAddCommentLocally?.(subtask.id, next);
+
+    // Comments not loaded yet (tab still fetching): wait for the server, then take its full list
+    if (commentsRef.current === undefined || !onAddCommentLocally) {
+      setIsSubmittingComment(true);
+      try {
+        await tasksApi.addComment(taskId, text, currentUser.id, listId, [], undefined, subtask.id);
+        setCommentText('');
+        const commentsRes = await tasksApi.getComments(taskId, subtask.id);
+        if (commentsRes?.comments) setComments(commentsRes.comments);
+      } catch (err) {
+        console.error(err);
+        toast.error('Failed to add comment');
+      } finally {
+        setIsSubmittingComment(false);
+      }
+      return;
+    }
+
+    // Shown at once; the saved comment replaces it when the server answers
+    const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setComments([...commentsRef.current, {
+      id: tempId,
+      content: text,
+      createdAt: new Date().toISOString(),
+      userId: currentUser.id,
+      user: { id: currentUser.id, name: currentUser.name || 'You', avatarUrl: currentUser.avatarUrl },
+      subtaskId: subtask.id,
+      reactions: [],
+      replies: [],
+    }]);
+    setCommentText('');
     try {
-      await tasksApi.addComment(taskId!, commentText.trim(), currentUser.id, listId, [], undefined, subtask.id);
-      setCommentText('');
-      
-      const commentsRes = await tasksApi.getComments(taskId!, subtask.id);
-      if (commentsRes?.comments) {
-        onUpdate(subtask.id, { comments: commentsRes.comments });
+      const res = await tasksApi.addComment(taskId, text, currentUser.id, listId, [], undefined, subtask.id);
+      const saved = res?.comment;
+      const current = commentsRef.current || [];
+      if (saved) {
+        setComments(current.some((c: any) => c.id === saved.id)
+          ? current.filter((c: any) => c.id !== tempId)
+          : current.map((c: any) => c.id === tempId ? { ...c, ...saved } : c));
       }
     } catch (err) {
       console.error(err);
+      setComments((commentsRef.current || []).filter((c: any) => c.id !== tempId));
+      setCommentText((prev) => prev || text);
       toast.error('Failed to add comment');
-    } finally {
-      setIsSubmittingComment(false);
     }
   };
 

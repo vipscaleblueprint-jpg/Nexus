@@ -2637,7 +2637,7 @@ export function TaskDetailModalContent({
                             </button>
                           </div>
                         ) : (
-                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
                               {comment.content || ''}
                             </ReactMarkdown>
@@ -4877,7 +4877,7 @@ export function SubtaskDetailView({
                           </button>
                         </div>
                       ) : (
-                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 hover:prose-a:bg-blue-500/15 hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
                               {c.content || ''}
                           </ReactMarkdown>

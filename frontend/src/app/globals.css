@@ -412,3 +412,11 @@ input:disabled,
   pointer-events: none !important;
 }
 
+/* Rich-text text colors: the editor's Color mark is a <span style="color"> that can wrap bold/italic/code/links,
+   and prose gives those their own color — make them inherit the chosen one. Highlights (<mark>) default to
+   black text in the browser, so they inherit too. */
+.prose span[style*="color"] :is(strong, b, em, i, u, s, del, code, a:not([href^="mention://"])),
+.prose mark {
+  color: inherit;
+}
+

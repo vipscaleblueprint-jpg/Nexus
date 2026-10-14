@@ -8,6 +8,7 @@ import { FormattedRichText, markdownToBlocks, blocksToMarkdown } from './utils';
 import { BlockEditor } from '@/components/ui/BlockEditor';
 import { tasksApi } from '@/api/tasks';
 import { useAppStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
 import { Task } from '@/lib/types';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
@@ -51,6 +52,8 @@ import {
 import { DocSkeleton } from '@/components/ui/Skeleton';
 import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from '@/lib/pageContentCache';
 import { BlockHtmlPreview } from '@/components/editor/BlockHtmlPreview';
+
+const NO_TASKS: Task[] = [];
 import {
   PageStylesPanel,
   usePageStyles,
@@ -744,7 +747,16 @@ const isFromTaskModal = (target: EventTarget | null) =>
 export default function DocPage({ docId }: { docId?: string }) {
   const params = useParams<{ id: string }>();
   const id = docId || params?.id;
-  const { currentUser, setCurrentUser, tasks, tasksIndex, loadTasks, hydrateTasksFromCache, updateTask, workspaceRoles } = useAppStore();
+  // Select only what the page uses: the whole store re-rendered this page (and every block row) on each task
+  // update, e.g. each comment posted from the task modal opened over the journal.
+  const { currentUser, setCurrentUser, loadTasks, hydrateTasksFromCache, updateTask, workspaceRoles } = useAppStore(useShallow((s) => ({
+    currentUser: s.currentUser,
+    setCurrentUser: s.setCurrentUser,
+    loadTasks: s.loadTasks,
+    hydrateTasksFromCache: s.hydrateTasksFromCache,
+    updateTask: s.updateTask,
+    workspaceRoles: s.workspaceRoles,
+  })));
   const [doc, setDoc] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1038,6 +1050,8 @@ export default function DocPage({ docId }: { docId?: string }) {
   }, [openTaskDetail]);
 
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  // The task list is only needed while the link picker is open
+  const tasks = useAppStore((s) => (isLinkModalOpen ? s.tasks : NO_TASKS));
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
 
   const [isRenameOpen, setIsRenameOpen] = useState(false);
@@ -1094,6 +1108,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   // Content of the open page as last loaded or saved, to tell whether it has unsaved edits
   const lastSyncedContentRef = useRef<string | null>(null);
+  const lastSyncedTitleRef = useRef<string | null>(null);
 
   const openPage = async (page: any) => {
     const seq = ++pageLoadSeqRef.current;
@@ -1131,6 +1146,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     if (page.content !== undefined || cached) resetUndoForPageSwitch();
     pageOpenedAtRef.current = Date.now();
     lastSyncedContentRef.current = content;
+    lastSyncedTitleRef.current = page.title || 'Untitled Page';
     setActivePage({ ...page, content });
     setPageTitle(page.title || 'Untitled Page');
     setBlocks(markdownToBlocks(content));
@@ -1326,6 +1342,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       pageLoadSeqRef.current++; // cancel any in-flight page load so it can't replace the new page
       resetUndoForPageSwitch();
       lastSyncedContentRef.current = res.page.content ?? null;
+      lastSyncedTitleRef.current = res.page.title || 'Untitled Page';
       setActivePage(res.page);
       setPageTitle(res.page.title || 'Untitled Page');
       setBlocks(cleanBlocks);
@@ -1338,10 +1355,14 @@ export default function DocPage({ docId }: { docId?: string }) {
   const handleSavePage = async (updatedBlocks = blocksRef.current, skipHistory = false) => {
     // No saves while the open page's content is loading (or failed to load): the editor has no blocks yet
     if (!activePageRef.current || pageContentStateRef.current !== 'ready') return;
+    const content = blocksToMarkdown(updatedBlocks);
+    const title = pageTitleRef.current;
+    // Every click out of a block saves (e.g. opening a task from the journal). With nothing changed that would
+    // upload and rewrite the whole page — megabytes for a journal day — and hold up the requests that follow.
+    if (content === lastSyncedContentRef.current && title === lastSyncedTitleRef.current) return;
     setSavingPage(true);
     try {
-      const content = blocksToMarkdown(updatedBlocks);
-      
+
       if (!skipHistory) {
         setUndoStack(prev => {
           if (prev.length === 0 || prev[prev.length - 1] !== content) {
@@ -1357,7 +1378,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       const savedIds = new Set(updatedBlocks.map((b) => b.id));
       const deletedBlockIds = seen.pageId === savedPageId ? [...seen.ids].filter((blockId) => !savedIds.has(blockId)) : undefined;
       const res = await spacesApi.updatePage(savedPageId, {
-        title: pageTitleRef.current,
+        title,
         content: content,
         deletedBlockIds,
       });
@@ -1365,7 +1386,10 @@ export default function DocPage({ docId }: { docId?: string }) {
       if (res?.page?.content && res.page.content !== content) mergeUnseenServerBlocks(savedPageId, res.page.content);
       // The server's copy is now what was sent (or the merged copy it returned)
       setCachedPage(savedPageId, res?.page?.content ?? content, res?.page?.updatedAt);
-      if (activePageRef.current?.id === savedPageId) lastSyncedContentRef.current = content;
+      if (activePageRef.current?.id === savedPageId) {
+        lastSyncedContentRef.current = content;
+        lastSyncedTitleRef.current = title;
+      }
       setLastSave({ pageId: savedPageId, at: new Date().toISOString() });
       if (socket) {
         // The page that was saved — the open page may have changed while the request was in flight
@@ -2598,6 +2622,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleOpenTaskModal = async (taskId: string) => {
+    const { tasksIndex } = useAppStore.getState();
     if (tasksIndex[taskId]) {
       setSelectedTaskForModal(tasksIndex[taskId]);
       setIsTaskModalOpen(true);

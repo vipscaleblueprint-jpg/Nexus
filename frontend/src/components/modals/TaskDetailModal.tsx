@@ -28,6 +28,20 @@ import { UserMentionChip } from '../ui/UserMentionChip';
 import { normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
+const COMMENT_REMARK_PLUGINS = [remarkGfm];
+const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
+const keepUrl = (url: string) => url;
+
+// Parsing a comment (remark-gfm + rehype-raw) is the costly part of the feed. Memoized on its content, so typing
+// in the comment box or posting another comment doesn't re-parse every comment already shown.
+const CommentMarkdown = React.memo(function CommentMarkdown({ content, components }: { content: string; components: any }) {
+  return (
+    <ReactMarkdown remarkPlugins={COMMENT_REMARK_PLUGINS} rehypePlugins={COMMENT_REHYPE_PLUGINS} components={components} urlTransform={keepUrl}>
+      {content}
+    </ReactMarkdown>
+  );
+});
+
 export const CustomCircleDotted = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
     <circle cx="12" cy="12" r="9" strokeDasharray="1 6" />
@@ -2638,9 +2652,7 @@ export function TaskDetailModalContent({
                           </div>
                         ) : (
                           <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
-                              {comment.content || ''}
-                            </ReactMarkdown>
+                            <CommentMarkdown content={comment.content || ''} components={markdownComponents} />
                           </div>
                         )}
                         {/* Reaction pills */}
@@ -2797,7 +2809,7 @@ export function TaskDetailModalContent({
                                           changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span>
                                           {act.oldStatus && (
                                             <>from <span
-                                              className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
+                                              className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
                                               style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
                                             >
                                               {act.oldStatus}
@@ -2809,7 +2821,7 @@ export function TaskDetailModalContent({
                                           changed status
                                           {act.oldStatus && (
                                             <> from <span
-                                              className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
+                                              className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
                                               style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
                                             >
                                               {act.oldStatus}
@@ -2818,7 +2830,7 @@ export function TaskDetailModalContent({
                                         </>
                                       )}
                                       {' '}to <span
-                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[(act.newStatus || '').toUpperCase()] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[(act.newStatus || '').toUpperCase()] || 'bg-blue-500/10 text-blue-400') : 'on-solid text-white shadow-sm'}`}
                                         style={(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: getHexColor((internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color) } : {}}
                                       >
                                         {act.newStatus}
@@ -4878,9 +4890,7 @@ export function SubtaskDetailView({
                         </div>
                       ) : (
                         <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]} components={markdownComponents} urlTransform={(url) => url}>
-                              {c.content || ''}
-                          </ReactMarkdown>
+                          <CommentMarkdown content={c.content || ''} components={markdownComponents} />
                         </div>
                       )}
 
@@ -4999,14 +5009,14 @@ export function SubtaskDetailView({
                                     changed status
                                     {act.oldStatus && (
                                       <> from <span
-                                          className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'text-white shadow-sm'}`}
+                                          className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
                                           style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? { backgroundColor: getHexColor((listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color) } : {}}
                                         >
                                           {act.oldStatus}
                                         </span></>
                                     )}
                                     {' '}to <span
-                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[(act.newStatus || '').toUpperCase()] || 'bg-blue-500/10 text-blue-400') : 'text-white shadow-sm'}`}
+                                        className={`font-medium px-1.5 py-0.5 rounded text-[11px] ml-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? (STATUS_COLORS[(act.newStatus || '').toUpperCase()] || 'bg-blue-500/10 text-blue-400') : 'on-solid text-white shadow-sm'}`}
                                         style={(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color ? { backgroundColor: getHexColor((listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.newStatus))?.color) } : {}}
                                       >
                                         {act.newStatus}

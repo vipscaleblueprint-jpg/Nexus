@@ -710,26 +710,31 @@ export async function updatePage(req: Request, res: Response) {
     // editor hadn't seen), since otherwise the editor already has exactly what it sent.
     const savedContent = content;
 
-    if (content !== undefined && userId && previous?.content !== content) {
-      // A burst of saves (typing, mention chips refreshing) folds into one version per user instead of a
-      // full page copy per keystroke; a pause longer than the window starts a new version.
-      const recent = await prisma.pageVersion.findFirst({
-        where: { pageId: page.id, createdAt: { gte: new Date(Date.now() - VERSION_COALESCE_MS) } },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true, userId: true },
-      });
-      if (recent && recent.userId === userId) {
-        await prisma.pageVersion.update({ where: { id: recent.id }, data: { content } });
-      } else {
-        await prisma.pageVersion.create({ data: { pageId: page.id, userId, content } });
-      }
-    }
-
     // The cached hierarchy only holds page titles, so content-only saves don't need to invalidate it
     if (title && title !== previous?.title) {
       await invalidateCache('spaces:all', 'dashboard:all');
     }
     res.json({ page: keptUnseenBlocks ? { ...page, content: savedContent } : page });
+
+    if (content !== undefined && userId && previous?.content !== content) {
+      // After responding: the version is another full page copy (megabytes for a journal day) sent to the database,
+      // and only the history panel reads it. A burst of saves (typing, mention chips refreshing) folds into one
+      // version per user instead of a full page copy per keystroke; a pause longer than the window starts a new one.
+      const pageId = page.id;
+      const versionContent = content;
+      (async () => {
+        const recent = await prisma.pageVersion.findFirst({
+          where: { pageId, createdAt: { gte: new Date(Date.now() - VERSION_COALESCE_MS) } },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, userId: true },
+        });
+        if (recent && recent.userId === userId) {
+          await prisma.pageVersion.update({ where: { id: recent.id }, data: { content: versionContent } });
+        } else {
+          await prisma.pageVersion.create({ data: { pageId, userId, content: versionContent } });
+        }
+      })().catch((err) => console.error('[updatePage] version save failed:', err));
+    }
 
     if (content !== undefined && previous && previous.content !== content) {
       syncRolloverExclusions(previous, content).catch((err) => console.error('[Rollover] exclusion sync failed:', err));

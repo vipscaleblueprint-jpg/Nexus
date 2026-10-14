@@ -279,17 +279,22 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       const { tr } = state;
       let modified = false;
 
+      // The task can't be mentioned in most blocks; only build the new attributes once one does
+      let shown: Record<string, string> | null = null;
       state.doc.descendants((node, pos) => {
         if (node.type.name === 'mention' && node.attrs.id === task.id) {
-          tr.setNodeMarkup(pos, null, {
-            ...node.attrs,
+          shown ??= {
             label: task.title,
             taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
             taskAssignees: JSON.stringify(task.assignees || []),
             taskPriority: task.priority || '',
             taskDueDate: task.dueDate || '',
-            frozenTaskData: JSON.stringify(task)
-          });
+          };
+          // Updates that change nothing the chip shows (e.g. a comment count) are skipped: rewriting the node
+          // re-serializes the whole task into it, for every editor on the page.
+          const current = shown;
+          if (Object.keys(current).every((key) => (node.attrs[key] ?? '') === current[key])) return;
+          tr.setNodeMarkup(pos, null, { ...node.attrs, ...current, frozenTaskData: JSON.stringify(task) });
           modified = true;
         }
       });

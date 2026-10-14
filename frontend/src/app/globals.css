@@ -118,8 +118,10 @@
 }
 
 /* Light mode remaps --color-white to dark text. On solid accent fills
-   (checkboxes, primary buttons, status pills) text/icons must stay truly white. */
+   (checkboxes, primary buttons, status pills) text/icons must stay truly white.
+   .on-solid marks fills set with an inline background color (e.g. a list's custom status colors). */
 .theme-light :is(
+  .on-solid,
   .bg-indigo-500, .bg-indigo-600, .bg-indigo-700,
   .bg-emerald-500, .bg-emerald-600, .bg-green-500, .bg-green-600,
   .bg-blue-500, .bg-blue-600, .bg-sky-500, .bg-sky-600,

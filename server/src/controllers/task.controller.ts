@@ -227,10 +227,10 @@ export async function getTask(req: Request, res: Response) {
 
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    // Cache under the actual task ID, not the requested ID (in case it was a subtask ID)
-    await setCache(`task:${task.id}`, task, 300, generation);
-
-    return res.json({ task, subtask: foundSubtask, cached: false });
+    res.json({ task, subtask: foundSubtask, cached: false });
+    // Cache under the actual task ID, not the requested ID (in case it was a subtask ID) — after responding,
+    // since the modal waits on this request
+    setCache(`task:${task.id}`, task, 300, generation).catch(() => {});
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -1586,7 +1586,8 @@ export async function getLiveBlocksData(req: Request, res: Response) {
       filters.listId = listId;
     }
 
-    const tasks = await prisma.task.findMany({
+    // The daily report runs its own query below; this one (every task, with subtasks and checklists) isn't used there
+    const tasks = type === 'daily-report' ? [] : await prisma.task.findMany({
       where: {
         ...filters,
         ...(assigneeId

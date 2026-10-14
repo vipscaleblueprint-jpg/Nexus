@@ -406,6 +406,9 @@ export const LiveKanbanBlockNode = (props: NodeViewProps) => {
 
   const [data, setData] = useState<any>(initialData);
   const [loading, setLoading] = useState(false);
+  // The stored snapshot as of now — the effect below outlives the render it was set up in
+  const frozenRef = useRef<string>(typeof frozenData === 'string' ? frozenData : JSON.stringify(frozenData ?? null));
+  frozenRef.current = typeof frozenData === 'string' ? frozenData : JSON.stringify(frozenData ?? null);
 
   const isClosed = !editor.isEditable;
 
@@ -421,9 +424,8 @@ export const LiveKanbanBlockNode = (props: NodeViewProps) => {
         const res = await tasksApi.getLiveBlocksData(blockType, assigneeName, '', listId);
         if (mounted) {
           setData(res.blocks);
-          const newFrozen = JSON.stringify(res.blocks);
-          const oldFrozen = typeof frozenData === 'string' ? frozenData : JSON.stringify(frozenData);
-          if (newFrozen !== oldFrozen) {
+          // Only a real change is written into the page: each write is a page edit that gets saved
+          if (JSON.stringify(res.blocks) !== frozenRef.current) {
             updateAttributes({ frozenData: res.blocks });
           }
         }
@@ -434,13 +436,21 @@ export const LiveKanbanBlockNode = (props: NodeViewProps) => {
       }
     };
 
+    // Activity arrives in bursts (every comment, from anyone): refetch once it settles, not per event
+    let activityTimer: ReturnType<typeof setTimeout> | null = null;
+    const onActivity = () => {
+      if (activityTimer) clearTimeout(activityTimer);
+      activityTimer = setTimeout(fetchData, 3000);
+    };
+
     fetchData();
     const interval = setInterval(fetchData, 30 * 60 * 1000); // 30 mins
-    window.addEventListener('task_activity', fetchData);
+    window.addEventListener('task_activity', onActivity);
     return () => {
       mounted = false;
       clearInterval(interval);
-      window.removeEventListener('task_activity', fetchData);
+      if (activityTimer) clearTimeout(activityTimer);
+      window.removeEventListener('task_activity', onActivity);
     };
   }, [isClosed, blockType, assigneeName, listId, updateAttributes]);
 

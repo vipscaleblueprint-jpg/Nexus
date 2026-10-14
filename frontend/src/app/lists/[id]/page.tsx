@@ -104,6 +104,30 @@ export default function BoardPage() {
   // When each task was last changed optimistically on this page (see mergeFetchedTasks)
   const localTaskEditsRef = useRef<Map<string, number>>(new Map());
 
+  // Keep the cached board in step with socket and optimistic changes, so coming back to it shows the latest
+  // state instead of the last full fetch. Debounced (a drag streams move previews; serialising the board on
+  // each would stutter it) and flushed on leaving, so nothing pending is lost.
+  const pendingListCacheRef = useRef<any>(null);
+  const listCacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushListCache = () => {
+    if (listCacheTimerRef.current) clearTimeout(listCacheTimerRef.current);
+    listCacheTimerRef.current = null;
+    const pending = pendingListCacheRef.current;
+    pendingListCacheRef.current = null;
+    if (pending?.id) {
+      // Unsaved optimistic tasks are left out; the next fetch brings them back with their real ids
+      setListCache(pending.id, { ...pending, tasks: pending.tasks.filter((t: any) => !String(t.id).startsWith('temp-')) });
+    }
+  };
+  useEffect(() => {
+    // list.id check: right after switching boards, the previous board is still in state until its fetch lands
+    if (!list?.tasks || list.id !== id) return;
+    pendingListCacheRef.current = list;
+    if (listCacheTimerRef.current) clearTimeout(listCacheTimerRef.current);
+    listCacheTimerRef.current = setTimeout(flushListCache, 2000);
+  }, [list, id]);
+  useEffect(() => flushListCache, [id]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {

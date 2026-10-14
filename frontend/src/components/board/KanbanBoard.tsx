@@ -702,9 +702,15 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
   };
 
+  // Read through refs so the stable callback below sees columns/groups added after mount
+  const categorizedColumnsRef = useRef(categorizedColumns);
+  categorizedColumnsRef.current = categorizedColumns;
+
   const customCollisionDetection = useCallback((args: any) => {
     const isGroupDrag = args.active?.data?.current?.type === 'Group';
     const isColumnDrag = args.active?.data?.current?.type === 'Column';
+    const categorizedColumns = categorizedColumnsRef.current;
+    const localStatuses = latestLocalStatusesRef.current;
 
     if (isGroupDrag) {
       let collisions = pointerWithin(args);

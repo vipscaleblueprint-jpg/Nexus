@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
-import { keepUnseenBlocks, stripMentionSnapshots } from '../utils/pageBlocks';
+import { keepUnseenBlocks, stripMentionSnapshots, taskMentionIds } from '../utils/pageBlocks';
+import { writePageIfUnchanged } from '../services/pageContentService';
 import { syncClients } from './webhook.controller';
 
 export async function triggerSyncClients(req: Request, res: Response) {
@@ -653,37 +654,61 @@ const VERSION_COALESCE_MS = 30_000;
 export async function updatePage(req: Request, res: Response) {
   try {
     const { title, deletedBlockIds } = req.body;
-    let { content } = req.body;
+    const incoming: string | undefined = req.body.content === undefined ? undefined : stripMentionSnapshots(req.body.content);
     const authReq = req as any;
     const userId = authReq.user?.id;
 
     // Read the stored values first so unchanged saves (e.g. clicking out of a block) don't create a
     // version or bust the hierarchy cache. The doc editor sends the title with every save.
-    const previous = await prisma.page.findUnique({
+    const readPrevious = () => prisma.page.findUnique({
       where: { id: req.params.id },
-      select: { content: true, title: true },
-    });
-
-    let keptUnseenBlocks = false;
-    if (content !== undefined) {
-      content = stripMentionSnapshots(content);
-      // Only editors that report their deletions get the merge; older clients keep last-write-wins
-      if (Array.isArray(deletedBlockIds)) {
-        const merged = keepUnseenBlocks(previous?.content, content, deletedBlockIds);
-        keptUnseenBlocks = merged !== content;
-        content = merged;
-      }
-    }
-
-    // The page content can be megabytes: send it back only when the server changed it (kept blocks the
-    // editor hadn't seen), since otherwise the editor already has exactly what it sent.
-    const { content: savedContent, ...page } = await prisma.page.update({
-      where: { id: req.params.id },
-      data: {
-        ...(title && { title }),
-        ...(content !== undefined && { content }),
+      select: {
+        ...pageSelectConfig,
+        content: true,
+        doc: { select: { isDailyRollover: true, rolloverTimezone: true } },
       },
     });
+    let previous = await readPrevious();
+    if (!previous) return res.status(404).json({ error: 'Page not found' });
+
+    let content = incoming;
+    let keptUnseenBlocks = false;
+    let page: Omit<NonNullable<typeof previous>, 'content' | 'doc'>;
+    if (incoming === undefined) {
+      const { content: _content, ...updated } = await prisma.page.update({
+        where: { id: req.params.id },
+        data: { ...(title && { title }) },
+      });
+      page = updated;
+    } else {
+      // Conditional write: a journal auto-append (or another save) landing between the read above and this
+      // write is re-read and merged in instead of being overwritten (see pageContentService).
+      for (let attempt = 1; ; attempt++) {
+        content = incoming;
+        keptUnseenBlocks = false;
+        // Only editors that report their deletions get the merge; older clients keep last-write-wins
+        if (Array.isArray(deletedBlockIds)) {
+          const merged = keepUnseenBlocks(previous.content, incoming, deletedBlockIds);
+          keptUnseenBlocks = merged !== incoming;
+          content = merged;
+        }
+        const updatedAt = await writePageIfUnchanged(req.params.id, previous.updatedAt, {
+          content,
+          ...(title && { title }),
+        });
+        if (updatedAt) {
+          const { content: _content, doc: _doc, ...meta } = previous;
+          page = { ...meta, ...(title && { title }), updatedAt };
+          break;
+        }
+        if (attempt >= 5) return res.status(409).json({ error: 'Page is being changed by someone else; please retry' });
+        previous = await readPrevious();
+        if (!previous) return res.status(404).json({ error: 'Page not found' });
+      }
+    }
+    // The page content can be megabytes: send it back only when the server changed it (kept blocks the
+    // editor hadn't seen), since otherwise the editor already has exactly what it sent.
+    const savedContent = content;
 
     if (content !== undefined && userId && previous?.content !== content) {
       // A burst of saves (typing, mention chips refreshing) folds into one version per user instead of a
@@ -704,10 +729,46 @@ export async function updatePage(req: Request, res: Response) {
     if (title && title !== previous?.title) {
       await invalidateCache('spaces:all', 'dashboard:all');
     }
-    return res.json({ page: keptUnseenBlocks ? { ...page, content: savedContent } : page });
+    res.json({ page: keptUnseenBlocks ? { ...page, content: savedContent } : page });
+
+    if (content !== undefined && previous && previous.content !== content) {
+      syncRolloverExclusions(previous, content).catch((err) => console.error('[Rollover] exclusion sync failed:', err));
+    }
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Page not found' });
     return res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * On today's day page of a daily rollover doc, erasing every mention of a task takes it (and its subtasks)
+ * off the following days' pages; mentioning it there again brings it back. Older day pages are history,
+ * so edits to them change nothing.
+ */
+async function syncRolloverExclusions(
+  previous: { content: string; title: string; parentPageId: string | null; doc: { isDailyRollover: boolean; rolloverTimezone: string } },
+  content: string,
+) {
+  if (!previous.doc.isDailyRollover || !previous.parentPageId) return;
+  // Same title format the rollover worker gives day pages ("October 14, 2026")
+  const todayTitle = new Intl.DateTimeFormat('en-US', {
+    timeZone: previous.doc.rolloverTimezone || 'Asia/Singapore',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date());
+  if (previous.title !== todayTitle) return;
+
+  const before = taskMentionIds(previous.content);
+  const after = taskMentionIds(content);
+  const erased = [...before].filter((id) => !after.has(id));
+  const added = [...after].filter((id) => !before.has(id));
+
+  if (erased.length > 0) {
+    await prisma.task.updateMany({ where: { id: { in: erased } }, data: { rolloverExcluded: true } });
+  }
+  if (added.length > 0) {
+    await prisma.task.updateMany({ where: { id: { in: added }, rolloverExcluded: true }, data: { rolloverExcluded: false } });
   }
 }
 

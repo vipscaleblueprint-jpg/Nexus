@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getR2PresignedUrl } from '../services/r2Service';
-import { getCache, setCache, invalidateCache } from '../services/redisService';
+import { getCache, setCache, invalidateCache, getCacheGeneration } from '../services/redisService';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { getPositionAfter } from '../services/taskOrderService';
 import { io } from '../server';
@@ -29,6 +29,7 @@ import {
 import { isNexusAuditChecklist } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal } from '../utils/pageBlocks';
+import { updatePageBlocks } from '../services/pageContentService';
 import {
   getStatusChangeRecipients,
   getChecklistCheckRecipients,
@@ -136,12 +137,15 @@ export async function listTasks(req: Request, res: Response) {
       return res.json({ tasks: cachedTasks, cached: true });
     }
 
-    let pending = listTasksInFlight.get(cacheKey);
+    // Keyed by cache generation too: a request made after a change must not join a query that started before it
+    const generation = getCacheGeneration();
+    const inFlightKey = `${cacheKey}@${generation}`;
+    let pending = listTasksInFlight.get(inFlightKey);
     if (!pending) {
-      pending = queryListTasks({ listId, assigneeId, status, lightweight }, cacheKey).finally(() => {
-        listTasksInFlight.delete(cacheKey);
+      pending = queryListTasks({ listId, assigneeId, status, lightweight }, cacheKey, generation).finally(() => {
+        listTasksInFlight.delete(inFlightKey);
       });
-      listTasksInFlight.set(cacheKey, pending);
+      listTasksInFlight.set(inFlightKey, pending);
     }
     const tasks = await pending;
 
@@ -154,6 +158,7 @@ export async function listTasks(req: Request, res: Response) {
 async function queryListTasks(
   { listId, assigneeId, status, lightweight }: Record<string, string | undefined>,
   cacheKey: string,
+  generation: number,
 ) {
     const startedAt = Date.now();
     const tasks = await prisma.task.findMany({
@@ -181,7 +186,7 @@ async function queryListTasks(
     });
     console.log(`[API] listTasks db query: ${((Date.now() - startedAt) / 1000).toFixed(3)}s (${tasks.length} tasks)`);
 
-    await setCache(cacheKey, tasks, 300);
+    await setCache(cacheKey, tasks, 300, generation);
     return tasks;
 }
 
@@ -196,6 +201,7 @@ export async function getTask(req: Request, res: Response) {
       return res.json({ task: cachedTask, cached: true });
     }
 
+    const generation = getCacheGeneration();
     let task = await prisma.task.findUnique({
       where: { id: taskId },
       include: taskInclude,
@@ -221,7 +227,7 @@ export async function getTask(req: Request, res: Response) {
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
     // Cache under the actual task ID, not the requested ID (in case it was a subtask ID)
-    await setCache(`task:${task.id}`, task, 300);
+    await setCache(`task:${task.id}`, task, 300, generation);
 
     return res.json({ task, subtask: foundSubtask, cached: false });
   } catch (err: any) {
@@ -245,6 +251,7 @@ export async function batchGetTasks(req: Request, res: Response) {
     });
 
     if (missing.length > 0) {
+      const generation = getCacheGeneration();
       // 2. Missing IDs as tasks, in one query
       const tasks = await prisma.task.findMany({ where: { id: { in: missing } }, include: taskInclude });
       const taskById = new Map(tasks.map(t => [t.id, t]));
@@ -276,7 +283,7 @@ export async function batchGetTasks(req: Request, res: Response) {
       });
 
       // Warm the per-task cache without blocking the response
-      Promise.all(Array.from(taskById.values()).map(t => setCache(`task:${t.id}`, t, 300))).catch(() => {});
+      Promise.all(Array.from(taskById.values()).map(t => setCache(`task:${t.id}`, t, 300, generation))).catch(() => {});
     }
 
     return res.json({ results });
@@ -327,53 +334,49 @@ export async function createTask(req: Request, res: Response) {
 
     await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
 
-    // Backend injection into Daily Rollover doc
-    try {
-      const docs = await prisma.doc.findMany({ where: { isDailyRollover: true } });
-      for (const doc of docs) {
-        const tz = doc.rolloverTimezone || 'Asia/Singapore';
-        const dateObj = new Date();
-        const monthFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' });
-        const monthTitle = monthFormatter.format(dateObj);
-        const dayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', day: 'numeric', year: 'numeric' });
-        const dayTitle = dayFormatter.format(dateObj);
-
-        const monthPage = await prisma.page.findFirst({ where: { docId: doc.id, title: monthTitle, parentPageId: null } });
-        if (!monthPage) continue;
-
-        const dayPage = await prisma.page.findFirst({ where: { docId: doc.id, title: dayTitle, parentPageId: monthPage.id } });
-        if (!dayPage) continue;
-
-        let blocks = [];
-        try {
-          blocks = JSON.parse(dayPage.content);
-        } catch(e) {}
-
-        const clientName = task.list?.name || 'Unknown Client';
-        const escapedTitle = task.title.replace(/"/g, '&quot;');
-        const statusColor = '#3b82f6';
-        const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
-        const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
-
-        appendTaskToJournal(blocks, clientName, (section) => ({
-          id: section === 'c' ? `blk-t-${Date.now()}-${task.id}` : `blk-t-${Date.now()}-${task.id}-n`,
-          type: 'text',
-          content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
-        }));
-
-        await prisma.page.update({
-          where: { id: dayPage.id },
-          data: { content: JSON.stringify(blocks) }
-        });
-        
-        io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
-      }
-    } catch (err) {
-      console.error('Failed to inject task into daily rollover:', err);
-    }
-
     // Global broadcast reaches list-room members too, so a separate room emit would deliver it twice
     io.emit('task:created', task);
+    res.status(201).json({ task });
+
+    // Backend injection into Daily Rollover doc — after the broadcast/response, so boards see the new card
+    // without waiting on the journal's page reads and write. Journal viewers get it via page_updated.
+    (async () => {
+      const docs = await prisma.doc.findMany({ where: { isDailyRollover: true } });
+      for (const doc of docs) {
+        try {
+          const tz = doc.rolloverTimezone || 'Asia/Singapore';
+          const dateObj = new Date();
+          const monthFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' });
+          const monthTitle = monthFormatter.format(dateObj);
+          const dayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', day: 'numeric', year: 'numeric' });
+          const dayTitle = dayFormatter.format(dateObj);
+
+          const monthPage = await prisma.page.findFirst({ where: { docId: doc.id, title: monthTitle, parentPageId: null } });
+          if (!monthPage) continue;
+
+          const dayPage = await prisma.page.findFirst({ where: { docId: doc.id, title: dayTitle, parentPageId: monthPage.id } });
+          if (!dayPage) continue;
+
+          const clientName = task.list?.name || 'Unknown Client';
+          const escapedTitle = task.title.replace(/"/g, '&quot;');
+          const statusColor = '#3b82f6';
+          const taskStatusStr = JSON.stringify({ name: task.status, color: statusColor }).replace(/"/g, '&quot;');
+          const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
+
+          const written = await updatePageBlocks(dayPage, (blocks) => {
+            appendTaskToJournal(blocks, clientName, (section) => ({
+              id: section === 'c' ? `blk-t-${Date.now()}-${task.id}` : `blk-t-${Date.now()}-${task.id}-n`,
+              type: 'text',
+              content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
+            }));
+          });
+
+          if (written) io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
+        } catch (err) {
+          console.error('Failed to inject task into daily rollover:', err);
+        }
+      }
+    })().catch((err) => console.error('Failed to inject task into daily rollover:', err));
 
     // --- ClickUp Sync (fire-and-forget) ---
     // Look up whether the target Nexus list is mapped to a ClickUp list
@@ -409,9 +412,8 @@ export async function createTask(req: Request, res: Response) {
         console.error('[ClickUp] createTask sync error:', err);
       }
     })();
-
-    return res.status(201).json({ task });
   } catch (err: any) {
+    if (res.headersSent) return console.error('createTask error after response:', err);
     return res.status(500).json({ error: err.message });
   }
 }
@@ -1788,43 +1790,41 @@ export async function createSubtask(req: Request, res: Response) {
       })();
     }
 
-        try {
-      const today = new Date();
-      const monthTitle = today.toLocaleString('default', { month: 'long', year: 'numeric' });
-      const dayTitle = today.toLocaleString('default', { weekday: 'long', month: 'short', day: 'numeric' });
-      
+    try {
       const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
       if (doc) {
-        const monthPage = await prisma.page.findFirst({ where: { docId: doc.id, title: monthTitle } });
+        // Same page titles the rollover worker and createTask use ("October 2026" / "October 14, 2026")
+        const tz = doc.rolloverTimezone || 'Asia/Singapore';
+        const today = new Date();
+        const monthTitle = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' }).format(today);
+        const dayTitle = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', day: 'numeric', year: 'numeric' }).format(today);
+
+        const monthPage = await prisma.page.findFirst({ where: { docId: doc.id, title: monthTitle, parentPageId: null } });
         if (monthPage) {
           const dayPage = await prisma.page.findFirst({ where: { docId: doc.id, title: dayTitle, parentPageId: monthPage.id } });
           if (dayPage) {
-            let blocks = [];
-            try { blocks = JSON.parse(dayPage.content); } catch(e) {}
-            
-            let updated = false;
-            let i = 0;
-            while (i < blocks.length) {
-              if (blocks[i].content && blocks[i].content.includes(`data-id="${taskId}"`) && blocks[i].content.includes('data-mention-type="task"')) {
-                const escapedTitle = subtask.title.replace(/"/g, '&quot;');
-                blocks.splice(i + 1, 0, {
-                  id: `blk-sub-${Date.now()}-${subtask.id}`,
-                  type: 'text',
-                  content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${escapedTitle}" data-mention-type="subtask">@${escapedTitle}</span></p>`
-                });
-                updated = true;
-                i++; // skip new block
+            const escapedTitle = subtask.title.replace(/"/g, '&quot;');
+            const written = await updatePageBlocks(dayPage, (blocks) => {
+              let updated = false;
+              let i = 0;
+              while (i < blocks.length) {
+                if (blocks[i].content && blocks[i].content.includes(`data-id="${taskId}"`) && blocks[i].content.includes('data-mention-type="task"')) {
+                  // After the task's existing subtask lines, so subtasks stay in creation order
+                  let insertAt = i + 1;
+                  while (insertAt < blocks.length && String(blocks[insertAt].content || '').includes('└─')) insertAt++;
+                  blocks.splice(insertAt, 0, {
+                    id: `blk-sub-${Date.now()}-${subtask.id}-${i}`,
+                    type: 'text',
+                    content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${escapedTitle}" data-mention-type="subtask">@${escapedTitle}</span></p>`
+                  });
+                  updated = true;
+                  i = insertAt; // skip the subtask lines and the new block
+                }
+                i++;
               }
-              i++;
-            }
-            if (updated) {
-              await prisma.page.update({
-                where: { id: dayPage.id },
-                data: { content: JSON.stringify(blocks) }
-              });
-              const { io } = require('../socket');
-              io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
-            }
+              return updated;
+            });
+            if (written) io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
           }
         }
       }

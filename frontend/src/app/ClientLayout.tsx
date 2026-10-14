@@ -84,6 +84,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     });
 
     s.on('task:created', (task) => {
+      // Into the shared store (and its localStorage copy) too: updateTask ignores tasks the store doesn't hold,
+      // so without this a new task's mentions (e.g. on the journal) miss its live updates until a full reload.
+      useAppStore.getState().addTask(task);
       window.dispatchEvent(new CustomEvent('task:created', { detail: { task } }));
     });
 
@@ -93,6 +96,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     });
 
     s.on('task:deleted', ({ id }) => {
+      useAppStore.getState().removeTask(id);
       window.dispatchEvent(new CustomEvent('task:deleted', { detail: { id } }));
     });
 

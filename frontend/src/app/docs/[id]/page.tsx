@@ -50,6 +50,7 @@ import {
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from '@/lib/pageContentCache';
+import { BlockHtmlPreview } from '@/components/editor/BlockHtmlPreview';
 import {
   PageStylesPanel,
   usePageStyles,
@@ -190,19 +191,20 @@ function SidebarPageItem({
   }) : [];
 
   useEffect(() => {
-    if (isMonthFolder && !isCurrent && activePageId && hasChildren) {
+    if (isMonthFolder && activePageId && hasChildren) {
       const idx = sortedSubpages.findIndex((s: any) => s.id === activePageId);
       if (idx >= 0 && idx >= sidebarSubpageLimit) {
         setSidebarSubpageLimit(idx + 5);
       }
     }
-  }, [activePageId, isMonthFolder, isCurrent, hasChildren, sortedSubpages, sidebarSubpageLimit]);
+  }, [activePageId, isMonthFolder, hasChildren, sortedSubpages, sidebarSubpageLimit]);
 
-  const visibleSubpages = isMonthFolder && !isCurrent
+  // Every month folder pages its days, the current one included (newest first, so today stays visible)
+  const visibleSubpages = isMonthFolder
     ? sortedSubpages.slice(0, sidebarSubpageLimit)
     : sortedSubpages;
 
-  const hasMoreSubpages = isMonthFolder && !isCurrent && sortedSubpages.length > sidebarSubpageLimit;
+  const hasMoreSubpages = isMonthFolder && sortedSubpages.length > sidebarSubpageLimit;
 
   return (
     <div className="select-none">
@@ -334,8 +336,8 @@ const getTaskStatusBadgeColor = (status?: string) => {
 
 // ── Lazy block editors
 // A journal day can hold hundreds of blocks; mounting a Tiptap editor (plus a React node view per task
-// mention) for every one froze the page for seconds after opening it. Each block shows its plain text
-// until it comes within MOUNT_MARGIN of the visible area, then mounts its editor; once it scrolls past
+// mention) for every one froze the page for seconds after opening it. Each block shows a static preview
+// (BlockHtmlPreview) until it comes within MOUNT_MARGIN of the visible area, then mounts its editor; once it scrolls past
 // UNMOUNT_MARGIN the editor is released again, so memory stays bounded by what is near the viewport
 // instead of growing with every block scrolled past. The gap between the two margins stops blocks near
 // the edge from flapping between states.
@@ -401,15 +403,6 @@ function scheduleMount(mount: () => void) {
   return () => { mountQueue.delete(mount); };
 }
 
-const decodeEntities = (text: string) =>
-  text
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&');
-
 function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   let node = el?.parentElement ?? null;
   while (node) {
@@ -419,20 +412,6 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   }
   return null;
 }
-
-/** Stand-in for a not-yet-mounted editor: the block's text, at roughly the same size. */
-const BlockTextPlaceholder = memo(function BlockTextPlaceholder({ content }: { content: string }) {
-  const { text, sizeClass } = useMemo(() => {
-    // Tiptap JSON content has no cheap text form; leave it blank until the editor mounts
-    const raw = (content || '').startsWith('{"type":"doc"') ? '' : content || '';
-    const heading = raw.match(/^\s*<h([1-3])/i)?.[1];
-    return {
-      text: decodeEntities(raw.replace(/<br\s*\/?>|<\/(p|div|li|h[1-6])>/gi, '\n').replace(/<[^>]+>/g, '')).trim(),
-      sizeClass: heading === '1' ? 'text-3xl font-bold' : heading === '2' ? 'text-2xl font-bold' : heading === '3' ? 'text-xl font-semibold' : 'text-sm',
-    };
-  }, [content]);
-  return <div className={`min-h-[24px] whitespace-pre-wrap break-words text-zinc-900 dark:text-zinc-100 ${sizeClass}`}>{text}</div>;
-});
 
 function LazyBlockEditor({ forceMount, onEditorUnmount, ...editorProps }: React.ComponentProps<typeof BlockEditor> & {
   /** Focused/selected blocks always keep a live editor (keyboard navigation and merges need it). */
@@ -484,14 +463,17 @@ function LazyBlockEditor({ forceMount, onEditorUnmount, ...editorProps }: React.
     return () => onEditorUnmountRef.current?.();
   }, [mounted]);
 
+  // The same static rendering (editor typography + task chips) stands in before the editor mounts and
+  // during the frame before Tiptap creates it, so the page looks finished from the start.
+  const preview = <BlockHtmlPreview content={editorProps.content} />;
   return (
     <div ref={wrapperRef}>
       {mounted ? (
-        <BlockEditor {...editorProps} />
+        <BlockEditor {...editorProps} loadingFallback={preview} />
       ) : (
         // A click before the queued mount ran mounts this block right away
         <div style={{ minHeight: releasedHeight }} onPointerDown={() => setNearView(true)}>
-          <BlockTextPlaceholder content={editorProps.content} />
+          {preview}
         </div>
       )}
     </div>
@@ -936,13 +918,10 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [hoverCardPos, setHoverCardPos] = useState<{ x: number, y: number } | null>(null);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Each opened page starts its subpage list on the first 10, current month included
   useEffect(() => {
-    if (doc?.isDailyRollover && isCurrentMonth(activePage?.title)) {
-      setSubpageLimit(100);
-    } else {
-      setSubpageLimit(10);
-    }
-  }, [activePage?.id, doc?.isDailyRollover, activePage?.title]);
+    setSubpageLimit(10);
+  }, [activePage?.id]);
 
   useEffect(() => {
     const handleMouseOver = (e: MouseEvent) => {

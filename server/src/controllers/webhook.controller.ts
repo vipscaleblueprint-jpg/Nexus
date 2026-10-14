@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { appendTaskToJournal } from '../utils/pageBlocks';
+import { updatePageBlocks } from '../services/pageContentService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
@@ -526,11 +527,6 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         });
 
         if (todayPage && todayPage.content) {
-          let blocks = [];
-          try {
-            blocks = JSON.parse(todayPage.content);
-          } catch(e) {}
-          
           const escapedTitle = newTask.title.replace(/"/g, '&quot;');
           const statusColor = '#3b82f6';
           const taskStatusStr = JSON.stringify({ name: fullyLoadedTask?.status || newTask.status, color: statusColor }).replace(/"/g, '&quot;');
@@ -544,14 +540,11 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
 
           // Under the client and under New Tasks; subtasks are added under these lines as they arrive
           // (see handleGalaxySubtask).
-          appendTaskToJournal(blocks, clientName, getNewTaskBlock);
-
-          await prisma.page.update({
-            where: { id: todayPage.id },
-            data: { content: JSON.stringify(blocks) }
+          const written = await updatePageBlocks(todayPage, (blocks) => {
+            appendTaskToJournal(blocks, clientName, getNewTaskBlock);
           });
 
-          io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
+          if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
         }
       }
     } catch (error) {
@@ -859,12 +852,11 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         });
 
         if (todayPage && todayPage.content) {
-          const blocks = JSON.parse(todayPage.content);
-          
           const parentTaskMention = `data-id="${parentTask.id}"`;
-          const parentTaskIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content.includes(parentTaskMention));
+          const written = await updatePageBlocks(todayPage, (blocks) => {
+            const parentTaskIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content.includes(parentTaskMention));
+            if (parentTaskIndex === -1) return false;
 
-          if (parentTaskIndex !== -1) {
             const newSubtaskBlock = {
               id: `blk-st-${Date.now()}-${subtask.id}`,
               type: "text",
@@ -880,16 +872,11 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
                 break;
               }
             }
-            
+
             blocks.splice(insertIndex, 0, newSubtaskBlock);
+          });
 
-            await prisma.page.update({
-              where: { id: todayPage.id },
-              data: { content: JSON.stringify(blocks) }
-            });
-
-            io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
-          }
+          if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
         }
       }
     } catch (error) {

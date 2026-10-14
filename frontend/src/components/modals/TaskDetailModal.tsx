@@ -2980,7 +2980,7 @@ export function TaskDetailModalContent({
                     const isVideo = file.type.startsWith('video/');
                     const previewUrl = (isImage || isVideo) ? URL.createObjectURL(file) : null;
                     return (
-                      <div key={idx} className="relative group flex items-center justify-center bg-zinc-800/80 rounded-md border border-zinc-700/50 w-16 h-16 shrink-0 overflow-hidden">
+                      <div key={idx} className="relative group flex items-center justify-center bg-muted rounded-md border border-border w-16 h-16 shrink-0 overflow-hidden">
                         {isImage && previewUrl ? (
                           <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
                         ) : isVideo && previewUrl ? (
@@ -2990,7 +2990,8 @@ export function TaskDetailModalContent({
                         )}
                         <button
                           onClick={() => setStagedFiles(prev => prev.filter((_, i) => i !== idx))}
-                          className="absolute -top-1 -right-1 p-0.5 bg-red-500 hover:bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove"
+                          className="absolute top-1 right-1 p-0.5 bg-card/90 hover:bg-muted border border-border rounded-full text-muted-foreground hover:text-foreground shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -3056,6 +3057,7 @@ export function TaskDetailModalContent({
                     }
                   }}
                   onSubmit={handleAddComment}
+                  onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
                   disabled={isSubmittingComment}
                   placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
                 />
@@ -3070,7 +3072,7 @@ export function TaskDetailModalContent({
                 </button>
                 <button
                   onClick={handleAddComment}
-                  disabled={(!comment.trim() || comment === '<p></p>') || isUploading}
+                  disabled={((!comment.trim() || comment === '<p></p>') && stagedFiles.length === 0) || isUploading}
                   className="absolute right-3 bottom-3 p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors"
                   title="Send comment"
                 >
@@ -3084,13 +3086,14 @@ export function TaskDetailModalContent({
       </div>
 
       {/* Lightbox Modal */}
-      {lightboxImage && (
+      {/* Portaled to body: the modal card's transform would otherwise trap this fixed overlay inside it */}
+      {lightboxImage && createPortal(
         <div
-          className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
+          className="fixed inset-0 z-[200000] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
           <button
-            className="absolute top-6 right-6 p-2 rounded-full bg-black/50 text-white hover:bg-white/20 transition-colors"
+            className="absolute top-6 right-6 p-2 rounded-full bg-card/90 border border-border text-muted-foreground hover:text-foreground hover:bg-muted shadow-lg backdrop-blur-md transition-colors cursor-pointer"
             onClick={() => setLightboxImage(null)}
           >
             <X className="w-6 h-6" />
@@ -3111,7 +3114,8 @@ export function TaskDetailModalContent({
               onClick={e => e.stopPropagation()}
             />
           )}
-        </div>
+        </div>,
+        document.body
       )}
       {commentToDelete && (
         <ConfirmDeleteModal
@@ -5115,10 +5119,10 @@ export function SubtaskDetailView({
               {stagedFiles.length > 0 && (
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
                   {stagedFiles.map((file, i) => (
-                    <div key={i} className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-zinc-700/50 text-xs text-zinc-300">
-                      <Paperclip className="w-3 h-3 text-zinc-500" />
+                    <div key={i} className="flex items-center gap-1.5 px-2 py-1 rounded bg-muted border border-border text-xs text-foreground">
+                      <Paperclip className="w-3 h-3 text-muted-foreground" />
                       <span className="max-w-[150px] truncate">{file.name}</span>
-                      <button onClick={() => setStagedFiles(prev => prev.filter((_, idx) => idx !== i))} className="p-0.5 hover:bg-zinc-700 rounded-sm ml-1 text-zinc-400 hover:text-red-400">
+                      <button title="Remove" onClick={() => setStagedFiles(prev => prev.filter((_, idx) => idx !== i))} className="p-0.5 hover:bg-card rounded-sm ml-1 text-muted-foreground hover:text-foreground cursor-pointer">
                         <X className="w-3 h-3" />
                       </button>
                     </div>
@@ -5180,6 +5184,7 @@ export function SubtaskDetailView({
                     }
                   }}
                   onSubmit={handleAddComment}
+                  onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
                   disabled={isSubmitting}
                   placeholder={isSubmitting ? "Posting comment..." : "Write a comment..."}
                 />
@@ -5213,13 +5218,13 @@ export function SubtaskDetailView({
           itemName="this comment"
         />
       )}
-      {lightboxImage && (
+      {lightboxImage && createPortal(
         <div
-          className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
+          className="fixed inset-0 z-[200000] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
           <button
-            className="absolute top-6 right-6 p-2 rounded-full bg-black/50 text-white hover:bg-white/20 transition-colors"
+            className="absolute top-6 right-6 p-2 rounded-full bg-card/90 border border-border text-muted-foreground hover:text-foreground hover:bg-muted shadow-lg backdrop-blur-md transition-colors cursor-pointer"
             onClick={() => setLightboxImage(null)}
           >
             <X className="w-6 h-6" />
@@ -5240,7 +5245,8 @@ export function SubtaskDetailView({
               onClick={e => e.stopPropagation()}
             />
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

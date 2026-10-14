@@ -22,6 +22,8 @@ import {
   getClickUpCommentReplies,
   resolveClickUpListId,
   clickupMarkdownToHtml,
+  clickupCommentToHtml,
+  escapeHtml,
 } from './clickupService';
 
 export interface ClickUpSyncSummary {
@@ -780,15 +782,30 @@ async function syncComments(cuTaskId: string, target: Target, ctx: SyncContext) 
   }
 }
 
-/** Creates the comment once; existing rows (including ones Nexus pushed to ClickUp) are left as-is. */
+/**
+ * Creates the comment once. Existing rows (including ones Nexus pushed to ClickUp or edited
+ * in Nexus) are left as-is, except untouched plain-text imports, which are upgraded to rich HTML.
+ */
 async function upsertComment(c: any, target: Target, parentCommentId: string | null, ctx: SyncContext) {
   const userId = userIdFor(c.user, ctx);
   const text = String(c.comment_text ?? '').trim();
   // No Nexus account means the person has left — label them so it reads clearly.
-  const content = userId ? text : `${c.user?.username || 'ClickUp user'} (Deactivated): ${text}`;
+  const deactivated = `${c.user?.username || 'ClickUp user'} (Deactivated):`;
+  const plainContent = userId ? text : `${deactivated} ${text}`;
+  const richHtml = Array.isArray(c.comment) && c.comment.length
+    ? clickupCommentToHtml(c.comment, (cuUser) => userIdFor(cuUser, ctx))
+    : '';
+  const content = richHtml ? (userId ? richHtml : `<p>${escapeHtml(deactivated)}</p>${richHtml}`) : plainContent;
 
-  const existing = await prisma.taskComment.findUnique({ where: { externalId: String(c.id) }, select: { id: true } });
-  if (existing) return existing.id;
+  const existing = await prisma.taskComment.findUnique({ where: { externalId: String(c.id) }, select: { id: true, content: true } });
+  if (existing) {
+    // Earlier syncs stored only comment_text; upgrade those if nobody has edited them since.
+    if (existing.content === plainContent && content !== plainContent) {
+      await prisma.taskComment.update({ where: { id: existing.id }, data: { content } });
+      ctx.summary.comments++;
+    }
+    return existing.id;
+  }
 
   const created = await prisma.taskComment.create({
     data: {

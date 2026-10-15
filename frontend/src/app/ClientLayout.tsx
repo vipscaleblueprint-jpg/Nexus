@@ -21,6 +21,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     loadingSpaces,
     hasLoadedSpaces,
     hydrateFromCache,
+    hydrateTasksFromCache,
     currentUser,
     setCurrentUser,
     setUnreadNotifications,
@@ -38,6 +39,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Instantly populate from localStorage cache (no flash)
     hydrateFromCache();
+    hydrateTasksFromCache();
     // Not on the login page: the API needs a session, and a failed load there still marks spaces as loaded, so
     // after signing in (router.push keeps the store) the sidebar would never fetch them
     if (pathname !== '/login' && !hasLoadedSpaces && !loadingSpaces) {

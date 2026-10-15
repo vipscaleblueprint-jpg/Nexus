@@ -48,15 +48,20 @@ function setCachedTasks(tasks: Task[]) {
   } catch {}
 }
 
-// Serialising the whole task list blocks the main thread, so socket-driven updates are batched
-// into one write instead of one per event.
 const TASKS_CACHE_WRITE_DELAY_MS = 2000;
 let tasksCacheWriteTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleCachedTasksWrite(getTasks: () => Task[]) {
   if (tasksCacheWriteTimer) clearTimeout(tasksCacheWriteTimer);
   tasksCacheWriteTimer = setTimeout(() => {
     tasksCacheWriteTimer = null;
-    setCachedTasks(getTasks());
+    const currentTasks = getTasks();
+    // Safeguard: Never overwrite a populated cache with an empty or suspiciously small list
+    // (which happens if a single task socket arrives while on a different page before full list is loaded)
+    const existing = getCachedTasks();
+    if (existing.length > 5 && currentTasks.length < 5) {
+      return;
+    }
+    setCachedTasks(currentTasks);
   }, TASKS_CACHE_WRITE_DELAY_MS);
 }
 
@@ -209,7 +214,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (cached && cached.length > 0) {
       const index: Record<string, Task> = {};
       cached.forEach(t => index[t.id] = t);
-      set({ tasks: cached, tasksIndex: index, hasLoadedTasks: true });
+      set({ tasks: cached, tasksIndex: index, hasLoadedTasks: cached.length > 5 });
     }
   },
   loadTasks: async (silent = false) => {
@@ -220,37 +225,67 @@ export const useAppStore = create<AppState>((set, get) => ({
         setCachedTasks(res.tasks);
         const index: Record<string, Task> = {};
         res.tasks.forEach((t: Task) => index[t.id] = t);
-        set({ tasks: res.tasks, tasksIndex: index });
+        set({ tasks: res.tasks, tasksIndex: index, hasLoadedTasks: true });
       }
     } catch (err) {
       console.error("Failed to load tasks:", err);
     } finally {
-      if (!silent) set({ loadingTasks: false, hasLoadedTasks: true });
+      set({ loadingTasks: false, hasLoadedTasks: true });
     }
   },
   updateTask: (updatedTask) => set((state) => {
-    const exists = state.tasksIndex[updatedTask.id];
-    if (!exists) return state; // Only update if it exists, or maybe add it? Let's update index and tasks
-    const newTasks = state.tasks.map(t => t.id === updatedTask.id ? { ...t, ...updatedTask } : t);
+    let currentTasks = state.tasks;
+    let currentIndex = state.tasksIndex;
+    if (currentTasks.length === 0) {
+      const cached = getCachedTasks();
+      if (cached.length > 0) {
+        currentTasks = cached;
+        currentIndex = {};
+        cached.forEach(t => currentIndex[t.id] = t);
+      }
+    }
+    const exists = currentIndex[updatedTask.id];
+    if (!exists) return state;
+    const newTasks = currentTasks.map(t => t.id === updatedTask.id ? { ...t, ...updatedTask } : t);
     scheduleCachedTasksWrite(() => get().tasks);
     return {
       tasks: newTasks,
-      tasksIndex: { ...state.tasksIndex, [updatedTask.id]: { ...exists, ...updatedTask } }
+      tasksIndex: { ...currentIndex, [updatedTask.id]: { ...exists, ...updatedTask } }
     };
   }),
   addTask: (newTask) => set((state) => {
-    if (state.tasksIndex[newTask.id]) return state; // Avoid duplicate
-    const newTasks = [newTask, ...state.tasks];
+    let currentTasks = state.tasks;
+    let currentIndex = state.tasksIndex;
+    if (currentTasks.length === 0) {
+      const cached = getCachedTasks();
+      if (cached.length > 0) {
+        currentTasks = cached;
+        currentIndex = {};
+        cached.forEach(t => currentIndex[t.id] = t);
+      }
+    }
+    if (currentIndex[newTask.id]) return state; // Avoid duplicate
+    const newTasks = [newTask, ...currentTasks];
     scheduleCachedTasksWrite(() => get().tasks);
     return {
       tasks: newTasks,
-      tasksIndex: { ...state.tasksIndex, [newTask.id]: newTask }
+      tasksIndex: { ...currentIndex, [newTask.id]: newTask }
     };
   }),
   removeTask: (taskId) => set((state) => {
-    const newTasks = state.tasks.filter(t => t.id !== taskId);
+    let currentTasks = state.tasks;
+    let currentIndex = state.tasksIndex;
+    if (currentTasks.length === 0) {
+      const cached = getCachedTasks();
+      if (cached.length > 0) {
+        currentTasks = cached;
+        currentIndex = {};
+        cached.forEach(t => currentIndex[t.id] = t);
+      }
+    }
+    const newTasks = currentTasks.filter(t => t.id !== taskId);
     scheduleCachedTasksWrite(() => get().tasks);
-    const newIndex = { ...state.tasksIndex };
+    const newIndex = { ...currentIndex };
     delete newIndex[taskId];
     return {
       tasks: newTasks,

@@ -559,8 +559,11 @@ function WorkspaceDashboardContent({
   // 1. Fetch all tasks from API and Hydrate from Cache
   useEffect(() => {
     hydrateTasksFromCache();
-    // With cached tasks already on screen, refresh quietly instead of swapping them for a spinner
-    loadTasks(useAppStore.getState().tasks.length > 0);
+    const storeState = useAppStore.getState();
+    // Only silent if we have a substantial cache (> 5 tasks) or have already fully loaded,
+    // avoiding a flash of an incomplete 1-task list while fetching.
+    const shouldBeSilent = storeState.hasLoadedTasks || storeState.tasks.length > 5;
+    loadTasks(shouldBeSilent);
     lastTasksFetchRef.current = Date.now();
     if (!hasLoadedUsers) loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1297,17 +1300,37 @@ function WorkspaceDashboardContent({
               <div className="flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-indigo-400" />
                 <h2 className="text-base font-semibold text-zinc-200">
-                  {currentTab === "all" ? "Workspace Tasks" : currentTab === "clients" ? "Clients Overview" : "Priorities Overview"} ({filteredAllTasks.length})
+                  {currentTab === "all" ? "Workspace Tasks" : currentTab === "clients" ? "Clients Overview" : "Priorities Overview"} {loadingTasks && filteredAllTasks.length <= 1 ? "" : `(${filteredAllTasks.length})`}
                 </h2>
               </div>
             </div>
 
-            {loadingTasks ? (
-              <div className="p-12 rounded-xl bg-card border border-zinc-800/80 text-center space-y-3">
-                <div className="animate-spin size-7 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto" />
-                <p className="text-xs text-zinc-400 font-medium">
-                  Loading tasks...
-                </p>
+            {loadingTasks && filteredAllTasks.length <= 1 ? (
+              <div className="space-y-3">
+                <div className="hidden sm:flex items-center justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-2 pb-2 border-b border-zinc-800/80 w-full mb-2">
+                  <span className="text-left pl-4">Name</span>
+                  <div className="flex items-center gap-1">
+                    <div className="flex items-center shrink-0 w-[320px]">
+                      <span className="w-[120px] shrink-0 text-center">Assignee</span>
+                      <span className="w-[100px] shrink-0 text-center">Priority</span>
+                      <span className="w-[100px] shrink-0 text-center">Due</span>
+                    </div>
+                    <div className="w-8 shrink-0" />
+                  </div>
+                </div>
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} className="flex items-center justify-between p-3.5 rounded-lg bg-card border border-zinc-800/60 animate-pulse">
+                    <div className="flex items-center gap-3">
+                      <div className="w-4 h-4 rounded bg-zinc-800" />
+                      <div className={`h-4 rounded bg-zinc-800 ${i % 2 === 0 ? 'w-56' : 'w-72'}`} />
+                    </div>
+                    <div className="flex items-center gap-6">
+                      <div className="w-6 h-6 rounded-full bg-zinc-800" />
+                      <div className="w-16 h-5 rounded-full bg-zinc-800" />
+                      <div className="w-16 h-4 rounded bg-zinc-800" />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : activeGroups.length === 0 ? (
               <div className="p-16 rounded-xl bg-card border border-zinc-800/80 text-center space-y-4 shadow-xl">
@@ -1575,12 +1598,21 @@ function WorkspaceDashboardContent({
       {/* ─── TAB CONTENT: MY TASKS (CLICKUP GROUPED STATUS TABLE) ─── */}
       {currentTab === "my" && (
         <div className="space-y-6">
-          {loadingTasks ? (
-            <div className="p-12 rounded-xl bg-card border border-zinc-800/80 text-center space-y-3">
-              <div className="animate-spin size-7 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto" />
-              <p className="text-xs text-zinc-400 font-medium">
-                Syncing tasks in real-time...
-              </p>
+          {loadingTasks && filteredMyTasks.length === 0 ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center justify-between p-3.5 rounded-lg bg-card border border-zinc-800/60 animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded bg-zinc-800" />
+                    <div className={`h-4 rounded bg-zinc-800 ${i % 2 === 0 ? 'w-48' : 'w-64'}`} />
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="w-6 h-6 rounded-full bg-zinc-800" />
+                    <div className="w-16 h-5 rounded-full bg-zinc-800" />
+                    <div className="w-16 h-4 rounded bg-zinc-800" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : filteredMyTasks.length === 0 ? (
             <div className="p-16 rounded-xl bg-card border border-zinc-800/80 text-center space-y-4 shadow-xl">

@@ -862,27 +862,49 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
 
         if (todayPage && todayPage.content) {
           const parentTaskMention = `data-id="${parentTask.id}"`;
+          const escapedTitle = subtask.title.replace(/"/g, '&quot;');
           const written = await updatePageBlocks(todayPage, (blocks) => {
-            const parentTaskIndex = blocks.findIndex((b: any) => b.type === 'text' && b.content.includes(parentTaskMention));
-            if (parentTaskIndex === -1) return false;
+            let updated = false;
+            let i = 0;
+            while (i < blocks.length) {
+              const b = blocks[i];
+              if (b.type === 'text' && b.content && b.content.includes(parentTaskMention) && !b.content.includes('data-mention-type="subtask"')) {
+                let insertIndex = i + 1;
+                let alreadyExists = false;
+                while (insertIndex < blocks.length) {
+                  const nextBlock = blocks[insertIndex];
+                  if (nextBlock.type === 'text' && nextBlock.content && nextBlock.content.includes('└─')) {
+                    if (nextBlock.content.includes(`data-id="${subtask.id}"`)) {
+                      alreadyExists = true;
+                    }
+                    insertIndex++;
+                  } else {
+                    break;
+                  }
+                }
 
-            const newSubtaskBlock = {
-              id: `blk-st-${Date.now()}-${subtask.id}`,
-              type: "text",
-              content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${subtask.title}" data-mention-type="subtask">@${subtask.title}</span></p>`
-            };
+                if (!alreadyExists) {
+                  const newSubtaskBlock = {
+                    id: `blk-st-${Date.now()}-${subtask.id}-${i}`,
+                    type: "text",
+                    content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${escapedTitle}" data-mention-type="subtask">@${escapedTitle}</span></p>`
+                  };
 
-            let insertIndex = parentTaskIndex + 1;
-            while (insertIndex < blocks.length) {
-              const nextBlock = blocks[insertIndex];
-              if (nextBlock.type === 'text' && nextBlock.content.includes('└─')) {
-                insertIndex++;
-              } else {
-                break;
+                  blocks.splice(insertIndex, 0, newSubtaskBlock);
+                  if (insertIndex + 1 >= blocks.length || (blocks[insertIndex + 1]?.type === 'text' && /^<h[1-6]/i.test(blocks[insertIndex + 1]?.content || ''))) {
+                    blocks.splice(insertIndex + 1, 0, {
+                      id: `blk-space-${Date.now()}-${subtask.id}-${i}`,
+                      type: 'text',
+                      content: '<p></p>'
+                    });
+                  }
+                  updated = true;
+                  i = insertIndex;
+                }
               }
+              i++;
             }
-
-            blocks.splice(insertIndex, 0, newSubtaskBlock);
+            return updated;
           });
 
           if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });

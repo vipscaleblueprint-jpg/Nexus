@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../config/prisma';
 import { getR2PresignedUrl } from '../services/r2Service';
 import { getCache, setCache, invalidateCache, getCacheGeneration } from '../services/redisService';
+import { redis } from '../config/redis';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { getPositionAfter } from '../services/taskOrderService';
 import { io } from '../server';
@@ -185,13 +186,17 @@ async function queryListTasks(
             assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
             assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
             team: { select: { id: true, name: true, color: true } },
-            list: { select: { id: true, name: true, space: { select: { id: true, name: true } }, folder: { select: { id: true, name: true } } } }
+            list: { select: { id: true, name: true, space: { select: { id: true, name: true } }, folder: { select: { id: true, name: true } } } },
+            _count: { select: { subtasks: true, comments: true, attachments: true } },
           }
         : taskInclude,
       orderBy: { createdAt: 'desc' },
     });
     console.log(`[API] listTasks db query: ${((Date.now() - startedAt) / 1000).toFixed(3)}s (${tasks.length} tasks)`);
 
+    // Lightweight all-tasks query: cache for 5 minutes. With 1200+ tasks this query
+    // takes 12–20s cold — the cache is the primary performance mechanism here.
+    // Full taskInclude: cache for 5 minutes too (heavier but less frequent).
     await setCache(cacheKey, tasks, 300, generation);
     return tasks;
 }
@@ -243,6 +248,27 @@ export async function getTask(req: Request, res: Response) {
 
 // POST /api/tasks/batch - fetch many tasks in one round trip (used by docs with many task mentions).
 // Returns results keyed by the requested ID, each shaped like GET /api/tasks/:id ({ task, subtask }).
+// Uses a lean select — batch calls come from doc task-mention nodes that only need title, status,
+// priority, assignees and list context for the inline chip. Full taskInclude here caused 6–13s responses.
+const batchTaskSelect = {
+  id: true,
+  title: true,
+  status: true,
+  priority: true,
+  listId: true,
+  dueDate: true,
+  createdAt: true,
+  updatedAt: true,
+  assigneeId: true,
+  teamId: true,
+  description: true,
+  assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+  assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
+  team: { select: { id: true, name: true, color: true } },
+  list: { select: { id: true, name: true, space: { select: { id: true, name: true } }, folder: { select: { id: true, name: true } } } },
+  _count: { select: { subtasks: true, comments: true, attachments: true } },
+};
+
 export async function batchGetTasks(req: Request, res: Response) {
   try {
     const ids: string[] = Array.from(new Set(req.body.ids as string[]));
@@ -258,9 +284,9 @@ export async function batchGetTasks(req: Request, res: Response) {
 
     if (missing.length > 0) {
       const generation = getCacheGeneration('task:');
-      // 2. Missing IDs as tasks, in one query
-      const tasks = await prisma.task.findMany({ where: { id: { in: missing } }, include: taskInclude });
-      const taskById = new Map(tasks.map(t => [t.id, t]));
+      // 2. Missing IDs as tasks, in one query — lean select instead of full taskInclude
+      const tasks = await prisma.task.findMany({ where: { id: { in: missing } }, select: batchTaskSelect as any });
+      const taskById = new Map(tasks.map((t: any) => [t.id, t]));
 
       // 3. Whatever is left may be subtask IDs — resolve to their parent task
       const stillMissing = missing.filter(id => !taskById.has(id));
@@ -273,23 +299,23 @@ export async function batchGetTasks(req: Request, res: Response) {
             },
           })
         : [];
-      const parentIds = Array.from(new Set(subtasks.map(s => s.taskId))).filter(id => !taskById.has(id));
+      const parentIds = Array.from(new Set(subtasks.map((s: any) => s.taskId))).filter((id: any) => !taskById.has(id));
       if (parentIds.length > 0) {
-        const parents = await prisma.task.findMany({ where: { id: { in: parentIds } }, include: taskInclude });
-        parents.forEach(p => taskById.set(p.id, p));
+        const parents = await prisma.task.findMany({ where: { id: { in: parentIds as string[] } }, select: batchTaskSelect as any });
+        parents.forEach((p: any) => taskById.set(p.id, p));
       }
 
       missing.forEach(id => {
         const task = taskById.get(id);
         if (task) results[id] = { task, subtask: null };
       });
-      subtasks.forEach(s => {
+      subtasks.forEach((s: any) => {
         const parent = taskById.get(s.taskId);
         if (parent) results[s.id] = { task: parent, subtask: s };
       });
 
       // Warm the per-task cache without blocking the response
-      Promise.all(Array.from(taskById.values()).map(t => setCache(`task:${t.id}`, t, 300, generation))).catch(() => {});
+      Promise.all(Array.from(taskById.values()).map((t: any) => setCache(`task:${t.id}`, t, 60, generation))).catch(() => {});
     }
 
     return res.json({ results });
@@ -661,6 +687,9 @@ export async function updateTask(req: Request, res: Response) {
     // Return the response immediately so the client doesn't wait
     res.json({ task: payload, queued: true });
 
+    // Invalidate activity + task cache in the background (status/priority/assignment write an AuditLog)
+    invalidateCache(`task:activities:${taskId}`, `task:${taskId}`).catch(() => {});
+
     // --- ClickUp Sync (fire-and-forget) ---
     (async () => {
       try {
@@ -693,7 +722,7 @@ export async function updateTask(req: Request, res: Response) {
     })();
 
     // Background Processing: Cache Invalidation & Audit Logs
-    invalidateCache(`task:${taskId}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all').catch(console.error);
+    invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(console.error);
 
     const actingUserId = effectiveUser?.id || (await prisma.user.findFirst())?.id;
     if (actingUserId) {
@@ -975,6 +1004,9 @@ export async function moveTask(req: Request, res: Response) {
     const roomListId = currentListId || currentTask.listId;
     io.emit('task:updated', updated);
 
+    // Invalidate activity cache in background (status change writes an AuditLog)
+    invalidateCache(`task:activities:${id}`, `task:${id}`).catch(() => {});
+
     // --- ClickUp Sync: status change (fire-and-forget) ---
     (async () => {
       try {
@@ -991,7 +1023,7 @@ export async function moveTask(req: Request, res: Response) {
     })();
 
     // Fire and forget cache invalidation so we don't block the API response
-    invalidateCache(`task:${id}`, 'tasks:all', 'spaces:all', 'dashboard:all', 'lists:all').catch(err => {
+    invalidateCache(`task:${id}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(err => {
       console.error('Cache invalidation error:', err);
     });
 
@@ -1138,6 +1170,18 @@ export async function createTaskComment(req: Request, res: Response) {
     };
 
     const payload = { taskId, comment, activity, subtaskId };
+
+    // Append new comment to the Redis List (lpush = newest at index 0).
+    // This keeps the cache warm without a DB round-trip — the next GET
+    // will see it immediately without waiting for invalidation + re-fetch.
+    const redisCommentKey = `comments:list:${taskId}${subtaskId ? `:sub:${subtaskId}` : ''}`;
+    redis.lrem(redisCommentKey, 0, '__EMPTY__')
+      .then(() => redis.lpush(redisCommentKey, JSON.stringify(comment)))
+      .then(() => redis.expire(redisCommentKey, 3600))
+      .catch(() => {});
+    // Also invalidate the activity cache since a new comment writes an AuditLog
+    invalidateCache(`task:activities:${taskId}`).catch(() => {});
+
     if (listId) {
       io.to(`list:${listId}`).emit('task:comment_added', payload);
       // Broadcast globally (room members included) so the Activity page, which isn't in list rooms, refreshes live
@@ -1262,6 +1306,8 @@ export async function updateTaskComment(req: Request, res: Response) {
     });
 
     const payload = { taskId, comment };
+    // Delete the Redis List so next fetch rebuilds it with the edited content
+    redis.del(`comments:list:${taskId}`).catch(() => {});
     if (listId) {
       io.to(`list:${listId}`).emit('task:comment_updated', payload);
     } else {
@@ -1315,6 +1361,8 @@ export async function deleteTaskComment(req: Request, res: Response) {
     }
 
     const payload = { taskId, commentId };
+    // Delete the Redis List so next fetch rebuilds it cleanly without the deleted comment
+    redis.del(`comments:list:${taskId}`).catch(() => {});
     if (listId) {
       io.to(`list:${listId}`).emit('task:comment_deleted', payload);
     } else {
@@ -1368,6 +1416,20 @@ export async function getTaskComments(req: Request, res: Response) {
     const taskId = req.params.id;
     const { subtaskId } = req.query;
 
+    // Redis List key — one list per task (or per subtask).
+    // New comments are lpush'd so index 0 = newest; we reverse before sending
+    // so the client always receives oldest-first (matches prior contract).
+    const redisKey = `comments:list:${taskId}${subtaskId ? `:sub:${subtaskId}` : ''}`;
+
+    const cachedItems = await redis.lrange(redisKey, 0, -1);
+    if (cachedItems.length > 0) {
+      if (cachedItems.length === 1 && cachedItems[0] === '__EMPTY__') {
+        return res.json({ comments: [], cached: true });
+      }
+      const comments = cachedItems.filter((c: string) => c !== '__EMPTY__').map((c: string) => JSON.parse(c)).reverse();
+      return res.json({ comments, cached: true });
+    }
+
     const whereClause: any = { taskId, parentCommentId: null };
     if (subtaskId) {
       whereClause.subtaskId = String(subtaskId);
@@ -1407,6 +1469,22 @@ export async function getTaskComments(req: Request, res: Response) {
       replies: c.replies.map((r: any) => ({ ...r, user: userMap[r.userId] })),
     }));
 
+    // Populate Redis List — store oldest-first (rpush), so lrange 0 -1 is chronological
+    // and lpush for new comments keeps newest at index 0 for efficient appends.
+    // If no comments exist, store '__EMPTY__' sentinel so subsequent queries return in 2ms.
+    // TTL: 1 hour — reset on every access so active tasks stay warm indefinitely.
+    const pipeline = redis.pipeline();
+    pipeline.del(redisKey);
+    if (enriched.length > 0) {
+      for (const c of enriched) {
+        pipeline.rpush(redisKey, JSON.stringify(c));
+      }
+    } else {
+      pipeline.rpush(redisKey, '__EMPTY__');
+    }
+    pipeline.expire(redisKey, 3600);
+    await pipeline.exec();
+
     return res.json({ comments: enriched });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1419,6 +1497,13 @@ export async function getTaskComments(req: Request, res: Response) {
 export async function getTaskActivities(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
+
+    // Redis cache — 60 second TTL, invalidated on any write to this task
+    const cacheKey = `task:activities:${taskId}`;
+    const cached = await getCache<any>(cacheKey);
+    if (cached) {
+      return res.json({ ...cached, cached: true });
+    }
 
     const task = await prisma.task.findUnique({
       where: { id: taskId },
@@ -1549,11 +1634,17 @@ export async function getTaskActivities(req: Request, res: Response) {
       };
     });
 
-    return res.json({
+    const result = {
       taskCreatedAt: task.createdAt,
       creator: task.creator,
       activities,
-    });
+    };
+
+    // Cache for 60 seconds — invalidated whenever a status change, comment, or
+    // checklist action writes a new AuditLog entry for this task
+    setCache(cacheKey, result, 60).catch(() => {});
+
+    return res.json(result);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

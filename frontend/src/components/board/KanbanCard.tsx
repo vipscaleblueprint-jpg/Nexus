@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, getAssigneeAvatarColor } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, getAssigneeAvatarColor, prefetchTaskActivities } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -1168,6 +1168,14 @@ export const KanbanCard = memo(function KanbanCard({
           if (dragTimeoutRef.current) {
             clearTimeout(dragTimeoutRef.current);
             dragTimeoutRef.current = null;
+          }
+        }}
+        onMouseEnter={() => {
+          // Prefetch activities & comments during the hover → click window (~100–300ms).
+          // By the time the user clicks, data is already in the in-memory cache so the
+          // modal opens with zero visible loading time.
+          if (task?.id && !isOverlay) {
+            prefetchTaskActivities(task.id);
           }
         }}
         onClick={(e) => {

@@ -24,13 +24,14 @@ interface CommentEditorProps {
   disabled?: boolean;
   onSubmit?: () => void;
   onPasteFiles?: (files: File[]) => void;
+  onKeyDown?: (event: KeyboardEvent) => boolean | void;
 }
 
 export interface CommentEditorRef {
   insertMention: (name: string, matchLength: number, userId: string) => void;
 }
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onKeyDown }, ref) => {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -62,6 +63,9 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         class: 'prose prose-sm prose-invert focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full pr-20'
       },
       handleKeyDown: (view, event) => {
+        if (onKeyDown && onKeyDown(event)) {
+          return true;
+        }
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
           if (onSubmit) onSubmit();

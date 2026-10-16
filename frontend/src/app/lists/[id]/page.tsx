@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { spacesApi, authApi } from '@/api';
 import { useAppStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
 import {
   List as ListIcon,
   Plus,
@@ -30,8 +31,7 @@ import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
 import { toast } from '@/lib/toast';
 import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
-import { getRoles } from '@/api/roles';
-import type { WorkspaceRole } from '@/lib/types';
+// getRoles removed — workspaceRoles now read from Zustand store (avoids a fresh HTTP call per board visit)
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'text-zinc-400 bg-zinc-800',
@@ -69,7 +69,15 @@ export default function BoardPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { currentUser, setCurrentUser } = useAppStore();
+  const { currentUser, setCurrentUser, workspaceRoles, loadRoles, hasLoadedRoles } = useAppStore(
+    useShallow(s => ({
+      currentUser: s.currentUser,
+      setCurrentUser: s.setCurrentUser,
+      workspaceRoles: s.workspaceRoles,
+      loadRoles: s.loadRoles,
+      hasLoadedRoles: s.hasLoadedRoles,
+    }))
+  );
 
   const [list, setList] = useState<any>(null);
   const [customGroups, setCustomGroups] = useState<string[]>([]);
@@ -90,16 +98,13 @@ export default function BoardPage() {
   const [taskModalStatus, setTaskModalStatus] = useState<string>('TODO');
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
-  const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingNameValue, setEditingNameValue] = useState('');
 
+  // Ensure workspace roles are loaded — uses store cache so no extra HTTP call if already fetched
   useEffect(() => {
-    if (!currentUser) return;
-    getRoles()
-      .then(setWorkspaceRoles)
-      .catch((err) => console.warn('Failed to load roles in page:', err));
-  }, [currentUser]);
+    if (!hasLoadedRoles) loadRoles();
+  }, [hasLoadedRoles, loadRoles]);
 
   // When each task was last changed optimistically on this page (see mergeFetchedTasks)
   const localTaskEditsRef = useRef<Map<string, number>>(new Map());
@@ -516,53 +521,57 @@ export default function BoardPage() {
 
   return (
     <div className="w-full h-full relative flex flex-col">
-      <TaskDetailModal
-        isOpen={!!selectedTask}
-        onClose={() => setSelectedTask(null)}
-        task={selectedTask || null}
-        mode="full"
-        socket={socket}
-        listStatuses={list?.statuses || []}
-        workspaceRoles={workspaceRoles}
-        onStatusChange={(newStatus) => {
-          if (selectedTask) {
-            const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
-            if (!check.allowed) {
-              toast.error(check.reason || 'You do not have permission to move tasks from this status');
-              return;
+      {/* TaskDetailModal is lazy-mounted: only added to the DOM when a task is selected.
+          This keeps the 286KB component tree out of every board render cycle. */}
+      {selectedTask && (
+        <TaskDetailModal
+          isOpen={true}
+          onClose={() => setSelectedTask(null)}
+          task={selectedTask}
+          mode="full"
+          socket={socket}
+          listStatuses={list?.statuses || []}
+          workspaceRoles={workspaceRoles}
+          onStatusChange={(newStatus) => {
+            if (selectedTask) {
+              const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
+              if (!check.allowed) {
+                toast.error(check.reason || 'You do not have permission to move tasks from this status');
+                return;
+              }
+              const transitionCheck = canTransitionTaskStatus(selectedTask, newStatus);
+              if (!transitionCheck.allowed) {
+                toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+                return;
+              }
+              handleTaskMove(selectedTask.id, newStatus);
+              setSelectedTask({ ...selectedTask, status: newStatus });
             }
-            const transitionCheck = canTransitionTaskStatus(selectedTask, newStatus);
-            if (!transitionCheck.allowed) {
-              toast.error(transitionCheck.reason || 'Cannot move task to this status.');
-              return;
+          }}
+          onUpdateTask={async (updatedTask) => {
+            if (selectedTask && updatedTask.status !== selectedTask.status) {
+              const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
+              if (!check.allowed) {
+                toast.error(check.reason || 'You do not have permission to move tasks from this status');
+                return;
+              }
+              const transitionCheck = canTransitionTaskStatus(selectedTask, updatedTask.status);
+              if (!transitionCheck.allowed) {
+                toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+                return;
+              }
             }
-            handleTaskMove(selectedTask.id, newStatus);
-            setSelectedTask({ ...selectedTask, status: newStatus });
-          }
-        }}
-        onUpdateTask={async (updatedTask) => {
-          if (selectedTask && updatedTask.status !== selectedTask.status) {
-            const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
-            if (!check.allowed) {
-              toast.error(check.reason || 'You do not have permission to move tasks from this status');
-              return;
-            }
-            const transitionCheck = canTransitionTaskStatus(selectedTask, updatedTask.status);
-            if (!transitionCheck.allowed) {
-              toast.error(transitionCheck.reason || 'Cannot move task to this status.');
-              return;
-            }
-          }
 
-          // Sync board and modal state
-          localTaskEditsRef.current.set(updatedTask.id, Date.now());
-          setSelectedTask(updatedTask);
-          setList((prev: any) => ({
-            ...prev,
-            tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
-          }));
-        }}
-      />
+            // Sync board and modal state
+            localTaskEditsRef.current.set(updatedTask.id, Date.now());
+            setSelectedTask(updatedTask);
+            setList((prev: any) => ({
+              ...prev,
+              tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
+            }));
+          }}
+        />
+      )}
       
       {loading ? (
         <ListSkeleton />
@@ -782,16 +791,18 @@ export default function BoardPage() {
                       };
                     });
 
-                    await spacesApi.updateList(id as string, { customGroups: newGroups });
-                    
+                    // Run the list update and all status patches in parallel
                     const statusesToUpdate = list?.statuses?.filter((s: any) => s.groupName === groupToDelete) || [];
-                    for (const status of statusesToUpdate) {
-                      await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${status.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nexus_token')}` },
-                        body: JSON.stringify({ groupName: null })
-                      });
-                    }
+                    await Promise.all([
+                      spacesApi.updateList(id as string, { customGroups: newGroups }),
+                      ...statusesToUpdate.map((status: any) =>
+                        fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${status.id}`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ groupName: null }),
+                        })
+                      ),
+                    ]);
                   } catch (e: any) {
                     console.error('Failed to delete group', e);
                     toast.error(e.message || 'Failed to delete group');
@@ -813,16 +824,18 @@ export default function BoardPage() {
                       };
                     });
 
-                    await spacesApi.updateList(id as string, { customGroups: newGroups });
-
+                    // Run the list update and all status patches in parallel
                     const statusesToUpdate = list?.statuses?.filter((s: any) => s.groupName === oldName) || [];
-                    for (const status of statusesToUpdate) {
-                      await fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${status.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nexus_token')}` },
-                        body: JSON.stringify({ groupName: newName })
-                      });
-                    }
+                    await Promise.all([
+                      spacesApi.updateList(id as string, { customGroups: newGroups }),
+                      ...statusesToUpdate.map((status: any) =>
+                        fetch(`${API_BASE_URL}/api/lists/${id}/statuses/${status.id}`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ groupName: newName }),
+                        })
+                      ),
+                    ]);
                   } catch (e: any) {
                     console.error('Failed to rename group', e);
                     toast.error(e.message || 'Failed to rename group');

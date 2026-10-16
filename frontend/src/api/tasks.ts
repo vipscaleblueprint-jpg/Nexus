@@ -3,7 +3,10 @@ import { Task } from '@/lib/types';
 
 export const tasksApi = {
   async getTasks(params?: { lightweight?: boolean }): Promise<{ tasks: Task[] }> {
-    const qs = params?.lightweight ? '?lightweight=true' : '';
+    // Default to lightweight=true — the global store only needs card-level fields.
+    // Pass { lightweight: false } explicitly when full task detail is required.
+    const lightweight = params?.lightweight !== false;
+    const qs = lightweight ? '?lightweight=true' : '';
     return apiClient<{ tasks: Task[] }>(`/api/tasks${qs}`, {
       method: 'GET',
     });

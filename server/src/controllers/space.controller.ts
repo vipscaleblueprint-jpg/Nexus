@@ -129,6 +129,9 @@ const folderIncludeConfig: any = {
   },
 };
 
+// In-flight deduplication: concurrent requests share the same DB promise when cache is cold
+const listSpacesInFlight = new Map<string, Promise<any>>();
+
 // GET /api/spaces - full hierarchy with Redis Cache-Aside
 export async function listSpaces(req: Request, res: Response) {
   try {
@@ -140,101 +143,114 @@ export async function listSpaces(req: Request, res: Response) {
       return res.json({ ...cachedSpaces, cached: true });
     }
 
-    const spaces = await prisma.space.findMany({
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: {
-        folders: folderIncludeConfig,
-        lists: { where: { folderId: null }, ...listsIncludeWithCount },
-        docs: {
-          where: { folderId: null, isDailyRollover: false },
-          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-          include: {
-            pages: {
-              orderBy: { createdAt: 'asc' },
-              select: {
-                ...pageSelectConfig,
-                subpages: {
-                  orderBy: { createdAt: 'asc' },
-                  select: pageSelectConfig,
+    // Reuse in-flight query if another concurrent request already started it
+    let spacesPromise = listSpacesInFlight.get('spaces:all');
+    if (!spacesPromise) {
+      spacesPromise = (async () => {
+        // Run all 5 independent queries in parallel via Promise.all
+        const [spaces, rootFolders, rootLists, rootDocs, dailyRolloverDocs] = await Promise.all([
+          prisma.space.findMany({
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: {
+              folders: folderIncludeConfig,
+              lists: { where: { folderId: null }, ...listsIncludeWithCount },
+              docs: {
+                where: { folderId: null, isDailyRollover: false },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+                include: {
+                  pages: {
+                    orderBy: { createdAt: 'asc' },
+                    select: {
+                      ...pageSelectConfig,
+                      subpages: {
+                        orderBy: { createdAt: 'asc' },
+                        select: pageSelectConfig,
+                      },
+                    },
+                  },
                 },
               },
             },
-          },
-        },
-      },
-    });
-
-    // Also fetch standalone root items (folders/lists/docs with no spaceId)
-    const rootFolders = await prisma.folder.findMany({
-      where: { spaceId: null, parentFolderId: null },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: folderIncludeConfig.include,
-    });
-    const rootLists = await prisma.list.findMany({
-      where: { spaceId: null, folderId: null },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: { _count: { select: { tasks: true } } },
-    });
-    const rootDocs = await prisma.doc.findMany({
-      where: { spaceId: null, folderId: null, isDailyRollover: false },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: {
-        pages: {
-          orderBy: { createdAt: 'asc' },
-          select: {
-            ...pageSelectConfig,
-            subpages: {
-              orderBy: { createdAt: 'asc' },
-              select: pageSelectConfig,
+          }),
+          prisma.folder.findMany({
+            where: { spaceId: null, parentFolderId: null },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: folderIncludeConfig.include,
+          }),
+          prisma.list.findMany({
+            where: { spaceId: null, folderId: null },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: { _count: { select: { tasks: true } } },
+          }),
+          prisma.doc.findMany({
+            where: { spaceId: null, folderId: null, isDailyRollover: false },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: {
+              pages: {
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  ...pageSelectConfig,
+                  subpages: {
+                    orderBy: { createdAt: 'asc' },
+                    select: pageSelectConfig,
+                  },
+                },
+              },
             },
-          },
-        },
-      },
-    });
+          }),
+          prisma.doc.findMany({
+            where: { isDailyRollover: true },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: {
+              pages: {
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  ...pageSelectConfig,
+                  subpages: {
+                    orderBy: { createdAt: 'asc' },
+                    select: pageSelectConfig,
+                  },
+                },
+              },
+            },
+          }),
+        ]);
 
-    let resultSpaces = [...spaces];
+        let resultSpaces = [...spaces];
 
-    // If standalone root items exist, bundle them into a virtual Space so they render in hierarchy tree
-    if (rootFolders.length > 0 || rootLists.length > 0 || rootDocs.length > 0) {
-      resultSpaces.unshift({
-        id: 'root-space',
-        name: 'Workspace Overview',
-        color: '#6366F1',
-        folders: rootFolders,
-        lists: rootLists,
-        docs: rootDocs,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as any);
+        // If standalone root items exist, bundle them into a virtual Space so they render in hierarchy tree
+        if (rootFolders.length > 0 || rootLists.length > 0 || rootDocs.length > 0) {
+          resultSpaces.unshift({
+            id: 'root-space',
+            name: 'Workspace Overview',
+            color: '#6366F1',
+            folders: rootFolders,
+            lists: rootLists,
+            docs: rootDocs,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          } as any);
+        }
+
+        const allDocsList = collectAllDocs(resultSpaces);
+        dailyRolloverDocs.forEach((d) => allDocsList.push({ doc: d }));
+
+        const payload = {
+          spaces: resultSpaces,
+          allLists: collectAllLists(resultSpaces),
+          allDocs: allDocsList,
+        };
+
+        await setCache('spaces:all', payload, 300);
+        return payload;
+      })().finally(() => {
+        listSpacesInFlight.delete('spaces:all');
+      });
+
+      listSpacesInFlight.set('spaces:all', spacesPromise);
     }
 
-    const allDocsList = collectAllDocs(resultSpaces);
-    const dailyRolloverDocs = await prisma.doc.findMany({
-      where: { isDailyRollover: true },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: {
-        pages: {
-          orderBy: { createdAt: 'asc' },
-          select: {
-            ...pageSelectConfig,
-            subpages: {
-              orderBy: { createdAt: 'asc' },
-              select: pageSelectConfig,
-            },
-          },
-        },
-      },
-    });
-    dailyRolloverDocs.forEach((d) => allDocsList.push({ doc: d }));
-
-    const payload = {
-      spaces: resultSpaces,
-      allLists: collectAllLists(resultSpaces),
-      allDocs: allDocsList,
-    };
-
-    await setCache('spaces:all', payload, 300);
-
+    const payload = await spacesPromise;
     return res.json({ ...payload, cached: false });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

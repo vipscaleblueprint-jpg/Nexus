@@ -527,20 +527,31 @@ function SubtaskRow({
     setTitleVal(subtask.title);
   }, [subtask.title]);
 
-  // Fetch comments when tab is active and not yet loaded
+  // Fetch comments when tab is active — use a ref flag so setting comments
+  // doesn't re-trigger this effect (which caused an infinite polling loop).
+  const commentsLoadedRef = useRef(false);
+  useEffect(() => {
+    // Reset the flag when the subtask changes so a new subtask fetches fresh
+    commentsLoadedRef.current = false;
+  }, [subtask.id]);
+
   useEffect(() => {
     let cancelled = false;
-    if (activeTab === 'comments' && subtask.comments === undefined && taskId && subtask.id) {
+    if (activeTab === 'comments' && !commentsLoadedRef.current && taskId && subtask.id) {
+      commentsLoadedRef.current = true; // mark immediately to prevent duplicate fetches
       tasksApi.getComments(taskId, subtask.id)
         .then(res => {
           if (!cancelled && res?.comments && onAddCommentLocally) {
             onAddCommentLocally(subtask.id, res.comments);
           }
         })
-        .catch(err => console.error('Failed to load subtask comments:', err));
+        .catch(err => {
+          commentsLoadedRef.current = false; // allow retry on error
+          console.error('Failed to load subtask comments:', err);
+        });
     }
     return () => { cancelled = true; };
-  }, [activeTab, subtask.comments, taskId, subtask.id, onAddCommentLocally]);
+  }, [activeTab, taskId, subtask.id, onAddCommentLocally]);
 
   const handleTitleSubmit = () => {
     setIsEditingTitle(false);

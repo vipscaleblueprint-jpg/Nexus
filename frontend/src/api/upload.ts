@@ -21,4 +21,21 @@ export const uploadApi = {
 
     return res.json();
   },
+
+  /** Has the server copy an image from a link into our storage (for hosts the browser can't read from). */
+  uploadFromUrl: async (url: string, folder?: string): Promise<{ url: string; name: string }> => {
+    const res = await fetch(`${API_BASE_URL}/api/upload/from-url`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, folder }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to copy image');
+    }
+
+    return res.json();
+  },
 };

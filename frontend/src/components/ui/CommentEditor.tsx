@@ -14,7 +14,7 @@ import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { normalizeHref } from '@/lib/links';
 import { toast } from '@/lib/toast';
-import { GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2 } from 'lucide-react';
+import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2 } from 'lucide-react';
 
 const colors = [
   '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1', '#d946ef', '#22c55e', '#14b8a6', '#52525b', 'transparent'
@@ -31,16 +31,47 @@ interface CommentEditorProps {
   onPasteFiles?: (files: File[]) => void;
   /** When set, images are placed inline at the cursor (like ClickUp) and uploaded in the background. */
   onUploadImage?: (file: File) => Promise<string>;
+  /** Copies an image from a link server-side, for pasted images whose host the browser can't read from. */
+  onUploadImageUrl?: (url: string) => Promise<string>;
   /** Fires with true while any inline image is still uploading, so the parent can hold submit. */
   onUploadingChange?: (uploading: boolean) => void;
-  /** Action buttons shown in a toolbar row under the text, inside the editor's border. */
+  /** Tool buttons on the left of the toolbar row under the text (use ComposerToolButton). */
   footer?: React.ReactNode;
+  /** The send action on the right of the toolbar row (use ComposerSendButton). */
+  footerEnd?: React.ReactNode;
 }
+
+/** An icon button for the comment toolbar. */
+export const ComposerToolButton = ({ className = '', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <button
+    type="button"
+    {...props}
+    className={`flex h-7 w-7 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-700/50 hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-40 cursor-pointer ${className}`}
+  />
+);
+
+/** The comment toolbar's send button; quiet while there's nothing to send. */
+export const ComposerSendButton = ({ className = '', children = 'Send', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <button
+    type="button"
+    {...props}
+    // on-solid keeps text-white white in light mode (the theme remaps it to dark text elsewhere)
+    className={`on-solid flex h-7 items-center gap-1.5 rounded-lg bg-gradient-to-b from-indigo-500 to-indigo-600 pl-2.5 pr-3 text-[12px] font-medium text-white shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_2px_8px_-2px_rgba(99,102,241,0.6)] transition-all hover:from-indigo-400 hover:to-indigo-500 active:scale-[0.97] disabled:pointer-events-none disabled:from-zinc-800 disabled:to-zinc-800 disabled:text-zinc-500 disabled:shadow-none cursor-pointer ${className}`}
+  >
+    <Send className="h-3.5 w-3.5" />
+    {children}
+  </button>
+);
 
 export interface CommentEditorRef {
   insertMention: (name: string, matchLength: number, userId: string) => void;
   insertImages: (files: File[]) => void;
 }
+
+// The line-move shortcut as the user's keyboard labels it (Option on a Mac)
+const ALT_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? '⌥' : 'Alt';
+// Theme tokens, so the keys read as keys in both light and dark mode
+const KBD_CLASS = 'inline-flex min-w-[18px] items-center justify-center rounded-[5px] border border-border bg-background px-1 font-sans text-[10px] font-medium leading-4 text-foreground/70 shadow-[0_1px_0_var(--border)]';
 
 // Clipboard screenshots arrive unnamed or as "image.png" — give them unique names
 const nameClipboardFiles = (files: File[]) => files.map((file, i) => {
@@ -135,7 +166,7 @@ const fileNameFromSrc = (src: string, type: string) => {
   return `pasted-image-${Date.now()}.${ext}`;
 };
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onUploadImage, onUploadingChange, footer }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd }, ref) => {
   const pendingUploads = React.useRef(0);
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   // Drag handle beside the hovered line/image: its top within the wrapper and the block's doc position
@@ -234,12 +265,33 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     editor.view.dispatch(tr);
   };
 
+  // Swaps every image with this src for a link to it, named after the image
+  const replaceImageWithLink = (src: string) => {
+    if (!editor || editor.isDestroyed) return;
+    const { schema, tr } = editor.state;
+    const hits: { pos: number; alt: string }[] = [];
+    tr.doc.descendants((node, pos) => {
+      if (node.type.name === 'image' && node.attrs.src === src) hits.push({ pos, alt: String(node.attrs.alt || '') });
+    });
+    if (hits.length === 0) return;
+    for (const hit of hits.reverse()) {
+      const label = hit.alt.trim() || fileNameFromSrc(src, 'image/png');
+      const link = schema.nodes.paragraph.create(null, schema.text(label, [schema.marks.link.create({ href: src })]));
+      tr.replaceWith(hit.pos, hit.pos + 1, link);
+    }
+    editor.view.dispatch(tr);
+  };
+
   // Re-uploads pasted images so the comment doesn't depend on another app's links (which can
-  // expire or need a login). Hosts that block cross-site reads keep their original URL;
-  // base64 images that fail are removed rather than stored inline in the comment.
+  // expire or need a login). When the browser can't read a host (cross-site block), the server
+  // copies it; one neither can reach (it needs the other app's login) becomes a link, since as an
+  // image it would only ever show for people signed in there. Base64 images that fail are removed.
   const rehostImages = (srcs: string[]) => {
     if (!onUploadImage) return;
-    for (const src of new Set(srcs)) {
+    const unique = Array.from(new Set(srcs));
+    let left = unique.length;
+    let linked = 0;
+    for (const src of unique) {
       setPending(1);
       fetch(src, { signal: AbortSignal.timeout(20000) })
         .then(res => {
@@ -250,11 +302,27 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
           if (!blob.type.startsWith('image/')) throw new Error('Not an image');
           return onUploadImage(new File([blob], fileNameFromSrc(src, blob.type), { type: blob.type }));
         })
+        .catch((err: unknown) => {
+          if (src.startsWith('data:') || !onUploadImageUrl) throw err;
+          return onUploadImageUrl(src);
+        })
         .then(url => replaceImageSrc(src, url))
         .catch(() => {
           if (src.startsWith('data:')) replaceImageSrc(src, null);
+          else if (onUploadImageUrl) {
+            linked++;
+            replaceImageWithLink(src);
+          }
         })
-        .finally(() => setPending(-1));
+        .finally(() => {
+          setPending(-1);
+          if (--left === 0 && linked > 0) {
+            toast.warning(
+              `${linked === 1 ? '1 pasted image' : `${linked} pasted images`} couldn't be copied from the other app, so ${linked === 1 ? 'it was' : 'they were'} added as a link. Download and attach the image so everyone can see it.`,
+              8000,
+            );
+          }
+        });
     }
   };
   rehostImagesRef.current = rehostImages;
@@ -425,6 +493,14 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     }
   }, [value, editor]);
 
+  // Types "@" at the cursor, which opens the parent's mention list like typing it does
+  const insertMentionTrigger = () => {
+    if (!editor || disabled) return;
+    const { $from } = editor.state.selection;
+    const before = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼');
+    editor.chain().focus().insertContent(before && !/\s$/.test(before) ? ' @' : '@').run();
+  };
+
   if (!editor) return null;
 
   return (
@@ -435,17 +511,28 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       onMouseDown={handleWrapperMouseDown}
       onMouseLeave={() => { if (!isDraggingRef.current) setDragHandle(null); }}
       onScrollCapture={() => { if (!isDraggingRef.current) setDragHandle(null); }}
-      className="relative w-full rounded-md border border-zinc-700/60 bg-zinc-800/60 py-3 pr-3 pl-7 text-sm focus-within:border-indigo-500/60 transition-colors custom-scrollbar"
+      className="group/composer relative w-full rounded-xl border border-zinc-700/50 bg-zinc-900/60 py-3 pr-3 pl-7 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all duration-200 hover:border-zinc-600/60 focus-within:border-indigo-500/50 focus-within:bg-zinc-900/90 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.12),0_8px_24px_-12px_rgba(0,0,0,0.6)] custom-scrollbar"
     >
       {dragHandle && dropLineTop === null && (
         <div
           data-comment-drag-handle
           onPointerDown={handleGripPointerDown}
           style={{ top: dragHandle.top - 3, touchAction: 'none' }}
-          className="absolute left-1 z-10 flex h-6 w-5 cursor-grab items-center justify-center rounded text-zinc-500 hover:bg-zinc-700/70 hover:text-zinc-200"
-          title="Drag to move (or Alt+↑/↓)"
+          className="group/grip absolute left-1 z-10 flex h-6 w-5 cursor-grab items-center justify-center rounded text-zinc-500 hover:bg-zinc-700/70 hover:text-zinc-200"
+          aria-label={`Drag to move this line, or press ${ALT_KEY}+↑ / ${ALT_KEY}+↓`}
         >
           <GripVertical className="h-4 w-4" />
+          {/* Opens to the right, over the hovered line: above it would be clipped by the modal on the first line */}
+          <div
+            role="tooltip"
+            className="pointer-events-none invisible absolute left-full top-1/2 ml-1.5 -translate-y-1/2 whitespace-nowrap rounded-lg border border-zinc-700 bg-popover px-2.5 py-1.5 text-[11px] leading-5 text-zinc-300 opacity-0 shadow-xl transition-opacity delay-0 group-hover/grip:visible group-hover/grip:opacity-100 group-hover/grip:delay-300"
+          >
+            <div><span className="font-medium text-zinc-100">Drag</span> to move this line</div>
+            <div className="flex items-center gap-1">
+              <kbd className={KBD_CLASS}>{ALT_KEY}</kbd>+<kbd className={KBD_CLASS}>↑</kbd>/<kbd className={KBD_CLASS}>↓</kbd>
+              <span className="ml-0.5">move it up or down</span>
+            </div>
+          </div>
         </div>
       )}
       {dropLineTop !== null && (
@@ -562,9 +649,22 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         .ProseMirror img.ProseMirror-selectednode { outline: 2px solid #6366f1; outline-offset: 1px; }
       `}</style>
       <div><EditorContent editor={editor} /></div>
-      {footer && (
-        <div className="flex items-center justify-end gap-1.5 mt-2 pt-2 border-t border-zinc-700/40">
+      {(footer || footerEnd) && (
+        <div className="-mr-1.5 -mb-1.5 mt-2 flex items-center gap-0.5 pt-1.5">
+          <ComposerToolButton onClick={insertMentionTrigger} disabled={disabled} title="Mention someone (@)">
+            <AtSign className="h-4 w-4" />
+          </ComposerToolButton>
           {footer}
+          <div className="ml-auto flex items-center gap-2.5">
+            {onSubmit && (
+              <span className="hidden items-center gap-1 text-[10.5px] text-zinc-500 opacity-0 transition-opacity group-focus-within/composer:opacity-100 sm:flex">
+                <kbd className={KBD_CLASS}>⏎</kbd> send
+                <span className="mx-0.5 text-zinc-700">·</span>
+                <kbd className={KBD_CLASS}>⇧ ⏎</kbd> new line
+              </span>
+            )}
+            {footerEnd}
+          </div>
         </div>
       )}
     </div>

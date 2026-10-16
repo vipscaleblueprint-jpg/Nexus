@@ -28,6 +28,7 @@ import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
+import { plainTextToCommentHtml } from '../utils/commentHtml';
 
 interface LinkedTarget {
   taskId: string;
@@ -290,7 +291,7 @@ function formatSheetComment(fileName: unknown, datePosted: unknown, message: str
   }).formatToParts(new Date());
   const p = (type: string) => parts.find((x) => x.type === type)?.value ?? '';
   const edited = `${p('month')} ${p('day')}, ${p('year')} ${p('hour')}:${p('minute')} ${p('dayPeriod')}`;
-  return `👤 ${who} | 📅  ${str(datePosted)} | ✏️ ${edited}\n\n${message}`;
+  return plainTextToCommentHtml(`👤 ${who} | 📅  ${str(datePosted)} | ✏️ ${edited}\n\n${message}`);
 }
 
 const commentInclude = { user: { select: { id: true, name: true, avatarUrl: true, email: true } } };

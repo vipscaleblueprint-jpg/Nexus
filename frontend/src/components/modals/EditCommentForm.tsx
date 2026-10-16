@@ -209,6 +209,7 @@ export function EditCommentForm({
   };
 
   const uploadImage = useCallback((file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url), []);
+  const copyImage = useCallback((url: string) => uploadApi.uploadFromUrl(url, 'comments').then(res => res.url), []);
 
   // Outer container paste capture so pasting works anywhere inside the edit form
   const handleOuterPasteCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -460,6 +461,7 @@ export function EditCommentForm({
           }}
           onPasteFiles={handlePasteFiles}
           onUploadImage={uploadImage}
+          onUploadImageUrl={copyImage}
           onUploadingChange={setIsUploadingInline}
           onSubmit={handleEditorSubmit}
           autoFocus

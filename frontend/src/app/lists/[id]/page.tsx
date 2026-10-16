@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { spacesApi, authApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -17,6 +17,8 @@ import {
   KanbanSquare,
   Share2,
   Pencil,
+  Search,
+  X,
 } from 'lucide-react';
 // useRouter is imported above
 import { ListSkeleton } from '@/components/ui/Skeleton';
@@ -65,6 +67,19 @@ function mergeFetchedTasks(prev: any[] | undefined, next: any[] | undefined, req
   });
 }
 
+const stripHtml = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&');
+
+/** Everything a task can be found by: its title, description, subtask titles and assignees. */
+function searchTextOf(task: any): string {
+  return [
+    task.title,
+    task.description ? stripHtml(String(task.description)) : '',
+    ...(task.subtasks || []).map((s: any) => s.title),
+    task.assignee?.name,
+    ...(task.assignees || []).map((a: any) => a.name),
+  ].filter(Boolean).join(' \n ').toLowerCase();
+}
+
 export default function BoardPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -93,6 +108,35 @@ export default function BoardPage() {
   const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingNameValue, setEditingNameValue] = useState('');
+  // Searches this client's tasks only; kept with the list it was typed on, so another list starts blank
+  const [searchState, setSearchState] = useState({ listId: id, text: '' });
+  const search = searchState.listId === id ? searchState.text : '';
+  const setSearch = (text: string) => setSearchState({ listId: id, text });
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // "/" focuses the search, like ClickUp, unless typing somewhere already
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      e.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const searchTerms = useMemo(() => search.toLowerCase().split(/\s+/).filter(Boolean), [search]);
+  const visibleTasks = useMemo(() => {
+    const tasks = list?.tasks || [];
+    if (searchTerms.length === 0) return tasks;
+    return tasks.filter((t: any) => {
+      const text = searchTextOf(t);
+      return searchTerms.every((term) => text.includes(term));
+    });
+  }, [list?.tasks, searchTerms]);
+  const isSearching = searchTerms.length > 0;
 
   useEffect(() => {
     if (!currentUser) return;
@@ -374,7 +418,7 @@ export default function BoardPage() {
   }, [id]);
 
   // Group tasks by status
-  const tasksByStatus = list?.tasks?.reduce((acc: Record<string, any[]>, task: any) => {
+  const tasksByStatus = visibleTasks.reduce((acc: Record<string, any[]>, task: any) => {
     const status = task.status || 'TODO';
     if (!acc[status]) acc[status] = [];
     acc[status].push(task);
@@ -664,6 +708,43 @@ export default function BoardPage() {
               <KanbanSquare className="w-4 h-4" />
               Board
             </button>
+
+            <div className="ml-auto mb-2 flex items-center gap-2">
+              {isSearching && (
+                <span className={`text-[11px] ${visibleTasks.length ? 'text-zinc-500' : 'text-amber-400'}`}>
+                  {visibleTasks.length ? `${visibleTasks.length} of ${list?.tasks?.length ?? 0}` : 'No matching tasks'}
+                </span>
+              )}
+              <div className={`relative flex items-center w-64 rounded-md border bg-secondary/60 transition-colors ${isSearching ? 'border-indigo-500/60' : 'border-zinc-800 focus-within:border-zinc-600'}`}>
+                <Search className="absolute left-2.5 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSearch('');
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  placeholder={`Search ${list?.name ?? 'this list'}'s tasks…`}
+                  aria-label="Search tasks in this list"
+                  className="w-full bg-transparent pl-8 pr-7 py-1.5 text-[12px] text-zinc-200 placeholder:text-zinc-600 outline-none"
+                />
+                {search ? (
+                  <button
+                    onClick={() => { setSearch(''); searchInputRef.current?.focus(); }}
+                    className="absolute right-1.5 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors cursor-pointer"
+                    title="Clear search (Esc)"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                ) : (
+                  <kbd className="absolute right-2 text-[10px] text-zinc-600 border border-zinc-700 rounded px-1 leading-4 pointer-events-none">/</kbd>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Task Groups by Status */}
@@ -671,7 +752,7 @@ export default function BoardPage() {
             <div className="flex-1 min-h-0">
               <KanbanBoard
                 listId={id}
-                tasks={list?.tasks || []}
+                tasks={visibleTasks}
                 onTaskMove={handleTaskMove}
                 onTaskMovePreview={handleTaskMovePreview}
                 onTaskReorder={handleTaskReorder}

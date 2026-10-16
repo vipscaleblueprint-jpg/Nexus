@@ -1,4 +1,8 @@
 import { Request, Response } from 'express';
+import dns from 'dns';
+import http from 'http';
+import https from 'https';
+import net from 'net';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { requireEnv } from '../config/env';
 import { logger, errMsg } from '../config/logger';
@@ -44,6 +48,28 @@ const AVATAR_EXTENSIONS: Record<string, string> = {
   'image/avif': '.avif',
 };
 
+// e.g. "comments" or "description"; client-supplied, so kept to a plain folder name
+const folderOf = (raw: unknown) => String(raw || 'general').replace(/[^a-zA-Z0-9_-]/g, '_') || 'general';
+
+/** Stores a file in R2 under a unique key and returns its public URL. */
+async function putFile(folder: string, originalname: string, buffer: Buffer, mimetype: string): Promise<string> {
+  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+  // Sanitize filename to avoid weird characters in URL
+  const safeFilename = originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const objectKey = `${folder}/${uniqueSuffix}-${safeFilename}`;
+
+  await s3.send(new PutObjectCommand({
+    Bucket: bucketName,
+    Key: objectKey,
+    Body: buffer,
+    ...storageHeaders(mimetype, safeFilename),
+  }));
+
+  const fileUrl = `${publicUrl}/${objectKey}`;
+  logger.info(`File uploaded successfully to R2: ${fileUrl}`);
+  return fileUrl;
+}
+
 export const uploadFile = async (req: Request, res: Response) => {
   try {
     if (!req.file) {
@@ -51,32 +77,136 @@ export const uploadFile = async (req: Request, res: Response) => {
     }
 
     const { originalname, buffer, mimetype } = req.file;
-    // e.g. "comments" or "description"; client-supplied, so kept to a plain folder name
-    const folder = String(req.body.folder || 'general').replace(/[^a-zA-Z0-9_-]/g, '_') || 'general';
-
-    // Generate a unique key
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    // Sanitize filename to avoid weird characters in URL
-    const safeFilename = originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const objectKey = `${folder}/${uniqueSuffix}-${safeFilename}`;
-
-    const command = new PutObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey,
-      Body: buffer,
-      ...storageHeaders(mimetype, safeFilename),
-    });
-
-    await s3.send(command);
-
-    const fileUrl = `${publicUrl}/${objectKey}`;
-    
-    logger.info(`File uploaded successfully to R2: ${fileUrl}`);
-
+    const fileUrl = await putFile(folderOf(req.body.folder), originalname, buffer, mimetype);
     res.status(200).json({ url: fileUrl, name: originalname });
   } catch (error: any) {
     logger.error({ err: error }, `Error uploading file to R2: ${error?.name}: ${errMsg(error)}`);
     res.status(500).json({ error: error.message || 'Failed to upload file' });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Copying an image from a link: for images pasted from another app that the browser can't read
+// (the host blocks cross-site reads). Public hosts only: every address a hostname resolves to is
+// checked when connecting (redirects included), so the server can't be pointed at internal services.
+// ---------------------------------------------------------------------------
+
+const FETCH_IMAGE_TYPES = /^image\/(png|jpeg|gif|webp|avif|bmp)$/;
+const FETCH_MAX_BYTES = 20 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_MAX_REDIRECTS = 3;
+
+/** A link that can't be copied (refused, not an image, needs a login...), as opposed to a server fault. */
+class FetchImageError extends Error {}
+
+const blockedIps = new net.BlockList();
+for (const [net4, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
+  ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
+] as const) blockedIps.addSubnet(net4, prefix, 'ipv4');
+for (const [net6, prefix] of [['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['64:ff9b::', 96]] as const) {
+  blockedIps.addSubnet(net6, prefix, 'ipv6');
+}
+
+function isBlockedIp(address: string): boolean {
+  const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return blockedIps.check(mapped[1], 'ipv4');
+  return blockedIps.check(address, net.isIPv6(address) ? 'ipv6' : 'ipv4');
+}
+
+const guardedLookup: net.LookupFunction = (hostname, options, callback) => {
+  dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) return callback(err, '', 0);
+    const list = addresses as unknown as dns.LookupAddress[];
+    if (!list.length || list.some((a) => isBlockedIp(a.address))) {
+      return callback(new FetchImageError(`Refusing to fetch from ${hostname}`), '', 0);
+    }
+    if ((options as dns.LookupOptions).all) return (callback as any)(null, list);
+    callback(null, list[0].address, list[0].family);
+  });
+};
+
+function fetchImage(url: URL, redirectsLeft = FETCH_MAX_REDIRECTS): Promise<{ buffer: Buffer; type: string }> {
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new FetchImageError('Only http(s) links can be copied');
+  // Literal IPs never go through the lookup, so they're checked here
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(host) && isBlockedIp(host)) throw new FetchImageError('That address is not allowed');
+
+  return new Promise((resolve, reject) => {
+    const req = (url.protocol === 'https:' ? https : http).get(url, {
+      lookup: guardedLookup,
+      timeout: FETCH_TIMEOUT_MS,
+      headers: { 'User-Agent': 'Nexus-Image-Copy/1.0', Accept: 'image/*' },
+    }, (res) => {
+      const status = res.statusCode ?? 0;
+      if (status >= 300 && status < 400 && res.headers.location) {
+        res.resume();
+        if (redirectsLeft <= 0) return reject(new FetchImageError('Too many redirects'));
+        try {
+          return resolve(fetchImage(new URL(res.headers.location, url), redirectsLeft - 1));
+        } catch (err) {
+          return reject(err);
+        }
+      }
+      if (status !== 200) {
+        res.resume();
+        return reject(new FetchImageError(`The image host answered ${status}`));
+      }
+      const type = String(res.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      if (!FETCH_IMAGE_TYPES.test(type)) {
+        res.resume();
+        return reject(new FetchImageError('The link is not an image'));
+      }
+      if (Number(res.headers['content-length'] || 0) > FETCH_MAX_BYTES) {
+        res.resume();
+        return reject(new FetchImageError('The image is too large'));
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > FETCH_MAX_BYTES) {
+          req.destroy(new FetchImageError('The image is too large'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on('end', () => resolve({ buffer: Buffer.concat(chunks), type }));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new FetchImageError('The image host took too long')));
+    req.on('error', reject);
+  });
+}
+
+function fileNameFromUrl(url: URL, type: string): string {
+  const ext = type.split('/')[1].replace('jpeg', 'jpg');
+  let name = '';
+  try {
+    name = decodeURIComponent(url.pathname.split('/').pop() || '');
+  } catch { /* malformed escape */ }
+  if (!name) return `pasted-image-${Date.now()}.${ext}`;
+  return /\.[a-z0-9]{2,5}$/i.test(name) ? name : `${name}.${ext}`;
+}
+
+// POST /api/upload/from-url  { url, folder? } → { url, name }
+export const uploadFromUrl = async (req: Request, res: Response) => {
+  let source: URL;
+  try {
+    source = new URL(String(req.body?.url || ''));
+  } catch {
+    return res.status(400).json({ error: 'A valid image link is required' });
+  }
+  try {
+    const { buffer, type } = await fetchImage(source);
+    const name = fileNameFromUrl(source, type);
+    const fileUrl = await putFile(folderOf(req.body?.folder), name, buffer, type);
+    res.status(200).json({ url: fileUrl, name });
+  } catch (error: any) {
+    // The host refused, needs a login or isn't an image: the client keeps a link instead
+    const status = error instanceof FetchImageError || error?.code ? 422 : 500;
+    if (status === 500) logger.error({ err: error }, `Error copying image from ${source.host}: ${errMsg(error)}`);
+    res.status(status).json({ error: errMsg(error) || 'Failed to copy image' });
   }
 };
 

@@ -23,7 +23,7 @@ import { SubtasksSection } from './SubtasksSection';
 import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
-import { CommentEditor } from '../ui/CommentEditor';
+import { CommentEditor, ComposerSendButton, ComposerToolButton } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
 import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
@@ -33,6 +33,7 @@ const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
 const keepUrl = (url: string) => url;
 const uploadCommentImage = (file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url);
+const copyCommentImage = (url: string) => uploadApi.uploadFromUrl(url, 'comments').then(res => res.url);
 
 // Parsing a comment (remark-gfm + rehype-raw) is the costly part of the feed. Memoized on its content, so typing
 // in the comment box or posting another comment doesn't re-parse every comment already shown.
@@ -223,6 +224,20 @@ export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[]
 
 function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  // An image that won't load (e.g. pasted from an app that needs its own login) shows as a link to it
+  if (failed) {
+    return (
+      <a href={src} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+        className="my-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-700/50 bg-secondary text-xs text-zinc-300 hover:border-zinc-500 no-underline"
+        title="This image couldn't be loaded. It may need a login to the app it was copied from.">
+        <ImageIcon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+        <span className="truncate max-w-[220px]">{alt || 'Image'}</span>
+        <span className="text-zinc-500">· unavailable</span>
+      </a>
+    );
+  }
 
   if (!loaded) {
     return (
@@ -252,6 +267,7 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
         src={src}
         alt={alt}
         className="max-w-[200px] max-h-[150px] object-cover rounded-lg"
+        onError={() => setFailed(true)}
       />
       <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg pointer-events-none">
         <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
@@ -3103,27 +3119,24 @@ export function TaskDetailModalContent({
                   onSubmit={handleAddComment}
                   onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
                   onUploadImage={uploadCommentImage}
+                  onUploadImageUrl={copyCommentImage}
                   onUploadingChange={setIsUploadingInline}
                   disabled={isSubmittingComment}
                   placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
-                  footer={<>
-                    <button
-                      onClick={() => commentFileInputRef.current?.click()}
-                      disabled={isUploading}
-                      className="p-1.5 rounded-md hover:bg-zinc-700/60 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors"
-                      title="Attach file or image"
-                    >
+                  footer={
+                    <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
                       <Paperclip className="w-4 h-4" />
-                    </button>
-                    <button
+                    </ComposerToolButton>
+                  }
+                  footerEnd={
+                    <ComposerSendButton
                       onClick={handleAddComment}
-                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline}
-                      className="p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors"
+                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
                       title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
                     >
-                      <Send className="w-4 h-4" />
-                    </button>
-                  </>}
+                      {isSubmittingComment ? 'Sending…' : 'Send'}
+                    </ComposerSendButton>
+                  }
                 />
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
               </div>
@@ -5239,27 +5252,24 @@ export function SubtaskDetailView({
                   onSubmit={handleAddComment}
                   onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
                   onUploadImage={uploadCommentImage}
+                  onUploadImageUrl={copyCommentImage}
                   onUploadingChange={setIsUploadingInline}
                   disabled={isSubmitting}
                   placeholder={isSubmitting ? "Posting comment..." : "Write a comment..."}
-                  footer={<>
-                    <button
-                      onClick={() => commentFileInputRef.current?.click()}
-                      disabled={isUploading}
-                      className="p-1.5 rounded-md hover:bg-zinc-700/60 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-                      title="Attach file or image"
-                    >
+                  footer={
+                    <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
                       <Paperclip className="w-4 h-4" />
-                    </button>
-                    <button
+                    </ComposerToolButton>
+                  }
+                  footerEnd={
+                    <ComposerSendButton
                       onClick={handleAddComment}
-                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline}
-                      className="p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors cursor-pointer"
+                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmitting}
                       title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
                     >
-                      <Send className="w-4 h-4" />
-                    </button>
-                  </>}
+                      {isSubmitting ? 'Sending…' : 'Send'}
+                    </ComposerSendButton>
+                  }
                 />
               <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
             </div>

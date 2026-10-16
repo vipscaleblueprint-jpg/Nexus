@@ -27,6 +27,7 @@ import { CommentEditor } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
 import { normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { EditCommentForm } from './EditCommentForm';
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
@@ -845,21 +846,23 @@ export function TaskDetailModalContent({
     }
   };
 
-  const handleSaveEdit = async (commentId: string) => {
-    if ((!editCommentText.trim() || editCommentText === '<p></p>') || !task?.id || isSubmittingEdit) return;
+  const handleSaveEdit = async (commentId: string, updatedContent?: string) => {
+    const contentToSave = (updatedContent !== undefined ? updatedContent : editCommentText).trim();
+    if ((!contentToSave || contentToSave === '<p></p>') || !task?.id || isSubmittingEdit) return;
     setIsSubmittingEdit(true);
     try {
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
-      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: editCommentText.trim() } : c));
+      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: contentToSave } : c));
       setEditingCommentId(null);
       setEditCommentText('');
-      await tasksApi.updateComment(targetId, commentId, editCommentText.trim());
+      await tasksApi.updateComment(targetId, commentId, contentToSave);
       const res = await tasksApi.getComments(targetId, subtaskId);
       if (res?.comments) setRichComments(res.comments);
     } catch (err) {
       console.warn('Edit failed:', err);
+      toast.error('Failed to update comment');
     } finally {
       setIsSubmittingEdit(false);
     }
@@ -2641,15 +2644,15 @@ export function TaskDetailModalContent({
                         </div>
 
                         {editingCommentId === comment.id ? (
-                          <div className="pl-11 flex gap-2 w-full">
-                            <CommentEditor id={`edit-${comment.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
-                            <button onClick={() => handleSaveEdit(comment.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === comment.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
-                              <Check className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          <EditCommentForm
+                            commentId={comment.id}
+                            initialContent={comment.content || ''}
+                            workspaceUsers={workspaceUsers}
+                            currentUser={currentUser}
+                            onSave={(newContent) => handleSaveEdit(comment.id, newContent)}
+                            onCancel={() => setEditingCommentId(null)}
+                            onPreviewImage={setLightboxImage}
+                          />
                         ) : (
                           <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                             <CommentMarkdown content={comment.content || ''} components={markdownComponents} />
@@ -3812,18 +3815,20 @@ export function SubtaskDetailView({
     }
   };
 
-  const handleSaveEdit = async (commentId: string) => {
-    if ((!editCommentText.trim() || editCommentText === '<p></p>') || !parentTask?.id || isSubmittingEdit) return;
+  const handleSaveEdit = async (commentId: string, updatedContent?: string) => {
+    const contentToSave = (updatedContent !== undefined ? updatedContent : editCommentText).trim();
+    if ((!contentToSave || contentToSave === '<p></p>') || !parentTask?.id || isSubmittingEdit) return;
     setIsSubmittingEdit(true);
     try {
-      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: editCommentText.trim() } : c));
+      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: contentToSave } : c));
       setEditingCommentId(null);
       setEditCommentText('');
-      await tasksApi.updateComment(parentTask.id, commentId, editCommentText.trim());
+      await tasksApi.updateComment(parentTask.id, commentId, contentToSave);
       const res = await tasksApi.getComments(parentTask.id, subtask.id);
       if (res?.comments) setRichComments(res.comments);
     } catch (err) {
       console.warn('Edit failed:', err);
+      toast.error('Failed to update comment');
     } finally {
       setIsSubmittingEdit(false);
     }
@@ -4879,15 +4884,15 @@ export function SubtaskDetailView({
                       </div>
 
                       {editingCommentId === c.id ? (
-                        <div className="pl-11 flex gap-2 w-full">
-                          <CommentEditor id={`edit-${c.id}`} value={editCommentText} onChange={setEditCommentText} autoFocus />
-                          <button onClick={() => handleSaveEdit(c.id)} disabled={isSubmittingEdit || (!editCommentText.trim() || editCommentText === '<p></p>') || editCommentText === c.content} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 h-[38px]">
-                            <Check className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => setEditingCommentId(null)} disabled={isSubmittingEdit} className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-zinc-200 transition-colors disabled:opacity-50 h-[38px]">
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        <EditCommentForm
+                          commentId={c.id}
+                          initialContent={c.content || ''}
+                          workspaceUsers={workspaceUsers}
+                          currentUser={currentUser}
+                          onSave={(newContent) => handleSaveEdit(c.id, newContent)}
+                          onCancel={() => setEditingCommentId(null)}
+                          onPreviewImage={setLightboxImage}
+                        />
                       ) : (
                         <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                           <CommentMarkdown content={c.content || ''} components={markdownComponents} />

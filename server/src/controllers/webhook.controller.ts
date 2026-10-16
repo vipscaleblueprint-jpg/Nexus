@@ -536,6 +536,10 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         });
 
         if (todayPage && todayPage.content) {
+          // The journal's client headings are list names. Galaxy's client name can differ from the
+          // list the task went into, and often equals a same-named Dormant Clients list
+          // (e.g. "Gianni Logan" vs "Gianni Logan | Accountant Coach | Goo...").
+          const journalClientName = list.name;
           const escapedTitle = newTask.title.replace(/"/g, '&quot;');
           const statusColor = '#3b82f6';
           const taskStatusStr = JSON.stringify({ name: fullyLoadedTask?.status || newTask.status, color: statusColor }).replace(/"/g, '&quot;');
@@ -544,13 +548,13 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
           const getNewTaskBlock = (suffix: string) => ({
             id: `blk-tk-${Date.now()}-${newTask.id}-${suffix}`,
             type: "text",
-            content: `<p><span data-type="mention" data-id="${newTask.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
+            content: `<p><span data-type="mention" data-id="${newTask.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${journalClientName}">@${escapedTitle}</span></p>`
           });
 
           // Under the client and under New Tasks; subtasks are added under these lines as they arrive
           // (see handleGalaxySubtask).
           const written = await updatePageBlocks(todayPage, (blocks) => {
-            appendTaskToJournal(blocks, clientName, getNewTaskBlock);
+            appendTaskToJournal(blocks, journalClientName, getNewTaskBlock);
           });
 
           if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });

@@ -12,7 +12,7 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { startClickUpSync, getClickUpSyncState } from '../services/clickupSyncService';
-import { autoLinkClientDashboardLists } from '../services/clickupMappingService';
+import { autoLinkClientDashboardLists, getMappingBoard } from '../services/clickupMappingService';
 
 // ---------------------------------------------------------------------------
 // GET /api/clickup/status
@@ -135,15 +135,33 @@ export async function getMappings(req: Request, res: Response) {
 // ---------------------------------------------------------------------------
 export async function createMapping(req: Request, res: Response) {
   try {
-    const { nexusListId, clickUpListId } = req.body;
+    const { nexusListId, clickUpListId, replace } = req.body;
     if (!nexusListId || !clickUpListId) {
       return res.status(400).json({ error: 'nexusListId and clickUpListId are required' });
     }
+    const cuId = String(clickUpListId);
 
-    const list = await prisma.list.update({
-      where: { id: nexusListId },
-      data: { clickUpListId: String(clickUpListId) },
-      select: { id: true, name: true }
+    // A ClickUp list feeds one Nexus list. With replace, move it off whichever list holds it now.
+    const holder = await prisma.list.findFirst({
+      where: { id: { not: nexusListId }, OR: [{ clickUpListId: cuId }, { externalId: `cu:${cuId}` }] },
+      select: { id: true, name: true, externalId: true },
+    });
+    if (holder && !replace) {
+      return res.status(409).json({ error: `That ClickUp list is already mapped to "${holder.name}"`, holder });
+    }
+
+    const list = await prisma.$transaction(async (tx) => {
+      if (holder) {
+        await tx.list.update({
+          where: { id: holder.id },
+          data: { clickUpListId: null, ...(holder.externalId === `cu:${cuId}` && { externalId: null }) },
+        });
+      }
+      return tx.list.update({
+        where: { id: nexusListId },
+        data: { clickUpListId: cuId },
+        select: { id: true, name: true },
+      });
     });
 
     return res.json({
@@ -159,6 +177,18 @@ export async function createMapping(req: Request, res: Response) {
       return res.status(409).json({ error: 'That ClickUp list is already mapped to another Nexus list' });
     }
     return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/clickup/mapping-board  (admin)
+// Every ClickUp list and every Nexus list, for the drag-and-drop connect board.
+// ---------------------------------------------------------------------------
+export async function getMappingBoardHandler(req: Request, res: Response) {
+  try {
+    return res.json(await getMappingBoard());
+  } catch (err: any) {
+    return res.status(502).json({ error: err.message });
   }
 }
 

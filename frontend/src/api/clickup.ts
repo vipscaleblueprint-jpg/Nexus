@@ -31,6 +31,23 @@ export interface ClickUpList {
   task_count?: number;
 }
 
+export interface MappingBoardClickUpList {
+  id: string;
+  name: string;
+  space: string;
+  folder: string | null;
+  taskCount: number | null;
+}
+
+export interface MappingBoardNexusList {
+  id: string;
+  name: string;
+  space: string | null;
+  folder: string | null;
+  clickUpListId: string | null;
+  taskCount: number;
+}
+
 export interface ClickUpSyncSummary {
   startedAt: string;
   finishedAt?: string;
@@ -110,12 +127,24 @@ export const clickUpApi = {
     return apiClient('/api/clickup/mappings');
   },
 
-  /** Create a new Nexus→ClickUp list mapping. */
-  async createMapping(nexusListId: string, clickUpListId: string): Promise<{ ok: boolean; mapping: ClickUpMapping }> {
+  /**
+   * Create a new Nexus→ClickUp list mapping. With replace, a ClickUp list already tied to
+   * another Nexus list is moved here instead of failing with 409.
+   */
+  async createMapping(
+    nexusListId: string,
+    clickUpListId: string,
+    replace = false
+  ): Promise<{ ok: boolean; mapping: ClickUpMapping }> {
     return apiClient('/api/clickup/mappings', {
       method: 'POST',
-      body: JSON.stringify({ nexusListId, clickUpListId }),
+      body: JSON.stringify({ nexusListId, clickUpListId, replace }),
     });
+  },
+
+  /** Admin only: every ClickUp list and every Nexus list, for the connect board. */
+  async getMappingBoard(): Promise<{ clickUpLists: MappingBoardClickUpList[]; nexusLists: MappingBoardNexusList[] }> {
+    return apiClient('/api/clickup/mapping-board');
   },
 
   /** Remove a Nexus→ClickUp list mapping. */

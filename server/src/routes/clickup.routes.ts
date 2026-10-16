@@ -14,7 +14,9 @@ import {
   syncAllClickUp,
   getClickUpSyncStatus,
   autoLinkMappings,
+  getMappingBoardHandler,
 } from '../controllers/clickup.controller';
+import { requireSystemRole } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -28,11 +30,14 @@ router.get('/spaces/:spaceId/folders', listFolders);
 router.get('/folders/:folderId/lists', listFolderLists);
 router.get('/spaces/:spaceId/folderless-lists', listFolderlessLists);
 
-// Nexus → ClickUp list mappings
+// Nexus → ClickUp list mappings. Reading is open to any signed-in user; changing them is admin-only.
+// (/api is already behind the login gate in server.ts, which sets req.user.)
+const adminOnly = requireSystemRole('ADMIN');
 router.get('/mappings', getMappings);
-router.post('/mappings', createMapping);
-router.post('/mappings/auto-link', autoLinkMappings);
-router.delete('/mappings/:nexusListId', deleteMapping);
+router.get('/mapping-board', adminOnly, getMappingBoardHandler);
+router.post('/mappings', adminOnly, createMapping);
+router.post('/mappings/auto-link', adminOnly, autoLinkMappings);
+router.delete('/mappings/:nexusListId', adminOnly, deleteMapping);
 
 // Proxy task info from ClickUp
 router.get('/tasks/:taskId', getClickUpTaskProxy);

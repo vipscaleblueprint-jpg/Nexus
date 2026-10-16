@@ -25,6 +25,8 @@ import {
   Activity,
 } from "lucide-react";
 import { clickUpApi, ClickUpMapping } from "@/api/clickup";
+import { useAppStore } from "@/lib/store";
+import { ConnectListsBoard } from "@/components/clickup/ConnectListsBoard";
 
 /* ========================================================================= */
 /* Helpers                                                                    */
@@ -66,7 +68,8 @@ function statusPill(status: string) {
 /* ========================================================================= */
 
 export default function ClickUpPage() {
-  const [tab, setTab] = useState<"status" | "activity" | "mappings" | "browser">("status");
+  const [tab, setTab] = useState<"status" | "activity" | "mappings" | "connect" | "browser">("status");
+  const isAdmin = useAppStore((state) => state.currentUser?.systemRole === "ADMIN");
   const [connected, setConnected] = useState<boolean | null>(null);
   const [cuUser, setCuUser] = useState<any>(null);
   const [mappings, setMappings] = useState<ClickUpMapping[]>([]);
@@ -102,8 +105,10 @@ export default function ClickUpPage() {
     { id: "status", label: "Connection", icon: Wifi },
     { id: "activity", label: "Synced Tasks", icon: Activity },
     { id: "mappings", label: "List Mappings", icon: Link2 },
+    // Changing connections is admin-only on the server too.
+    ...(isAdmin ? [{ id: "connect", label: "Connect Lists", icon: Zap }] : []),
     { id: "browser", label: "Browse ClickUp", icon: Globe },
-  ] as const;
+  ] as { id: typeof tab; label: string; icon: typeof Wifi }[];
 
   return (
     <div className="min-h-screen bg-background text-zinc-100 p-6">
@@ -209,6 +214,7 @@ export default function ClickUpPage() {
           {tab === "status" && <StatusTab connected={connected} cuUser={cuUser} loading={loading} />}
           {tab === "activity" && <ActivityTab tasks={activity} loading={loading} />}
           {tab === "mappings" && <MappingsTab mappings={mappings} onRefresh={fetchAll} />}
+          {tab === "connect" && isAdmin && <ConnectListsBoard />}
           {tab === "browser" && <BrowserTab />}
         </motion.div>
       </AnimatePresence>

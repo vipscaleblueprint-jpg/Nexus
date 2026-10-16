@@ -6,7 +6,14 @@
  */
 
 import { prisma } from '../config/prisma';
-import { getWorkspaces, getSpaces, getFolders, getListsInFolder } from './clickupService';
+import {
+  getWorkspaces,
+  getSpaces,
+  getFolders,
+  getListsInFolder,
+  getFolderlessLists,
+  resolveClickUpListId,
+} from './clickupService';
 
 const FOLDER_NAME = 'client dashboard';
 
@@ -45,6 +52,69 @@ export interface AutoLinkResult {
   linked: { nexusListName: string; clickUpListName: string; clickUpListId: string }[];
   /** Unmapped Nexus lists with no ClickUp list of a matching name. */
   unmatched: string[];
+}
+
+export interface MappingBoardClickUpList {
+  id: string;
+  name: string;
+  space: string;
+  folder: string | null;
+  taskCount: number | null;
+}
+
+export interface MappingBoardNexusList {
+  id: string;
+  name: string;
+  space: string | null;
+  folder: string | null;
+  clickUpListId: string | null;
+  taskCount: number;
+}
+
+/**
+ * Both sides of the admin "Connect Lists" board: every ClickUp list (all spaces, folders
+ * and folderless lists) and every Nexus list with the ClickUp list id it is tied to.
+ */
+export async function getMappingBoard(): Promise<{
+  clickUpLists: MappingBoardClickUpList[];
+  nexusLists: MappingBoardNexusList[];
+}> {
+  const clickUpLists: MappingBoardClickUpList[] = [];
+  for (const team of (await getWorkspaces())?.teams ?? []) {
+    for (const space of (await getSpaces(team.id))?.spaces ?? []) {
+      // The folder endpoint already embeds each folder's lists.
+      for (const folder of (await getFolders(space.id))?.folders ?? []) {
+        for (const l of folder.lists ?? []) {
+          clickUpLists.push({ id: String(l.id), name: l.name, space: space.name, folder: folder.name, taskCount: l.task_count ?? null });
+        }
+      }
+      for (const l of (await getFolderlessLists(space.id))?.lists ?? []) {
+        clickUpLists.push({ id: String(l.id), name: l.name, space: space.name, folder: null, taskCount: l.task_count ?? null });
+      }
+    }
+  }
+
+  const lists = await prisma.list.findMany({
+    select: {
+      id: true,
+      name: true,
+      clickUpListId: true,
+      externalId: true,
+      space: { select: { name: true } },
+      folder: { select: { name: true, space: { select: { name: true } } } },
+      _count: { select: { tasks: true } },
+    },
+    orderBy: { name: 'asc' },
+  });
+  const nexusLists = lists.map((l) => ({
+    id: l.id,
+    name: l.name,
+    space: l.folder?.space?.name ?? l.space?.name ?? null,
+    folder: l.folder?.name ?? null,
+    clickUpListId: resolveClickUpListId(l),
+    taskCount: l._count.tasks,
+  }));
+  return { clickUpLists, nexusLists };
 }
 
 export async function autoLinkClientDashboardLists(): Promise<AutoLinkResult> {

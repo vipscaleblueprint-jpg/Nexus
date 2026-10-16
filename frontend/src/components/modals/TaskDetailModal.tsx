@@ -177,6 +177,29 @@ export function getAssigneeAvatarColor(name: string) {
   return colors[Math.abs(hash) % colors.length];
 }
 
+// Role restrictions can arrive in any casing (Galaxy sends "DEVELOPER", the team role is "Developer"),
+// so every comparison goes through roleKey.
+const roleKey = (role: string) => (role || '').trim().toLowerCase();
+
+function hasRole(roles: string[], name: string): boolean {
+  return roles.some((r) => roleKey(r) === roleKey(name));
+}
+
+function withoutRole(roles: string[], name: string): string[] {
+  return roles.filter((r) => roleKey(r) !== roleKey(name));
+}
+
+/** One entry per role regardless of casing, spelled like its TeamRole when there is one. */
+function normalizeRoles(roles: string[], teams?: any[]): string[] {
+  const canonical = new Map<string, string>();
+  (teams || []).forEach((team: any) => (team.teamRoles || []).forEach((tr: any) => canonical.set(roleKey(tr.name), tr.name)));
+  const out = new Map<string, string>();
+  roles.forEach((r) => {
+    if (!out.has(roleKey(r))) out.set(roleKey(r), canonical.get(roleKey(r)) ?? r);
+  });
+  return [...out.values()];
+}
+
 export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[], teams?: any[]): any[] {
   if (!roles || roles.length === 0) return [];
   const teamRoleToTeamId = new Map<string, string>();
@@ -1991,7 +2014,7 @@ export function TaskDetailModalContent({
                         {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
                           <motion.div layout className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
                             <AnimatePresence>
-                              {localRoleRestrictions.map((role, i) => {
+                              {normalizeRoles(localRoleRestrictions, workspaceTeams).map((role, i) => {
                                 const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                                 const bgColor = colors[i % colors.length];
                                 return (
@@ -2030,8 +2053,8 @@ export function TaskDetailModalContent({
                                   const teamRoles = team.teamRoles || [];
                                   const current = latestRoleRestrictionsRef.current;
                                   const hasRoles = teamRoles.length > 0;
-                                  const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-                                  const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                                  const allSelected = hasRoles && teamRoles.every((r: any) => hasRole(current, r.name));
+                                  const someSelected = hasRoles && teamRoles.some((r: any) => hasRole(current, r.name));
 
                                   return (
                                     <div
@@ -2039,11 +2062,12 @@ export function TaskDetailModalContent({
                                         if (!hasRoles) return;
                                         let next = [...current];
                                         if (allSelected) {
-                                          next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                          next = next.filter(r => !teamRoles.some((tr: any) => roleKey(tr.name) === roleKey(r)));
                                         } else {
-                                          const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                          const toAdd = teamRoles.filter((tr: any) => !hasRole(next, tr.name)).map((tr: any) => tr.name);
                                           next = [...next, ...toAdd];
                                         }
+                                        next = normalizeRoles(next, workspaceTeams);
                                         const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
                                         const matchingIds = matchingUsers.map((u: any) => u.id);
 
@@ -2098,15 +2122,16 @@ export function TaskDetailModalContent({
                                 {team.teamRoles && team.teamRoles.length > 0 && (
                                   <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
                                     {team.teamRoles.map((role: any) => {
-                                      const selected = localRoleRestrictions.includes(role.name);
+                                      const selected = hasRole(localRoleRestrictions, role.name);
                                       return (
                                         <div
                                           key={role.id}
                                           onClick={() => {
                                             const current = latestRoleRestrictionsRef.current;
-                                            const next = selected
-                                              ? current.filter(r => r !== role.name)
-                                              : [...current, role.name];
+                                            const next = normalizeRoles(
+                                              selected ? withoutRole(current, role.name) : [...current, role.name],
+                                              workspaceTeams
+                                            );
 
                                             const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
                                             const matchingIds = matchingUsers.map((u: any) => u.id);
@@ -4258,7 +4283,7 @@ export function SubtaskDetailView({
                     <Popover.Trigger asChild>
                       {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
                         <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
-                          {localRoleRestrictions.map((role: string, i: number) => {
+                          {normalizeRoles(localRoleRestrictions, workspaceTeams).map((role: string, i: number) => {
                             const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                             const bgColor = colors[i % colors.length];
                             return (
@@ -4290,8 +4315,8 @@ export function SubtaskDetailView({
                                 const teamRoles = team.teamRoles || [];
                                 const current = latestRoleRestrictionsRef.current;
                                 const hasRoles = teamRoles.length > 0;
-                                const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-                                const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                                const allSelected = hasRoles && teamRoles.every((r: any) => hasRole(current, r.name));
+                                const someSelected = hasRoles && teamRoles.some((r: any) => hasRole(current, r.name));
 
                                 return (
                                   <div
@@ -4299,11 +4324,12 @@ export function SubtaskDetailView({
                                         if (!hasRoles) return;
                                         let next = [...current];
                                         if (allSelected) {
-                                          next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                                          next = next.filter(r => !teamRoles.some((tr: any) => roleKey(tr.name) === roleKey(r)));
                                         } else {
-                                          const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                                          const toAdd = teamRoles.filter((tr: any) => !hasRole(next, tr.name)).map((tr: any) => tr.name);
                                           next = [...next, ...toAdd];
                                         }
+                                        next = normalizeRoles(next, workspaceTeams);
                                         const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers || [], workspaceTeams || []);
                                         const matchingIds = matchingUsers.map((u: any) => u.id);
 
@@ -4356,15 +4382,16 @@ export function SubtaskDetailView({
                               {team.teamRoles && team.teamRoles.length > 0 && (
                                 <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-border/50 mt-1 mb-1 relative">
                                   {team.teamRoles.map((role: any) => {
-                                    const selected = localRoleRestrictions.includes(role.name);
+                                    const selected = hasRole(localRoleRestrictions, role.name);
                                     return (
                                       <div
                                         key={role.id}
                                         onClick={() => {
                                           const current = latestRoleRestrictionsRef.current;
-                                          const next = selected
-                                            ? current.filter((r: string) => r !== role.name)
-                                            : [...current, role.name];
+                                          const next = normalizeRoles(
+                                            selected ? withoutRole(current, role.name) : [...current, role.name],
+                                            workspaceTeams
+                                          );
 
                                           const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers || [], workspaceTeams || []);
                                           const matchingIds = matchingUsers.map((u: any) => u.id);

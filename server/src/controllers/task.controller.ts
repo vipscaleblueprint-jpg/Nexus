@@ -92,21 +92,26 @@ const taskInclude = {
       // all-tasks list) huge. The UI loads a subtask's comments on demand via GET /:id/comments.
       _count: { select: { comments: true } },
       checklists: {
-        include: { 
+        orderBy: { createdAt: 'asc' } as any,
+        include: {
           items: {
+            orderBy: { createdAt: 'asc' } as any,
             include: { checkedBy: { select: { id: true, name: true, avatarUrl: true } } }
-          } 
-        } 
+          }
+        }
       },
     }
   },
-  checklists: { 
+  // Stable order so the same Audit checklist is picked on every load.
+  checklists: {
     where: { subtaskId: null },
-    include: { 
+    orderBy: { createdAt: 'asc' } as any,
+    include: {
       items: {
+        orderBy: { createdAt: 'asc' } as any,
         include: { checkedBy: { select: { id: true, name: true, avatarUrl: true } } }
-      } 
-    } 
+      }
+    }
   },
   assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
   assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },

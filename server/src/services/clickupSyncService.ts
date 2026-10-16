@@ -135,8 +135,9 @@ function isReservedChecklistName(name: string | undefined): boolean {
 export function auditorRoleFromTitle(title: string | undefined): string | null {
   const t = (title ?? '').trim().toLowerCase();
   if (!/^--\s*audit/.test(t)) return null;
-  // Only the "--Audit <Kind>" part, so "--Audit Design — Funnel Page" stays Design.
-  const head = t.replace(/^--\s*/, '').split(/\s[—–-]\s/)[0];
+  // Only the kind right after "--Audit", so "--Audit Design — Funnel Page" stays Design and
+  // "--Audit - Design Auditor - Sales Page" reads "design auditor", not an empty "audit".
+  const head = t.replace(/^--\s*audit[\s—–-]*/, '').split(/\s[—–-]\s/)[0];
   if (/ui\s*\/?\s*ux/.test(head)) return 'UI UX Auditor';
   if (/funnel|automation|kajabi/.test(head)) return 'Funnel Auditor';
   if (/design/.test(head)) return 'Design Auditor';

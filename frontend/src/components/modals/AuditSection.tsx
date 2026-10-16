@@ -4,6 +4,7 @@ import { tasksApi } from '@/api/tasks';
 import { ChevronDown, ChevronRight, User, Check, ShieldCheck } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
+import { getAssigneeAvatarColor } from './TaskDetailModal';
 
 interface AuditSectionProps {
   task: Task;
@@ -28,6 +29,18 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) =>
     audits.add('Funnel Audit');
   }
 
+  // Same title rules as the server's getRequiredAudits, so every audit it requires is shown here.
+  if (/graphic|reel|video|sample/.test(title)) audits.add('Design Audit');
+  if (/email|newsletter|social media/.test(title)) {
+    audits.add('Design Audit');
+    audits.add('Funnel Audit');
+  }
+  if (/website|page|funnel|link/.test(title)) {
+    audits.add('UI UX Audit');
+    audits.add('Design Audit');
+    audits.add('Funnel Audit');
+  }
+
   // Whatever auditor role was actually assigned (e.g. via the Galaxy "--Audit - <Role> -" subtask)
   // determines the required audit item directly, regardless of what the task title says.
   (auditorRoles || []).forEach((role) => {
@@ -44,7 +57,9 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   const [isExpanded, setIsExpanded] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const auditChecklist = checklists.find(c => {
+  // A task can end up with more than one Audit checklist (e.g. two clicks racing to create it).
+  // Read items from all of them so an assignee or check saved on either one still shows.
+  const auditChecklists = checklists.filter(c => {
     if (!isNexusAuditChecklist(c)) return false;
     if (subtaskId) {
       return c.subtaskId === subtaskId;
@@ -52,22 +67,29 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
       return !c.subtaskId;
     }
   });
+  const auditChecklist = auditChecklists[0];
 
   // Roles suggested by the auditor: from the specific "--Audit" subtask when one is targeted,
-  // otherwise from every "--Audit" subtask attached to this task.
+  // otherwise from the task's own roles plus every "--Audit" subtask attached to it
+  // (the server's completion check uses the task's own roles too).
   const auditorRoles = subtaskId
     ? (task.subtasks?.find((s: any) => s.id === subtaskId)?.assigneeRoleRestrictions || [])
-    : (task.subtasks || [])
-        .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
-        .flatMap((s: any) => s.assigneeRoleRestrictions || []);
+    : [
+        ...(task.assigneeRoleRestrictions || []),
+        ...(task.subtasks || [])
+          .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
+          .flatMap((s: any) => s.assigneeRoleRestrictions || []),
+      ];
 
   const requiredAuditItems = Array.from(new Set([
     ...getRequiredAudits(title, auditorRoles),
-    ...(auditChecklist?.items?.map(i => i.text) || [])
-  ]));
+    ...auditChecklists.flatMap(c => c.items?.map(i => i.text) || [])
+  ].filter((text, i, all) => all.findIndex(t => t.toLowerCase() === text.toLowerCase()) === i)));
 
+  // Prefer the copy that carries state (assigned or checked) when duplicates exist.
   const getAuditItem = (text: string) => {
-    return auditChecklist?.items?.find(i => i.text.toLowerCase() === text.toLowerCase());
+    const matches = auditChecklists.flatMap(c => c.items || []).filter(i => i.text.toLowerCase() === text.toLowerCase());
+    return matches.find(i => i.assigneeId || i.completed) || matches[0];
   };
 
   const completedCount = requiredAuditItems.reduce((acc, text) => {
@@ -79,7 +101,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-      let targetChecklistId = auditChecklist?.id;
+      let targetChecklistId = currentItem?.checklistId || auditChecklist?.id;
       let newChecklists = [...checklists];
 
       // Create checklist if it doesn't exist
@@ -133,7 +155,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-      let targetChecklistId = auditChecklist?.id;
+      let targetChecklistId = currentItem?.checklistId || auditChecklist?.id;
       let newChecklists = [...checklists];
 
       if (!targetChecklistId) {
@@ -213,6 +235,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                 const item = getAuditItem(text);
                 const isCompleted = !!item?.completed;
                 const assigneeId = item?.assigneeId;
+                const assignee = assigneeId ? users.find(u => u.id === assigneeId) : undefined;
 
                 const roles = (currentUser?.roles || []).map(r => r?.toLowerCase() || '');
                 const isAdmin = currentUser?.systemRole === 'ADMIN';
@@ -259,9 +282,11 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                       <Popover.Root>
                         <Popover.Trigger asChild>
                           <button className="w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover cursor-pointer" disabled={isProcessing}>
-                            {assigneeId ? (
-                              <div className="w-full h-full rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-medium border border-emerald-500/30">
-                                {users.find(u => u.id === assigneeId)?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
+                            {assignee?.avatarUrl ? (
+                              <img src={assignee.avatarUrl} alt={assignee.name} title={assignee.name} className="w-full h-full rounded-full object-cover" />
+                            ) : assigneeId ? (
+                              <div title={assignee?.name} className={`w-full h-full rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(assignee?.name || assigneeId)}`}>
+                                {assignee?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
                               </div>
                             ) : (
                               <User className="w-3 h-3" />
@@ -294,11 +319,12 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                                   {u.avatarUrl ? (
                                     <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
                                   ) : (
-                                    <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[10px] font-medium">
+                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(u.name || u.id)}`}>
                                       {u.name?.substring(0, 2).toUpperCase()}
                                     </div>
                                   )}
-                                  {u.name}
+                                  <span className="flex-1 truncate">{u.name}</span>
+                                  {u.id === assigneeId && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                                 </button>
                               ))}
                             </div>

@@ -25,20 +25,21 @@ import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
 import { CommentEditor } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
-import { normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
+import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EditCommentForm } from './EditCommentForm';
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
 const keepUrl = (url: string) => url;
+const uploadCommentImage = (file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url);
 
 // Parsing a comment (remark-gfm + rehype-raw) is the costly part of the feed. Memoized on its content, so typing
 // in the comment box or posting another comment doesn't re-parse every comment already shown.
 const CommentMarkdown = React.memo(function CommentMarkdown({ content, components }: { content: string; components: any }) {
   return (
     <ReactMarkdown remarkPlugins={COMMENT_REMARK_PLUGINS} rehypePlugins={COMMENT_REHYPE_PLUGINS} components={components} urlTransform={keepUrl}>
-      {content}
+      {commentHtmlForMarkdown(content)}
     </ReactMarkdown>
   );
 });
@@ -516,6 +517,7 @@ export function TaskDetailModalContent({
 
   const [editingUser, setEditingUser] = useState<string | null>(null); // Name of user currently editing
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [isUploadingInline, setIsUploadingInline] = useState(false);
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [isCheckLocked, setIsCheckLocked] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -1550,10 +1552,10 @@ export function TaskDetailModalContent({
   };
 
   const handleAddComment = async () => {
-    const trimmed = comment.trim();
+    const trimmed = isBlankCommentHtml(comment) ? '' : trimCommentHtml(comment);
     if (!trimmed && stagedFiles.length === 0) return;
     if (!task) return;
-    if (isUploading || isSubmittingComment) return;
+    if (isUploading || isUploadingInline || isSubmittingComment) return;
 
     let finalComment = trimmed;
     const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1677,7 +1679,9 @@ export function TaskDetailModalContent({
 
   const handleCommentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (file?.type.startsWith('image/')) {
+      commentEditorRef.current?.insertImages([file]);
+    } else if (file) {
       setStagedFiles(prev => [...prev, file]);
     }
     if (commentFileInputRef.current) {
@@ -2679,7 +2683,7 @@ export function TaskDetailModalContent({
                             onPreviewImage={setLightboxImage}
                           />
                         ) : (
-                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                             <CommentMarkdown content={comment.content || ''} components={markdownComponents} />
                           </div>
                         )}
@@ -3098,26 +3102,30 @@ export function TaskDetailModalContent({
                   }}
                   onSubmit={handleAddComment}
                   onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
+                  onUploadImage={uploadCommentImage}
+                  onUploadingChange={setIsUploadingInline}
                   disabled={isSubmittingComment}
                   placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
+                  footer={<>
+                    <button
+                      onClick={() => commentFileInputRef.current?.click()}
+                      disabled={isUploading}
+                      className="p-1.5 rounded-md hover:bg-zinc-700/60 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors"
+                      title="Attach file or image"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={handleAddComment}
+                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline}
+                      className="p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors"
+                      title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </>}
                 />
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
-                <button
-                  onClick={() => commentFileInputRef.current?.click()}
-                  disabled={isUploading}
-                  className="absolute right-[56px] bottom-3 p-1.5 rounded-md hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors"
-                  title="Attach file or image"
-                >
-                  <Paperclip className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handleAddComment}
-                  disabled={((!comment.trim() || comment === '<p></p>') && stagedFiles.length === 0) || isUploading}
-                  className="absolute right-3 bottom-3 p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors"
-                  title="Send comment"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
               </div>
             </div>
           </div>
@@ -3311,6 +3319,7 @@ export function SubtaskDetailView({
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [isUploadingInline, setIsUploadingInline] = useState(false);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const commentEditorRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -3756,7 +3765,9 @@ export function SubtaskDetailView({
 
   const handleCommentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (file?.type.startsWith('image/')) {
+      commentEditorRef.current?.insertImages([file]);
+    } else if (file) {
       setStagedFiles(prev => [...prev, file]);
     }
     if (commentFileInputRef.current) {
@@ -3765,9 +3776,9 @@ export function SubtaskDetailView({
   };
 
   const handleAddComment = async () => {
-    const trimmed = comment.trim();
+    const trimmed = isBlankCommentHtml(comment) ? '' : trimCommentHtml(comment);
     if (!trimmed && stagedFiles.length === 0) return;
-    if (!currentUser?.id || isSubmitting || isUploading) return;
+    if (!currentUser?.id || isSubmitting || isUploading || isUploadingInline) return;
 
     const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const draftHtml = comment;
@@ -4921,7 +4932,7 @@ export function SubtaskDetailView({
                           onPreviewImage={setLightboxImage}
                         />
                       ) : (
-                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                           <CommentMarkdown content={c.content || ''} components={markdownComponents} />
                         </div>
                       )}
@@ -5227,26 +5238,30 @@ export function SubtaskDetailView({
                   }}
                   onSubmit={handleAddComment}
                   onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
+                  onUploadImage={uploadCommentImage}
+                  onUploadingChange={setIsUploadingInline}
                   disabled={isSubmitting}
                   placeholder={isSubmitting ? "Posting comment..." : "Write a comment..."}
+                  footer={<>
+                    <button
+                      onClick={() => commentFileInputRef.current?.click()}
+                      disabled={isUploading}
+                      className="p-1.5 rounded-md hover:bg-zinc-700/60 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                      title="Attach file or image"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={handleAddComment}
+                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline}
+                      className="p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors cursor-pointer"
+                      title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </>}
                 />
               <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
-              <button
-                onClick={() => commentFileInputRef.current?.click()}
-                disabled={isUploading}
-                className="absolute right-[56px] bottom-3 p-1.5 rounded-md hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-                title="Attach file or image"
-              >
-                <Paperclip className="w-4 h-4" />
-              </button>
-              <button
-                onClick={handleAddComment}
-                disabled={((!comment.trim() || comment === '<p></p>') && stagedFiles.length === 0) || isUploading}
-                className="absolute right-3 bottom-3 p-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white transition-colors cursor-pointer"
-                title="Send comment"
-              >
-                <Send className="w-4 h-4" />
-              </button>
             </div>
           </div>
         </div >

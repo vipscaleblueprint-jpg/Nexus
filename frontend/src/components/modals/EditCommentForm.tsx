@@ -5,6 +5,7 @@ import { CommentEditor, CommentEditorRef } from '../ui/CommentEditor';
 import { uploadApi } from '@/api/upload';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
+import { isBlankCommentHtml, trimCommentHtml } from '@/lib/links';
 
 export interface ParsedCommentAttachment {
   id: string;
@@ -21,21 +22,17 @@ export function parseCommentContent(content: string): {
   if (!content) return { text: '', attachments: [] };
 
   const attachments: ParsedCommentAttachment[] = [];
-
-  // 1. Extract markdown images: ![alt](url)
-  const mdImgRegex = /!\[(.*?)\]\((https?:\/\/[^\s\)]+|\/uploads\/[^\s\)]+)\)/g;
   let match: RegExpExecArray | null;
-  while ((match = mdImgRegex.exec(content)) !== null) {
-    attachments.push({
-      id: `att-img-${attachments.length}-${Date.now()}`,
-      name: match[1] || 'image',
-      url: match[2],
-      type: 'image',
-      rawMarkdown: match[0],
-    });
-  }
 
-  // 2. Extract HTML videos: <video ... src="url" ...></video>
+  // Images stay inline where they were placed. Older comments appended them as markdown,
+  // which the editor can't read, so turn those into <img> tags it can show and move.
+  const escapeAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  content = content.replace(
+    /!\[(.*?)\]\((https?:\/\/[^\s\)]+|\/uploads\/[^\s\)]+)\)/g,
+    (_m, alt: string, url: string) => `<img src="${escapeAttr(url)}" alt="${escapeAttr(alt || 'image')}">`
+  );
+
+  // 1. Extract HTML videos: <video ... src="url" ...></video>
   const videoRegex = /<video[^>]*src=["']([^"']+)["'][^>]*>(?:<\/video>)?/gi;
   while ((match = videoRegex.exec(content)) !== null) {
     const url = match[1];
@@ -49,21 +46,7 @@ export function parseCommentContent(content: string): {
     });
   }
 
-  // 3. Extract HTML images: <img ... src="url" ... />
-  const htmlImgRegex = /<img[^>]*src=["']([^"']+)["'][^>]*\/?>/gi;
-  while ((match = htmlImgRegex.exec(content)) !== null) {
-    const url = match[1];
-    const fileName = url.split('/').pop() || 'image';
-    attachments.push({
-      id: `att-himg-${attachments.length}-${Date.now()}`,
-      name: fileName,
-      url,
-      type: 'image',
-      rawMarkdown: match[0],
-    });
-  }
-
-  // 4. Extract markdown file attachments: [filename](url) where url is an uploaded file/doc
+  // 2. Extract markdown file attachments: [filename](url) where url is an uploaded file/doc
   const fileRegex = /(?<!\!)\[(.*?)\]\((https?:\/\/[^\s\)]+|\/uploads\/[^\s\)]+)\)/g;
   while ((match = fileRegex.exec(content)) !== null) {
     const name = match[1];
@@ -137,6 +120,7 @@ export function EditCommentForm({
   const [existingAttachments, setExistingAttachments] = useState<ParsedCommentAttachment[]>(initialParsed.attachments);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingInline, setIsUploadingInline] = useState(false);
 
   // Mention state
   const [showMentionMenu, setShowMentionMenu] = useState(false);
@@ -211,16 +195,29 @@ export function EditCommentForm({
     setMentionSearch('');
   }, [mentionSearch]);
 
+  // Images go inline at the cursor; other files are staged as attachments
+  const addFiles = (newFiles: File[]) => {
+    const images = newFiles.filter(f => f.type.startsWith('image/'));
+    const others = newFiles.filter(f => !f.type.startsWith('image/'));
+    if (images.length > 0) commentEditorRef.current?.insertImages(images);
+    if (others.length > 0) setStagedFiles(prev => [...prev, ...others]);
+  };
+
   // Handle files pasted from clipboard
   const handlePasteFiles = (newFiles: File[]) => {
     setStagedFiles(prev => [...prev, ...newFiles]);
   };
+
+  const uploadImage = useCallback((file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url), []);
 
   // Outer container paste capture so pasting works anywhere inside the edit form
   const handleOuterPasteCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (isSaving) return;
     const data = event.clipboardData;
     if (!data) return;
+    // Rich text pasted from another app is left to the editor, which keeps text and images in order
+    const html = data.getData('text/html');
+    if (html && new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim()) return;
     let files = Array.from(data.files || []);
     if (files.length === 0) {
       files = Array.from(data.items || [])
@@ -236,18 +233,17 @@ export function EditCommentForm({
       const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
       return new File([file], `pasted-image-${Date.now()}${i ? `-${i}` : ''}.${ext}`, { type: file.type });
     });
-    setStagedFiles(prev => [...prev, ...formattedFiles]);
+    addFiles(formattedFiles);
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selected = Array.from(e.target.files);
-      setStagedFiles(prev => [...prev, ...selected]);
+      addFiles(Array.from(e.target.files));
       e.target.value = '';
     }
   };
 
-  const hasText = Boolean(text.trim() && text !== '<p></p>');
+  const hasText = !isBlankCommentHtml(text);
   const hasAttachments = existingAttachments.length > 0 || stagedFiles.length > 0;
   const hasAnyContent = hasText || hasAttachments;
 
@@ -256,11 +252,11 @@ export function EditCommentForm({
   const hasChanged = hasTextChanged || hasAttachmentsChanged;
 
   const handleSave = async () => {
-    if (isSaving || !hasAnyContent || !hasChanged) return;
+    if (isSaving || isUploadingInline || !hasAnyContent || !hasChanged) return;
     setIsSaving(true);
 
     try {
-      let finalContent = text.trim();
+      let finalContent = hasText ? trimCommentHtml(text) : '';
 
       // 1. Append remaining existing attachments
       for (const att of existingAttachments) {
@@ -463,6 +459,8 @@ export function EditCommentForm({
             }
           }}
           onPasteFiles={handlePasteFiles}
+          onUploadImage={uploadImage}
+          onUploadingChange={setIsUploadingInline}
           onSubmit={handleEditorSubmit}
           autoFocus
           disabled={isSaving}
@@ -560,7 +558,7 @@ export function EditCommentForm({
           <button
             type="button"
             onClick={handleSave}
-            disabled={isSaving || !hasAnyContent || !hasChanged}
+            disabled={isSaving || isUploadingInline || !hasAnyContent || !hasChanged}
             className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-xs font-semibold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
           >
             {isSaving ? (

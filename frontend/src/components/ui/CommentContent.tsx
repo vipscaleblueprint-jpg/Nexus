@@ -5,7 +5,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markd
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { useAppStore } from '@/lib/store';
-import { normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
+import { commentHtmlForMarkdown, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { UserMentionChip } from './UserMentionChip';
 
 // Shared across instances so a feed of many comments requests the user list only once
@@ -56,14 +56,14 @@ export function CommentContent({ content, className = '' }: CommentContentProps)
   }, [hasLoadedUsers, content]);
 
   return (
-    <div className={`select-text ${className}`}>
+    <div className={`select-text [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]}
         components={components}
         urlTransform={keepMentionUrls}
       >
-        {content}
+        {commentHtmlForMarkdown(content)}
       </ReactMarkdown>
     </div>
   );

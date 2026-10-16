@@ -110,6 +110,30 @@ function restoreUnknownTags(parent: Parent) {
   if (changed) parent.children = next;
 }
 
+const EMPTY_PARAGRAPH = String.raw`<p[^>]*>(?:\s|&nbsp;|<br\s*\/?>)*<\/p>`;
+const LEADING_EMPTY_PARAGRAPHS = new RegExp(`^(?:\\s*${EMPTY_PARAGRAPH})+`, 'i');
+const TRAILING_EMPTY_PARAGRAPHS = new RegExp(`(?:${EMPTY_PARAGRAPH}\\s*)+$`, 'i');
+
+/** Comment editor HTML with blank lines removed from the start and end. */
+export function trimCommentHtml(html: string): string {
+  return html.trim().replace(LEADING_EMPTY_PARAGRAPHS, '').replace(TRAILING_EMPTY_PARAGRAPHS, '').trim();
+}
+
+/** True when comment HTML has no visible text and no image/video, e.g. only blank lines. */
+export function isBlankCommentHtml(html: string): boolean {
+  if (/<(img|video)\b/i.test(html)) return false;
+  return !html.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim();
+}
+
+/**
+ * Comment HTML from the editor can begin with an inline-placed image. Markdown only treats a line
+ * as raw HTML when it opens with a block tag, so an <img> first would turn the rest into markdown;
+ * an empty leading <p> keeps the whole comment as HTML.
+ */
+export function commentHtmlForMarkdown(content: string): string {
+  return /^\s*<img\b/i.test(content) ? `<p></p>${content}` : content;
+}
+
 /**
  * Rehype plugin (run after rehype-raw): plain text like "/tasks/<id>" in a comment is parsed
  * as an <id> element, which React rejects and which hides the text inside it. Unknown tags

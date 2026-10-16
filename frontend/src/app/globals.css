@@ -148,16 +148,44 @@ body {
   -webkit-user-select: none;
 }
 
-.theme-light {
-  font-weight: 500;
-  -webkit-font-smoothing: auto;
-  -moz-osx-font-smoothing: auto;
+/* Typography geometry in .theme-light is kept identical to dark mode so zero layout shift occurs during theme switches */
+
+/* Disable transitions during theme switch so elements jump immediately to target color in snapshot */
+html.disable-transitions * {
+  transition: none !important;
 }
 
+/* View Transition: Hardware-accelerated snapshot layers */
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation-duration: 400ms;
-  animation-timing-function: ease-in-out;
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+  animation: theme-sweep-reveal 0.65s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  will-change: clip-path;
+  transform: translateZ(0);
+}
+
+@keyframes theme-sweep-reveal {
+  from {
+    clip-path: circle(0px at 0% 0%);
+  }
+  to {
+    clip-path: circle(var(--end-radius, 2500px) at 0% 0%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
 }
 
 /* Ensure typing cursor only on actually typable fields */

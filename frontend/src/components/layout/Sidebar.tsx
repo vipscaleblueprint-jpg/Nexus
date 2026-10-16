@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
+import { flushSync } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -620,11 +621,32 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       }
     };
 
-    if (document.startViewTransition) {
-      document.startViewTransition(applyTheme);
-    } else {
+    const hasViewTransition = typeof document !== 'undefined' && 'startViewTransition' in document;
+    const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (!hasViewTransition || prefersReducedMotion) {
       applyTheme();
+      return;
     }
+
+    // 1. Calculate the exact screen diagonal and set CSS variable for hardware keyframe
+    const endRadius = Math.hypot(window.innerWidth, window.innerHeight);
+    document.documentElement.style.setProperty('--end-radius', `${endRadius}px`);
+
+    // 2. Temporarily pause independent CSS transitions so elements don't repaint during snapshot capture
+    document.documentElement.classList.add('disable-transitions');
+
+    // 3. Synchronously commit React DOM updates so the browser captures the exact new state immediately
+    const transition = (document as any).startViewTransition(() => {
+      flushSync(() => {
+        applyTheme();
+      });
+    });
+
+    // 4. Restore regular transitions once the 0.65s CSS keyframe completes
+    transition.finished.finally(() => {
+      document.documentElement.classList.remove('disable-transitions');
+    });
   };
 
   const updateDropIndicator = (active: any, over: any) => {

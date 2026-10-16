@@ -116,6 +116,10 @@ function setCachedTeams(teams: any[]) {
   } catch {}
 }
 
+let loadRolesPromise: Promise<void> | null = null;
+let loadUsersPromise: Promise<void> | null = null;
+let loadTeamsPromise: Promise<void> | null = null;
+
 interface AppState {
   // Session User
   currentUser: User | null;
@@ -306,17 +310,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   loadRoles: async () => {
-    try {
-      const roles = await getRoles();
-      if (roles) {
-        setCachedRoles(roles);
-        const index: Record<string, WorkspaceRole> = {};
-        roles.forEach((r: WorkspaceRole) => { index[r.id] = r; index[r.name] = r; });
-        set({ workspaceRoles: roles, workspaceRolesIndex: index, hasLoadedRoles: true });
+    if (loadRolesPromise) return loadRolesPromise;
+    loadRolesPromise = (async () => {
+      try {
+        const roles = await getRoles();
+        if (roles) {
+          setCachedRoles(roles);
+          const index: Record<string, WorkspaceRole> = {};
+          roles.forEach((r: WorkspaceRole) => { index[r.id] = r; index[r.name] = r; });
+          set({ workspaceRoles: roles, workspaceRolesIndex: index, hasLoadedRoles: true });
+        }
+      } catch (err) {
+        console.warn("Failed to load roles:", err);
+      } finally {
+        loadRolesPromise = null;
       }
-    } catch (err) {
-      console.warn("Failed to load roles:", err);
-    }
+    })();
+    return loadRolesPromise;
   },
 
   // Users
@@ -332,17 +342,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   loadUsers: async () => {
-    try {
-      const res = await usersApi.getUsers();
-      if (res?.users) {
-        setCachedUsers(res.users);
-        const index: Record<string, User> = {};
-        res.users.forEach((u: User) => index[u.id] = u);
-        set({ workspaceUsers: res.users, workspaceUsersIndex: index, hasLoadedUsers: true });
+    if (loadUsersPromise) return loadUsersPromise;
+    loadUsersPromise = (async () => {
+      try {
+        const res = await usersApi.getUsers();
+        if (res?.users) {
+          setCachedUsers(res.users);
+          const index: Record<string, User> = {};
+          res.users.forEach((u: User) => index[u.id] = u);
+          set({ workspaceUsers: res.users, workspaceUsersIndex: index, hasLoadedUsers: true });
+        }
+      } catch (err) {
+        console.warn("Failed to load users:", err);
+      } finally {
+        loadUsersPromise = null;
       }
-    } catch (err) {
-      console.warn("Failed to load users:", err);
-    }
+    })();
+    return loadUsersPromise;
   },
 
   // Teams
@@ -358,17 +374,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   loadTeams: async () => {
-    try {
-      const res = await usersApi.getTeams();
-      if (res?.teams) {
-        setCachedTeams(res.teams);
-        const index: Record<string, any> = {};
-        res.teams.forEach((t: any) => index[t.id] = t);
-        set({ workspaceTeams: res.teams, workspaceTeamsIndex: index, hasLoadedTeams: true });
+    if (loadTeamsPromise) return loadTeamsPromise;
+    loadTeamsPromise = (async () => {
+      try {
+        const res = await usersApi.getTeams();
+        if (res?.teams) {
+          setCachedTeams(res.teams);
+          const index: Record<string, any> = {};
+          res.teams.forEach((t: any) => index[t.id] = t);
+          set({ workspaceTeams: res.teams, workspaceTeamsIndex: index, hasLoadedTeams: true });
+        }
+      } catch (err) {
+        console.warn("Failed to load teams:", err);
+      } finally {
+        loadTeamsPromise = null;
       }
-    } catch (err) {
-      console.warn("Failed to load teams:", err);
-    }
+    })();
+    return loadTeamsPromise;
   },
 
   unreadNotifications: 0,

@@ -6,13 +6,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, getAssigneeAvatarColor } from '@/components/modals/TaskDetailModal';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
-import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { canUserEditTask, canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
+
+const ROLE_BADGE_COLORS = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -37,6 +39,41 @@ const isSubtaskClosed = (s: Subtask) => {
 };
 
 const SUBTASK_ROW_TRANSITION = { duration: 0.28, ease: [0.4, 0, 0.2, 1] as const };
+
+const SafeAvatar = ({
+  src,
+  name,
+  id,
+  className,
+  textClass = 'text-[8px]',
+}: {
+  src?: string | null;
+  name?: string;
+  id?: string;
+  className: string;
+  textClass?: string;
+}) => {
+  const [hasError, setHasError] = useState(false);
+  const initials = (name || id || 'U').substring(0, 2).toUpperCase();
+  const bgColor = getAssigneeAvatarColor(name || id || 'U');
+
+  if (src && !hasError) {
+    return (
+      <img
+        src={src}
+        alt={name || ''}
+        onError={() => setHasError(true)}
+        className={`${className} object-cover`}
+      />
+    );
+  }
+
+  return (
+    <div className={`${className} flex items-center justify-center text-white font-bold shrink-0 ${bgColor} ${textClass}`}>
+      {initials}
+    </div>
+  );
+};
 
 const CardContent = memo(({
   task: initialTask,
@@ -65,14 +102,23 @@ const CardContent = memo(({
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'teamRole' | 'date' | 'priority' | null>(null);
 
   // Select only what the card uses, so unrelated store changes (e.g. other tasks updating) don't re-render every card
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles } = useAppStore(useShallow((s) => ({
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles, workspaceTeams, loadTeams, hydrateTeamsFromCache } = useAppStore(useShallow((s) => ({
     currentUser: s.currentUser,
     workspaceUsers: s.workspaceUsers,
     loadUsers: s.loadUsers,
     hydrateUsersFromCache: s.hydrateUsersFromCache,
     allLists: s.allLists,
     workspaceRoles: s.workspaceRoles,
+    workspaceTeams: s.workspaceTeams,
+    loadTeams: s.loadTeams,
+    hydrateTeamsFromCache: s.hydrateTeamsFromCache,
   })));
+
+  useEffect(() => {
+    if (workspaceTeams.length === 0) {
+      hydrateTeamsFromCache();
+    }
+  }, [workspaceTeams.length, hydrateTeamsFromCache]);
 
   const orderedListStatuses = useMemo(() => {
     const sortedInternals = [...(listStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -233,6 +279,22 @@ const CardContent = memo(({
     }
   };
 
+  const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(
+    () => (initialTask as any)?.assigneeRoleRestrictions || []
+  );
+  const latestRoleRestrictionsRef = useRef<string[]>(
+    (initialTask as any)?.assigneeRoleRestrictions || []
+  );
+  const lastRoleUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+      const fromProps = (initialTask as any)?.assigneeRoleRestrictions || [];
+      setLocalRoleRestrictions(fromProps);
+      latestRoleRestrictionsRef.current = fromProps;
+    }
+  }, [(initialTask as any)?.assigneeRoleRestrictions]);
+
   const assignees = 'assignees' in task && task.assignees?.length ? task.assignees : ('assignee' in task && task.assignee) ? [task.assignee] : [];
 
   // Unified edit access check: uses teamAssignAccessRole on the task
@@ -240,17 +302,45 @@ const CardContent = memo(({
     return canUserEditTask(task as any, currentUser).allowed;
   }, [(task as any).teamAssignAccessRole, currentUser]);
 
-  // Role-based filter: which users can be assigned (assigneeRoleRestrictions)
+  const canAssignTask = useMemo(() => {
+    if (isSubtask || (task as any)?.parentTaskId) return true;
+    return canUserMoveTask(task as any, listStatuses, currentUser, workspaceRoles).allowed;
+  }, [task, listStatuses, currentUser, workspaceRoles, isSubtask]);
+
+  const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
+  const canAssignMember = canAssignTask && hasTeamRole;
+
+  // Role-based filter matching TaskDetailModal 1-to-1
   const assignableUsers = useMemo(() => {
-    const t = task as any;
-    if (!t.assigneeRoleRestrictions?.length) return workspaceUsers;
-    const requiredRoles = t.assigneeRoleRestrictions.map((r: string) => r.trim().toUpperCase());
-    return workspaceUsers.filter((u: any) => {
-      const uRoles = (u.roles || [])
-        .filter(Boolean).map((r: any) => r.trim().toUpperCase());
-      return requiredRoles.some((req: string) => uRoles.includes(req));
+    if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
+      return workspaceUsers;
+    }
+    const teamRoleToTeamId = new Map<string, string>();
+    workspaceTeams.forEach((team: any) => {
+      (team.teamRoles || []).forEach((tr: any) => {
+        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
+      });
     });
-  }, [workspaceUsers, (task as any).assigneeRoleRestrictions]);
+
+    const filteredUsers = workspaceUsers.filter((u: any) => {
+      const userRoles = (u.roles || []) as string[];
+      return localRoleRestrictions.some((role: string) => {
+        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
+        const teamId = teamRoleToTeamId.get(role.toLowerCase());
+        if (teamId && (u as any).teamId === teamId) return true;
+        return false;
+      });
+    });
+
+    if (currentUser && !filteredUsers.some(u => u.id === currentUser.id)) {
+      const me = workspaceUsers.find(u => u.id === currentUser.id);
+      if (me) {
+        filteredUsers.push(me);
+      }
+    }
+
+    return filteredUsers;
+  }, [workspaceUsers, workspaceTeams, localRoleRestrictions, currentUser]);
 
   const handleAssigneeToggle = async (user: any) => {
     if (!currentUser) return;
@@ -260,7 +350,16 @@ const CardContent = memo(({
     const assigneeIds = newAssignees.map(a => a.id);
     const primaryAssignee = newAssignees.length > 0 ? newAssignees[0] : null;
 
-    setTask(prev => ({ ...prev, assignees: newAssignees, assignee: primaryAssignee, assigneeId: primaryAssignee?.id || null, assigneeIds }));
+    const updated = {
+      ...task,
+      assignees: newAssignees,
+      assignee: primaryAssignee,
+      assigneeId: primaryAssignee?.id || null,
+      assigneeIds,
+    };
+    setTask(updated as any);
+    useAppStore.getState().updateTask(updated as any);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
 
     try {
       if (isSubtask) {
@@ -281,7 +380,16 @@ const CardContent = memo(({
   const handleClearAssignees = async () => {
     if (!currentUser) return;
 
-    setTask(prev => ({ ...prev, assignees: [], assignee: null, assigneeId: null, assigneeIds: [] }));
+    const updated = {
+      ...task,
+      assignees: [],
+      assignee: null,
+      assigneeId: null,
+      assigneeIds: [],
+    };
+    setTask(updated as any);
+    useAppStore.getState().updateTask(updated as any);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
 
     try {
       if (isSubtask) {
@@ -306,17 +414,38 @@ const CardContent = memo(({
   const priorityTriggerRef = useRef<HTMLDivElement>(null);
   const descTriggerRef = useRef<HTMLDivElement>(null);
 
-  const handleTeamRoleChange = async (roleName: string | null) => {
+  const handleRoleRestrictionsChange = async (next: string[]) => {
     if (!currentUser) return;
-    setTask(prev => ({ ...prev, teamAssignAccessRole: roleName }));
-    closeDropdown();
+
+    const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
+    const matchingIds = matchingUsers.map((u: any) => u.id);
+    const primaryAssignee = matchingUsers.length > 0 ? matchingUsers[0] : null;
+
+    latestRoleRestrictionsRef.current = next;
+    setLocalRoleRestrictions(next);
+    lastRoleUpdateTimestampRef.current = Date.now();
+
+    const updatedTask = {
+      ...task,
+      assigneeRoleRestrictions: next,
+      assignees: matchingUsers,
+      assigneeIds: matchingIds,
+      assignee: primaryAssignee,
+      assigneeId: primaryAssignee?.id || null,
+    };
+
+    setTask(updatedTask as any);
+    useAppStore.getState().updateTask(updatedTask as any);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+
     try {
-      if (isSubtask) {
-        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { teamAssignAccessRole: roleName });
+      const parentId = isSubtask ? ((task as Subtask).taskId || (task as any).parentTaskId) : null;
+      if (isSubtask && parentId) {
+        await tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any);
       } else {
-        await tasksApi.updateTask(task.id, { teamAssignAccessRole: roleName });
+        await tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any);
       }
-      toast.success(roleName ? `Team role assigned` : 'Team role cleared');
+      toast.success(next.length > 0 ? 'Team role updated' : 'Team role cleared');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update team role');
       setTask(initialTask);
@@ -527,46 +656,129 @@ const CardContent = memo(({
         )}
 
         {/* Team Role & Assignees */}
-        <div className="flex items-center gap-4 w-full">
+        <div className="flex items-center gap-2.5 w-full">
           {/* Team Role Assign */}
           <div className="relative flex items-center group/teamrole shrink-0">
             <div
               ref={teamRoleTriggerRef}
-              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
-              onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'teamRole' ? null : 'teamRole'); }}
+              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-400 flex items-center select-none ${!canAssignTask ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canAssignTask) {
+                  toast.error('You do not have permission to assign roles in this status');
+                  return;
+                }
+                setOpenDropdown(openDropdown === 'teamRole' ? null : 'teamRole');
+              }}
+              title={hasTeamRole ? localRoleRestrictions.join(', ') : 'Assign Role'}
             >
-              <Shield className="w-4 h-4 shrink-0" />
-              {('teamAssignAccessRole' in task && task.teamAssignAccessRole) && (
-                <span className="truncate">{task.teamAssignAccessRole}</span>
-              )}
-            </div>
-            {openDropdown === 'teamRole' && (
-              <PortalDropdown triggerRef={teamRoleTriggerRef} onClose={closeDropdown}>
-                <div className="w-52 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
-                  <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-zinc-900 z-10">Assign Role</div>
-                  {workspaceRoles?.map(role => {
-                    const isSelected = ('teamAssignAccessRole' in task && task.teamAssignAccessRole === role.name);
+              {hasTeamRole ? (
+                <div className="flex items-center">
+                  {localRoleRestrictions.slice(0, 2).map((role, i) => {
+                    const bgColor = ROLE_BADGE_COLORS[i % ROLE_BADGE_COLORS.length];
                     return (
                       <div
-                        key={role.id}
-                        className={`px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors ${
-                          isSelected ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
-                        }`}
-                        onClick={() => handleTeamRoleChange(role.name)}
+                        key={role}
+                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white ring-1 ring-card shadow-sm relative shrink-0 ${i > 0 ? '-ml-2' : ''} ${bgColor}`}
+                        style={{ zIndex: 10 - i }}
+                        title={role}
                       >
-                        <span className="text-xs truncate flex-1">
-                          {role.name}
-                        </span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                        {role.substring(0, 2).toUpperCase()}
                       </div>
                     );
                   })}
-                  <div
-                    className="px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors mt-1 border-t border-zinc-800/50 hover:bg-red-500/10 text-red-400/80 hover:text-red-400"
-                    onClick={() => handleTeamRoleChange(null)}
-                  >
-                    <span className="text-xs truncate flex-1">Clear Role</span>
-                  </div>
+                  {localRoleRestrictions.length > 2 && (
+                    <div
+                      className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-zinc-300 bg-zinc-800 ring-1 ring-card -ml-2 relative z-0 shrink-0"
+                      title={localRoleRestrictions.slice(2).join(', ')}
+                    >
+                      +{localRoleRestrictions.length - 2}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <Shield className="w-4 h-4 shrink-0" />
+                  {!canAssignTask && <Lock className="w-2.5 h-2.5 ml-0.5 shrink-0 text-zinc-500" />}
+                </div>
+              )}
+            </div>
+
+            {openDropdown === 'teamRole' && (
+              <PortalDropdown triggerRef={teamRoleTriggerRef} onClose={closeDropdown}>
+                <div className="w-56 max-h-72 overflow-y-auto custom-scrollbar p-1 flex flex-col">
+                  <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
+                  {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
+                  {workspaceTeams.map((team: any) => {
+                    const teamRoles = team.teamRoles || [];
+                    const current = latestRoleRestrictionsRef.current;
+                    const hasRoles = teamRoles.length > 0;
+                    const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
+                    const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+
+                    return (
+                      <div key={team.id} className="mb-2">
+                        <div
+                          onClick={() => {
+                            if (!hasRoles) return;
+                            let next = [...current];
+                            if (allSelected) {
+                              next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                            } else {
+                              const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                              next = [...next, ...toAdd];
+                            }
+                            handleRoleRestrictionsChange(next);
+                          }}
+                          className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/40 rounded ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/70 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
+                        >
+                          {hasRoles && (
+                            <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-zinc-900'}`}>
+                              {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                              {!allSelected && someSelected && <div className="w-1.5 h-0.5 bg-indigo-400 rounded-full" />}
+                            </div>
+                          )}
+                          <span className="truncate">{team.name}</span>
+                        </div>
+                        {(!teamRoles || teamRoles.length === 0) && (
+                          <div className="px-2 py-1 text-[10px] text-zinc-500 italic">No roles</div>
+                        )}
+                        {teamRoles && teamRoles.length > 0 && (
+                          <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
+                            {teamRoles.map((role: any) => {
+                              const selected = localRoleRestrictions.includes(role.name);
+                              return (
+                                <div
+                                  key={role.id}
+                                  onClick={() => {
+                                    const current = latestRoleRestrictionsRef.current;
+                                    const next = selected
+                                      ? current.filter(r => r !== role.name)
+                                      : [...current, role.name];
+                                    handleRoleRestrictionsChange(next);
+                                  }}
+                                  className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 hover:text-zinc-100 transition-colors rounded-md"
+                                >
+                                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
+                                    {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                                  </div>
+                                  <span className="truncate">{role.name}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {localRoleRestrictions.length > 0 && (
+                    <div
+                      className="px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors mt-1 border-t border-zinc-800/50 hover:bg-red-500/10 text-red-400/80 hover:text-red-400"
+                      onClick={() => handleRoleRestrictionsChange([])}
+                    >
+                      <span className="text-xs truncate flex-1">Clear all roles</span>
+                    </div>
+                  )}
                 </div>
               </PortalDropdown>
             )}
@@ -574,52 +786,47 @@ const CardContent = memo(({
 
           {/* Assignees */}
           <div className="relative flex items-center group/assignee flex-1 min-w-0">
-            {(() => {
-              const hasTeamRole = Boolean((task as any).assigneeRoleRestrictions && (task as any).assigneeRoleRestrictions.length > 0);
-              return (
-                <div
-                  ref={assigneeTriggerRef}
-                  title={!hasTeamRole ? 'Please assign a team role first' : undefined}
-                  className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 ${!hasTeamRole ? 'opacity-60 cursor-not-allowed' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!hasTeamRole) {
-                      toast.error('Please assign a team role first');
-                      return;
-                    }
-                    setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee');
-                  }}
-                >
-                  {assignees.length > 0 ? (
-                    <div className="flex items-center -space-x-1 overflow-hidden">
-                      {assignees.slice(0, 2).map((a: any) => (
-                        <div key={a.id} className="relative ring-1 ring-card rounded-full shrink-0" title={a.name}>
-                          {a.avatarUrl ? (
-                            <img src={a.avatarUrl} alt={a.name} className="w-4 h-4 rounded-full object-cover" />
-                          ) : (
-                            <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] text-white font-bold">
-                              {(a.name || 'U').charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      {assignees.length > 2 && (
-                        <div className="relative ring-1 ring-card rounded-full shrink-0 w-4 h-4 bg-zinc-700 flex items-center justify-center text-[8px] text-zinc-300 font-bold">
-                          +{assignees.length - 2}
-                        </div>
-                      )}
-                      {!hasTeamRole && <Lock className="w-2.5 h-2.5 text-zinc-500 ml-1 shrink-0" />}
+            <div
+              ref={assigneeTriggerRef}
+              title={!hasTeamRole ? 'Please assign a team role first' : undefined}
+              className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-400 ${!hasTeamRole ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!hasTeamRole) {
+                  toast.error('Please assign a team role first');
+                  return;
+                }
+                setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee');
+              }}
+            >
+              {assignees.length > 0 ? (
+                <div className="flex items-center -space-x-1 overflow-hidden">
+                  {assignees.slice(0, 2).map((a: any) => (
+                    <div key={a.id} className="relative ring-1 ring-card rounded-full shrink-0" title={a.name}>
+                      <SafeAvatar
+                        src={a.avatarUrl}
+                        name={a.name}
+                        id={a.id}
+                        className="w-4 h-4 rounded-full"
+                        textClass="text-[8px]"
+                      />
                     </div>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <Users className="w-4 h-4 shrink-0" />
-                      {!hasTeamRole && <Lock className="w-2.5 h-2.5 text-zinc-500 shrink-0" />}
+                  ))}
+                  {assignees.length > 2 && (
+                    <div className="relative ring-1 ring-card rounded-full shrink-0 w-4 h-4 bg-zinc-800 text-zinc-300 flex items-center justify-center text-[8px] font-bold">
+                      +{assignees.length - 2}
                     </div>
                   )}
+                  {!hasTeamRole && <Lock className="w-2.5 h-2.5 text-zinc-500 ml-1 shrink-0" />}
                 </div>
-              );
-            })()}
-            {assignees.length > 0 && (
+              ) : (
+                <div className="flex items-center gap-1">
+                  <Users className="w-4 h-4 shrink-0" />
+                  {!hasTeamRole && <Lock className="w-2.5 h-2.5 text-zinc-500 shrink-0" />}
+                </div>
+              )}
+            </div>
+            {assignees.length > 0 && canAssignMember && (
               <div
                 className="ml-1 p-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover/assignee:opacity-100 transition-opacity cursor-pointer z-10"
                 onClick={(e) => { e.stopPropagation(); handleClearAssignees(); }}
@@ -633,7 +840,7 @@ const CardContent = memo(({
                 <div className="w-52 max-h-64 overflow-y-auto custom-scrollbar p-0.5 flex flex-col gap-0.5">
                   <div className="text-[10px] font-bold text-zinc-500 tracking-wider px-2.5 py-1.5 uppercase sticky top-0 bg-zinc-900 z-10">Assign To</div>
                   {assignableUsers.length > 0 ? (
-                    assignableUsers.map(user => {
+                    assignableUsers.map((user: any) => {
                       const isAssigned = assignees.some((a: any) => a.id === user.id);
                       return (
                         <div
@@ -643,13 +850,13 @@ const CardContent = memo(({
                           }`}
                           onClick={() => handleAssigneeToggle(user)}
                         >
-                          {user.avatarUrl ? (
-                            <img src={user.avatarUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
-                          ) : (
-                            <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] text-white font-bold shrink-0">
-                              {(user.name || 'U').charAt(0).toUpperCase()}
-                            </div>
-                          )}
+                          <SafeAvatar
+                            src={user.avatarUrl}
+                            name={user.name}
+                            id={user.id}
+                            className="w-5 h-5 rounded-full"
+                            textClass="text-[9px]"
+                          />
                           <span className="text-xs truncate flex-1">
                             {user.name}
                           </span>
@@ -658,7 +865,15 @@ const CardContent = memo(({
                       );
                     })
                   ) : (
-                    <div className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 italic">Loading assignees...</div>
+                    <div className="px-2 py-2 text-xs text-zinc-500">No matching assignees</div>
+                  )}
+                  {assignees.length > 0 && (
+                    <div
+                      className="px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors mt-1 border-t border-zinc-800/50 hover:bg-red-500/10 text-red-400/80 hover:text-red-400"
+                      onClick={handleClearAssignees}
+                    >
+                      <span className="text-xs truncate flex-1">Clear Assignees</span>
+                    </div>
                   )}
                 </div>
               </PortalDropdown>

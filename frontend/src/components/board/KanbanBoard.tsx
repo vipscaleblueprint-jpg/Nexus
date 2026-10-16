@@ -235,12 +235,23 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   // Select only what the board uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
-  const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache } = useAppStore(useShallow((s) => ({
+  const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache } = useAppStore(useShallow((s) => ({
     currentUser: s.currentUser,
     workspaceRoles: s.workspaceRoles,
     loadRoles: s.loadRoles,
     hydrateRolesFromCache: s.hydrateRolesFromCache,
+    workspaceTeams: s.workspaceTeams,
+    loadTeams: s.loadTeams,
+    hydrateTeamsFromCache: s.hydrateTeamsFromCache,
   })));
+
+  useEffect(() => {
+    if (workspaceTeams.length === 0) {
+      hydrateTeamsFromCache();
+      loadTeams();
+    }
+  }, [workspaceTeams.length, hydrateTeamsFromCache, loadTeams]);
+
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
@@ -382,6 +393,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     if (!currentUser) return;
     hydrateRolesFromCache();
     loadRoles();
+    hydrateTeamsFromCache();
+    loadTeams();
   }, [currentUser]);
 
   const roleMap = useMemo(() => {

@@ -34,7 +34,7 @@ export const spacesApi = {
     });
   },
 
-  async createFolder(data: { name: string; spaceId?: string; parentFolderId?: string }): Promise<{ folder: Folder }> {
+  async createFolder(data: { name: string; color?: string | null; spaceId?: string; parentFolderId?: string }): Promise<{ folder: Folder }> {
     return apiClient<{ folder: Folder }>('/api/spaces/folders', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -47,7 +47,7 @@ export const spacesApi = {
     });
   },
 
-  async updateFolder(id: string, data: { name?: string }): Promise<{ folder: Folder }> {
+  async updateFolder(id: string, data: { name?: string; color?: string | null }): Promise<{ folder: Folder }> {
     return apiClient<{ folder: Folder }>(`/api/spaces/folders/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),

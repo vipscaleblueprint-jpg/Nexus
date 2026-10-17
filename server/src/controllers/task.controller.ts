@@ -31,7 +31,9 @@ import {
 import { isNexusAuditChecklist } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal } from '../utils/pageBlocks';
+import { canUserSetAssignees, getAssignDeniedMessage } from '../utils/assignPermission';
 import { updatePageBlocks } from '../services/pageContentService';
+import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 import {
   getStatusChangeRecipients,
   getChecklistCheckRecipients,
@@ -187,6 +189,15 @@ async function queryListTasks(
             assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
             team: { select: { id: true, name: true, color: true } },
             list: { select: { id: true, name: true, space: { select: { id: true, name: true } }, folder: { select: { id: true, name: true } } } },
+            // Card-level subtask fields so the dashboard can list subtasks as their own rows
+            subtasks: {
+              orderBy: { createdAt: 'asc' } as any,
+              select: {
+                id: true, title: true, status: true, completed: true, priority: true, dueDate: true,
+                createdAt: true, assigneeId: true, assigneeRoleRestrictions: true, taskId: true,
+                assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
+              },
+            },
             _count: { select: { subtasks: true, comments: true, attachments: true } },
           }
         : taskInclude,
@@ -369,6 +380,26 @@ export async function createTask(req: Request, res: Response) {
     // Global broadcast reaches list-room members too, so a separate room emit would deliver it twice
     io.emit('task:created', task);
     res.status(201).json({ task });
+
+    // Notify the assignees a task was created for (the creator excluded) — after the broadcast/response
+    (async () => {
+      const actingUserId = (req as any).user?.id || creatorId;
+      const assigneeIdsToNotify = (task.assignees ?? []).map((a: any) => a.id).filter((id: string) => id !== actingUserId);
+      if (!actingUserId || assigneeIdsToNotify.length === 0) return;
+      const actor = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
+      await prisma.taskNotification.createMany({
+        data: assigneeIdsToNotify.map((id: string) => ({
+          userId: id,
+          actorId: actingUserId,
+          taskId: task.id,
+          type: 'ASSIGNMENT',
+          title: `${actor?.name || 'Someone'} assigned this task to you`,
+        })),
+      });
+      assigneeIdsToNotify.forEach((id: string) => {
+        io.to(`user:${id}`).emit('notification_received');
+      });
+    })().catch((err) => console.error('createTask: assignment notifications failed:', err));
 
     // Backend injection into Daily Rollover doc — after the broadcast/response, so boards see the new card
     // without waiting on the journal's page reads and write. Journal viewers get it via page_updated.
@@ -561,6 +592,12 @@ export async function updateTask(req: Request, res: Response) {
     } = req.body;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
 
+    // Only Project Managers and Admins can set Team Role / Assignees (checked against the DB, not the token)
+    const changesAssignment = assigneeIds !== undefined || assigneeId !== undefined || assigneeRoleRestrictions !== undefined;
+    if (changesAssignment && !(await canUserSetAssignees(authReq.user?.id))) {
+      return res.status(403).json({ error: await getAssignDeniedMessage() });
+    }
+
     // Status lock is now open to all, only audit checklist completion is checked later.
 
     const currentTask = await prisma.task.findUnique({
@@ -587,34 +624,31 @@ export async function updateTask(req: Request, res: Response) {
     }
 
     if (status !== undefined) {
-      const restrictedStatuses = ['in review', 'inreview', 'checking', 'crm'];
+      const restrictedStatuses = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
       if (restrictedStatuses.includes(status.toLowerCase())) {
         // Find if ANY subtask is NOT "Closed"
-        const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => st.status.toLowerCase() !== 'closed');
+        const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => {
+          const s = (st.status || '').toLowerCase();
+          return s !== 'closed' && s !== 'done' && !st.completed;
+        });
         if (hasUnclosedSubtasks) {
           return res.status(400).json({ error: `Cannot move to ${status}: All subtasks must be Closed first.` });
         }
-      }
-    }
 
-    if (status !== undefined && status.toLowerCase() === 'checking') {
-      // Check task audit checklists
-      const requiredTaskAudits = getRequiredAudits(currentTask.title, (currentTask as any).assigneeRoleRestrictions);
-      const auditChecklists = currentTask.checklists.filter((c: any) => isNexusAuditChecklist(c));
-      for (const c of auditChecklists) {
-        if (c.items.some((i: any) => requiredTaskAudits.includes(i.text) && !i.completed)) {
-          return res.status(400).json({ error: `Cannot move to ${status}: Required audits for task are not fully completed.` });
-        }
-      }
-
-      // Check subtasks audit checklists
-      for (const subtask of currentTask.subtasks) {
-        const requiredSubtaskAudits = getRequiredAudits(subtask.title, (subtask as any).assigneeRoleRestrictions);
-        const subtaskAuditChecklists = subtask.checklists.filter((c: any) => isNexusAuditChecklist(c));
-        for (const c of subtaskAuditChecklists) {
-          if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {
-            return res.status(400).json({ error: `Cannot move to ${status}: Subtask "${subtask.title}" required audits are not fully completed.` });
-          }
+        const auditorRoles = [
+          ...((currentTask as any).assigneeRoleRestrictions || []),
+          ...(currentTask.subtasks || [])
+            .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
+            .flatMap((s: any) => (s as any).assigneeRoleRestrictions || []),
+        ];
+        const requiredTaskAudits = getRequiredAudits(currentTask.title, auditorRoles);
+        const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+        const completedTexts = new Set(
+          auditChecklists.flatMap((c: any) => (c.items || []).filter((i: any) => i.completed).map((i: any) => i.text.toLowerCase()))
+        );
+        const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
+        if (unchecked.length > 0) {
+          return res.status(400).json({ error: `Cannot move to ${status}: Required audits are not completed (${unchecked.join(', ')}).` });
         }
       }
     }
@@ -970,11 +1004,52 @@ export async function moveTask(req: Request, res: Response) {
 
     const currentTask = await prisma.task.findUnique({
       where: { id },
-      select: { id: true, title: true, status: true, listId: true, creatorId: true, teamId: true, externalId: true, assignees: { select: { id: true } } },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        listId: true,
+        creatorId: true,
+        teamId: true,
+        externalId: true,
+        assignees: { select: { id: true } },
+        assigneeRoleRestrictions: true,
+        checklists: { where: { subtaskId: null }, include: { items: true } },
+        subtasks: { include: { checklists: { include: { items: true } } } },
+      },
     });
 
     if (!currentTask) {
       return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (status !== undefined) {
+      const restrictedStatuses = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
+      if (restrictedStatuses.includes(status.toLowerCase())) {
+        const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => {
+          const s = (st.status || '').toLowerCase();
+          return s !== 'closed' && s !== 'done' && !st.completed;
+        });
+        if (hasUnclosedSubtasks) {
+          return res.status(400).json({ error: `Cannot move to ${status}: All subtasks must be Closed first.` });
+        }
+
+        const auditorRoles = [
+          ...((currentTask as any).assigneeRoleRestrictions || []),
+          ...(currentTask.subtasks || [])
+            .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
+            .flatMap((s: any) => (s as any).assigneeRoleRestrictions || []),
+        ];
+        const requiredTaskAudits = getRequiredAudits(currentTask.title, auditorRoles);
+        const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+        const completedTexts = new Set(
+          auditChecklists.flatMap((c: any) => (c.items || []).filter((i: any) => i.completed).map((i: any) => i.text.toLowerCase()))
+        );
+        const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
+        if (unchecked.length > 0) {
+          return res.status(400).json({ error: `Cannot move to ${status}: Required audits are not completed (${unchecked.join(', ')}).` });
+        }
+      }
     }
 
     const oldStatus = currentTask.status;
@@ -1827,12 +1902,33 @@ export async function createSubtask(req: Request, res: Response) {
       select: { id: true, listId: true, externalId: true, subtasks: taskInclude.subtasks }
     });
     if (task) {
-      await invalidateCache(`tasks:all:${task.listId}*`);
-      io.to(`list:${task.listId}`).emit('task:updated', task);
+      // Whole tasks:all family: the dashboard's all-tasks list now carries subtasks too
+      await invalidateCache('tasks:all');
+      // Global broadcast (like updateSubtask) so the dashboard, which joins no list room, gets the new row
+      io.emit('task:updated', task);
 
       const authReq = req as any;
       const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
       if (actingUserId) {
+        // Notify the subtask's assignees (the acting user excluded)
+        const subtaskAssigneeIds: string[] = (((subtask as any).assignees ?? []) as Array<{ id: string }>)
+          .map((a) => a.id)
+          .filter((id) => id !== actingUserId);
+        if (subtaskAssigneeIds.length > 0) {
+          await prisma.taskNotification.createMany({
+            data: subtaskAssigneeIds.map((id) => ({
+              userId: id,
+              actorId: actingUserId,
+              taskId,
+              type: 'ASSIGNMENT',
+              title: `You were assigned to a subtask: ${subtask.title}`,
+            })),
+          });
+          subtaskAssigneeIds.forEach((id) => {
+            io.to(`user:${id}`).emit('notification_received');
+          });
+        }
+
         await prisma.auditLog.create({
           data: {
             action: 'CREATE_SUBTASK',
@@ -1904,47 +2000,9 @@ export async function createSubtask(req: Request, res: Response) {
       })();
     }
 
-    try {
-      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
-      if (doc) {
-        // Same page titles the rollover worker and createTask use ("October 2026" / "October 14, 2026")
-        const tz = doc.rolloverTimezone || 'Asia/Singapore';
-        const today = new Date();
-        const monthTitle = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' }).format(today);
-        const dayTitle = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', day: 'numeric', year: 'numeric' }).format(today);
-
-        const monthPage = await prisma.page.findFirst({ where: { docId: doc.id, title: monthTitle, parentPageId: null } });
-        if (monthPage) {
-          const dayPage = await prisma.page.findFirst({ where: { docId: doc.id, title: dayTitle, parentPageId: monthPage.id } });
-          if (dayPage) {
-            const escapedTitle = subtask.title.replace(/"/g, '&quot;');
-            const written = await updatePageBlocks(dayPage, (blocks) => {
-              let updated = false;
-              let i = 0;
-              while (i < blocks.length) {
-                if (blocks[i].content && blocks[i].content.includes(`data-id="${taskId}"`) && blocks[i].content.includes('data-mention-type="task"')) {
-                  // After the task's existing subtask lines, so subtasks stay in creation order
-                  let insertAt = i + 1;
-                  while (insertAt < blocks.length && String(blocks[insertAt].content || '').includes('└─')) insertAt++;
-                  blocks.splice(insertAt, 0, {
-                    id: `blk-sub-${Date.now()}-${subtask.id}-${i}`,
-                    type: 'text',
-                    content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${escapedTitle}" data-mention-type="subtask">@${escapedTitle}</span></p>`
-                  });
-                  updated = true;
-                  i = insertAt; // skip the subtask lines and the new block
-                }
-                i++;
-              }
-              return updated;
-            });
-            if (written) io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
-          }
-        }
-      }
-    } catch(err) {
-      console.error('Failed to inject subtask', err);
-    }
+    injectSubtaskIntoJournal(taskId, { id: subtask.id, title: subtask.title }).catch((err) => {
+      console.error('Failed to inject subtask into journal:', err);
+    });
 
     return res.json({ subtask });
   } catch (err: any) {
@@ -1956,18 +2014,30 @@ export async function updateSubtask(req: Request, res: Response) {
   try {
     const { id: taskId, subtaskId } = req.params;
     const { title, description, completed, assigneeIds, assigneeId, teamId, priority, dueDate, status, assigneeRoleRestrictions, teamAssignAccessRole } = req.body;
-    
-    if (status !== undefined && status.toLowerCase() === 'checking') {
-      const currentSubtask = await prisma.subtask.findUnique({
-        where: { id: subtaskId },
-        include: { checklists: { include: { items: true } } }
-      });
-      if (currentSubtask) {
-        const requiredSubtaskAudits = getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions);
-        const auditChecklists = currentSubtask.checklists.filter((c: any) => isNexusAuditChecklist(c));
-        for (const c of auditChecklists) {
-          if (c.items.some((i: any) => requiredSubtaskAudits.includes(i.text) && !i.completed)) {
-            return res.status(400).json({ error: `Cannot move to ${status}: Required audits for subtask are not fully completed.` });
+
+    // Only Project Managers and Admins can set Team Role / Assignees (checked against the DB, not the token)
+    const changesAssignment = assigneeIds !== undefined || assigneeId !== undefined || assigneeRoleRestrictions !== undefined;
+    if (changesAssignment && !(await canUserSetAssignees((req as any).user?.id))) {
+      return res.status(403).json({ error: await getAssignDeniedMessage() });
+    }
+
+    if (status !== undefined || completed === true) {
+      const restrictedStatuses = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
+      const targetStatus = (status || (completed ? 'CLOSED' : '')).toLowerCase();
+      if (restrictedStatuses.includes(targetStatus)) {
+        const currentSubtask = await prisma.subtask.findUnique({
+          where: { id: subtaskId },
+          include: { checklists: { include: { items: true } } }
+        });
+        if (currentSubtask) {
+          const requiredSubtaskAudits = getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions);
+          const auditChecklists = (currentSubtask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+          const completedTexts = new Set(
+            auditChecklists.flatMap((c: any) => (c.items || []).filter((i: any) => i.completed).map((i: any) => i.text.toLowerCase()))
+          );
+          const unchecked = requiredSubtaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
+          if (unchecked.length > 0) {
+            return res.status(400).json({ error: `Cannot move to ${status || 'Closed'}: Required audits for subtask are not completed (${unchecked.join(', ')}).` });
           }
         }
       }
@@ -2062,18 +2132,26 @@ export async function updateSubtask(req: Request, res: Response) {
           }
         });
 
-        for (const assigneeId of computedAssigneeIds) {
-          if (assigneeId !== actingUserId) {
-            await prisma.taskNotification.create({
-              data: {
-                userId: assigneeId,
-                actorId: actingUserId,
-                taskId,
-                type: 'ASSIGNMENT',
-                title: `You were assigned to a subtask: ${subtask.title}`
-              }
-            });
-          }
+      }
+      // Notify only users newly added to the subtask (array or single-assignee path); the
+      // notification_received emit refreshes their cowbell and Activity feed live
+      if (assigneesChanging) {
+        const newlyAssignedIds = newSubtaskAssignees
+          .map((u) => u.id)
+          .filter((id) => id !== actingUserId && !previousAssignees.some((p) => p.id === id));
+        if (newlyAssignedIds.length > 0) {
+          await prisma.taskNotification.createMany({
+            data: newlyAssignedIds.map((id) => ({
+              userId: id,
+              actorId: actingUserId,
+              taskId,
+              type: 'ASSIGNMENT',
+              title: `You were assigned to a subtask: ${subtask.title}`,
+            })),
+          });
+          newlyAssignedIds.forEach((id) => {
+            io.to(`user:${id}`).emit('notification_received');
+          });
         }
       }
       if (status !== undefined) {
@@ -2146,6 +2224,7 @@ export async function updateSubtask(req: Request, res: Response) {
       }
     }
 
+    let statusActivity: any = null;
     await invalidateCache(`task:${taskId}`);
 
     const task = await prisma.task.findUnique({ 
@@ -2154,7 +2233,9 @@ export async function updateSubtask(req: Request, res: Response) {
     });
     if (task) {
       io.emit('task:updated', task);
-      
+      // After the emit: the dashboard's all-tasks list carries subtasks, so a reload must not serve the old copy
+      invalidateCache('tasks:all').catch(() => {});
+
       // Emit socket events for the newly created audit logs so the frontend updates in real-time
       if (actingUserId) {
         const actorUser = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
@@ -2173,6 +2254,7 @@ export async function updateSubtask(req: Request, res: Response) {
           };
           io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
         }
+        statusActivity = null;
         if (status !== undefined) {
           const act = {
             id: (Date.now() + 1).toString(),
@@ -2183,6 +2265,7 @@ export async function updateSubtask(req: Request, res: Response) {
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
           };
+          statusActivity = act;
           io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
         }
         if (priority !== undefined) {
@@ -2245,7 +2328,7 @@ export async function updateSubtask(req: Request, res: Response) {
       }
     })();
 
-    return res.json({ subtask });
+    return res.json({ subtask, activity: statusActivity });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -2265,7 +2348,9 @@ export async function deleteSubtask(req: Request, res: Response) {
       where: { id: taskId }, 
       select: { id: true, listId: true, subtasks: taskInclude.subtasks }
     });
-    if (task) io.to(`list:${task.listId}`).emit('task:updated', task);
+    // Global broadcast so the dashboard (no list room) drops the deleted subtask row too
+    if (task) io.emit('task:updated', task);
+    invalidateCache('tasks:all').catch(() => {});
 
     // --- ClickUp Sync ---
     (async () => {

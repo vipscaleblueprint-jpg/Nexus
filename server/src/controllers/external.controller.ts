@@ -3,9 +3,11 @@ import { prisma } from '../config/prisma';
 import bcrypt from 'bcryptjs';
 import { timingSafeEqual } from 'crypto';
 import { io } from '../server';
+import { hashApiKey } from '../utils/apiKey';
 import { invalidateCache } from '../services/redisService';
 import { appendTaskToJournal } from '../utils/pageBlocks';
 import { updatePageBlocks } from '../services/pageContentService';
+import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 
 
 async function getOrCreateVipScaleUser() {
@@ -48,10 +50,30 @@ async function authenticateApiKey(req: Request, res: Response) {
     return { id: null, userId: user.id, user };
   }
 
-  const apiKey = await (prisma as any).apiKey.findUnique({
-    where: { key: token },
+  const hashedToken = hashApiKey(token);
+
+  let apiKey = await (prisma as any).apiKey.findUnique({
+    where: { key: hashedToken },
     include: { user: true }
   });
+
+  // Backward compatibility & automatic migration:
+  // If not found by hash, check if an unhashed legacy key exists
+  if (!apiKey) {
+    const legacyKey = await (prisma as any).apiKey.findUnique({
+      where: { key: token },
+      include: { user: true }
+    });
+
+    if (legacyKey) {
+      // Auto-migrate legacy key to SHA-256 hash immediately
+      await (prisma as any).apiKey.update({
+        where: { id: legacyKey.id },
+        data: { key: hashedToken }
+      });
+      apiKey = legacyKey;
+    }
+  }
 
   if (!apiKey) {
     res.status(401).json({ error: 'Invalid API Key' });
@@ -823,79 +845,9 @@ export async function createSubtask(req: Request, res: Response) {
       }
     });
 
-    try {
-      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
-      if (doc) {
-        const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
-        const dayFormatter = new Intl.DateTimeFormat('en-US', {
-          timeZone: tz,
-          month: 'long',
-          day: 'numeric',
-          year: 'numeric'
-        });
-        const dayTitle = dayFormatter.format(new Date());
-
-        const todayPage = await prisma.page.findFirst({
-          where: { 
-            docId: doc.id, 
-            title: dayTitle 
-          },
-          orderBy: { createdAt: 'desc' }
-        });
-
-        if (todayPage && todayPage.content) {
-          const parentTaskMention = `data-id="${task.id}"`;
-          const escapedTitle = subtask.title.replace(/"/g, '&quot;');
-          const written = await updatePageBlocks(todayPage, (blocks) => {
-            let updated = false;
-            let i = 0;
-            while (i < blocks.length) {
-              const b = blocks[i];
-              if (b.type === 'text' && b.content && b.content.includes(parentTaskMention) && !b.content.includes('data-mention-type="subtask"')) {
-                let insertIndex = i + 1;
-                let alreadyExists = false;
-                while (insertIndex < blocks.length) {
-                  const nextBlock = blocks[insertIndex];
-                  if (nextBlock.type === 'text' && nextBlock.content && nextBlock.content.includes('└─')) {
-                    if (nextBlock.content.includes(`data-id="${subtask.id}"`)) {
-                      alreadyExists = true;
-                    }
-                    insertIndex++;
-                  } else {
-                    break;
-                  }
-                }
-
-                if (!alreadyExists) {
-                  const newSubtaskBlock = {
-                    id: `blk-st-${Date.now()}-${subtask.id}-${i}`,
-                    type: "text",
-                    content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${escapedTitle}" data-mention-type="subtask">@${escapedTitle}</span></p>`
-                  };
-
-                  blocks.splice(insertIndex, 0, newSubtaskBlock);
-                  if (insertIndex + 1 >= blocks.length || (blocks[insertIndex + 1]?.type === 'text' && /^<h[1-6]/i.test(blocks[insertIndex + 1]?.content || ''))) {
-                    blocks.splice(insertIndex + 1, 0, {
-                      id: `blk-space-${Date.now()}-${subtask.id}-${i}`,
-                      type: 'text',
-                      content: '<p></p>'
-                    });
-                  }
-                  updated = true;
-                  i = insertIndex;
-                }
-              }
-              i++;
-            }
-            return updated;
-          });
-
-          if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
-        }
-      }
-    } catch (error) {
+    injectSubtaskIntoJournal(task.id, { id: subtask.id, title: subtask.title }).catch((error) => {
       console.error('Failed to inject subtask into Priorities Journal:', error);
-    }
+    });
 
     return res.status(201).json({ message: 'Subtask created successfully', subtask });
   } catch (err: any) {

@@ -1,5 +1,5 @@
 import { Task, WorkspaceRole, User } from '@/lib/types';
-import { isNexusAuditChecklist } from '@/lib/auditChecklist';
+import { isNexusAuditChecklist, getTaskAuditStatus, getTaskSubtaskStatus } from '@/lib/auditChecklist';
 
 export function canUserMoveTask(
   task: Task | null | undefined,
@@ -75,52 +75,90 @@ export function canUserEditTask(
   };
 }
 
-export const RESTRICTED_GATE_STATUSES = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm'];
+const PROJECT_MANAGER_ROLE = /project\s*manager|^pm$/i;
+
+/**
+ * Only Project Managers and Admins can set a task's Team Role and Assignees.
+ * Same PM match as the server (server/src/utils/assignPermission.ts).
+ */
+export function isProjectManagerOrAdmin(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.systemRole === 'ADMIN') return true;
+  return (user.roles || []).some((r) => PROJECT_MANAGER_ROLE.test((r || '').trim()));
+}
+
+/**
+ * Message shown to users who can't set Team Role / Assignees, naming the PM role(s) exactly as they are
+ * written in the WorkspaceRole table. Same text as the server (server/src/utils/assignPermission.ts).
+ */
+export function getAssignDeniedMessage(workspaceRoles: { name: string }[] = []): string {
+  const pmRoles = workspaceRoles.map((r) => r.name).filter((n) => PROJECT_MANAGER_ROLE.test((n || '').trim()));
+  const label = pmRoles.length > 0 ? pmRoles.join(' or ') : 'Project Manager';
+  return `You can't change this. Only ${label} and Admins can set Team Role and Assignees.`;
+}
+
+export const RESTRICTED_GATE_STATUSES =['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
+
+export interface TransitionCheckResult {
+  allowed: boolean;
+  reason?: string;
+  uncheckedAudits: string[];
+  openSubtasks: string[];
+  targetStatus: string;
+}
 
 /**
  * Validates whether a task can transition to a restricted status.
- * Requires all subtasks to be Closed, and all Audit checklist items to be completed.
+ * Requires all subtasks to be Closed, and all required Audit checklist items to be checked.
  */
 export function canTransitionTaskStatus(
   task: any,
   newStatus: string
-): { allowed: boolean; reason?: string } {
-  if (!task || !newStatus) return { allowed: true };
+): TransitionCheckResult {
+  if (!task || !newStatus) {
+    return { allowed: true, uncheckedAudits: [], openSubtasks: [], targetStatus: newStatus || '' };
+  }
 
   const currentStatusNorm = (task.status || '').trim().toLowerCase();
   const targetStatusNorm = newStatus.trim().toLowerCase();
 
   // If status is not changing, allow
-  if (currentStatusNorm === targetStatusNorm) return { allowed: true };
+  if (currentStatusNorm === targetStatusNorm) {
+    return { allowed: true, uncheckedAudits: [], openSubtasks: [], targetStatus: newStatus };
+  }
 
   if (RESTRICTED_GATE_STATUSES.includes(targetStatusNorm)) {
-    // 1. Subtasks check: all subtasks must be closed
-    if (task.subtasks && task.subtasks.length > 0) {
-      const hasUnclosedSubtasks = task.subtasks.some((st: any) => {
-        const s = (st.status || '').trim().toLowerCase();
-        return s !== 'closed' && !st.completed;
-      });
-      if (hasUnclosedSubtasks) {
-        return {
-          allowed: false,
-          reason: `Cannot move task to ${newStatus} until all subtasks are Closed.`,
-        };
-      }
-    }
+    const subtaskStatus = getTaskSubtaskStatus(task);
+    const auditStatus = getTaskAuditStatus(task);
 
-    // 2. Audit checklist check: Nexus Audit checklist must be fully completed
-    if (task.checklists && task.checklists.length > 0) {
-      const auditChecklists = task.checklists.filter((c: any) => isNexusAuditChecklist(c));
-      for (const c of auditChecklists) {
-        if (c.items && c.items.length > 0 && c.items.some((i: any) => !i.completed)) {
-          return {
-            allowed: false,
-            reason: `Cannot move to ${newStatus}: Audit checklist "${c.name}" is not fully completed.`,
-          };
-        }
+    const subtasksIncomplete = !subtaskStatus.isComplete;
+    const auditsIncomplete = !auditStatus.isComplete;
+
+    if (subtasksIncomplete || auditsIncomplete) {
+      let reason = '';
+      if (subtasksIncomplete && auditsIncomplete) {
+        reason = `Cannot move to ${newStatus}: ${subtaskStatus.openCount} subtask(s) still open and Audits need checking (${auditStatus.completedCount}/${auditStatus.totalCount} completed).`;
+      } else if (subtasksIncomplete) {
+        reason = `Cannot move to ${newStatus}: All subtasks must be Closed first (${subtaskStatus.openCount} open).`;
+      } else {
+        reason = `Cannot move to ${newStatus}: All Audits must be checked first (${auditStatus.completedCount}/${auditStatus.totalCount} completed). Needs check: ${auditStatus.uncheckedAudits.join(', ')}.`;
       }
+
+      return {
+        allowed: false,
+        reason,
+        uncheckedAudits: auditStatus.uncheckedAudits,
+        openSubtasks: subtaskStatus.openSubtasks,
+        targetStatus: newStatus,
+      };
     }
   }
 
-  return { allowed: true };
+  return {
+    allowed: true,
+    uncheckedAudits: [],
+    openSubtasks: [],
+    targetStatus: newStatus,
+  };
 }
+

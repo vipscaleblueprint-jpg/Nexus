@@ -23,7 +23,7 @@ export const redis = REDIS_URL
     });
 
 redis.on('error', (err) => {
-  log.warn({ err }, `Redis connection error: ${errMsg(err)}`);
+  log.warn(`Redis connection error: ${errMsg(err)}`);
 });
 
 redis.on('connect', () => {

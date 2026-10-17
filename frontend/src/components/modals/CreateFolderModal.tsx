@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { spacesApi } from '@/api';
 import { Space, Folder } from '@/lib/types';
-import { X, Folder as FolderIcon } from 'lucide-react';
+import { X, Folder as FolderIcon, Check } from 'lucide-react';
+import { FOLDER_COLOR_PALETTE } from '@/components/layout/Sidebar';
 
 interface CreateFolderModalProps {
   isOpen: boolean;
@@ -38,6 +39,7 @@ export function CreateFolderModal({
   defaultParentFolderId,
 }: CreateFolderModalProps) {
   const [name, setName] = useState('');
+  const [color, setColor] = useState('#F59E0B');
   const [spaceId, setSpaceId] = useState<string>(defaultSpaceId || '');
   const [parentFolderId, setParentFolderId] = useState<string>(defaultParentFolderId || '');
   const [loading, setLoading] = useState(false);
@@ -49,6 +51,7 @@ export function CreateFolderModal({
     if (defaultSpaceId) setSpaceId(defaultSpaceId);
     if (defaultParentFolderId) setParentFolderId(defaultParentFolderId);
     setName('');
+    setColor('#F59E0B');
     setError(null);
   }, [isOpen, defaultSpaceId, defaultParentFolderId]);
 
@@ -66,6 +69,7 @@ export function CreateFolderModal({
     try {
       await spacesApi.createFolder({
         name: name.trim(),
+        color,
         spaceId: spaceId && spaceId !== 'root-space' ? spaceId : undefined,
         parentFolderId: parentFolderId || undefined,
       });
@@ -96,8 +100,8 @@ export function CreateFolderModal({
             className="w-full max-w-md bg-card border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200"
           >
             <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-amber-400">
-            <FolderIcon className="w-5 h-5" />
+          <div className="flex items-center gap-2" style={{ color }}>
+            <FolderIcon className="w-5 h-5 shrink-0" />
             <h3 className="text-base font-bold text-white">Create Folder</h3>
           </div>
           <button
@@ -126,6 +130,40 @@ export function CreateFolderModal({
               placeholder="e.g. Q3 Projects, Design Assets..."
               className="w-full px-3.5 py-2.5 bg-secondary border border-zinc-700/80 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 transition-colors"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-zinc-300 mb-1.5">Folder Color</label>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              {FOLDER_COLOR_PALETTE.map((c) => {
+                const isSelected = color.toLowerCase() === c.value.toLowerCase();
+                return (
+                  <button
+                    key={c.value}
+                    type="button"
+                    title={c.label}
+                    onClick={() => setColor(c.value)}
+                    className={`size-6 rounded-full border border-black/40 hover:scale-115 transition-transform flex items-center justify-center cursor-pointer ${
+                      isSelected ? 'ring-2 ring-white/90 ring-offset-1 ring-offset-zinc-900' : ''
+                    }`}
+                    style={{ backgroundColor: c.value }}
+                  >
+                    {isSelected && <Check className="size-3.5 text-white drop-shadow stroke-[3]" />}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="w-8 h-8 bg-secondary border border-zinc-700 rounded-lg cursor-pointer p-0.5"
+              />
+              <span className="text-xs font-mono text-zinc-400 bg-secondary px-2.5 py-1 rounded-md border border-zinc-800">
+                {color}
+              </span>
+            </div>
           </div>
 
           {/* Space Selector */}

@@ -80,6 +80,7 @@ export interface Space {
 export interface Folder {
   id: string;
   name: string;
+  color?: string | null;
   spaceId?: string;
   parentFolderId?: string;
   order?: number;

@@ -28,7 +28,19 @@ export const logger = pino({
       'refreshToken',
       'otp',
       '*.password',
+      '*.*.password',
+      '*.*.*.password',
       '*.token',
+      '*.*.token',
+      '*.options.password',
+      '*.options.url',
+      'options.password',
+      'options.url',
+      '*.connection.password',
+      'err.options.password',
+      'err.options.url',
+      'redis.options.password',
+      'redis.options.url',
     ],
     censor: '[redacted]',
   },
@@ -51,13 +63,22 @@ export const logger = pino({
 });
 
 /**
+ * Strips passwords from URIs (e.g. redis://:secret@host:port or postgres://user:secret@host:port).
+ */
+export function maskUriSecrets(text: string): string {
+  if (!text) return text;
+  return text.replace(/:\/\/([^/\s@]+):([^/\s]+)@/g, '://$1:[redacted]@')
+             .replace(/:\/\/:([^/\s]+)@/g, '://:[redacted]@');
+}
+
+/**
  * Error text for a log message. Because the structured object is hidden in
  * line mode, the reason has to live in the message itself or it is lost.
  * Full stacks are still available under LOG_JSON=true.
  */
 export function errMsg(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  const raw = err instanceof Error ? err.message : String(err);
+  return maskUriSecrets(raw);
 }
 
 /** Namespaced child logger, e.g. createLogger('redis') -> { module: 'redis' }. */

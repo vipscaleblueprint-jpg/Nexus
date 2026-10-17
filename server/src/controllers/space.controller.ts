@@ -460,9 +460,14 @@ export async function deleteSpace(req: Request, res: Response) {
 // POST /api/spaces/folders (Can belong to spaceId or parentFolderId)
 export async function createFolder(req: Request, res: Response) {
   try {
-    const { name, spaceId, parentFolderId } = req.body;
+    const { name, color, spaceId, parentFolderId } = req.body;
     const folder = await prisma.folder.create({
-      data: { name, spaceId: spaceId || null, parentFolderId: parentFolderId || null },
+      data: {
+        name,
+        color: color || null,
+        spaceId: spaceId || null,
+        parentFolderId: parentFolderId || null,
+      },
     });
     await invalidateCache('spaces:all', 'dashboard:all');
     return res.status(201).json({ folder });
@@ -474,11 +479,12 @@ export async function createFolder(req: Request, res: Response) {
 // PATCH /api/spaces/folders/:id
 export async function updateFolder(req: Request, res: Response) {
   try {
-    const { name } = req.body;
+    const { name, color } = req.body;
     const folder = await prisma.folder.update({
       where: { id: req.params.id },
       data: {
-        ...(name && { name }),
+        ...(name !== undefined && { name }),
+        ...(color !== undefined && { color: color || null }),
       },
     });
     await invalidateCache('spaces:all', 'dashboard:all');
@@ -498,6 +504,7 @@ export async function duplicateFolder(req: Request, res: Response) {
     const folder = await prisma.folder.create({
       data: {
         name: `${original.name} (Copy)`,
+        color: original.color,
         spaceId: original.spaceId,
         parentFolderId: original.parentFolderId,
       },

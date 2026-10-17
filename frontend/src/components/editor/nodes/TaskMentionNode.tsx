@@ -1,5 +1,6 @@
 import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
 import { canTransitionTaskStatus } from '@/lib/permissions';
+import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
 import { tasksApi, usersApi } from '@/api';
@@ -43,6 +44,9 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData, taskListName } = node.attrs;
 
   const currentUser = useAppStore(s => s.currentUser);
+  // Only Project Managers and Admins can set Team Role and Assignees
+  const canSetAssignees = useCanSetAssignees();
+  const assignDeniedMessage = useAssignDeniedMessage();
   const globalTask = useAppStore(s => s.tasksIndex[id]);
   const updateTaskStore = useAppStore(s => s.updateTask);
   
@@ -461,6 +465,15 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     }
   };
 
+  // Subtask mentions must save through the subtask endpoint (the subtask id is not a task id)
+  const persistTeamRoles = (roles: string[], teamId: string, assigneeIds: string[]) => {
+    const data = { assigneeRoleRestrictions: roles, teamId, assigneeIds } as any;
+    const request = mentionType === 'subtask'
+      ? tasksApi.updateSubtask(taskData?.taskId, id, data)
+      : tasksApi.updateTask(id, data);
+    request.catch(() => toast.error('Failed to update team role'));
+  };
+
   // Resolve board/list name: prefer live taskData, fallback to stored taskListName attr
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
@@ -558,9 +571,16 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         <motion.span layout
           ref={teamRef}
-          className="inline-flex items-center justify-center shrink-0 cursor-pointer hover:opacity-80 transition-opacity mr-1.5 align-middle"
-          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'team' ? null : 'team'); }}
-          title={taskData?.assigneeRoleRestrictions?.length ? taskData.assigneeRoleRestrictions.join(', ') : 'Assign Role'}
+          className={`inline-flex items-center justify-center shrink-0 transition-opacity mr-1.5 align-middle ${canSetAssignees ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-60'}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!canSetAssignees) {
+              toast.error(assignDeniedMessage);
+              return;
+            }
+            setOpenDropdown(openDropdown === 'team' ? null : 'team');
+          }}
+          title={!canSetAssignees ? assignDeniedMessage : taskData?.assigneeRoleRestrictions?.length ? taskData.assigneeRoleRestrictions.join(', ') : 'Assign Role'}
         >
           <AnimatePresence mode="popLayout">
             {(taskData?.assigneeRoleRestrictions && taskData.assigneeRoleRestrictions.length > 0) ? (
@@ -600,8 +620,16 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         <motion.span layout
           ref={assigneesRef}
-          className="inline-flex items-center -space-x-1 shrink-0 cursor-pointer hover:opacity-80 transition-opacity align-middle"
-          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee'); }}
+          className={`inline-flex items-center -space-x-1 shrink-0 transition-opacity align-middle ${canSetAssignees ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-60'}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!canSetAssignees) {
+              toast.error(assignDeniedMessage);
+              return;
+            }
+            setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee');
+          }}
+          title={!canSetAssignees ? assignDeniedMessage : undefined}
         >
           <AnimatePresence mode="popLayout">
             {assignees.length > 0 ? (
@@ -820,7 +848,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                                   const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t, assignees: matchingUsers, assigneeIds: matchingIds };
                                   setTaskData(updatedTask);
                                   updateTaskStore(updatedTask);
-                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id, assigneeIds: matchingIds } as any).catch(console.error);
+                                  persistTeamRoles(next, t.id, matchingIds);
                                 }
                               }}
                           className={`flex items-center gap-2.5 px-2 py-1 ${hasRoles ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
@@ -863,7 +891,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                                   const updatedTask = { ...taskData, assigneeRoleRestrictions: next, teamId: t.id, team: t, assignees: matchingUsers, assigneeIds: matchingIds };
                                   setTaskData(updatedTask);
                                   updateTaskStore(updatedTask);
-                                  tasksApi.updateTask(taskData.id, { assigneeRoleRestrictions: next, teamId: t.id, assigneeIds: matchingIds } as any).catch(console.error);
+                                  persistTeamRoles(next, t.id, matchingIds);
                                 }
                               }}
                               className="flex items-center gap-2.5 cursor-pointer px-1 py-1 text-[13px] font-medium text-zinc-200 hover:text-white transition-colors"

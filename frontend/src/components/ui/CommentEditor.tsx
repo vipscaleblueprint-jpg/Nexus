@@ -13,6 +13,8 @@ import { Extension, type Editor } from '@tiptap/core';
 import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { normalizeHref } from '@/lib/links';
+import { Badge, EndBadgeOnNewLine } from '@/components/editor/extensions/Badge';
+import { TextColorPanel } from '@/components/editor/TextColorPanel';
 import { toast } from '@/lib/toast';
 import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2 } from 'lucide-react';
 
@@ -189,6 +191,8 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       TextStyle,
       Color,
       Highlight.configure({ multicolor: true }),
+      Badge,
+      EndBadgeOnNewLine,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder }),
       Link.configure({
@@ -550,40 +554,11 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             <BubbleMenu pluginKey={`bubbleMenu-${id}`} editor={editor} tippyOptions={{ duration: 100, zIndex: 999999, placement: 'top' }} shouldShow={({ state }) => !state.selection.empty} className="flex items-center bg-popover border border-[#27272a] p-1 rounded-xl shadow-2xl mb-2 gap-0.5 text-zinc-300">
               {/* Text Color / Highlight Dropdown */}
               <div className="relative group/color">
-                <button onMouseDown={e => e.preventDefault()} className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-center gap-1 text-sm font-medium" title="Text Color & Highlight">
+                <button onMouseDown={e => e.preventDefault()} className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-center gap-1 text-sm font-medium" title="Text color, highlight & badge">
                   <span className="w-5 h-5 flex items-center justify-center font-serif text-[15px] border border-zinc-600 rounded">A</span>
                 </button>
                 <div className="absolute bottom-full pb-2 left-0 hidden group-hover/color:flex flex-col z-[9999]" onMouseDown={e => e.preventDefault()}>
-                  <div className="bg-popover border border-zinc-800 p-3 rounded-xl shadow-2xl w-[260px] flex flex-col gap-3">
-                    {/* Text Colors */}
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-xs font-medium text-zinc-500 px-1">Text colors</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {colors.map((color) => (
-                          <button key={`text-${color}`} onMouseDown={e => e.preventDefault()} onClick={() => color === 'transparent' ? editor.chain().focus().unsetColor().run() : editor.chain().focus().setColor(color).run()} className="w-6 h-6 flex items-center justify-center rounded transition-transform hover:scale-110" style={{ backgroundColor: color === 'transparent' ? 'transparent' : 'rgba(255,255,255,0.05)', color: color === 'transparent' ? '#a1a1aa' : color, border: color === 'transparent' ? '1px solid #3f3f46' : 'none' }}>
-                            {color === 'transparent' ? <div className="w-full h-full relative"><div className="absolute inset-0 border-t-2 border-red-500/80 rotate-45 transform origin-center top-1/2 -mt-px" /></div> : <span className="font-serif text-[14px]">A</span>}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Text Highlights */}
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-xs font-medium text-zinc-500 px-1">Text highlights</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {colors.map((color) => (
-                          <button key={`bg-${color}`} onMouseDown={e => e.preventDefault()} onClick={() => color === 'transparent' ? editor.chain().focus().unsetHighlight().run() : editor.chain().focus().setHighlight({ color }).run()} className="w-6 h-6 rounded-full border border-zinc-700 hover:scale-110 transition-transform shrink-0 flex items-center justify-center" style={{ backgroundColor: color === 'transparent' ? '#18181b' : color }}>
-                            {color === 'transparent' && <div className="w-full h-full relative"><div className="absolute inset-0 border-t-2 border-red-500/80 rotate-45 transform origin-center top-1/2 -mt-px" /></div>}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button onMouseDown={e => e.preventDefault()} onClick={() => { editor.chain().focus().unsetColor().unsetHighlight().run(); }} className="w-full py-1.5 mt-1 rounded border border-zinc-700/50 hover:bg-zinc-800 text-xs font-medium text-zinc-300 transition-colors flex items-center justify-center gap-1.5">
-                      <span className="w-3 h-3 rounded-full border border-zinc-500 flex items-center justify-center"><div className="w-full h-px bg-zinc-500 rotate-45 transform" /></span>
-                      Remove color
-                    </button>
-                  </div>
+                  <TextColorPanel editor={editor} textColors={colors} highlightColors={colors} />
                 </div>
               </div>
 

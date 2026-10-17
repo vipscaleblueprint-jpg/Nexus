@@ -23,6 +23,7 @@ import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
 import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
+import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -256,6 +257,20 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
+
+  const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
+    isOpen: boolean;
+    task: any;
+    targetStatus: string;
+    uncheckedAudits: string[];
+    openSubtasks: string[];
+  }>({
+    isOpen: false,
+    task: null,
+    targetStatus: '',
+    uncheckedAudits: [],
+    openSubtasks: [],
+  });
 
   // Optimistic handler for task status changes from card dropdown
   const handleTaskMoveFromCard = useCallback((taskId: string, newStatus: string) => {
@@ -932,8 +947,16 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     if (finalStatus !== originalTask.status) {
       const transitionCheck = canTransitionTaskStatus(originalTask, finalStatus);
       if (!transitionCheck.allowed) {
-        toast.error(transitionCheck.reason || 'Cannot move task to this status.');
         setLocalTasks([...latestTasksRef.current]);
+        // Visual rejection feedback: shake card on Kanban board
+        window.dispatchEvent(new CustomEvent('card:shake', { detail: { taskId: activeId } }));
+        setBlockedAuditAlert({
+          isOpen: true,
+          task: originalTask,
+          targetStatus: finalStatus,
+          uncheckedAudits: transitionCheck.uncheckedAudits,
+          openSubtasks: transitionCheck.openSubtasks,
+        });
         return;
       }
     }
@@ -1438,6 +1461,35 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
         }}
         title="Delete Group"
         itemName={groupToDelete || ''}
+      />
+
+      <UncheckedAuditsModal
+        isOpen={blockedAuditAlert.isOpen}
+        onClose={() => setBlockedAuditAlert(prev => ({ ...prev, isOpen: false }))}
+        taskTitle={blockedAuditAlert.task?.title || ''}
+        targetStatus={blockedAuditAlert.targetStatus}
+        uncheckedAudits={blockedAuditAlert.uncheckedAudits}
+        openSubtasks={blockedAuditAlert.openSubtasks}
+        onReviewAudits={() => {
+          if (blockedAuditAlert.task && onTaskClick) {
+            onTaskClick(blockedAuditAlert.task);
+            const pendingHighlight = {
+              taskId: blockedAuditAlert.task.id,
+              targetStatus: blockedAuditAlert.targetStatus,
+              uncheckedAudits: blockedAuditAlert.uncheckedAudits,
+              openSubtasks: blockedAuditAlert.openSubtasks,
+            };
+            if (typeof window !== 'undefined') {
+              (window as any).__pendingAuditHighlight = pendingHighlight;
+            }
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('task:highlight-audits', {
+                detail: pendingHighlight
+              }));
+            }, 350);
+          }
+        }}
+        reviewButtonText="Open Task & Review Audits"
       />
     </DndContext>
   );

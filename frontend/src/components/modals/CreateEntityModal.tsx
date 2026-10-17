@@ -71,6 +71,7 @@ export function CreateEntityModal({
       } else if (type === 'FOLDER') {
         await spacesApi.createFolder({
           name: title.trim(),
+          color,
           spaceId: selectedSpaceId || undefined,
           parentFolderId: selectedFolderId || undefined,
         });
@@ -207,8 +208,8 @@ export function CreateEntityModal({
             />
           </div>
 
-          {/* Additional Options for Space */}
-          {type === 'SPACE' && (
+          {/* Additional Options for Space or Folder */}
+          {(type === 'SPACE' || type === 'FOLDER') && (
             <div className="flex gap-3">
               <div className="flex-1">
                 <label className="block text-xs font-semibold text-zinc-300 mb-1.5">Theme Color</label>

@@ -3,7 +3,8 @@ import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea
 import { BlockEditor } from '../ui/BlockEditor';
 import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
-import { canUserEditTask } from '@/lib/permissions';
+import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck, Shield, Lock, UserPlus } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import * as Popover from '@radix-ui/react-popover';
@@ -469,8 +470,20 @@ function SubtaskRow({
     });
   }, [localRoleRestrictions, users, teams]);
 
+  // Only Project Managers and Admins can set Team Role and Assignees
+  const canSetAssignees = useCanSetAssignees();
+  const canEditAssignment = Boolean(canEditTask) && canSetAssignees;
+  const assignDeniedMessage = useAssignDeniedMessage();
+  // Locked triggers stay clickable so the user is told why; preventDefault stops Radix opening the popover
+  const blockIfCannotAssign = (e: React.MouseEvent): boolean => {
+    if (canSetAssignees) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    toast.error(assignDeniedMessage);
+    return true;
+  };
   const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
-  const canAssignMember = Boolean(canEditTask) && hasTeamRole && !subtask.completed;
+  const canAssignMember = canEditAssignment && hasTeamRole && !subtask.completed;
 
   const [localAssignees, setLocalAssignees] = useState<any[]>(() => {
     const s = subtask as any;
@@ -682,7 +695,7 @@ function SubtaskRow({
           <div key={team.id} className="mb-2">
             <div
               onClick={() => {
-                if (!hasRoles || !canEditTask) return;
+                if (!hasRoles || !canEditAssignment) return;
                 let next = [...current];
                 if (allSelected) {
                   next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
@@ -706,7 +719,7 @@ function SubtaskRow({
                 subtask.assigneeIds = matchingIds;
                 onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds, assignees: matchingUsers } as any);
               }}
-              className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles && canEditTask ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'} ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
+              className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles && canEditAssignment ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'} ${!canEditAssignment ? 'opacity-50 pointer-events-none' : ''}`}
             >
               {hasRoles && (
                 <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-500' : someSelected ? 'bg-indigo-900/50 border-indigo-500' : 'border-zinc-500 bg-popover'}`}>
@@ -727,7 +740,7 @@ function SubtaskRow({
                     <div
                       key={role.id}
                       onClick={() => {
-                        if (!canEditTask) return;
+                        if (!canEditAssignment) return;
                         const current = localRoleRestrictions || [];
                         const next = selected
                           ? current.filter((r: string) => r !== role.name)
@@ -749,7 +762,7 @@ function SubtaskRow({
                         subtask.assigneeIds = matchingIds;
                         onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds, assignees: matchingUsers } as any);
                       }}
-                      className={`flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}
+                      className={`flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditAssignment ? 'opacity-50 pointer-events-none' : ''}`}
                     >
                       <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${selected ? 'bg-indigo-600 border-indigo-500' : 'border-zinc-600'}`}>
                         {selected && <Check className="w-2.5 h-2.5 text-white" />}
@@ -978,8 +991,10 @@ function SubtaskRow({
                   <Popover.Trigger asChild>
                     <button
                       type="button"
+                      onClick={(e) => { if (!isRowLocked) blockIfCannotAssign(e); }}
                       title={
                         isRowLocked ? 'Locked'
+                          : !canSetAssignees ? assignDeniedMessage
                           : localRoleRestrictions.length > 0 ? `Roles: ${localRoleRestrictions.join(', ')}`
                           : 'Assign Role'
                       }
@@ -1045,14 +1060,16 @@ function SubtaskRow({
                     <button
                       type="button"
                       onClick={(e) => {
+                        if (isRowLocked || blockIfCannotAssign(e)) return;
                         // If no team role yet: open the role picker popover right away
-                        if (!hasTeamRole && !isRowLocked) {
+                        if (!hasTeamRole) {
                           e.preventDefault();
                           setColRoleOpen(true);
                         }
                       }}
                       title={
                         isRowLocked ? 'Locked'
+                          : !canSetAssignees ? assignDeniedMessage
                           : !hasTeamRole ? 'Select a team role first — click to assign role'
                           : currentAssignees.length > 0 ? currentAssignees.map((u) => u.name).join(', ') : 'Assign members'
                       }
@@ -1264,7 +1281,7 @@ function SubtaskRow({
               <Popover.Root>
                 <Popover.Trigger asChild>
                   {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
-                    <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canEditTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <div onClick={blockIfCannotAssign} title={!canSetAssignees ? assignDeniedMessage : undefined} className={`flex items-center transition-all duration-300 ${!canEditAssignment ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}`}>
                       {localRoleRestrictions.map((role: string, i: number) => {
                         const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                         const bgColor = colors[i % colors.length];
@@ -1280,7 +1297,7 @@ function SubtaskRow({
                       })}
                     </div>
                   ) : (
-                    <button disabled={!canEditTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                    <button onClick={blockIfCannotAssign} aria-disabled={!canEditAssignment} title={!canSetAssignees ? assignDeniedMessage : undefined} className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 border border-zinc-700/50 text-zinc-400 text-[11px] transition-colors select-none whitespace-nowrap ${!canEditAssignment ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-700/50 hover:text-zinc-200'}`}>
                       <Plus className="w-3 h-3 shrink-0" />
                       Assign Role
                     </button>
@@ -1296,7 +1313,8 @@ function SubtaskRow({
               <Popover.Root open={assigneeOpen && canAssignMember} onOpenChange={(open) => { if (canAssignMember) setAssigneeOpen(open); }}>
               <Popover.Trigger asChild>
                 <div
-                  title={!hasTeamRole ? 'Select a team role first to assign members' : currentAssignees.map((u) => u.name).join(', ')}
+                  onClick={blockIfCannotAssign}
+                  title={!canSetAssignees ? assignDeniedMessage : !hasTeamRole ? 'Select a team role first to assign members' : currentAssignees.map((u) => u.name).join(', ')}
                   className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-all ${
                     !canAssignMember
                       ? 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed'
@@ -1348,7 +1366,7 @@ function SubtaskRow({
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
-            {currentAssignees.length > 0 && !subtask.completed && (
+            {currentAssignees.length > 0 && !subtask.completed && canEditAssignment && (
               <button
                 onClick={handleClearAllAssignees}
                 className="p-0.5 text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer shrink-0"
@@ -1698,6 +1716,23 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   }, [task.subtasks]);
 
   const optimisticUpdate = useCallback(async (subtaskId: string, data: Partial<Subtask>) => {
+    // Check audit restrictions if status or completion is changing
+    const targetStatus = data.status || (data.completed !== undefined ? (data.completed ? 'Closed' : 'Pending') : undefined);
+    if (targetStatus) {
+      const currentSubtask = localSubtasksRef.current.find(s => s.id === subtaskId);
+      if (currentSubtask) {
+        const transitionCheck = canTransitionTaskStatus(currentSubtask, targetStatus);
+        if (!transitionCheck.allowed) {
+          if (transitionCheck.uncheckedAudits.length > 0) {
+            toast.error(`Audits required before moving "${currentSubtask.title}" to ${targetStatus}`);
+          } else {
+            toast.error(`Cannot move "${currentSubtask.title}" to ${targetStatus}`);
+          }
+          return;
+        }
+      }
+    }
+
     // Step 1: apply locally right away
     const currentLocal = localSubtasksRef.current;
     const optimisticSubtasks = currentLocal.map(s => {

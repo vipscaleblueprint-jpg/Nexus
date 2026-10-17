@@ -4,6 +4,7 @@ import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache, clearAllCache } from '../services/redisService';
 import { syncUsers } from './webhook.controller';
 import { queueUserPush } from '../services/toolsSync';
+import { generateApiKey } from '../utils/apiKey';
 import type { AuthRequest } from '../types';
 
 export async function triggerSyncUsers(req: Request, res: Response) {
@@ -169,7 +170,12 @@ export async function getApiKeys(req: Request, res: Response) {
       where: { userId: id },
       orderBy: { createdAt: 'desc' },
     });
-    return res.json({ apiKeys });
+    // Mask raw/hashed key so credentials are never exposed after initial generation
+    const sanitizedKeys = apiKeys.map((k: any) => ({
+      ...k,
+      key: null,
+    }));
+    return res.json({ apiKeys: sanitizedKeys });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -185,13 +191,19 @@ export async function createApiKey(req: Request, res: Response) {
       return res.status(400).json({ error: 'Name is required' });
     }
 
-    const key = `nx_${crypto.randomBytes(24).toString('hex')}`;
+    const { rawKey, hashedKey } = generateApiKey();
 
     const apiKey = await db.apiKey.create({
-      data: { name, key, userId: id },
+      data: { name, key: hashedKey, userId: id },
     });
 
-    return res.json({ apiKey });
+    // Return the raw plaintext key once to the client for copying
+    return res.json({
+      apiKey: {
+        ...apiKey,
+        key: rawKey,
+      },
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

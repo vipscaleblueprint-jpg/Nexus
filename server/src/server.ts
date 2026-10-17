@@ -303,9 +303,11 @@ io.on('connection', (socket) => {
 export { io };
 
 const PORT = requireEnv('PORT');
-server.listen(PORT, () => {
-  logger.info({ port: PORT, env: process.env.NODE_ENV ?? 'development' }, 'Nexus Server API listening');
-});
+if (!process.env.STANDALONE_SCRIPT) {
+  server.listen(PORT, () => {
+    logger.info({ port: PORT, env: process.env.NODE_ENV ?? 'development' }, 'Nexus Server API listening');
+  });
+}
 
 process.on('unhandledRejection', (reason) => {
   logger.error({ err: reason }, `Unhandled promise rejection: ${errMsg(reason)}`);

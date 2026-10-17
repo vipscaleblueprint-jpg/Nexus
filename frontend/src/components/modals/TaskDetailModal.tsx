@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -14,8 +14,10 @@ import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
+
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
 import { fetchListStatuses } from '@/lib/listStatusCache';
@@ -23,17 +25,20 @@ import { SubtasksSection } from './SubtasksSection';
 import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
+import { getFolderColor } from '@/components/layout/Sidebar';
 import { CommentEditor, ComposerSendButton, ComposerToolButton } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
 import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EditCommentForm } from './EditCommentForm';
+import { UncheckedAuditsModal } from './UncheckedAuditsModal';
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
 const keepUrl = (url: string) => url;
 const uploadCommentImage = (file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url);
 const copyCommentImage = (url: string) => uploadApi.uploadFromUrl(url, 'comments').then(res => res.url);
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'];
 
 // Parsing a comment (remark-gfm + rehype-raw) is the costly part of the feed. Memoized on its content, so typing
 // in the comment box or posting another comment doesn't re-parse every comment already shown.
@@ -696,8 +701,6 @@ export function TaskDetailModalContent({
   }, [activeSubtask, scrollToLatestComment]);
 
 
-  const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'];
-
   const markdownComponents = React.useMemo(() => ({
     a: (props: any) => {
       const { node, ...rest } = props;
@@ -725,7 +728,7 @@ export function TaskDetailModalContent({
   }), []);
 
   // Select only what the modal uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists, workspaceRoles: storeWorkspaceRoles } = useAppStore(useShallow((s) => ({
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists } = useAppStore(useShallow((s) => ({
     currentUser: s.currentUser,
     workspaceUsers: s.workspaceUsers,
     loadUsers: s.loadUsers,
@@ -734,7 +737,6 @@ export function TaskDetailModalContent({
     loadTeams: s.loadTeams,
     hydrateTeamsFromCache: s.hydrateTeamsFromCache,
     allLists: s.allLists,
-    workspaceRoles: s.workspaceRoles,
   })));
 
   // Fetch real users from DB for assignee picker
@@ -764,12 +766,15 @@ export function TaskDetailModalContent({
   // Task edits are open to all
   const canEditTask = true;
 
-  // Assignment is restricted by the column's role restrictions
-  const canAssignTask = React.useMemo(() => {
-    if ((task as any)?.parentTaskId) return true;
-    const effectiveRoles = workspaceRoles && workspaceRoles.length > 0 ? workspaceRoles : storeWorkspaceRoles || [];
-    return canUserMoveTask(task, listStatuses, currentUser, effectiveRoles).allowed;
-  }, [task, currentUser, listStatuses, workspaceRoles, storeWorkspaceRoles]);
+  // Only Project Managers and Admins can set Team Role and Assignees
+  const canAssignTask = useCanSetAssignees();
+  const assignDeniedMessage = useAssignDeniedMessage();
+  // Locked triggers stay clickable so the user is told why; preventDefault stops Radix opening the popover
+  const blockIfCannotAssign = (e: React.MouseEvent) => {
+    if (canAssignTask) return;
+    e.preventDefault();
+    toast.error(assignDeniedMessage);
+  };
 
   const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(() => task?.assigneeRoleRestrictions || []);
   const latestRoleRestrictionsRef = useRef<string[]>(task?.assigneeRoleRestrictions || []);
@@ -1269,6 +1274,27 @@ export function TaskDetailModalContent({
       if (!isSubtask && payload.subtaskId) return;
 
       setRichComments(prev => {
+        // If it's a reply to a comment
+        if (payload.comment.parentCommentId) {
+          return prev.map(c => {
+            if (c.id === payload.comment.parentCommentId) {
+              const replies = c.replies || [];
+              if (replies.some((r: any) => r.id === payload.comment.id)) return c;
+              const tempIdx = replies.findIndex((r: any) =>
+                typeof r.id === 'string' && r.id.startsWith('temp-') && r.content === payload.comment.content
+              );
+              if (tempIdx !== -1) {
+                const nextReplies = [...replies];
+                nextReplies[tempIdx] = payload.comment;
+                return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+              }
+              const nextReplies = [...replies, payload.comment];
+              return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+            }
+            return c;
+          });
+        }
+
         // Deduplicate — the sender already added it optimistically
         if (prev.some(c => c.id === payload.comment.id)) return prev;
         // Replace temp placeholder if this is the acting client
@@ -1291,7 +1317,13 @@ export function TaskDetailModalContent({
       const targetId = (currentTask as any).parentTaskId || currentTask.id;
       if (payload.taskId !== targetId) return;
       setRichComments(prev =>
-        prev.map(c => c.id === payload.comment.id ? { ...c, ...payload.comment } : c)
+        prev.map(c => {
+          if (c.id === payload.comment.id) return { ...c, ...payload.comment };
+          return {
+            ...c,
+            replies: c.replies?.map((r: any) => r.id === payload.comment.id ? { ...r, ...payload.comment } : r)
+          };
+        })
       );
     };
 
@@ -1300,7 +1332,12 @@ export function TaskDetailModalContent({
       if (!currentTask) return;
       const targetId = (currentTask as any).parentTaskId || currentTask.id;
       if (payload.taskId !== targetId) return;
-      setRichComments(prev => prev.filter(c => c.id !== payload.commentId));
+      setRichComments(prev =>
+        prev.filter(c => c.id !== payload.commentId).map(c => ({
+          ...c,
+          replies: c.replies?.filter((r: any) => r.id !== payload.commentId)
+        }))
+      );
     };
 
     socket.on('task:comment_added', handleCommentAdded);
@@ -1444,7 +1481,19 @@ export function TaskDetailModalContent({
 
     const transitionCheck = canTransitionTaskStatus(task, newStatus);
     if (!transitionCheck.allowed) {
-      toast.error(transitionCheck.reason || 'Cannot move task to this status.');
+      window.dispatchEvent(new CustomEvent('task:highlight-audits', {
+        detail: {
+          taskId: task.id,
+          targetStatus: newStatus,
+          uncheckedAudits: transitionCheck.uncheckedAudits,
+          openSubtasks: transitionCheck.openSubtasks,
+        }
+      }));
+      if (transitionCheck.uncheckedAudits.length > 0) {
+        toast.error(`Audits required before moving to ${newStatus}`);
+      } else if (transitionCheck.openSubtasks.length > 0) {
+        toast.error(`All subtasks must be closed before moving to ${newStatus}`);
+      }
       return;
     }
 
@@ -1917,7 +1966,7 @@ export function TaskDetailModalContent({
                       onClick={() => { onClose(); router.push('/'); }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
-                      <Folder className="w-3.5 h-3.5 shrink-0" />
+                      <Folder className="w-3.5 h-3.5 shrink-0" style={{ color: getFolderColor(task.list.folder) }} />
                       <span className="truncate max-w-[120px]">{task.list.folder.name}</span>
                     </button>
                     <span className="text-zinc-700">/</span>
@@ -2169,7 +2218,7 @@ export function TaskDetailModalContent({
                     <Popover.Root>
                       <Popover.Trigger asChild>
                         {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
-                          <motion.div layout className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                          <motion.div layout onClick={blockIfCannotAssign} title={!canAssignTask ? assignDeniedMessage : undefined} className={`flex items-center transition-all duration-300 ${!canAssignTask ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}`}>
                             <AnimatePresence>
                               {normalizeRoles(localRoleRestrictions, workspaceTeams).map((role, i) => {
                                 const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
@@ -2192,7 +2241,7 @@ export function TaskDetailModalContent({
                             </AnimatePresence>
                           </motion.div>
                         ) : (
-                          <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                          <button onClick={blockIfCannotAssign} aria-disabled={!canAssignTask} title={!canAssignTask ? assignDeniedMessage : undefined} className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 border border-zinc-700/50 text-zinc-400 text-[11px] transition-colors select-none whitespace-nowrap ${!canAssignTask ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-700/50 hover:text-zinc-200'}`}>
                             <Plus className="w-3 h-3" />
                             Assign Role
                             {!canAssignTask && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
@@ -2346,7 +2395,8 @@ export function TaskDetailModalContent({
                     <Popover.Root open={isAssigneeOpen && canAssignMember} onOpenChange={(open) => canAssignMember && setIsAssigneeOpen(open)}>
                       <Popover.Trigger asChild>
                         <motion.div layout
-                          title={!hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u) => u.name).join(', ')}
+                          onClick={blockIfCannotAssign}
+                          title={!canAssignTask ? assignDeniedMessage : !hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u) => u.name).join(', ')}
                           className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignMember
                             ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
                             : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
@@ -2474,7 +2524,7 @@ export function TaskDetailModalContent({
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
-                    {currentAssignees.length > 0 && canEditTask && (
+                    {currentAssignees.length > 0 && canAssignTask && (
                       <button
                         onClick={handleClearAllAssignees}
                         title="Clear all assignees"
@@ -2639,6 +2689,7 @@ export function TaskDetailModalContent({
               </div>
 
               <div 
+                id="task-modal-subtasks-section"
                 className="flex items-center justify-between mb-1 mt-5 cursor-pointer group select-none" 
                 onClick={handleSubtasksHeaderClick}
                 onDoubleClick={handleSubtasksHeaderDoubleClick}
@@ -2668,6 +2719,7 @@ export function TaskDetailModalContent({
                   )}
                 </div>
               </div>
+
 
               {isSubtasksExpanded && (
                 <>
@@ -3375,6 +3427,7 @@ export function TaskDetailModalContent({
           itemName="this comment"
         />
       )}
+
     </div>
   );
 }
@@ -3473,6 +3526,16 @@ export function SubtaskDetailView({
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
+  const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
+  const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+
+  useEffect(() => {
+    setReplyingToId(null);
+    setReplyText('');
+    setShowEmojiPickerFor(null);
+  }, [subtask?.id]);
+
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionStartIndex, setMentionStartIndex] = useState(0);
@@ -3482,6 +3545,17 @@ export function SubtaskDetailView({
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localDesc, setLocalDesc] = useState(subtask.description || '');
+  const [localStatus, setLocalStatus] = useState<string>(subtask.status || 'Pending');
+  const [localCompleted, setLocalCompleted] = useState<boolean>(!!subtask.completed);
+  const lastStatusUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
+      setLocalStatus(subtask.status || 'Pending');
+      setLocalCompleted(!!subtask.completed);
+    }
+  }, [subtask.status, subtask.completed]);
+
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const [localTitle, setLocalTitle] = useState(subtask.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -3578,8 +3652,15 @@ export function SubtaskDetailView({
   const activityPanelRef = useRef<HTMLDivElement>(null);
   // Task edits are open to all
   const canEditTask = true;
-  // Subtasks bypass column role restrictions for assignment
-  const canAssignTask = true;
+  // Only Project Managers and Admins can set Team Role and Assignees
+  const canAssignTask = useCanSetAssignees();
+  const assignDeniedMessage = useAssignDeniedMessage();
+  // Locked triggers stay clickable so the user is told why; preventDefault stops Radix opening the popover
+  const blockIfCannotAssign = (e: React.MouseEvent) => {
+    if (canAssignTask) return;
+    e.preventDefault();
+    toast.error(assignDeniedMessage);
+  };
   const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
   const canAssignMember = canAssignTask && hasTeamRole;
 
@@ -3625,33 +3706,104 @@ export function SubtaskDetailView({
 
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!subtask || isSubmitting) return;
+
+    const currentSubtask = subtaskRef.current || subtask;
+    const transitionCheck = canTransitionTaskStatus(currentSubtask, newStatus);
+    if (!transitionCheck.allowed) {
+      window.dispatchEvent(new CustomEvent('task:highlight-audits', {
+        detail: {
+          taskId: parentTask.id,
+          subtaskId: subtask.id,
+          targetStatus: newStatus,
+          uncheckedAudits: transitionCheck.uncheckedAudits,
+          openSubtasks: transitionCheck.openSubtasks,
+        }
+      }));
+      if (transitionCheck.uncheckedAudits.length > 0) {
+        toast.error(`Audits required before moving to ${newStatus}`);
+      } else if (transitionCheck.openSubtasks.length > 0) {
+        toast.error(`All subtasks must be closed before moving to ${newStatus}`);
+      }
+      return;
+    }
+
+    const oldStatus = localStatus;
+    const oldCompleted = localCompleted;
+    const isCompleted = newStatus.toLowerCase() === 'closed' || newStatus.toLowerCase() === 'done' || newStatus.toLowerCase() === 'completed';
+
+    // 1. Instantly update local state
+    lastStatusUpdateTimestampRef.current = Date.now();
+    setLocalStatus(newStatus);
+    setLocalCompleted(isCompleted);
+
+    let updatedChecklists = currentSubtask.checklists || [];
+    if (newStatus.toLowerCase() === 'revision') {
+      updatedChecklists = updatedChecklists.map((c: any) => {
+        if (isNexusAuditChecklist(c)) {
+          return {
+            ...c,
+            items: c.items?.map((i: any) => ({ ...i, completed: false })) || []
+          };
+        }
+        return c;
+      });
+    }
+
+    const updatedSubtask = {
+      ...currentSubtask,
+      status: newStatus,
+      completed: isCompleted,
+      checklists: updatedChecklists
+    };
+    subtaskRef.current = updatedSubtask;
+
+    // 2. Instantly append optimistic activity to local subtask feed
+    const optimisticId = `optimistic-status-${Date.now()}`;
+    const optimisticActivity = {
+      id: optimisticId,
+      type: 'status_change',
+      author: currentUser?.name || 'Someone',
+      oldStatus,
+      newStatus,
+      date: new Date().toISOString(),
+      user: currentUser,
+      subtaskTitle: subtask.title,
+    };
+    setActivities(prev => [...prev, optimisticActivity]);
+
+    // 3. Instantly update parent task & global store
+    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+    const newSubtasks = parentTask.subtasks?.map((st: any) => 
+      st.id === updatedSubtask.id ? updatedSubtask : st
+    ) || [];
+    const updatedParent = { ...parentTask, subtasks: newSubtasks };
+    if (onUpdateTask) onUpdateTask(updatedParent);
+    useAppStore.getState().updateTask(updatedParent);
+
+    // 4. Background DB update
     setIsSubmitting(true);
     try {
-      let updatedChecklists = subtask.checklists || [];
-      if (newStatus.toLowerCase() === 'revision') {
-        updatedChecklists = updatedChecklists.map((c: any) => {
-          if (isNexusAuditChecklist(c)) {
-            return {
-              ...c,
-              items: c.items?.map((i: any) => ({ ...i, completed: false })) || []
-            };
-          }
-          return c;
-        });
+      const res = await tasksApi.updateSubtask(parentTask.id, subtask.id, {
+        status: newStatus,
+        completed: isCompleted
+      });
+      if (res?.activity) {
+        setActivities(prev => prev.map(a => a.id === optimisticId ? res.activity : a));
       }
-
-      const isCompleted = newStatus === 'Closed' || newStatus === 'CLOSED' || newStatus === 'DONE';
-      const updatedSubtask = { ...subtask, status: newStatus, completed: isCompleted, checklists: updatedChecklists };
-
-      if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-      if (onUpdateTask) {
-        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-        onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-      }
-
-      await tasksApi.updateSubtask(parentTask.id, subtask.id, { status: newStatus, completed: isCompleted });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to update subtask status', err);
+      // Revert optimistic updates on error
+      setLocalStatus(oldStatus);
+      setLocalCompleted(oldCompleted);
+      setActivities(prev => prev.filter(a => a.id !== optimisticId));
+      if (setActiveSubtask) setActiveSubtask(currentSubtask);
+      const revertedSubtasks = parentTask.subtasks?.map((st: any) => 
+        st.id === currentSubtask.id ? currentSubtask : st
+      ) || [];
+      const revertedParent = { ...parentTask, subtasks: revertedSubtasks };
+      if (onUpdateTask) onUpdateTask(revertedParent);
+      useAppStore.getState().updateTask(revertedParent);
+      toast.error(err?.message || 'Failed to update subtask status');
     } finally {
       setIsSubmitting(false);
     }
@@ -3750,10 +3902,25 @@ export function SubtaskDetailView({
               return updated;
             }
           }
+          if (data.activity.type === 'status_change') {
+            const idx = prev.findIndex(
+              a => typeof a.id === 'string' && a.id.startsWith('optimistic-status-') &&
+                a.newStatus === data.activity.newStatus
+            );
+            if (idx !== -1) {
+              const updated = [...prev];
+              updated[idx] = data.activity;
+              return updated;
+            }
+          }
           return [...prev, data.activity];
         });
 
         if (data.activity.type === 'status_change' && data.activity.newStatus) {
+          if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
+            setLocalStatus(data.activity.newStatus);
+            setLocalCompleted(data.activity.newStatus.toLowerCase() === 'closed' || data.activity.newStatus.toLowerCase() === 'done' || data.activity.newStatus.toLowerCase() === 'completed');
+          }
           if (currentSubtask.status !== data.activity.newStatus) {
             const updatedSubtask = {
               ...currentSubtask,
@@ -3780,16 +3947,89 @@ export function SubtaskDetailView({
       }
     };
 
+    const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string }) => {
+      const currentParentTask = parentTaskRef.current;
+      const currentSubtask = subtaskRef.current;
+      if (!currentParentTask || !currentSubtask) return;
+      if (payload.taskId !== currentParentTask.id) return;
+      if (payload.subtaskId !== currentSubtask.id) return;
+
+      setRichComments(prev => {
+        if (payload.comment.parentCommentId) {
+          return prev.map(c => {
+            if (c.id === payload.comment.parentCommentId) {
+              const replies = c.replies || [];
+              if (replies.some((r: any) => r.id === payload.comment.id)) return c;
+              const tempIdx = replies.findIndex((r: any) =>
+                typeof r.id === 'string' && r.id.startsWith('temp-') && r.content === payload.comment.content
+              );
+              if (tempIdx !== -1) {
+                const nextReplies = [...replies];
+                nextReplies[tempIdx] = payload.comment;
+                return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+              }
+              const nextReplies = [...replies, payload.comment];
+              return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+            }
+            return c;
+          });
+        }
+
+        if (prev.some(c => c.id === payload.comment.id)) return prev;
+        const tempIdx = prev.findIndex(c =>
+          typeof c.id === 'string' && c.id.startsWith('temp-') &&
+          c.content === payload.comment.content
+        );
+        if (tempIdx !== -1) {
+          const updated = [...prev];
+          updated[tempIdx] = payload.comment;
+          return updated;
+        }
+        return [...prev, payload.comment];
+      });
+    };
+
+    const handleCommentUpdated = (payload: { taskId: string; comment: any }) => {
+      const currentParentTask = parentTaskRef.current;
+      if (!currentParentTask || payload.taskId !== currentParentTask.id) return;
+      setRichComments(prev =>
+        prev.map(c => {
+          if (c.id === payload.comment.id) return { ...c, ...payload.comment };
+          return {
+            ...c,
+            replies: c.replies?.map((r: any) => r.id === payload.comment.id ? { ...r, ...payload.comment } : r)
+          };
+        })
+      );
+    };
+
+    const handleCommentDeleted = (payload: { taskId: string; commentId: string }) => {
+      const currentParentTask = parentTaskRef.current;
+      if (!currentParentTask || payload.taskId !== currentParentTask.id) return;
+      setRichComments(prev =>
+        prev.filter(c => c.id !== payload.commentId).map(c => ({
+          ...c,
+          replies: c.replies?.filter((r: any) => r.id !== payload.commentId)
+        }))
+      );
+    };
+
     socket.on('task_editing_start', handleEditingStart);
     socket.on('task_editing_stop', handleEditingStop);
     socket.on('task_editing_content', handleEditingContent);
     socket.on('task_activity', handleActivity);
+    socket.on('task:comment_added', handleCommentAdded);
+    socket.on('task:comment_updated', handleCommentUpdated);
+    socket.on('task:comment_deleted', handleCommentDeleted);
 
     return () => {
       socket.off('task_editing_start', handleEditingStart);
       socket.off('task_editing_stop', handleEditingStop);
       socket.off('task_editing_content', handleEditingContent);
       socket.off('task_activity', handleActivity);
+      socket.off('task:comment_added', handleCommentAdded);
+      socket.off('task:comment_updated', handleCommentUpdated);
+      socket.off('task:comment_deleted', handleCommentDeleted);
     };
   }, [socket, subtask?.id, currentUser?.name, parentTask.id, subtask?.title]);
 
@@ -4058,7 +4298,13 @@ export function SubtaskDetailView({
     if ((!contentToSave || contentToSave === '<p></p>') || !parentTask?.id || isSubmittingEdit) return;
     setIsSubmittingEdit(true);
     try {
-      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: contentToSave } : c));
+      setRichComments(prev => prev.map(c => {
+        if (c.id === commentId) return { ...c, content: contentToSave };
+        return {
+          ...c,
+          replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: contentToSave } : r)
+        };
+      }));
       setEditingCommentId(null);
       setEditCommentText('');
       await tasksApi.updateComment(parentTask.id, commentId, contentToSave);
@@ -4075,10 +4321,70 @@ export function SubtaskDetailView({
   const handleDeleteComment = async (commentId: string) => {
     if (!parentTask?.id) return;
     try {
-      setRichComments(prev => prev.filter(c => c.id !== commentId));
+      setRichComments(prev =>
+        prev.filter(c => c.id !== commentId).map(c => ({
+          ...c,
+          replies: c.replies?.filter((r: any) => r.id !== commentId)
+        }))
+      );
       await tasksApi.deleteComment(parentTask.id, commentId);
     } catch (err) {
       console.warn('Delete failed:', err);
+    }
+  };
+
+  const handleToggleReaction = async (commentId: string, emoji: string) => {
+    if (!parentTask?.id || !currentUser?.id) return;
+    setShowEmojiPickerFor(null);
+    try {
+      const res = await tasksApi.toggleCommentReaction(parentTask.id, commentId, emoji, currentUser.id);
+      setRichComments(prev => prev.map(c => {
+        if (c.id === commentId) return { ...c, reactions: res.reactions };
+        return {
+          ...c,
+          replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, reactions: res.reactions } : r),
+        };
+      }));
+    } catch (err) {
+      console.warn('Reaction failed:', err);
+    }
+  };
+
+  const handleSubmitReply = async (parentCommentId: string) => {
+    if (!replyText.trim() || !parentTask?.id || !currentUser?.id) return;
+    const text = replyText.trim();
+    const tempId = `temp-reply-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const withReplies = (map: (replies: any[]) => any[]) => (prev: any[]) =>
+      prev.map(c => {
+        if (c.id !== parentCommentId) return c;
+        const newReplies = map(c.replies || []);
+        return { ...c, replies: newReplies, replyCount: newReplies.length };
+      });
+
+    // Shown in the thread at once; the saved reply replaces it when the server answers
+    setRichComments(withReplies(replies => [...replies, {
+      id: tempId,
+      content: text,
+      createdAt: new Date().toISOString(),
+      userId: currentUser.id,
+      user: { id: currentUser.id, name: currentUser.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
+      parentCommentId,
+      subtaskId: subtask.id,
+      reactions: [],
+    }]));
+    setReplyText('');
+    setReplyingToId(null);
+    try {
+      const res = await tasksApi.addComment(parentTask.id, text, currentUser.id, parentTask.listId, [], parentCommentId, subtask.id);
+      if (res?.comment) {
+        setRichComments(withReplies(replies => replies.some(r => r.id === res.comment.id)
+          ? replies.filter(r => r.id !== tempId)
+          : replies.map(r => r.id === tempId ? { ...r, ...res.comment } : r)));
+      }
+    } catch (err: any) {
+      console.warn('Reply failed:', err);
+      setRichComments(withReplies(replies => replies.filter(r => r.id !== tempId)));
+      toast.error(err?.message || 'Failed to post reply');
     }
   };
 
@@ -4161,7 +4467,7 @@ export function SubtaskDetailView({
                     }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
-                    <Folder className="w-3.5 h-3.5 shrink-0" />
+                    <Folder className="w-3.5 h-3.5 shrink-0" style={{ color: getFolderColor(parentTask.list.folder) }} />
                     <span className="truncate max-w-[120px]">{parentTask.list.folder.name}</span>
                   </button>
                   <span className="text-zinc-700">/</span>
@@ -4318,8 +4624,8 @@ export function SubtaskDetailView({
               <div className="flex items-center gap-3 min-h-[32px]">
                 <div className="flex items-center gap-2 w-28 shrink-0">
                   {(() => {
-                    const isClosed = subtask.completed || subtask.status === 'Closed' || subtask.status === 'CLOSED' || subtask.status === 'DONE';
-                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
+                    const isClosed = localCompleted || (localStatus || '').toLowerCase() === 'closed' || (localStatus || '').toLowerCase() === 'done';
+                    return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((localStatus || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
                   })()}
                   <span className="text-[12px] text-zinc-500">Status</span>
                 </div>
@@ -4329,10 +4635,10 @@ export function SubtaskDetailView({
                         ? sortStatusesWithClosedAndKycAtEnd(listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')))
                         : ALL_STATUSES;
 
-                      const statusName = subtask.status || 'No Status';
+                      const statusName = localStatus || 'No Status';
                       const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
                       const hasCustomColor = !!statusObj?.color;
-                      const defaultClasses = STATUS_COLORS[(subtask.status || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
+                      const defaultClasses = STATUS_COLORS[(localStatus || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
 
                       const getHex = (colorStr: string) => {
                         const tailwindColors: Record<string, string> = {
@@ -4366,27 +4672,10 @@ export function SubtaskDetailView({
                                     <div
                                       key={s}
                                       onClick={() => {
-                                        const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
-                                        
-                                        // Update parent task subtasks state to trigger real-time UI refresh
-                                        if (parentTask?.subtasks) {
-                                          const updatedSubtasks = parentTask.subtasks.map((st: any) => 
-                                            st.id === subtask.id ? { ...st, status: s, completed: isFinal } : st
-                                          );
-                                          onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
-                                        }
-
-                                        tasksApi.updateSubtask(parentTask.id, subtask.id, {
-                                          status: s,
-                                          completed: isFinal
-                                        }).catch(err => console.error(err));
-                                        
-                                        if (setActiveSubtask) {
-                                          setActiveSubtask({ ...subtask, status: s, completed: isFinal });
-                                        }
+                                        handleStatusChangeAction(s);
                                         setIsStatusOpen(false);
                                       }}
-                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${subtask.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
                                     >
                                       {(() => {
                                         const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
@@ -4405,7 +4694,7 @@ export function SubtaskDetailView({
                                         return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
                                       })()}
                                       {s}
-                                      {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                      {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
                                     </div>
                                   ))}
                                 </div>
@@ -4426,23 +4715,7 @@ export function SubtaskDetailView({
                                 title={`Move to "${nextStatus}"`}
                                 className="flex items-center justify-center h-full px-1.5 cursor-pointer hover:brightness-110 rounded-r-md"
                                 onClick={() => {
-                                  const isFinal = nextStatus.toLowerCase() === 'closed' || nextStatus.toLowerCase() === 'done' || nextStatus.toLowerCase() === 'completed';
-                                  
-                                  if (parentTask?.subtasks) {
-                                    const updatedSubtasks = parentTask.subtasks.map((st: any) => 
-                                      st.id === subtask.id ? { ...st, status: nextStatus, completed: isFinal } : st
-                                    );
-                                    onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
-                                  }
-
-                                  tasksApi.updateSubtask(parentTask.id, subtask.id, {
-                                    status: nextStatus,
-                                    completed: isFinal
-                                  }).catch(err => console.error(err));
-                                  
-                                  if (setActiveSubtask) {
-                                    setActiveSubtask({ ...subtask, status: nextStatus, completed: isFinal });
-                                  }
+                                  handleStatusChangeAction(nextStatus);
                                 }}
                               >
                                 <ChevronRight className="w-3.5 h-3.5 opacity-90" />
@@ -4454,20 +4727,11 @@ export function SubtaskDetailView({
                     })()}
 
                       {(() => {
-                        const isSubClosed = subtask.completed || (subtask.status || '').toLowerCase() === 'closed' || (subtask.status || '').toLowerCase() === 'done';
+                        const isSubClosed = localCompleted || (localStatus || '').toLowerCase() === 'closed' || (localStatus || '').toLowerCase() === 'done';
                         return (
                           <button
                             onClick={() => {
-                              const s = isSubClosed ? 'Pending' : 'Closed';
-                              const nextCompleted = !isSubClosed;
-                              if (parentTask?.subtasks) {
-                                const updatedSubtasks = parentTask.subtasks.map((st: any) => 
-                                  st.id === subtask.id ? { ...st, status: s, completed: nextCompleted } : st
-                                );
-                                onUpdateTask?.({ ...parentTask, subtasks: updatedSubtasks });
-                              }
-                              tasksApi.updateSubtask(parentTask.id, subtask.id, { status: s, completed: nextCompleted }).catch(err => console.error(err));
-                              if (setActiveSubtask) setActiveSubtask({ ...subtask, status: s, completed: nextCompleted });
+                              handleStatusChangeAction(isSubClosed ? 'Pending' : 'Closed');
                             }}
                             title={isSubClosed ? "Mark as Open" : "Mark as Closed"}
                             className={`w-7 h-7 rounded flex items-center justify-center transition-colors shadow-sm border cursor-pointer ${
@@ -4495,7 +4759,7 @@ export function SubtaskDetailView({
                   <Popover.Root>
                     <Popover.Trigger asChild>
                       {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
-                        <div className={`flex items-center cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 ${!canAssignTask ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <div onClick={blockIfCannotAssign} title={!canAssignTask ? assignDeniedMessage : undefined} className={`flex items-center transition-all duration-300 ${!canAssignTask ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}`}>
                           {normalizeRoles(localRoleRestrictions, workspaceTeams).map((role: string, i: number) => {
                             const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                             const bgColor = colors[i % colors.length];
@@ -4511,7 +4775,7 @@ export function SubtaskDetailView({
                           })}
                         </div>
                       ) : (
-                        <button disabled={!canAssignTask} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 text-[11px] cursor-pointer transition-colors select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                        <button onClick={blockIfCannotAssign} aria-disabled={!canAssignTask} title={!canAssignTask ? assignDeniedMessage : undefined} className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 border border-zinc-700/50 text-zinc-400 text-[11px] transition-colors select-none whitespace-nowrap ${!canAssignTask ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-700/50 hover:text-zinc-200'}`}>
                           <Plus className="w-3 h-3 shrink-0" />
                           Assign Role
                         </button>
@@ -4665,7 +4929,8 @@ export function SubtaskDetailView({
                   <Popover.Root open={isAssigneeOpen && canAssignMember} onOpenChange={(open) => canAssignMember && setIsAssigneeOpen(open)}>
                     <Popover.Trigger asChild>
                       <motion.div layout
-                        title={!hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u: any) => u.name).join(', ')}
+                        onClick={blockIfCannotAssign}
+                        title={!canAssignTask ? assignDeniedMessage : !hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u: any) => u.name).join(', ')}
                         className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignMember
                           ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
                           : 'cursor-not-allowed bg-zinc-800/20 text-zinc-500 opacity-70'
@@ -4793,7 +5058,7 @@ export function SubtaskDetailView({
                       </Popover.Content>
                     </Popover.Portal>
                   </Popover.Root>
-                  {currentAssignees.length > 0 && canEditTask && (
+                  {currentAssignees.length > 0 && canAssignTask && (
                     <button
                       onClick={handleClearAllAssignees}
                       title="Clear all assignees"
@@ -5074,7 +5339,7 @@ export function SubtaskDetailView({
                   ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
                 ].sort((a, b) => a.sortDate - b.sortDate);
 
-                const renderComment = (c: any) => {
+                const renderComment = (c: any, isReply = false) => {
                   const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                   const dateStr = new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -5087,7 +5352,7 @@ export function SubtaskDetailView({
                   });
 
                   return (
-                    <div key={c.id} className="flex flex-col gap-2 text-sm w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm mt-2">
+                    <div key={c.id} className={`flex flex-col gap-2 text-sm w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-muted' : 'mt-2'}`}>
                       <div className="flex items-center gap-3 w-full">
                         {c.user?.avatarUrl ? (
                           <img src={c.user.avatarUrl} alt={c.user?.name} className="w-8 h-8 rounded-full shrink-0 object-cover" />
@@ -5146,6 +5411,7 @@ export function SubtaskDetailView({
                             <button
                               key={emoji}
                               title={data.users.join(', ')}
+                              onClick={() => handleToggleReaction(c.id, emoji)}
                               className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
                             >
                               {emoji} <span className="font-medium">{data.count}</span>
@@ -5157,23 +5423,62 @@ export function SubtaskDetailView({
                       {/* Action row */}
                       <div className="flex items-center gap-1 mt-1 pl-11 relative">
                         <button
+                          onClick={() => handleToggleReaction(c.id, '👍')}
                           className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                           title="Like"
                         >
                           <ThumbsUp className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
-                          title="React"
-                        >
-                          <SmilePlus className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
-                        >
-                          <MessageSquare className="w-3 h-3" /> Reply {c.replyCount > 0 && `(${c.replyCount})`}
-                        </button>
+                        <div className="relative">
+                          <button
+                            onClick={() => setShowEmojiPickerFor(showEmojiPickerFor === c.id ? null : c.id)}
+                            className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
+                            title="React"
+                          >
+                            <SmilePlus className="w-3.5 h-3.5" />
+                          </button>
+                          {showEmojiPickerFor === c.id && (
+                            <div className="absolute bottom-8 left-0 bg-card border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
+                              {QUICK_EMOJIS.map(e => (
+                                <button key={e} onClick={() => handleToggleReaction(c.id, e)} className="text-lg hover:scale-125 cursor-pointer transition-transform p-0.5">
+                                  {e}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {!isReply && (
+                          <button
+                            onClick={() => setReplyingToId(replyingToId === c.id ? null : c.id)}
+                            className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
+                          >
+                            <MessageSquare className="w-3 h-3" /> Reply {((c.replies?.length ?? c.replyCount) > 0) && `(${c.replies?.length ?? c.replyCount})`}
+                          </button>
+                        )}
                       </div>
+
+                      {/* Reply input */}
+                      {!isReply && replyingToId === c.id && (
+                        <div className="pl-11 flex gap-2 mt-1">
+                          <input
+                            value={replyText}
+                            onChange={e => setReplyText(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(c.id); } }}
+                            placeholder="Write a reply..."
+                            className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
+                          />
+                          <button onClick={() => handleSubmitReply(c.id)} disabled={!replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
+                            <Send className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Replies */}
+                      {!isReply && c.replies?.length > 0 && (
+                        <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800">
+                          {c.replies.map((r: any) => renderComment(r, true))}
+                        </div>
+                      )}
                     </div>
                   );
                 };

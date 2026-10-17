@@ -1,6 +1,6 @@
 import { Redis } from 'ioredis';
 import { requireEnv } from './env';
-import { createLogger } from './logger';
+import { createLogger, errMsg } from './logger';
 
 const redisLog = createLogger('redis');
 
@@ -13,5 +13,5 @@ redis.on('connect', () => {
 });
 
 redis.on('error', (err) => {
-  redisLog.error({ err }, 'Redis connection error');
+  redisLog.error(`Redis connection error: ${errMsg(err)}`);
 });

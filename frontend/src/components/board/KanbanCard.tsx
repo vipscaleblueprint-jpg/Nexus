@@ -12,13 +12,16 @@ import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
-import { canUserEditTask, canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
+
 
 const ROLE_BADGE_COLORS = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
+import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 
 interface Props {
   task: Task;
@@ -92,6 +95,8 @@ const CardContent = memo(({
   onTaskMove?: (taskId: string, newStatus: string) => void;
   onSubtaskStatusChange?: (subtaskId: string, newStatus: string) => void;
 }) => {
+
+
   const [task, setTask] = useState(initialTask);
 
   useEffect(() => {
@@ -101,14 +106,25 @@ const CardContent = memo(({
   const [isDescOpen, setIsDescOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'teamRole' | 'date' | 'priority' | null>(null);
 
+  const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
+    isOpen: boolean;
+    targetStatus: string;
+    uncheckedAudits: string[];
+    openSubtasks: string[];
+  }>({
+    isOpen: false,
+    targetStatus: '',
+    uncheckedAudits: [],
+    openSubtasks: [],
+  });
+
   // Select only what the card uses, so unrelated store changes (e.g. other tasks updating) don't re-render every card
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceRoles, workspaceTeams, loadTeams, hydrateTeamsFromCache } = useAppStore(useShallow((s) => ({
+  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, allLists, workspaceTeams, loadTeams, hydrateTeamsFromCache } = useAppStore(useShallow((s) => ({
     currentUser: s.currentUser,
     workspaceUsers: s.workspaceUsers,
     loadUsers: s.loadUsers,
     hydrateUsersFromCache: s.hydrateUsersFromCache,
     allLists: s.allLists,
-    workspaceRoles: s.workspaceRoles,
     workspaceTeams: s.workspaceTeams,
     loadTeams: s.loadTeams,
     hydrateTeamsFromCache: s.hydrateTeamsFromCache,
@@ -178,12 +194,17 @@ const CardContent = memo(({
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
 
-    if (!isSubtask) {
-      const transitionCheck = canTransitionTaskStatus(task, newStatus);
-      if (!transitionCheck.allowed) {
-        toast.error(transitionCheck.reason || 'Cannot move task to this status.');
-        return;
-      }
+    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+    if (!transitionCheck.allowed) {
+      closeDropdown();
+      window.dispatchEvent(new CustomEvent('card:shake', { detail: { taskId: task.id } }));
+      setBlockedAuditAlert({
+        isOpen: true,
+        targetStatus: newStatus,
+        uncheckedAudits: transitionCheck.uncheckedAudits,
+        openSubtasks: transitionCheck.openSubtasks,
+      });
+      return;
     }
 
     // ⚡ Close dropdown immediately for instant, lag-free UI response
@@ -302,10 +323,9 @@ const CardContent = memo(({
     return canUserEditTask(task as any, currentUser).allowed;
   }, [(task as any).teamAssignAccessRole, currentUser]);
 
-  const canAssignTask = useMemo(() => {
-    if (isSubtask || (task as any)?.parentTaskId) return true;
-    return canUserMoveTask(task as any, listStatuses, currentUser, workspaceRoles).allowed;
-  }, [task, listStatuses, currentUser, workspaceRoles, isSubtask]);
+  // Only Project Managers and Admins can set Team Role and Assignees
+  const canAssignTask = useCanSetAssignees();
+  const assignDeniedMessage = useAssignDeniedMessage();
 
   const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
   const canAssignMember = canAssignTask && hasTeamRole;
@@ -665,12 +685,12 @@ const CardContent = memo(({
               onClick={(e) => {
                 e.stopPropagation();
                 if (!canAssignTask) {
-                  toast.error('You do not have permission to assign roles in this status');
+                  toast.error(assignDeniedMessage);
                   return;
                 }
                 setOpenDropdown(openDropdown === 'teamRole' ? null : 'teamRole');
               }}
-              title={hasTeamRole ? localRoleRestrictions.join(', ') : 'Assign Role'}
+              title={!canAssignTask ? assignDeniedMessage : hasTeamRole ? localRoleRestrictions.join(', ') : 'Assign Role'}
             >
               {hasTeamRole ? (
                 <div className="flex items-center">
@@ -788,10 +808,14 @@ const CardContent = memo(({
           <div className="relative flex items-center group/assignee flex-1 min-w-0">
             <div
               ref={assigneeTriggerRef}
-              title={!hasTeamRole ? 'Please assign a team role first' : undefined}
-              className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-400 ${!hasTeamRole ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+              title={!canAssignTask ? assignDeniedMessage : !hasTeamRole ? 'Please assign a team role first' : undefined}
+              className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-400 ${!canAssignMember ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
               onClick={(e) => {
                 e.stopPropagation();
+                if (!canAssignTask) {
+                  toast.error(assignDeniedMessage);
+                  return;
+                }
                 if (!hasTeamRole) {
                   toast.error('Please assign a team role first');
                   return;
@@ -1001,6 +1025,41 @@ const CardContent = memo(({
 
         {children}
       </div>
+
+      {blockedAuditAlert.isOpen && typeof document !== 'undefined' && createPortal(
+        <div onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <UncheckedAuditsModal
+            isOpen={blockedAuditAlert.isOpen}
+            onClose={() => setBlockedAuditAlert(prev => ({ ...prev, isOpen: false }))}
+            taskTitle={task.title}
+            targetStatus={blockedAuditAlert.targetStatus}
+            uncheckedAudits={blockedAuditAlert.uncheckedAudits}
+            openSubtasks={blockedAuditAlert.openSubtasks}
+            onReviewAudits={() => {
+              const pendingHighlight = {
+                taskId: task.id,
+                targetStatus: blockedAuditAlert.targetStatus,
+                uncheckedAudits: blockedAuditAlert.uncheckedAudits,
+                openSubtasks: blockedAuditAlert.openSubtasks,
+              };
+              if (typeof window !== 'undefined') {
+                (window as any).__pendingAuditHighlight = pendingHighlight;
+              }
+              const url = new URL(window.location.href);
+              url.searchParams.set('task', task.id);
+              window.history.pushState(null, '', url.pathname + '?' + url.searchParams.toString());
+              window.dispatchEvent(new CustomEvent('task:open', { detail: { taskId: task.id } }));
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('task:highlight-audits', {
+                  detail: pendingHighlight
+                }));
+              }, 350);
+            }}
+            reviewButtonText="Open Task & Review Audits"
+          />
+        </div>,
+        document.body
+      )}
     </div>
   );
 });
@@ -1019,7 +1078,19 @@ export const KanbanCard = memo(function KanbanCard({
 
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
+  const [isCardShaking, setIsCardShaking] = useState(false);
   const pointerPosRef = useRef<{ x: number, y: number } | null>(null);
+
+  useEffect(() => {
+    const handleShake = (e: any) => {
+      if (e.detail?.taskId === task.id) {
+        setIsCardShaking(true);
+        setTimeout(() => setIsCardShaking(false), 700);
+      }
+    };
+    window.addEventListener('card:shake', handleShake);
+    return () => window.removeEventListener('card:shake', handleShake);
+  }, [task.id]);
 
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -1142,6 +1213,7 @@ export const KanbanCard = memo(function KanbanCard({
 
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+
   return (
     // Outer wrapper owns the DnD ref+style so dnd-kit tracks a single stable DOM node.
     // Card visuals and subtasks are children — prevents the infinite loop that occurs
@@ -1195,6 +1267,7 @@ export const KanbanCard = memo(function KanbanCard({
           ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3"
           : `bg-card hover:bg-card/90 border border-border hover:border-zinc-400 dark:hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
           } ${isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
+          } ${isCardShaking ? 'animate-shake' : ''
           } ${hasOpenDropdown || isMenuOpen ? 'z-50' : 'z-10'}`}
       >
         {!isOverlay && !isDragging && (
@@ -1246,6 +1319,7 @@ export const KanbanCard = memo(function KanbanCard({
 
       {/* ── Subtasks: tree-indented, outside the draggable card ── */}
       {openSubtasksCount > 0 && isSubtasksExpanded && !isDragging && (
+
         <div className="mt-1 ml-3">
           <AnimatePresence initial={false}>
           {visibleSubtasks.map((sub) => {

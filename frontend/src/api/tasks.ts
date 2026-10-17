@@ -111,8 +111,8 @@ export const tasksApi = {
     });
   },
 
-  async updateSubtask(taskId: string, subtaskId: string, data: Partial<any>): Promise<{ subtask: any }> {
-    return apiClient<{ subtask: any }>(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+  async updateSubtask(taskId: string, subtaskId: string, data: Partial<any>): Promise<{ subtask: any; activity?: any }> {
+    return apiClient<{ subtask: any; activity?: any }>(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });

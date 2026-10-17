@@ -1,4 +1,4 @@
-import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
+import { getStatusColor } from '../editor/nodes/TaskMentionNode';
 import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -11,6 +11,8 @@ import TaskList from '@tiptap/extension-task-list';
 import Link from '@tiptap/extension-link';
 import { openExternalLink } from '@/lib/links';
 import { TaskMention } from '../editor/extensions/TaskMention';
+import { Badge, EndBadgeOnNewLine } from '../editor/extensions/Badge';
+import { TextColorPanel } from '../editor/TextColorPanel';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
 import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
 import { taskSuggestion } from '../editor/suggestions/taskSuggestion';
@@ -18,7 +20,7 @@ import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
   List, ListOrdered, Palette, X, CheckSquare,
-  ListTree, ChevronRight, Heading1, Heading2, Heading3, Highlighter
+  ListTree, ChevronRight, Heading1, Heading2, Heading3
 } from 'lucide-react';
 import React, { useEffect, useRef, memo } from 'react';
 
@@ -71,6 +73,8 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       TextStyle,
       Color,
       Highlight.configure({ multicolor: true }),
+      Badge,
+      EndBadgeOnNewLine,
       TaskList,
       TaskItem.configure({
         nested: true,
@@ -268,33 +272,35 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
   useEffect(() => {
     if (!editor) return;
 
-    
-    const getStatusColor = (status: string) => STATUS_COLORS[status] || '#3b82f6';
-
     const handleTaskUpdated = (e: any) => {
       const task = e.detail?.task;
       if (!task) return;
+
+      // Socket payloads are often partial: a subtask change re-sends its parent as just { id, listId, subtasks },
+      // and moves send scalars only. Only overwrite what the payload carries — filling the gaps with blanks
+      // wiped the parent chip's title/status/assignees until the store copy restored them (the flicker).
+      const shown: Record<string, string> = {};
+      if (task.title !== undefined) shown.label = task.title;
+      if (task.status !== undefined) shown.taskStatus = JSON.stringify({ name: task.status, color: getStatusColor(task.status) });
+      if (task.assignees !== undefined) shown.taskAssignees = JSON.stringify(task.assignees || []);
+      if (task.priority !== undefined) shown.taskPriority = task.priority || '';
+      if (task.dueDate !== undefined) shown.taskDueDate = task.dueDate || '';
+      if (Object.keys(shown).length === 0) return;
 
       const { state, view } = editor;
       const { tr } = state;
       let modified = false;
 
-      // The task can't be mentioned in most blocks; only build the new attributes once one does
-      let shown: Record<string, string> | null = null;
       state.doc.descendants((node, pos) => {
         if (node.type.name === 'mention' && node.attrs.id === task.id) {
-          shown ??= {
-            label: task.title,
-            taskStatus: JSON.stringify({ name: task.status, color: getStatusColor(task.status) }),
-            taskAssignees: JSON.stringify(task.assignees || []),
-            taskPriority: task.priority || '',
-            taskDueDate: task.dueDate || '',
-          };
           // Updates that change nothing the chip shows (e.g. a comment count) are skipped: rewriting the node
-          // re-serializes the whole task into it, for every editor on the page.
-          const current = shown;
-          if (Object.keys(current).every((key) => (node.attrs[key] ?? '') === current[key])) return;
-          tr.setNodeMarkup(pos, null, { ...node.attrs, ...current, frozenTaskData: JSON.stringify(task) });
+          // re-renders it in every editor on the page.
+          if (Object.keys(shown).every((key) => (node.attrs[key] ?? '') === shown[key])) return;
+          let frozen = node.attrs.frozenTaskData;
+          if (typeof frozen === 'string') {
+            try { frozen = JSON.parse(frozen); } catch { frozen = null; }
+          }
+          tr.setNodeMarkup(pos, null, { ...node.attrs, ...shown, frozenTaskData: { ...(frozen || {}), ...task } });
           modified = true;
         }
       });
@@ -477,50 +483,14 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
             <div className="w-px h-4 bg-zinc-700 mx-1" />
 
+            {/* Text color / highlight / badge */}
             <div className="relative group/color">
-              <button onMouseDown={e => e.preventDefault()} className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 cursor-pointer flex items-center gap-1" title="Text Color">
+              <button onMouseDown={e => e.preventDefault()} className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 cursor-pointer flex items-center gap-1" title="Text color, highlight & badge">
                 <Palette className="w-3.5 h-3.5" />
               </button>
 
               <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/color:block z-99999" onMouseDown={e => e.preventDefault()}>
-                <div className="bg-card border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
-                  {colors.map((color) => (
-                    <button
-                      key={`text-${color}`}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={() => color === 'transparent' ? editor.chain().focus().unsetColor().run() : editor.chain().focus().setColor(color).run()}
-                      className="w-4 h-4 rounded-full border border-zinc-700 hover:scale-125 transition-transform cursor-pointer shadow-sm relative overflow-hidden"
-                      style={{ backgroundColor: color === 'transparent' ? '#000' : color }}
-                      title={color === 'transparent' ? 'Remove Color' : color}
-                    >
-                      {color === 'transparent' && <div className="absolute inset-0 w-full h-full border-t-2 border-red-500 rotate-45 transform origin-center" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Background / Highlight Color */}
-            <div className="relative group/highlight ml-0.5">
-              <button onMouseDown={e => e.preventDefault()} className="p-1.5 rounded hover:bg-zinc-800 transition-colors text-zinc-300 cursor-pointer flex items-center gap-1" title="Background Color">
-                <Highlighter className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="absolute bottom-full pb-1 left-1/2 -translate-x-1/2 hidden group-hover/highlight:block z-99999" onMouseDown={e => e.preventDefault()}>
-                <div className="bg-card border border-zinc-700 p-2 rounded-lg shadow-xl gap-1.5 w-max max-w-40 flex flex-wrap justify-center" onMouseDown={e => e.preventDefault()}>
-                  {colors.map((color) => (
-                    <button
-                      key={`bg-${color}`}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={() => color === 'transparent' ? editor.chain().focus().unsetHighlight().run() : editor.chain().focus().setHighlight({ color }).run()}
-                      className="w-4 h-4 rounded-full border border-zinc-700 hover:scale-125 transition-transform cursor-pointer shadow-sm relative overflow-hidden"
-                      style={{ backgroundColor: color === 'transparent' ? '#000' : color }}
-                      title={color === 'transparent' ? 'Remove Background' : color}
-                    >
-                       {color === 'transparent' && <div className="absolute inset-0 w-full h-full border-t-2 border-red-500 rotate-45 transform origin-center" />}
-                    </button>
-                  ))}
-                </div>
+                <TextColorPanel editor={editor} textColors={colors} highlightColors={colors} />
               </div>
             </div>
             </div>

@@ -149,7 +149,8 @@ function toReact(node: Node, key: number): React.ReactNode {
   if (PASS_THROUGH_TAGS.has(mapped)) return React.createElement(mapped, { key, style: safeStyle(el) }, ...children);
   // Links render as text styled like links (no navigation from a preview); other spans keep only colours
   if (tag === 'a') return <span key={key} className="underline text-blue-400">{children}</span>;
-  if (tag === 'span') return <span key={key} style={safeStyle(el)}>{children}</span>;
+  // data-badge keeps the badge pill shape (globals.css); its colours come through safeStyle
+  if (tag === 'span') return <span key={key} style={safeStyle(el)} data-badge={el.hasAttribute('data-badge') ? '' : undefined}>{children}</span>;
   return <React.Fragment key={key}>{children}</React.Fragment>;
 }
 

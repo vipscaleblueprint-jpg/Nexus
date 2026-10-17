@@ -12,6 +12,7 @@ export const createSpaceSchema = z.object({
 
 export const createFolderSchema = z.object({
   name: shortText('name'),
+  color: hexColor.nullable().optional(),
   spaceId: nullableUuid,
   parentFolderId: nullableUuid,
 });
@@ -65,6 +66,7 @@ export const updateSpaceSchema = z
 export const updateFolderSchema = z
   .object({
     name: shortText('name').optional(),
+    color: hexColor.nullable().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

@@ -10,6 +10,7 @@ import { updatePageBlocks } from '../services/pageContentService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
+import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 
 
 // Galaxy-created tasks/subtasks are authored by this system account rather than
@@ -710,11 +711,16 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
       null;
 
     if (subtaskClickUpId) {
-      // Already here (the ClickUp pull, or the other caller, got there first): nothing to add.
+      // Already here (the ClickUp pull, or the other caller, got there first): ensure it's in the journal.
       const already = await prisma.subtask.findFirst({
         where: { OR: [{ externalId: subtaskClickUpId }, { externalId: { endsWith: `/${subtaskClickUpId}` } }] },
       });
-      if (already) return res.status(200).json({ success: true, subtask: already });
+      if (already) {
+        injectSubtaskIntoJournal(parentTask.id, { id: already.id, title: already.title }).catch((err) =>
+          console.error('[Galaxy] Failed to inject already existing subtask into journal:', err)
+        );
+        return res.status(200).json({ success: true, subtask: already });
+      }
 
       // Same subtask saved earlier without its ClickUp id (titles differ only by ClickUp's "--"): link it.
       const bare = (title || '').replace(/^--\s*/, '');
@@ -735,6 +741,9 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
           where: { id: unlinked.id },
           data: { externalId: subtaskClickUpId, ...(description && !unlinked.description && { description }) },
         });
+        injectSubtaskIntoJournal(parentTask.id, { id: linked.id, title: linked.title }).catch((err) =>
+          console.error('[Galaxy] Failed to inject linked subtask into journal:', err)
+        );
         return res.status(200).json({ success: true, subtask: linked });
       }
     }
@@ -845,78 +854,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
       io.emit('task:comment_added', { taskId: parentTask.id, subtaskId: subtask.id, comment });
     }
 
-    try {
-      const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
-      if (doc) {
-        const tz = (doc as any).rolloverTimezone || 'Asia/Singapore';
-        const dayFormatter = new Intl.DateTimeFormat('en-US', {
-          timeZone: tz,
-          month: 'long',
-          day: 'numeric',
-          year: 'numeric'
-        });
-        const dayTitle = dayFormatter.format(new Date());
-
-        const todayPage = await prisma.page.findFirst({
-          where: { 
-            docId: doc.id, 
-            title: dayTitle 
-          }
-        });
-
-        if (todayPage && todayPage.content) {
-          const parentTaskMention = `data-id="${parentTask.id}"`;
-          const escapedTitle = subtask.title.replace(/"/g, '&quot;');
-          const written = await updatePageBlocks(todayPage, (blocks) => {
-            let updated = false;
-            let i = 0;
-            while (i < blocks.length) {
-              const b = blocks[i];
-              if (b.type === 'text' && b.content && b.content.includes(parentTaskMention) && !b.content.includes('data-mention-type="subtask"')) {
-                let insertIndex = i + 1;
-                let alreadyExists = false;
-                while (insertIndex < blocks.length) {
-                  const nextBlock = blocks[insertIndex];
-                  if (nextBlock.type === 'text' && nextBlock.content && nextBlock.content.includes('└─')) {
-                    if (nextBlock.content.includes(`data-id="${subtask.id}"`)) {
-                      alreadyExists = true;
-                    }
-                    insertIndex++;
-                  } else {
-                    break;
-                  }
-                }
-
-                if (!alreadyExists) {
-                  const newSubtaskBlock = {
-                    id: `blk-st-${Date.now()}-${subtask.id}-${i}`,
-                    type: "text",
-                    content: `<p>&nbsp;&nbsp;└─ <span data-type="mention" data-id="${subtask.id}" data-label="${escapedTitle}" data-mention-type="subtask">@${escapedTitle}</span></p>`
-                  };
-
-                  blocks.splice(insertIndex, 0, newSubtaskBlock);
-                  if (insertIndex + 1 >= blocks.length || (blocks[insertIndex + 1]?.type === 'text' && /^<h[1-6]/i.test(blocks[insertIndex + 1]?.content || ''))) {
-                    blocks.splice(insertIndex + 1, 0, {
-                      id: `blk-space-${Date.now()}-${subtask.id}-${i}`,
-                      type: 'text',
-                      content: '<p></p>'
-                    });
-                  }
-                  updated = true;
-                  i = insertIndex;
-                }
-              }
-              i++;
-            }
-            return updated;
-          });
-
-          if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
-        }
-      }
-    } catch (error) {
-      console.error('Failed to inject subtask into Priorities Journal:', error);
-    }
+    await injectSubtaskIntoJournal(parentTask.id, { id: subtask.id, title: subtask.title });
 
     io.emit('subtask_created', subtask);
 

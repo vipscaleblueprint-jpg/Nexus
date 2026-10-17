@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { redis } from '../config/redis';
-import { logger } from '../config/logger';
+import { logger, errMsg } from '../config/logger';
 import { reconcileWithTools } from '../services/toolsSync';
 
 // Safety net for the instant two-way sync: re-sends failed Nexus pushes and
@@ -15,5 +15,9 @@ export const toolsSyncWorker = new Worker(
 );
 
 toolsSyncWorker.on('failed', (job, err) => {
-  logger.error({ err }, `ToolsSync reconcile failed: ${err.message}`);
+  logger.error({ jobId: job?.id }, `ToolsSync reconcile failed: ${errMsg(err)}`);
+});
+
+toolsSyncWorker.on('error', (err) => {
+  logger.error(`ToolsSync Redis error: ${errMsg(err)}`);
 });

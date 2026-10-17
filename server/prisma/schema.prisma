@@ -117,6 +117,7 @@ model Space {
 model Folder {
   id             String   @id @default(uuid())
   name           String
+  color          String?
   spaceId        String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

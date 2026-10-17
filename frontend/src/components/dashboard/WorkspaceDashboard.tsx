@@ -646,10 +646,43 @@ function WorkspaceDashboardContent({
       .filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [spaces, searchQuery]);
 
+  // Subtasks flattened into their own rows (status, assignees, priority of the subtask; client of the
+  // parent) so people assigned only to a subtask still see it here
+  const tasksWithSubtasks = useMemo(() => {
+    const subtaskRows: Task[] = [];
+    tasks.forEach((parent) => {
+      (parent.subtasks || []).forEach((st: any) => {
+        subtaskRows.push({
+          ...st,
+          status: st.status || (st.completed ? "CLOSED" : "PENDING"),
+          assignee: st.User || undefined,
+          assignees: st.assignees || [],
+          list: parent.list,
+          listId: parent.listId,
+          subtasks: [],
+          isSubtask: true,
+          parentTask: parent,
+        } as any);
+      });
+    });
+    return subtaskRows.length > 0 ? [...tasks, ...subtaskRows] : tasks;
+  }, [tasks]);
+
+  // Subtask rows open their parent task with the subtask panel showing (TaskDetailModal reads ?subtask=)
+  const openRow = (row: Task) => {
+    const parent = (row as any).isSubtask ? ((row as any).parentTask as Task) : null;
+    // Also clear a leftover ?subtask= so a plain task row never reopens an old subtask panel
+    const url = new URL(window.location.href);
+    if (parent) url.searchParams.set("subtask", row.id);
+    else url.searchParams.delete("subtask");
+    window.history.replaceState(null, "", url.pathname + url.search);
+    setSelectedTask(parent || row);
+  };
+
   // User's assigned tasks
   const myTasks = useMemo(() => {
     if (!currentUser) return [];
-    return tasks.filter((t) => {
+    return tasksWithSubtasks.filter((t) => {
       const isDirectAssignee =
         t.assigneeId === currentUser.id ||
         t.assignee?.id === currentUser.id ||
@@ -661,7 +694,7 @@ function WorkspaceDashboardContent({
       );
       return isDirectAssignee || isMultiAssignee;
     });
-  }, [tasks, currentUser]);
+  }, [tasksWithSubtasks, currentUser]);
 
   // Closed tasks are hidden from every overview tab unless the user explicitly filters by "Closed"
   const isClosedTask = (t: Task) => (t.status || "").trim().toUpperCase() === "CLOSED";
@@ -722,7 +755,7 @@ function WorkspaceDashboardContent({
 
   // All Tasks filtering and sorting
   const filteredAllTasks = useMemo(() => {
-    let result = showClosed ? [...tasks] : tasks.filter((t) => !isClosedTask(t));
+    let result = showClosed ? [...tasksWithSubtasks] : tasksWithSubtasks.filter((t) => !isClosedTask(t));
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -782,7 +815,7 @@ function WorkspaceDashboardContent({
 
     return result;
   }, [
-    tasks,
+    tasksWithSubtasks,
     searchQuery,
     filterAssignee,
     filterPriority,
@@ -1380,8 +1413,8 @@ function WorkspaceDashboardContent({
                           return (
                             <div
                               key={task.id}
-                              onClick={() => setSelectedTask(task)}
-                              className={`group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''}`}
+                              onClick={() => openRow(task)}
+                              className={`group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''} ${(task as any).isSubtask ? 'bg-violet-500/[0.05] border-l-2 border-l-violet-500/70' : ''}`}
                             >
                               {((task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE') && (
                                 <div className="absolute top-1/2 left-4 right-4 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
@@ -1406,6 +1439,15 @@ function WorkspaceDashboardContent({
                                 <span className="text-[13px] font-medium text-zinc-300 group-hover:text-indigo-300 transition-colors truncate">
                                   {task.title}
                                 </span>
+                                {(task as any).isSubtask && (
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[10px] text-violet-300 bg-violet-500/15 border border-violet-500/30 rounded px-1.5 py-0.5 shrink-0 max-w-[240px] ml-1 font-semibold"
+                                    title={`Subtask of ${(task as any).parentTask?.title}`}
+                                  >
+                                    <span className="uppercase tracking-wide">Subtask</span>
+                                    <span className="hidden md:inline truncate font-medium text-violet-300/80">· {(task as any).parentTask?.title}</span>
+                                  </span>
+                                )}
                                 {task.list && (
                                   <span className="hidden md:inline-flex items-center text-[11px] text-zinc-600 shrink-0 max-w-[200px] truncate ml-1 font-medium group-hover:text-zinc-400 transition-colors">
                                     ≡ {task.list.name}
@@ -1416,7 +1458,7 @@ function WorkspaceDashboardContent({
                                     <ListIcon className="w-3 h-3 text-zinc-500" />
                                     {
                                       task.subtasks.filter(
-                                        (st: any) => st.isCompleted,
+                                        (st: any) => st.completed || st.isCompleted,
                                       ).length
                                     }
                                     /{task.subtasks.length}
@@ -1691,8 +1733,8 @@ function WorkspaceDashboardContent({
                             return (
                               <div
                                 key={task.id}
-                                onClick={() => setSelectedTask(task)}
-                                className={`group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''}`}
+                                onClick={() => openRow(task)}
+                                className={`group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''} ${(task as any).isSubtask ? 'bg-violet-500/[0.05] border-l-2 border-l-violet-500/70' : ''}`}
                               >
                                 {((task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE') && (
                                   <div className="absolute top-1/2 left-6 right-6 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
@@ -1721,6 +1763,17 @@ function WorkspaceDashboardContent({
                                     {task.title}
                                   </span>
 
+                                  {/* Parent task for subtask rows */}
+                                  {(task as any).isSubtask && (
+                                    <span
+                                      className="inline-flex items-center gap-1 text-[10px] text-violet-300 bg-violet-500/15 border border-violet-500/30 rounded px-1.5 py-0.5 shrink-0 max-w-[240px] ml-1 font-semibold"
+                                      title={`Subtask of ${(task as any).parentTask?.title}`}
+                                    >
+                                      <span className="uppercase tracking-wide">Subtask</span>
+                                      <span className="hidden md:inline truncate font-medium text-violet-300/80">· {(task as any).parentTask?.title}</span>
+                                    </span>
+                                  )}
+
                                   {/* List Name aligned after title */}
                                   {task.list && (
                                     <span className="hidden md:inline-flex items-center text-[11px] text-zinc-600 shrink-0 max-w-[200px] truncate ml-1 font-medium group-hover:text-zinc-400 transition-colors">
@@ -1734,7 +1787,7 @@ function WorkspaceDashboardContent({
                                       <ListIcon className="w-3 h-3 text-zinc-500" />
                                       {
                                         task.subtasks.filter(
-                                          (st: any) => st.isCompleted,
+                                          (st: any) => st.completed || st.isCompleted,
                                         ).length
                                       }
                                       /{task.subtasks.length}

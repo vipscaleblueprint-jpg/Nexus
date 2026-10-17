@@ -36,5 +36,9 @@ taskUpdateWorker.on('completed', (job) => {
 });
 
 taskUpdateWorker.on('failed', (job, err) => {
-  workerLog.error({ jobId: job?.id, err }, 'Job failed');
+  workerLog.error({ jobId: job?.id, err: errMsg(err) }, 'Job failed');
+});
+
+taskUpdateWorker.on('error', (err) => {
+  workerLog.error(`TaskUpdateWorker Redis error: ${errMsg(err)}`);
 });

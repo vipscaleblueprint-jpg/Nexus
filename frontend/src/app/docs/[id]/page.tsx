@@ -48,7 +48,6 @@ import {
   Check,
   History,
   CaseSensitive,
-  RotateCcw
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from '@/lib/pageContentCache';
@@ -1057,7 +1056,6 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [pageToRename, setPageToRename] = useState<{ id: string, title: string } | null>(null);
-  const [carryingOver, setCarryingOver] = useState(false);
 
   const handleRenamePageClick = (pageId: string, title: string) => {
     setPageToRename({ id: pageId, title: title || 'Untitled Page' });
@@ -1229,13 +1227,31 @@ export default function DocPage({ docId }: { docId?: string }) {
         if (requestedPage) {
           firstPage = requestedPage;
         } else if (docRes.doc.isDailyRollover) {
-          const sortedPages = [...docRes.doc.pages].sort((a, b) => {
-            const timeA = new Date(a.title || '').getTime();
-            const timeB = new Date(b.title || '').getTime();
-            if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
-            return 0;
-          });
-          firstPage = sortedPages[0];
+          const allPages: any[] = [];
+          const collectPages = (pages: any[]) => {
+            for (const p of pages || []) {
+              allPages.push(p);
+              if (p.subpages?.length) collectPages(p.subpages);
+            }
+          };
+          collectPages(docRes.doc.pages);
+
+          const tz = docRes.doc.rolloverTimezone || 'Asia/Singapore';
+          const todayTitle = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric'
+          }).format(new Date());
+
+          const todayPage = allPages.find((p) => p.title === todayTitle);
+          if (todayPage) {
+            firstPage = todayPage;
+          } else {
+            const dayPages = allPages.filter((p) => p.parentPageId && !isNaN(new Date(p.title || '').getTime()));
+            dayPages.sort((a, b) => new Date(b.title || '').getTime() - new Date(a.title || '').getTime());
+            firstPage = dayPages[0] || docRes.doc.pages[0];
+          }
         }
 
         // Not awaited: the doc frame renders now and the page's blocks fill in when they arrive
@@ -1295,23 +1311,28 @@ export default function DocPage({ docId }: { docId?: string }) {
     let pageUpdatedTimer: ReturnType<typeof setTimeout> | null = null;
     let openPageChanged = false;
     s.on('page_updated', (data?: { pageId?: string }) => {
-      if (data?.pageId && data.pageId === activePageRef.current?.id) openPageChanged = true;
+      if (!data?.pageId || data.pageId === activePageRef.current?.id) openPageChanged = true;
       if (pageUpdatedTimer) clearTimeout(pageUpdatedTimer);
       pageUpdatedTimer = setTimeout(() => {
         pageUpdatedTimer = null;
         fetchDoc();
         const pageId = activePageRef.current?.id;
         if (openPageChanged && pageId) {
-          spacesApi.getPage(pageId, { since: getCachedPage(pageId)?.updatedAt })
+          spacesApi.getPage(pageId)
             .then((res) => {
               if (res.notModified || res.page?.content === undefined) return;
               setCachedPage(pageId, res.page.content, res.page.updatedAt);
-              mergeUnseenServerBlocks(pageId, res.page.content);
+              if (blocksToMarkdown(blocksRef.current) === lastSyncedContentRef.current) {
+                lastSyncedContentRef.current = res.page.content;
+                setBlocks(markdownToBlocks(res.page.content));
+              } else {
+                mergeUnseenServerBlocks(pageId, res.page.content);
+              }
             })
             .catch((err) => console.error('Failed to refresh page:', err));
         }
         openPageChanged = false;
-      }, 1000);
+      }, 500);
     });
 
     setSocket(s);
@@ -1401,29 +1422,6 @@ export default function DocPage({ docId }: { docId?: string }) {
       console.error('Failed to save page:', err);
     } finally {
       setSavingPage(false);
-    }
-  };
-
-  const handleCarryOverPriorities = async () => {
-    if (!activePage?.id || carryingOver) return;
-    setCarryingOver(true);
-    try {
-      const res = await spacesApi.carryOverPriorities(activePage.id);
-      if (res.success) {
-        const fresh = await spacesApi.getPage(activePage.id);
-        if (fresh.page?.content) {
-          lastSyncedContentRef.current = fresh.page.content;
-          setCachedPage(activePage.id, fresh.page.content, fresh.page.updatedAt);
-          setActivePage((prev: any) => ({ ...prev, content: fresh.page.content }));
-          setBlocks(markdownToBlocks(fresh.page.content));
-        }
-      }
-    } catch (err: any) {
-      console.error('Failed to carry over priorities:', err);
-      const msg = err.response?.data?.error || err.message || 'Failed to carry over priorities';
-      alert(msg);
-    } finally {
-      setCarryingOver(false);
     }
   };
 
@@ -2950,21 +2948,6 @@ export default function DocPage({ docId }: { docId?: string }) {
                 >
                   Version History
                 </button>
-
-                {doc?.isDailyRollover && activePage?.parentPageId && (
-                  <>
-                    <span className="text-zinc-400 dark:text-zinc-600">•</span>
-                    <button
-                      onClick={handleCarryOverPriorities}
-                      disabled={carryingOver}
-                      className="text-amber-500 hover:text-amber-400 font-medium hover:underline underline-offset-2 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50 text-xs"
-                      title="Carry over whatever was written, designed, and formatted in yesterday's priorities into today"
-                    >
-                      <RotateCcw className={`w-3 h-3 ${carryingOver ? 'animate-spin' : ''}`} />
-                      <span>{carryingOver ? 'Rolling Over...' : "Roll Over Yesterday's Priorities"}</span>
-                    </button>
-                  </>
-                )}
 
                 {savingPage && <span className="text-purple-500 dark:text-purple-400 text-[10px] italic ml-2">Saving...</span>}
               </div>

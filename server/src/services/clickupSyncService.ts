@@ -15,6 +15,7 @@ import { Priority } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { redis } from '../config/redis';
 import { invalidateCache } from './redisService';
+import { injectSubtaskIntoJournal } from './journalInjectionService';
 import {
   getClickUpTask,
   getClickUpListTasks,
@@ -654,6 +655,11 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
   }
   ctx.summary.subtasks++;
   recordActivity(ctx, existing ? 'updated' : 'added', 'subtask', cu.name);
+
+  // Auto-inject subtask into Priorities Journal if parent task is present
+  injectSubtaskIntoJournal(nexusTaskId, { id: subtaskId, title: cu.name }).catch((err) =>
+    console.error('[ClickUpSync] Failed to inject subtask into journal:', err)
+  );
 
   const target: Target = { taskId: nexusTaskId, subtaskId };
   await syncChecklists(cu.checklists, target, ctx);

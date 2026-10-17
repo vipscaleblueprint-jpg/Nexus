@@ -120,7 +120,42 @@ import {
   Link as LinkIcon,
   Bot,
   Check,
+  Palette,
 } from 'lucide-react';
+
+export const FOLDER_COLOR_PALETTE = [
+  { value: '#94A3B8', label: 'Slate' },
+  { value: '#0EA5E9', label: 'Sky' },
+  { value: '#10B981', label: 'Emerald' },
+  { value: '#F59E0B', label: 'Amber' },
+  { value: '#EC4899', label: 'Pink' },
+  { value: '#8B5CF6', label: 'Violet' },
+  { value: '#F97316', label: 'Orange' },
+  { value: '#06B6D4', label: 'Cyan' },
+  { value: '#6366F1', label: 'Indigo' },
+  { value: '#14B8A6', label: 'Teal' },
+  { value: '#E11D48', label: 'Rose' },
+  { value: '#84CC16', label: 'Lime' },
+];
+
+export function getFolderColor(folder?: { id?: string; name?: string; color?: string | null }): string {
+  if (!folder) return '#F59E0B';
+  if (folder.color && folder.color.trim()) return folder.color;
+
+  const lower = (folder.name || '').toLowerCase().trim();
+  if (lower === 'startups') return '#94A3B8';
+  if (lower === 'admin') return '#0EA5E9';
+  if (lower === 'client dashboard') return '#10B981';
+  if (lower === 'human resource') return '#F59E0B';
+  if (lower === 'dormant clients') return '#EC4899';
+
+  const str = folder.id || folder.name || '';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) & 0xffffffff;
+  }
+  return FOLDER_COLOR_PALETTE[Math.abs(hash) % FOLDER_COLOR_PALETTE.length].value;
+}
 
 const VIPSCALE_BASE = 'https://tools.vipscaleph.com';
 
@@ -379,6 +414,7 @@ function getActiveItemInfo(id: string, spaces: Space[]) {
   return {
     itemType,
     name: item.name || item.title || 'Item',
+    item,
   };
 }
 
@@ -388,7 +424,9 @@ function DragLandingSlot({ activeId, spaces }: { activeId: string; spaces: Space
 
   return (
     <div className="relative opacity-50 ring-2 ring-indigo-500/50 rounded-md bg-zinc-800 px-2 py-1 my-0.5 text-xs text-zinc-100 flex items-center gap-2 pointer-events-none select-none">
-      {info.itemType === 'folder' && <FolderIcon className="size-3.5 text-amber-400 shrink-0" />}
+      {info.itemType === 'folder' && (
+        <FolderIcon className="size-3.5 shrink-0" style={{ color: getFolderColor(info.item) }} />
+      )}
       {info.itemType === 'list' && <ListIcon className="size-3.5 text-blue-400 shrink-0" />}
       {info.itemType === 'doc' && <FileText className="size-3.5 text-zinc-400 shrink-0" />}
       <span className="truncate">{info.name}</span>
@@ -482,7 +520,7 @@ function ActiveDragItem({ id, spaces }: { id: string; spaces: Space[] }) {
     <div className="bg-card rounded-md shadow-2xl border border-[hsl(240,3.7%,25.9%)] scale-105 cursor-grabbing pointer-events-none ring-1 ring-white/10 w-full overflow-hidden">
       {itemType === 'folder' && (
         <div className="flex items-center gap-2 px-2 py-1.5 text-sm bg-zinc-800">
-          <FolderIcon className="size-3.5 text-amber-400 shrink-0" />
+          <FolderIcon className="size-3.5 shrink-0" style={{ color: getFolderColor(item) }} />
           <span className="truncate text-xs text-zinc-100">{item.name}</span>
         </div>
       )}
@@ -1559,6 +1597,13 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
   const [sort, setSort] = usePersistedSort(`folder-${folder.id}`);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(folder.name);
+  const [localColor, setLocalColor] = useState<string | null>(folder.color || null);
+
+  useEffect(() => {
+    setLocalColor(folder.color || null);
+  }, [folder.color]);
+
+  const folderColor = localColor || getFolderColor(folder);
   
   const combinedItems = sortTreeItems([
     ...(folder.subfolders?.map(f => ({ ...f, itemType: 'folder' })) || []),
@@ -1609,7 +1654,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
               </motion.div>
             </div>
             <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
-              <FolderIcon className="size-3.5 text-amber-400" />
+              <FolderIcon className="size-3.5 shrink-0" style={{ color: folderColor }} />
             </div>
           </div>
           {isEditing ? (
@@ -1630,10 +1675,88 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
           )}
         </div>
         <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-          <ActionMenu icon={<MoreHorizontal className="size-3.5" />} width="w-40">
+          <ActionMenu icon={<MoreHorizontal className="size-3.5" />} width="w-48">
             <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
             <button onClick={() => onAction('delete', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
             <TreeSortMenuItems sort={sort} onChange={setSort} />
+
+            <div className="px-3 py-2 border-t border-zinc-700/60 mt-1" onClick={(e) => e.stopPropagation()}>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Palette className="size-3 text-zinc-400" />
+                  Color
+                </span>
+                {localColor && (
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setLocalColor(null);
+                      try {
+                        await spacesApi.updateFolder(folder.id, { color: null });
+                        window.dispatchEvent(new CustomEvent('space_activity'));
+                      } catch (err) {
+                        console.error('Failed to reset folder color', err);
+                        setLocalColor(folder.color || null);
+                      }
+                    }}
+                    className="text-[10px] text-zinc-400 hover:text-zinc-200 underline cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-6 gap-1.5 mb-2">
+                {FOLDER_COLOR_PALETTE.map((c) => {
+                  const isSelected = folderColor.toLowerCase() === c.value.toLowerCase();
+                  return (
+                    <button
+                      key={c.value}
+                      title={c.label}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setLocalColor(c.value);
+                        try {
+                          await spacesApi.updateFolder(folder.id, { color: c.value });
+                          window.dispatchEvent(new CustomEvent('space_activity'));
+                        } catch (err) {
+                          console.error('Failed to update folder color', err);
+                          setLocalColor(folder.color || null);
+                        }
+                      }}
+                      className={`size-5 rounded-full border border-black/40 hover:scale-115 transition-transform flex items-center justify-center cursor-pointer ${
+                        isSelected ? 'ring-2 ring-white/80 ring-offset-1 ring-offset-zinc-800' : ''
+                      }`}
+                      style={{ backgroundColor: c.value }}
+                    >
+                      {isSelected && <Check className="size-3 text-white drop-shadow stroke-[3]" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-2 pt-1.5 border-t border-zinc-700/60">
+                <input
+                  type="color"
+                  value={folderColor.startsWith('#') ? folderColor : '#F59E0B'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLocalColor(val);
+                  }}
+                  onBlur={async (e) => {
+                    const val = e.target.value;
+                    try {
+                      await spacesApi.updateFolder(folder.id, { color: val });
+                      window.dispatchEvent(new CustomEvent('space_activity'));
+                    } catch (err) {
+                      console.error('Failed to update folder color', err);
+                      setLocalColor(folder.color || null);
+                    }
+                  }}
+                  className="size-5 rounded cursor-pointer bg-transparent border-0 p-0"
+                  title="Custom Hex Color"
+                />
+                <span className="text-[11px] text-zinc-400 font-mono">Custom color</span>
+              </div>
+            </div>
           </ActionMenu>
           <ActionMenu icon={<Plus className="size-3.5" />}>
             <button onClick={(e) => { e.stopPropagation(); onAddFolder(spaceId, folder.id); }} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><FolderIcon className="size-3.5 text-amber-400" />Folder</button>

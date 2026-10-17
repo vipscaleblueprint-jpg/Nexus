@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { redis } from '../config/redis';
 import { prisma } from '../config/prisma';
-import { logger } from '../config/logger';
+import { logger, errMsg } from '../config/logger';
 import {
   extractPrioritiesSection,
   hasCustomPriorities,
@@ -324,5 +324,9 @@ dailyRolloverWorker.on('completed', (job) => {
 });
 
 dailyRolloverWorker.on('failed', (job, err) => {
-  logger.error(`DailyRollover job ${job?.id} has failed with ${err.message}`);
+  logger.error(`DailyRollover job ${job?.id} has failed with ${errMsg(err)}`);
+});
+
+dailyRolloverWorker.on('error', (err) => {
+  logger.error(`DailyRollover Redis error: ${errMsg(err)}`);
 });

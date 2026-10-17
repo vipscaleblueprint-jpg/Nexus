@@ -47,7 +47,8 @@ import {
   Flag,
   Check,
   History,
-  CaseSensitive
+  CaseSensitive,
+  RotateCcw
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from '@/lib/pageContentCache';
@@ -1056,6 +1057,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [pageToRename, setPageToRename] = useState<{ id: string, title: string } | null>(null);
+  const [carryingOver, setCarryingOver] = useState(false);
 
   const handleRenamePageClick = (pageId: string, title: string) => {
     setPageToRename({ id: pageId, title: title || 'Untitled Page' });
@@ -1399,6 +1401,29 @@ export default function DocPage({ docId }: { docId?: string }) {
       console.error('Failed to save page:', err);
     } finally {
       setSavingPage(false);
+    }
+  };
+
+  const handleCarryOverPriorities = async () => {
+    if (!activePage?.id || carryingOver) return;
+    setCarryingOver(true);
+    try {
+      const res = await spacesApi.carryOverPriorities(activePage.id);
+      if (res.success) {
+        const fresh = await spacesApi.getPage(activePage.id);
+        if (fresh.page?.content) {
+          lastSyncedContentRef.current = fresh.page.content;
+          setCachedPage(activePage.id, fresh.page.content, fresh.page.updatedAt);
+          setActivePage((prev: any) => ({ ...prev, content: fresh.page.content }));
+          setBlocks(markdownToBlocks(fresh.page.content));
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to carry over priorities:', err);
+      const msg = err.response?.data?.error || err.message || 'Failed to carry over priorities';
+      alert(msg);
+    } finally {
+      setCarryingOver(false);
     }
   };
 
@@ -2925,6 +2950,21 @@ export default function DocPage({ docId }: { docId?: string }) {
                 >
                   Version History
                 </button>
+
+                {doc?.isDailyRollover && activePage?.parentPageId && (
+                  <>
+                    <span className="text-zinc-400 dark:text-zinc-600">•</span>
+                    <button
+                      onClick={handleCarryOverPriorities}
+                      disabled={carryingOver}
+                      className="text-amber-500 hover:text-amber-400 font-medium hover:underline underline-offset-2 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50 text-xs"
+                      title="Carry over whatever was written, designed, and formatted in yesterday's priorities into today"
+                    >
+                      <RotateCcw className={`w-3 h-3 ${carryingOver ? 'animate-spin' : ''}`} />
+                      <span>{carryingOver ? 'Rolling Over...' : "Roll Over Yesterday's Priorities"}</span>
+                    </button>
+                  </>
+                )}
 
                 {savingPage && <span className="text-purple-500 dark:text-purple-400 text-[10px] italic ml-2">Saving...</span>}
               </div>

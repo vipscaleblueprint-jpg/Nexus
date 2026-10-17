@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto';
+
 type Block = { id: string; type: string; content: string; [key: string]: any };
 
 // Old editors wrote a full JSON copy of each mentioned task into `data-task-data` (most of a journal page's
@@ -132,3 +134,66 @@ export function keepUnseenBlocks(storedContent: string | undefined, incomingCont
   });
   return JSON.stringify(result);
 }
+
+/**
+ * Clones an array of blocks while assigning fresh unique IDs to avoid collisions across pages.
+ */
+export function cloneBlocksWithNewIds(blocks: Block[], prefix = 'blk-prio'): Block[] {
+  const timestamp = Date.now();
+  return blocks.map((b, idx) => ({
+    ...b,
+    id: `${prefix}-${timestamp}-${idx}-${randomUUID().slice(0, 8)}`,
+  }));
+}
+
+/**
+ * Extracts the "Priorities for Today" header and content blocks from a page's block list.
+ * The section is bounded by the Priorities header (inclusive) and the next section heading (exclusive).
+ */
+export function extractPrioritiesSection(blocks: Block[]): {
+  headerBlock?: Block;
+  contentBlocks: Block[];
+  startIndex: number;
+  endIndex: number;
+} {
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    return { contentBlocks: [], startIndex: -1, endIndex: -1 };
+  }
+
+  const startIndex = blocks.findIndex(
+    (b) => b?.type === 'text' && /priorities\s+(for\s+today)?/i.test(b.content || '')
+  );
+
+  if (startIndex === -1) {
+    return { contentBlocks: [], startIndex: -1, endIndex: -1 };
+  }
+
+  let endIndex = startIndex + 1;
+  while (endIndex < blocks.length) {
+    const b = blocks[endIndex];
+    if (b?.type === 'text' && /^<h[1-6]/i.test(b.content || '')) {
+      break;
+    }
+    endIndex++;
+  }
+
+  return {
+    headerBlock: blocks[startIndex],
+    contentBlocks: blocks.slice(startIndex + 1, endIndex),
+    startIndex,
+    endIndex,
+  };
+}
+
+/**
+ * Checks whether the priorities section contains custom content written or designed by the user,
+ * rather than being empty or containing only "<p>No priorities</p>".
+ */
+export function hasCustomPriorities(blocks: Block[]): boolean {
+  if (!Array.isArray(blocks) || blocks.length === 0) return false;
+  return blocks.some((b) => {
+    const stripped = (b?.content || '').replace(/<[^>]+>/g, '').trim().toLowerCase();
+    return stripped !== '' && stripped !== 'no priorities';
+  });
+}
+

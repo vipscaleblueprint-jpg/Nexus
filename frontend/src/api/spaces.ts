@@ -141,6 +141,19 @@ export const spacesApi = {
     });
   },
 
+  async carryOverPriorities(id: string): Promise<{ success: boolean; carriedCount: number; sourcePageTitle: string }> {
+    return apiClient<{ success: boolean; carriedCount: number; sourcePageTitle: string }>(`/api/spaces/pages/${id}/carry-over-priorities`, {
+      method: 'POST',
+    });
+  },
+
+  async triggerRollover(options?: { dateOverride?: string; force?: boolean }): Promise<{ success: boolean; result: any }> {
+    return apiClient<{ success: boolean; result: any }>('/api/spaces/trigger-rollover', {
+      method: 'POST',
+      body: JSON.stringify(options || {}),
+    });
+  },
+
   async createList(data: { name: string; spaceId?: string; folderId?: string }): Promise<{ list: any }> {
     return apiClient<{ list: any }>('/api/lists', {
       method: 'POST',

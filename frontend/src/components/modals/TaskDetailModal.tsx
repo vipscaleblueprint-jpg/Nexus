@@ -126,6 +126,43 @@ export const sortStatusesWithClosedAndKycAtEnd = (statuses: any[]) => {
   return [...nonEnd, ...ends];
 };
 
+// ---------------------------------------------------------------------------
+// Module-level in-memory cache for task activities & comments.
+// Lives outside the component so it persists across modal open/close cycles
+// within the same browser session. Cleared on page refresh.
+// TTL: 60 seconds — stale entries trigger a silent background refresh.
+// ---------------------------------------------------------------------------
+interface ActivityCacheEntry {
+  activities: any[];
+  comments: any[];
+  timestamp: number;
+}
+export const activityCache = new Map<string, ActivityCacheEntry>();
+const ACTIVITY_CACHE_TTL_MS = 60_000; // 60 seconds
+
+// Exported so KanbanCard can prime the cache on hover (prefetch)
+export function prefetchTaskActivities(taskId: string): void {
+  const cached = activityCache.get(taskId);
+  const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
+  if (cacheAge < ACTIVITY_CACHE_TTL_MS) return; // already fresh, skip
+
+  // Fire-and-forget — result stored in cache so modal opens with data ready
+  Promise.all([
+    fetch(`/api/tasks/${taskId}/activities`, { credentials: 'include' })
+      .then(r => r.json()).catch(() => null),
+    fetch(`/api/tasks/${taskId}/comments`, { credentials: 'include' })
+      .then(r => r.json()).catch(() => null),
+  ]).then(([actRes, commentRes]) => {
+    if (actRes?.activities && commentRes?.comments) {
+      activityCache.set(taskId, {
+        activities: actRes.activities,
+        comments: commentRes.comments,
+        timestamp: Date.now(),
+      });
+    }
+  }).catch(() => {/* prefetch errors are silent */});
+}
+
 export const STATUS_COLORS: Record<string, string> = {
   'KYC': 'bg-[#3A8F55] text-white',
   'PIN BOARD': 'bg-[#1F8A6E] text-white',
@@ -626,6 +663,7 @@ export function TaskDetailModalContent({
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: string; name: string }[]>([]);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
 
   // Comments with reactions + replies
   const [richComments, setRichComments] = useState<any[]>([]);
@@ -785,20 +823,55 @@ export function TaskDetailModalContent({
 
 
   // Fetch persistent activities and comments from DB
+  // ---------------------------------------------------------------------------
+  // In-memory session cache (module-level — survives re-renders, cleared on
+  // page refresh). Keyed by task/parent-task ID. Entries expire after 60 s so
+  // a long-open modal still eventually picks up new comments.
+  // ---------------------------------------------------------------------------
   const loadActivities = useCallback(async (silent = false) => {
     if (!task?.id || !currentUser) return;
     try {
-      if (!silent) setLoadingActivities(true);
-      setLoadError(null);
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
 
+      // ── 1. CACHE-FIRST: show cached data immediately (zero skeleton flicker) ──
+      const cached = activityCache.get(targetId);
+      const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
+      const cacheValid = cacheAge < ACTIVITY_CACHE_TTL_MS;
+
+      if (cached && cacheValid) {
+        // Serve cached data right away — user sees content instantly
+        const cachedActivities = isSubtask
+          ? cached.activities.filter((a: any) => a.subtaskTitle === task.title)
+          : cached.activities;
+        setActivities(cachedActivities);
+        setRichComments(cached.comments);
+        setLoadingActivities(false);
+        // Fall through to background refresh below (silent)
+      } else {
+        // No valid cache — show skeleton only on first open
+        if (!silent) setLoadingActivities(true);
+      }
+
+      setLoadError(null);
+
+      // ── 2. BACKGROUND REFRESH: always fetch fresh data ──
       const [actRes, commentRes] = await Promise.all([
         tasksApi.getActivities(targetId),
         tasksApi.getComments(targetId, subtaskId),
       ]);
       if (!isMountedRef.current) return;
+
+      // ── 3. SAVE TO CACHE ──
+      if (actRes?.activities && commentRes?.comments) {
+        activityCache.set(targetId, {
+          activities: actRes.activities,
+          comments: commentRes.comments,
+          timestamp: Date.now(),
+        });
+      }
+
       if (actRes?.activities) {
         const fetchedActivities = isSubtask
           ? actRes.activities.filter((a: any) => a.subtaskTitle === task.title)
@@ -921,8 +994,17 @@ export function TaskDetailModalContent({
     }
   };
 
+  // ── Bootstrap comments & activities ONCE per task open ──────────────────
+  // After the initial load, the socket handles all new comments in real-time.
+  // This ref resets whenever the task ID changes so reopening a different task
+  // always triggers a fresh load.
+  const commentsBootstrappedRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (isOpen && task?.id) {
+    if (!isOpen || !task?.id) return;
+    // Only bootstrap if this task hasn't been loaded yet in this session
+    if (commentsBootstrappedRef.current !== task.id) {
+      commentsBootstrappedRef.current = task.id;
       loadActivities();
     }
   }, [isOpen, task?.id, loadActivities]);
@@ -1173,11 +1255,66 @@ export function TaskDetailModalContent({
     socket.on('task_editing_content', handleEditingContent);
     socket.on('task_activity', handleActivity);
 
+    // ── Real-time comment delivery ──────────────────────────────────────────
+    // After bootstrap, new comments arrive via socket only — no polling needed.
+    const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask) return;
+      const targetId = (currentTask as any).parentTaskId || currentTask.id;
+      if (payload.taskId !== targetId) return;
+
+      // If viewing a subtask, only show comments for this subtask
+      const isSubtask = !!(currentTask as any).parentTaskId;
+      if (isSubtask && payload.subtaskId !== currentTask.id) return;
+      if (!isSubtask && payload.subtaskId) return;
+
+      setRichComments(prev => {
+        // Deduplicate — the sender already added it optimistically
+        if (prev.some(c => c.id === payload.comment.id)) return prev;
+        // Replace temp placeholder if this is the acting client
+        const tempIdx = prev.findIndex(c =>
+          typeof c.id === 'string' && c.id.startsWith('temp-') &&
+          c.content === payload.comment.content
+        );
+        if (tempIdx !== -1) {
+          const updated = [...prev];
+          updated[tempIdx] = payload.comment;
+          return updated;
+        }
+        return [...prev, payload.comment];
+      });
+    };
+
+    const handleCommentUpdated = (payload: { taskId: string; comment: any }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask) return;
+      const targetId = (currentTask as any).parentTaskId || currentTask.id;
+      if (payload.taskId !== targetId) return;
+      setRichComments(prev =>
+        prev.map(c => c.id === payload.comment.id ? { ...c, ...payload.comment } : c)
+      );
+    };
+
+    const handleCommentDeleted = (payload: { taskId: string; commentId: string }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask) return;
+      const targetId = (currentTask as any).parentTaskId || currentTask.id;
+      if (payload.taskId !== targetId) return;
+      setRichComments(prev => prev.filter(c => c.id !== payload.commentId));
+    };
+
+    socket.on('task:comment_added', handleCommentAdded);
+    socket.on('task:comment_updated', handleCommentUpdated);
+    socket.on('task:comment_deleted', handleCommentDeleted);
+
     return () => {
       socket.off('task_editing_start', handleEditingStart);
       socket.off('task_editing_stop', handleEditingStop);
       socket.off('task_editing_content', handleEditingContent);
       socket.off('task_activity', handleActivity);
+      socket.off('task:comment_added', handleCommentAdded);
+      socket.off('task:comment_updated', handleCommentUpdated);
+      socket.off('task:comment_deleted', handleCommentDeleted);
     };
   }, [socket, task?.id, currentUser?.name]);
 
@@ -3061,83 +3198,134 @@ export function TaskDetailModalContent({
                 </div>
               )}
               <div className="relative">
-                {showMentionMenu && (
-                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-card border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100000]">
-                    <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
-                      People
-                    </div>
-                    <div className="max-h-48 overflow-y-auto">
-                      {workspaceUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).map(u => (
-                        <div
-                          key={u.id}
-                          className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
-                          onClick={() => {
-                            const matchLength = mentionSearch.length + 1;
-                            commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
-                            setShowMentionMenu(false);
-                            if (!mentionedUsers.some(m => m.id === u.id)) {
-                              setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
-                            }
-                          }}
-                        >
-                          {u.avatarUrl ? (
-                            <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold">
-                              {(u.name || '?').substring(0, 2).toUpperCase()}
-                            </div>
-                          )}
-                          <span>{u.name}</span>
-                        </div>
-                      ))}
-                      {workspaceUsers.filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).length === 0 && (
-                        <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                <CommentEditor
-                  ref={commentEditorRef}
-                  id="main-task-comment"
-                  value={comment}
-                  onChange={(html, text, cursorPosition) => {
-                    setComment(html);
+                {(() => {
+                  const filteredMentionUsers = (workspaceUsers || []).filter(u =>
+                    (u.name || '').toLowerCase().includes(mentionSearch.toLowerCase()) ||
+                    (u.email || '').toLowerCase().includes(mentionSearch.toLowerCase())
+                  );
 
-
-                    // Mention logic
-                    const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
-                    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-
-                    if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
-                      setShowMentionMenu(true);
-                      setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
-                      setMentionStartIndex(lastAtIndex);
-                    } else {
-                      setShowMentionMenu(false);
+                  const handleSelectMentionUser = (u: any) => {
+                    const matchLength = mentionSearch.length + 1;
+                    commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
+                    setShowMentionMenu(false);
+                    if (!mentionedUsers.some(m => m.id === u.id)) {
+                      setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
                     }
-                  }}
-                  onSubmit={handleAddComment}
-                  onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
-                  onUploadImage={uploadCommentImage}
-                  onUploadImageUrl={copyCommentImage}
-                  onUploadingChange={setIsUploadingInline}
-                  disabled={isSubmittingComment}
-                  placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
-                  footer={
-                    <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
-                      <Paperclip className="w-4 h-4" />
-                    </ComposerToolButton>
-                  }
-                  footerEnd={
-                    <ComposerSendButton
-                      onClick={handleAddComment}
-                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
-                      title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
-                    >
-                      {isSubmittingComment ? 'Sending…' : 'Send'}
-                    </ComposerSendButton>
-                  }
-                />
+                  };
+
+                  return (
+                    <>
+                      {showMentionMenu && (
+                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-card border border-zinc-700/60 rounded-xl shadow-2xl overflow-hidden z-[100000] animate-in fade-in zoom-in-95 duration-100">
+                          <div className="p-2 border-b border-zinc-800/60 text-xs font-semibold text-zinc-400 bg-zinc-900/60 flex items-center justify-between">
+                            <span>People</span>
+                            <span className="text-[10px] text-zinc-500 font-normal">↑↓ navigate, Enter/Tab select</span>
+                          </div>
+                          <div className="max-h-52 overflow-y-auto custom-scrollbar">
+                            {filteredMentionUsers.map((u, idx) => {
+                              const isSelected = idx === mentionSelectedIndex;
+                              return (
+                                <div
+                                  key={u.id}
+                                  onMouseEnter={() => setMentionSelectedIndex(idx)}
+                                  onClick={() => handleSelectMentionUser(u)}
+                                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${
+                                    isSelected ? 'bg-indigo-600/30 text-white' : 'text-zinc-200 hover:bg-zinc-800/60'
+                                  }`}
+                                >
+                                  {u.avatarUrl ? (
+                                    <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
+                                  ) : (
+                                    <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                      {(u.name || '?').substring(0, 2).toUpperCase()}
+                                    </div>
+                                  )}
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-xs font-medium truncate">{u.name}</span>
+                                    {u.email && <span className="text-[10px] text-zinc-500 truncate">{u.email}</span>}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {filteredMentionUsers.length === 0 && (
+                              <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      <CommentEditor
+                        ref={commentEditorRef}
+                        id="main-task-comment"
+                        value={comment}
+                        onChange={(html, text, cursorPosition) => {
+                          setComment(html);
+
+                          // Mention logic
+                          const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
+                          const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+
+                          if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
+                            setShowMentionMenu(true);
+                            setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
+                            setMentionStartIndex(lastAtIndex);
+                            setMentionSelectedIndex(0);
+                          } else {
+                            setShowMentionMenu(false);
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (showMentionMenu && filteredMentionUsers.length > 0) {
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              setMentionSelectedIndex(prev => (prev + 1) % filteredMentionUsers.length);
+                              return true;
+                            }
+                            if (e.key === 'ArrowUp') {
+                              e.preventDefault();
+                              setMentionSelectedIndex(prev => (prev - 1 + filteredMentionUsers.length) % filteredMentionUsers.length);
+                              return true;
+                            }
+                            if (e.key === 'Enter' || e.key === 'Tab') {
+                              e.preventDefault();
+                              const targetUser = filteredMentionUsers[mentionSelectedIndex] || filteredMentionUsers[0];
+                              if (targetUser) {
+                                handleSelectMentionUser(targetUser);
+                              }
+                              return true;
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setShowMentionMenu(false);
+                              return true;
+                            }
+                          }
+                          return false;
+                        }}
+                        onSubmit={handleAddComment}
+                        onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
+                        onUploadImage={uploadCommentImage}
+                        onUploadImageUrl={copyCommentImage}
+                        onUploadingChange={setIsUploadingInline}
+                        disabled={isSubmittingComment}
+                        placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
+                        footer={
+                          <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
+                            <Paperclip className="w-4 h-4" />
+                          </ComposerToolButton>
+                        }
+                        footerEnd={
+                          <ComposerSendButton
+                            onClick={handleAddComment}
+                            disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
+                            title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                          >
+                            {isSubmittingComment ? 'Sending…' : 'Send'}
+                          </ComposerSendButton>
+                        }
+                      />
+                    </>
+                  );
+                })()}
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
               </div>
             </div>
@@ -3289,6 +3477,7 @@ export function SubtaskDetailView({
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionStartIndex, setMentionStartIndex] = useState(0);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: string, name: string }[]>([]);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -5195,82 +5384,134 @@ export function SubtaskDetailView({
                   ))}
                 </div>
               )}
-              {showMentionMenu && (
-                <div className="absolute bottom-full left-0 mb-2 w-64 bg-card border border-zinc-700/60 rounded-md shadow-xl overflow-hidden z-[100000]">
-                  <div className="p-2 border-b border-zinc-800/60 text-xs font-medium text-zinc-400">
-                    People
-                  </div>
-                  <div className="max-h-48 overflow-y-auto">
-                    {(workspaceUsers || []).filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).map(u => (
-                      <div
-                        key={u.id}
-                        className="flex items-center gap-2 p-2 hover:bg-[#5f5ce6]/20 cursor-pointer text-sm text-zinc-200"
-                        onClick={() => {
-                          const matchLength = mentionSearch.length + 1;
-                          commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
-                          setShowMentionMenu(false);
-                          if (!mentionedUsers.some(m => m.id === u.id)) {
-                            setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
-                          }
-                        }}
-                      >
-                        {u.avatarUrl ? (
-                          <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold">
-                            {(u.name || '?').substring(0, 2).toUpperCase()}
-                          </div>
-                        )}
-                        <span>{u.name}</span>
-                      </div>
-                    ))}
-                    {(workspaceUsers || []).filter(u => u.name?.toLowerCase().includes(mentionSearch.toLowerCase())).length === 0 && (
-                      <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
-                    )}
-                  </div>
-                </div>
-              )}
-              <CommentEditor
-                  ref={commentEditorRef}
-                  id="subtask-comment"
-                  value={comment}
-                  onChange={(html, text, cursorPosition) => {
-                    setComment(html);
-                    
-                    // Mention logic
-                    const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
-                    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+              {(() => {
+                const filteredMentionUsers = (workspaceUsers || []).filter(u =>
+                  (u.name || '').toLowerCase().includes(mentionSearch.toLowerCase()) ||
+                  (u.email || '').toLowerCase().includes(mentionSearch.toLowerCase())
+                );
 
-                    if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
-                      setShowMentionMenu(true);
-                      setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
-                      setMentionStartIndex(lastAtIndex);
-                    } else {
-                      setShowMentionMenu(false);
-                    }
-                  }}
-                  onSubmit={handleAddComment}
-                  onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
-                  onUploadImage={uploadCommentImage}
-                  onUploadImageUrl={copyCommentImage}
-                  onUploadingChange={setIsUploadingInline}
-                  disabled={isSubmitting}
-                  placeholder={isSubmitting ? "Posting comment..." : "Write a comment..."}
-                  footer={
-                    <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
-                      <Paperclip className="w-4 h-4" />
-                    </ComposerToolButton>
+                const handleSelectMentionUser = (u: any) => {
+                  const matchLength = mentionSearch.length + 1;
+                  commentEditorRef.current?.insertMention(u.name || '', matchLength, u.id);
+                  setShowMentionMenu(false);
+                  if (!mentionedUsers.some(m => m.id === u.id)) {
+                    setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
                   }
-                  footerEnd={
-                    <ComposerSendButton
-                      onClick={handleAddComment}
-                      disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmitting}
-                      title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
-                    >
-                      {isSubmitting ? 'Sending…' : 'Send'}
-                    </ComposerSendButton>
-                  }
-                />
+                };
+
+                return (
+                  <>
+                    {showMentionMenu && (
+                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-card border border-zinc-700/60 rounded-xl shadow-2xl overflow-hidden z-[100000] animate-in fade-in zoom-in-95 duration-100">
+                        <div className="p-2 border-b border-zinc-800/60 text-xs font-semibold text-zinc-400 bg-zinc-900/60 flex items-center justify-between">
+                          <span>People</span>
+                          <span className="text-[10px] text-zinc-500 font-normal">↑↓ navigate, Enter/Tab select</span>
+                        </div>
+                        <div className="max-h-52 overflow-y-auto custom-scrollbar">
+                          {filteredMentionUsers.map((u, idx) => {
+                            const isSelected = idx === mentionSelectedIndex;
+                            return (
+                              <div
+                                key={u.id}
+                                onMouseEnter={() => setMentionSelectedIndex(idx)}
+                                onClick={() => handleSelectMentionUser(u)}
+                                className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${
+                                  isSelected ? 'bg-indigo-600/30 text-white' : 'text-zinc-200 hover:bg-zinc-800/60'
+                                }`}
+                              >
+                                {u.avatarUrl ? (
+                                  <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
+                                ) : (
+                                  <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                    {(u.name || '?').substring(0, 2).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-xs font-medium truncate">{u.name}</span>
+                                  {u.email && <span className="text-[10px] text-zinc-500 truncate">{u.email}</span>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {filteredMentionUsers.length === 0 && (
+                            <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <CommentEditor
+                      ref={commentEditorRef}
+                      id="subtask-comment"
+                      value={comment}
+                      onChange={(html, text, cursorPosition) => {
+                        setComment(html);
+                        
+                        // Mention logic
+                        const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
+                        const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+
+                        if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
+                          setShowMentionMenu(true);
+                          setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
+                          setMentionStartIndex(lastAtIndex);
+                          setMentionSelectedIndex(0);
+                        } else {
+                          setShowMentionMenu(false);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (showMentionMenu && filteredMentionUsers.length > 0) {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setMentionSelectedIndex(prev => (prev + 1) % filteredMentionUsers.length);
+                            return true;
+                          }
+                          if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setMentionSelectedIndex(prev => (prev - 1 + filteredMentionUsers.length) % filteredMentionUsers.length);
+                            return true;
+                          }
+                          if (e.key === 'Enter' || e.key === 'Tab') {
+                            e.preventDefault();
+                            const targetUser = filteredMentionUsers[mentionSelectedIndex] || filteredMentionUsers[0];
+                            if (targetUser) {
+                              handleSelectMentionUser(targetUser);
+                            }
+                            return true;
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setShowMentionMenu(false);
+                            return true;
+                          }
+                        }
+                        return false;
+                      }}
+                      onSubmit={handleAddComment}
+                      onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
+                      onUploadImage={uploadCommentImage}
+                      onUploadImageUrl={copyCommentImage}
+                      onUploadingChange={setIsUploadingInline}
+                      disabled={isSubmitting}
+                      placeholder={isSubmitting ? "Posting comment..." : "Write a comment..."}
+                      footer={
+                        <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
+                          <Paperclip className="w-4 h-4" />
+                        </ComposerToolButton>
+                      }
+                      footerEnd={
+                        <ComposerSendButton
+                          onClick={handleAddComment}
+                          disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmitting}
+                          title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                        >
+                          {isSubmitting ? 'Sending…' : 'Send'}
+                        </ComposerSendButton>
+                      }
+                    />
+                  </>
+                );
+              })()}
               <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
             </div>
           </div>

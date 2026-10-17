@@ -28,6 +28,8 @@ import {
   reorderLists,
   reorderDocs,
   triggerSyncClients,
+  triggerDailyRollover,
+  carryOverPriorities,
 } from '../controllers/space.controller';
 import { idParams, validate } from '../validation';
 import {
@@ -45,6 +47,7 @@ export const spaceRouter = Router();
 
 spaceRouter.get('/dashboard', getDashboardData);
 spaceRouter.post('/sync-clients', triggerSyncClients);
+spaceRouter.post('/trigger-rollover', triggerDailyRollover);
 
 // Reorder routes (must come before generic /:id routes)
 spaceRouter.put('/reorder', reorderSpaces);
@@ -70,6 +73,7 @@ spaceRouter.patch('/pages/:id', authenticateToken, validate({ params: idParams, 
 spaceRouter.get('/pages/:id/versions', authenticateToken, validate({ params: idParams }), getPageVersions);
 spaceRouter.post('/pages/:id/duplicate', validate({ params: idParams }), duplicatePage);
 spaceRouter.delete('/pages/:id', validate({ params: idParams }), deletePage);
+spaceRouter.post('/pages/:id/carry-over-priorities', authenticateToken, validate({ params: idParams }), carryOverPriorities);
 
 spaceRouter.get('/', listSpaces);
 spaceRouter.post('/', validate({ body: createSpaceSchema }), createSpace);

@@ -1,13 +1,40 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache } from '../services/redisService';
-import { keepUnseenBlocks, stripMentionSnapshots, taskMentionIds } from '../utils/pageBlocks';
-import { writePageIfUnchanged } from '../services/pageContentService';
+import {
+  keepUnseenBlocks,
+  stripMentionSnapshots,
+  taskMentionIds,
+  extractPrioritiesSection,
+  hasCustomPriorities,
+  cloneBlocksWithNewIds,
+} from '../utils/pageBlocks';
+import { writePageIfUnchanged, updatePageBlocks } from '../services/pageContentService';
 import { syncClients } from './webhook.controller';
+import { runDailyRollover } from '../workers/dailyRollover.worker';
+
+function getIo() {
+  try {
+    return require('../server').io;
+  } catch {
+    return null;
+  }
+}
 
 export async function triggerSyncClients(req: Request, res: Response) {
   req.headers['x-api-key'] = process.env.VIPSCALE_API_KEY;
   return syncClients(req, res);
+}
+
+export async function triggerDailyRollover(req: Request, res: Response) {
+  try {
+    const { dateOverride, force } = req.body || {};
+    const result = await runDailyRollover({ dateOverride, force });
+    await invalidateCache('spaces:all', 'dashboard:all');
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 function collectAllLists(spaces: any[]): { list: any; spaceName?: string; folderName?: string }[] {
@@ -129,6 +156,9 @@ const folderIncludeConfig: any = {
   },
 };
 
+// In-flight deduplication: concurrent requests share the same DB promise when cache is cold
+const listSpacesInFlight = new Map<string, Promise<any>>();
+
 // GET /api/spaces - full hierarchy with Redis Cache-Aside
 export async function listSpaces(req: Request, res: Response) {
   try {
@@ -140,101 +170,114 @@ export async function listSpaces(req: Request, res: Response) {
       return res.json({ ...cachedSpaces, cached: true });
     }
 
-    const spaces = await prisma.space.findMany({
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: {
-        folders: folderIncludeConfig,
-        lists: { where: { folderId: null }, ...listsIncludeWithCount },
-        docs: {
-          where: { folderId: null, isDailyRollover: false },
-          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-          include: {
-            pages: {
-              orderBy: { createdAt: 'asc' },
-              select: {
-                ...pageSelectConfig,
-                subpages: {
-                  orderBy: { createdAt: 'asc' },
-                  select: pageSelectConfig,
+    // Reuse in-flight query if another concurrent request already started it
+    let spacesPromise = listSpacesInFlight.get('spaces:all');
+    if (!spacesPromise) {
+      spacesPromise = (async () => {
+        // Run all 5 independent queries in parallel via Promise.all
+        const [spaces, rootFolders, rootLists, rootDocs, dailyRolloverDocs] = await Promise.all([
+          prisma.space.findMany({
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: {
+              folders: folderIncludeConfig,
+              lists: { where: { folderId: null }, ...listsIncludeWithCount },
+              docs: {
+                where: { folderId: null, isDailyRollover: false },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+                include: {
+                  pages: {
+                    orderBy: { createdAt: 'asc' },
+                    select: {
+                      ...pageSelectConfig,
+                      subpages: {
+                        orderBy: { createdAt: 'asc' },
+                        select: pageSelectConfig,
+                      },
+                    },
+                  },
                 },
               },
             },
-          },
-        },
-      },
-    });
-
-    // Also fetch standalone root items (folders/lists/docs with no spaceId)
-    const rootFolders = await prisma.folder.findMany({
-      where: { spaceId: null, parentFolderId: null },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: folderIncludeConfig.include,
-    });
-    const rootLists = await prisma.list.findMany({
-      where: { spaceId: null, folderId: null },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: { _count: { select: { tasks: true } } },
-    });
-    const rootDocs = await prisma.doc.findMany({
-      where: { spaceId: null, folderId: null, isDailyRollover: false },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: {
-        pages: {
-          orderBy: { createdAt: 'asc' },
-          select: {
-            ...pageSelectConfig,
-            subpages: {
-              orderBy: { createdAt: 'asc' },
-              select: pageSelectConfig,
+          }),
+          prisma.folder.findMany({
+            where: { spaceId: null, parentFolderId: null },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: folderIncludeConfig.include,
+          }),
+          prisma.list.findMany({
+            where: { spaceId: null, folderId: null },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: { _count: { select: { tasks: true } } },
+          }),
+          prisma.doc.findMany({
+            where: { spaceId: null, folderId: null, isDailyRollover: false },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: {
+              pages: {
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  ...pageSelectConfig,
+                  subpages: {
+                    orderBy: { createdAt: 'asc' },
+                    select: pageSelectConfig,
+                  },
+                },
+              },
             },
-          },
-        },
-      },
-    });
+          }),
+          prisma.doc.findMany({
+            where: { isDailyRollover: true },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
+            include: {
+              pages: {
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  ...pageSelectConfig,
+                  subpages: {
+                    orderBy: { createdAt: 'asc' },
+                    select: pageSelectConfig,
+                  },
+                },
+              },
+            },
+          }),
+        ]);
 
-    let resultSpaces = [...spaces];
+        let resultSpaces = [...spaces];
 
-    // If standalone root items exist, bundle them into a virtual Space so they render in hierarchy tree
-    if (rootFolders.length > 0 || rootLists.length > 0 || rootDocs.length > 0) {
-      resultSpaces.unshift({
-        id: 'root-space',
-        name: 'Workspace Overview',
-        color: '#6366F1',
-        folders: rootFolders,
-        lists: rootLists,
-        docs: rootDocs,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as any);
+        // If standalone root items exist, bundle them into a virtual Space so they render in hierarchy tree
+        if (rootFolders.length > 0 || rootLists.length > 0 || rootDocs.length > 0) {
+          resultSpaces.unshift({
+            id: 'root-space',
+            name: 'Workspace Overview',
+            color: '#6366F1',
+            folders: rootFolders,
+            lists: rootLists,
+            docs: rootDocs,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          } as any);
+        }
+
+        const allDocsList = collectAllDocs(resultSpaces);
+        dailyRolloverDocs.forEach((d) => allDocsList.push({ doc: d }));
+
+        const payload = {
+          spaces: resultSpaces,
+          allLists: collectAllLists(resultSpaces),
+          allDocs: allDocsList,
+        };
+
+        await setCache('spaces:all', payload, 300);
+        return payload;
+      })().finally(() => {
+        listSpacesInFlight.delete('spaces:all');
+      });
+
+      listSpacesInFlight.set('spaces:all', spacesPromise);
     }
 
-    const allDocsList = collectAllDocs(resultSpaces);
-    const dailyRolloverDocs = await prisma.doc.findMany({
-      where: { isDailyRollover: true },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] as any,
-      include: {
-        pages: {
-          orderBy: { createdAt: 'asc' },
-          select: {
-            ...pageSelectConfig,
-            subpages: {
-              orderBy: { createdAt: 'asc' },
-              select: pageSelectConfig,
-            },
-          },
-        },
-      },
-    });
-    dailyRolloverDocs.forEach((d) => allDocsList.push({ doc: d }));
-
-    const payload = {
-      spaces: resultSpaces,
-      allLists: collectAllLists(resultSpaces),
-      allDocs: allDocsList,
-    };
-
-    await setCache('spaces:all', payload, 300);
-
+    const payload = await spacesPromise;
     return res.json({ ...payload, cached: false });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -774,6 +817,84 @@ async function syncRolloverExclusions(
   }
   if (added.length > 0) {
     await prisma.task.updateMany({ where: { id: { in: added }, rolloverExcluded: true }, data: { rolloverExcluded: false } });
+  }
+}
+
+// POST /api/spaces/pages/:id/carry-over-priorities
+export async function carryOverPriorities(req: Request, res: Response) {
+  try {
+    const pageId = req.params.id;
+    const targetPage = await prisma.page.findUnique({
+      where: { id: pageId },
+      include: { doc: true },
+    });
+    if (!targetPage) return res.status(404).json({ error: 'Page not found' });
+    if (!targetPage.doc.isDailyRollover || !targetPage.parentPageId) {
+      return res.status(400).json({ error: 'Page is not a daily rollover day page' });
+    }
+
+    // Find the most recent day page before this one
+    const targetTime = new Date(targetPage.title).getTime();
+    const otherPages = await prisma.page.findMany({
+      where: {
+        docId: targetPage.docId,
+        parentPageId: { not: null },
+        id: { not: pageId },
+      },
+      select: { id: true, title: true, content: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const sorted = otherPages
+      .map((p) => ({ page: p, time: new Date(p.title).getTime() }))
+      .filter((p) => !isNaN(p.time) && (isNaN(targetTime) || p.time < targetTime))
+      .sort((a, b) => b.time - a.time);
+
+    const sourcePage = sorted[0]?.page || otherPages[0];
+    if (!sourcePage || !sourcePage.content) {
+      return res.status(400).json({ error: 'No previous day page found to carry over from' });
+    }
+
+    let sourceBlocks: any[] = [];
+    try {
+      sourceBlocks = JSON.parse(sourcePage.content);
+    } catch {
+      return res.status(400).json({ error: 'Failed to parse previous page content' });
+    }
+
+    const { headerBlock, contentBlocks } = extractPrioritiesSection(sourceBlocks);
+    if (!hasCustomPriorities(contentBlocks)) {
+      return res.status(400).json({ error: 'Previous page has no custom priorities to carry over' });
+    }
+
+    const clonedBlocks = cloneBlocksWithNewIds(contentBlocks, 'blk-prio');
+
+    const written = await updatePageBlocks(targetPage, (blocks) => {
+      const targetSection = extractPrioritiesSection(blocks);
+      if (targetSection.startIndex !== -1) {
+        const deleteCount = targetSection.endIndex - (targetSection.startIndex + 1);
+        blocks.splice(targetSection.startIndex + 1, deleteCount, ...clonedBlocks);
+      } else {
+        const prioHeader = headerBlock ? { ...headerBlock, id: `blk-${Date.now()}-prio-head` } : {
+          id: `blk-${Date.now()}-prio-head`,
+          type: 'text',
+          content: '<h2>🚨 Priorities for Today</h2>',
+        };
+        blocks.unshift(prioHeader, ...clonedBlocks);
+      }
+      return true;
+    });
+
+    if (written) {
+      const io = getIo();
+      if (io) {
+        io.to(`doc:${targetPage.docId}`).emit('page_updated', { docId: targetPage.docId, pageId: targetPage.id });
+      }
+    }
+
+    return res.json({ success: true, carriedCount: clonedBlocks.length, sourcePageTitle: sourcePage.title });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 }
 

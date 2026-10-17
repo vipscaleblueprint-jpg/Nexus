@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { useAppStore } from '@/lib/store';
-import { useEffect, Suspense } from 'react';
+import { useEffect, useRef, Suspense } from 'react';
 
 import { authApi } from '@/api';
 import { notificationsApi } from '@/api/notifications';
@@ -19,13 +19,17 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     spaces,
     loadSpaces,
     loadingSpaces,
-    hasLoadedSpaces,
     hydrateFromCache,
     hydrateTasksFromCache,
     currentUser,
     setCurrentUser,
     setUnreadNotifications,
   } = useAppStore();
+
+  // Track when spaces were last fetched so we don't refetch on every navigation.
+  // Spaces are considered stale after 5 minutes.
+  const lastSpacesFetchRef = useRef<number>(0);
+  const SPACES_STALE_MS = 5 * 60 * 1000;
 
   // Opt-in performance monitor (?perf=1): logs request timings, freezes and memory to the console
   useEffect(() => {
@@ -41,9 +45,15 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     hydrateFromCache();
     hydrateTasksFromCache();
     // Not on the login page: the API needs a session, and a failed load there still marks spaces as loaded, so
-    // after signing in (router.push keeps the store) the sidebar would never fetch them
-    if (pathname !== '/login' && !hasLoadedSpaces && !loadingSpaces) {
-      loadSpaces();
+    // after signing in (router.push keeps the store) the sidebar would never fetch them.
+    // Only refetch spaces when the cached data is stale (older than 5 min) — prevents a fresh
+    // API call on every single client-side navigation.
+    if (pathname !== '/login' && !loadingSpaces) {
+      const isStale = Date.now() - lastSpacesFetchRef.current > SPACES_STALE_MS;
+      if (isStale) {
+        lastSpacesFetchRef.current = Date.now();
+        loadSpaces();
+      }
     }
     if (!currentUser && pathname !== '/login') {
       authApi

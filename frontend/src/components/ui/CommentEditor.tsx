@@ -39,6 +39,7 @@ interface CommentEditorProps {
   footer?: React.ReactNode;
   /** The send action on the right of the toolbar row (use ComposerSendButton). */
   footerEnd?: React.ReactNode;
+  onKeyDown?: (event: KeyboardEvent) => boolean | void;
 }
 
 /** An icon button for the comment toolbar. */
@@ -166,7 +167,7 @@ const fileNameFromSrc = (src: string, type: string) => {
   return `pasted-image-${Date.now()}.${ext}`;
 };
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown }, ref) => {
   const pendingUploads = React.useRef(0);
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   // Drag handle beside the hovered line/image: its top within the wrapper and the block's doc position
@@ -177,7 +178,6 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
   // Editor handlers are registered once, so they reach the latest functions through refs
   const insertImagesRef = React.useRef<(files: File[], pos?: number) => void>(() => {});
   const rehostImagesRef = React.useRef<(srcs: string[]) => void>(() => {});
-
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -212,6 +212,9 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         class: 'prose prose-sm prose-invert prose-p:my-0 focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full'
       },
       handleKeyDown: (view, event) => {
+        if (onKeyDown && onKeyDown(event)) {
+          return true;
+        }
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
           if (onSubmit) onSubmit();

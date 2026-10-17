@@ -5,7 +5,7 @@ import { timingSafeEqual } from 'crypto';
 import { io } from '../server';
 import { hashApiKey } from '../utils/apiKey';
 import { invalidateCache } from '../services/redisService';
-import { appendTaskToJournal } from '../utils/pageBlocks';
+import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { updatePageBlocks } from '../services/pageContentService';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 
@@ -483,14 +483,14 @@ export async function createTask(req: Request, res: Response) {
 
         if (todayPage && todayPage.content) {
           const clientName = list.name || 'Unknown Client';
-          const getNewTaskBlock = (suffix: string) => ({
-            id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
+          const taskBlock = {
+            id: `blk-t-${Date.now()}-${task.id}`,
             type: "text",
-            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span></p>`
-          });
+            content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span> ${NEW_TASK_BADGE}</p>`
+          };
 
           const written = await updatePageBlocks(todayPage, (blocks) => {
-            appendTaskToJournal(blocks, clientName, getNewTaskBlock);
+            appendTaskToJournal(blocks, clientName, taskBlock);
           });
 
           if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });
@@ -566,16 +566,17 @@ export async function updateTask(req: Request, res: Response) {
           if (todayPage && todayPage.content) {
             const taskMention = `data-id="${task.id}"`;
             const clientName = existingTask.list?.name || 'Unknown Client';
-            const getNewTaskBlock = (suffix: string) => ({
-              id: `blk-t-${Date.now()}-${task.id}-${suffix}`,
+            // Re-opened, not new: no NEW TASK ADDED badge
+            const taskBlock = {
+              id: `blk-t-${Date.now()}-${task.id}`,
               type: "text",
               content: `<p><span data-type="mention" data-id="${task.id}" data-label="${task.title}" data-mention-type="task" data-task-list-name="${clientName}">@${task.title}</span></p>`
-            });
+            };
 
             const written = await updatePageBlocks(todayPage, (blocks) => {
               const isAlreadyInJournal = blocks.some((b: any) => b.type === 'text' && b.content.includes(taskMention));
               if (isAlreadyInJournal) return false;
-              appendTaskToJournal(blocks, clientName, getNewTaskBlock);
+              appendTaskToJournal(blocks, clientName, taskBlock);
             });
 
             if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });

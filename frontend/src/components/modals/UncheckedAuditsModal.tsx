@@ -22,9 +22,14 @@ export function UncheckedAuditsModal({
   uncheckedAudits = [],
   openSubtasks = [],
   onReviewAudits,
-  reviewButtonText = 'Review Audits',
+  reviewButtonText,
 }: UncheckedAuditsModalProps) {
   if (!isOpen) return null;
+
+  // In Review only gates on subtasks, so the copy must not claim audits are needed
+  const blockedBySubtasksOnly = uncheckedAudits.length === 0 && openSubtasks.length > 0;
+  const heading = blockedBySubtasksOnly ? 'Close Subtasks First' : 'Audit Verification Required';
+  const buttonText = reviewButtonText || (blockedBySubtasksOnly ? 'Review Subtasks' : 'Review Audits');
 
   return (
     <div
@@ -41,7 +46,7 @@ export function UncheckedAuditsModal({
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-900/40">
           <div>
             <h3 className="text-sm font-semibold text-zinc-100">
-              Audit Verification Required
+              {heading}
             </h3>
             <p className="text-xs text-zinc-400 mt-0.5">
               Moving to <span className="font-semibold text-zinc-200 uppercase">{targetStatus}</span> requires verification
@@ -142,7 +147,7 @@ export function UncheckedAuditsModal({
               }}
               className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-sm flex items-center gap-2 transition-all cursor-pointer"
             >
-              <span>{reviewButtonText}</span>
+              <span>{buttonText}</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}

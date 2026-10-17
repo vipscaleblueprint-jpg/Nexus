@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { authApi } from '@/api';
+import { resetSidebarSession } from '@/lib/sidebarSession';
 import { ForgotPasswordModal } from '@/components/modals/ForgotPasswordModal';
 import { Lock, Mail, ArrowRight, ShieldCheck, AlertCircle, CheckSquare, Square } from 'lucide-react';
 
@@ -18,6 +19,8 @@ export default function LoginPage() {
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
 
   useEffect(() => {
+    // Every Nexus login (email or Google) passes through here: open the sidebar fresh afterwards
+    resetSidebarSession();
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const urlError = params.get('error');

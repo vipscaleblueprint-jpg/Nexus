@@ -28,9 +28,9 @@ import {
   extractClickUpTaskId,
   resolveClickUpListId,
 } from '../services/clickupService';
-import { isNexusAuditChecklist } from '../utils/auditChecklist';
+import { isNexusAuditChecklist, requiresClosedSubtasks, requiresCompletedAudits } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
-import { appendTaskToJournal } from '../utils/pageBlocks';
+import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { canUserSetAssignees, getAssignDeniedMessage } from '../utils/assignPermission';
 import { updatePageBlocks } from '../services/pageContentService';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
@@ -427,11 +427,11 @@ export async function createTask(req: Request, res: Response) {
           const assigneesStr = JSON.stringify(task.assignees || []).replace(/"/g, '&quot;');
 
           const written = await updatePageBlocks(dayPage, (blocks) => {
-            appendTaskToJournal(blocks, clientName, (section) => ({
-              id: section === 'c' ? `blk-t-${Date.now()}-${task.id}` : `blk-t-${Date.now()}-${task.id}-n`,
+            appendTaskToJournal(blocks, clientName, {
+              id: `blk-t-${Date.now()}-${task.id}`,
               type: 'text',
-              content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span></p>`
-            }));
+              content: `<p><span data-type="mention" data-id="${task.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${clientName}">@${escapedTitle}</span> ${NEW_TASK_BADGE}</p>`
+            });
           });
 
           if (written) io.to(`doc:${doc.id}`).emit('page_updated', { pageId: dayPage.id });
@@ -624,9 +624,8 @@ export async function updateTask(req: Request, res: Response) {
     }
 
     if (status !== undefined) {
-      const restrictedStatuses = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
-      if (restrictedStatuses.includes(status.toLowerCase())) {
-        // Find if ANY subtask is NOT "Closed"
+      // In Review: only subtasks must be Closed (auditing happens during review)
+      if (requiresClosedSubtasks(status)) {
         const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => {
           const s = (st.status || '').toLowerCase();
           return s !== 'closed' && s !== 'done' && !st.completed;
@@ -634,7 +633,10 @@ export async function updateTask(req: Request, res: Response) {
         if (hasUnclosedSubtasks) {
           return res.status(400).json({ error: `Cannot move to ${status}: All subtasks must be Closed first.` });
         }
+      }
 
+      // Completion statuses: required audits must also be checked
+      if (requiresCompletedAudits(status)) {
         const auditorRoles = [
           ...((currentTask as any).assigneeRoleRestrictions || []),
           ...(currentTask.subtasks || [])
@@ -1024,8 +1026,8 @@ export async function moveTask(req: Request, res: Response) {
     }
 
     if (status !== undefined) {
-      const restrictedStatuses = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
-      if (restrictedStatuses.includes(status.toLowerCase())) {
+      // In Review: only subtasks must be Closed (auditing happens during review)
+      if (requiresClosedSubtasks(status)) {
         const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => {
           const s = (st.status || '').toLowerCase();
           return s !== 'closed' && s !== 'done' && !st.completed;
@@ -1033,7 +1035,10 @@ export async function moveTask(req: Request, res: Response) {
         if (hasUnclosedSubtasks) {
           return res.status(400).json({ error: `Cannot move to ${status}: All subtasks must be Closed first.` });
         }
+      }
 
+      // Completion statuses: required audits must also be checked
+      if (requiresCompletedAudits(status)) {
         const auditorRoles = [
           ...((currentTask as any).assigneeRoleRestrictions || []),
           ...(currentTask.subtasks || [])
@@ -2022,9 +2027,9 @@ export async function updateSubtask(req: Request, res: Response) {
     }
 
     if (status !== undefined || completed === true) {
-      const restrictedStatuses = ['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
+      // Subtasks have no children, so In Review is free; only completion statuses need audits
       const targetStatus = (status || (completed ? 'CLOSED' : '')).toLowerCase();
-      if (restrictedStatuses.includes(targetStatus)) {
+      if (requiresCompletedAudits(targetStatus)) {
         const currentSubtask = await prisma.subtask.findUnique({
           where: { id: subtaskId },
           include: { checklists: { include: { items: true } } }

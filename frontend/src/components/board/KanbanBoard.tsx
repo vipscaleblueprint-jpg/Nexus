@@ -1489,7 +1489,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
             }, 350);
           }
         }}
-        reviewButtonText="Open Task & Review Audits"
+        reviewButtonText={blockedAuditAlert.uncheckedAudits.length > 0 ? 'Open Task & Review Audits' : 'Open Task & Review Subtasks'}
       />
     </DndContext>
   );

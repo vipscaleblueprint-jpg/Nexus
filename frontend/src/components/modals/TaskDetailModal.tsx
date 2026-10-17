@@ -168,6 +168,31 @@ export function prefetchTaskActivities(taskId: string): void {
   }).catch(() => {/* prefetch errors are silent */});
 }
 
+// Exported so SubtasksSection can prime the subtask cache on hover (prefetch)
+export function prefetchSubtaskActivities(parentTaskId: string, subtaskId: string, subtaskTitle?: string): void {
+  const cacheKey = `subtask:${subtaskId}`;
+  const cached = activityCache.get(cacheKey);
+  const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
+  if (cacheAge < ACTIVITY_CACHE_TTL_MS) return; // already fresh, skip
+
+  Promise.all([
+    tasksApi.getActivities(parentTaskId).catch(() => null),
+    tasksApi.getComments(parentTaskId, subtaskId).catch(() => null),
+  ]).then(([actRes, commentRes]) => {
+    if (actRes?.activities && commentRes?.comments) {
+      const currentTitle = subtaskTitle || '';
+      const filtered = actRes.activities.filter(
+        (a: any) => a.subtaskId === subtaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase())
+      );
+      activityCache.set(cacheKey, {
+        activities: filtered,
+        comments: commentRes.comments,
+        timestamp: Date.now(),
+      });
+    }
+  }).catch(() => {/* prefetch errors are silent */});
+}
+
 export const STATUS_COLORS: Record<string, string> = {
   'KYC': 'bg-[#3A8F55] text-white',
   'PIN BOARD': 'bg-[#1F8A6E] text-white',
@@ -1489,9 +1514,9 @@ export function TaskDetailModalContent({
           openSubtasks: transitionCheck.openSubtasks,
         }
       }));
-      if (transitionCheck.uncheckedAudits.length > 0) {
-        toast.error(`Audits required before moving to ${newStatus}`);
-      } else if (transitionCheck.openSubtasks.length > 0) {
+      // Missing audits: the Audit section's floating card says which ones (and any open subtasks), so no toast.
+      // It only appears for unchecked audits, so open subtasks alone still get a toast.
+      if (transitionCheck.uncheckedAudits.length === 0 && transitionCheck.openSubtasks.length > 0) {
         toast.error(`All subtasks must be closed before moving to ${newStatus}`);
       }
       return;
@@ -2878,15 +2903,17 @@ export function TaskDetailModalContent({
                         </div>
 
                         {editingCommentId === comment.id ? (
-                          <EditCommentForm
-                            commentId={comment.id}
-                            initialContent={comment.content || ''}
-                            workspaceUsers={workspaceUsers}
-                            currentUser={currentUser}
-                            onSave={(newContent) => handleSaveEdit(comment.id, newContent)}
-                            onCancel={() => setEditingCommentId(null)}
-                            onPreviewImage={setLightboxImage}
-                          />
+                          <div className="w-full mt-1.5">
+                            <EditCommentForm
+                              commentId={comment.id}
+                              initialContent={comment.content || ''}
+                              workspaceUsers={workspaceUsers}
+                              currentUser={currentUser}
+                              onSave={(newContent) => handleSaveEdit(comment.id, newContent)}
+                              onCancel={() => setEditingCommentId(null)}
+                              onPreviewImage={setLightboxImage}
+                            />
+                          </div>
                         ) : (
                           <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                             <CommentMarkdown content={comment.content || ''} components={markdownComponents} />
@@ -3474,6 +3501,31 @@ export function SubtaskDetailView({
 }) {
   const router = useRouter();
 
+  const subtaskRef = useRef(subtask);
+  useEffect(() => {
+    subtaskRef.current = subtask;
+  }, [subtask]);
+
+  const parentTaskRef = useRef(parentTask);
+  useEffect(() => {
+    parentTaskRef.current = parentTask;
+  }, [parentTask]);
+
+  // Synchronize subtask modifications immediately to local parent, global store, and window event bus
+  const syncSubtaskToParent = useCallback((updatedSubtask: any) => {
+    subtaskRef.current = updatedSubtask;
+    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
+    const currentParent = parentTaskRef.current || parentTask;
+    const newSubtasks = (currentParent.subtasks || []).map((st: any) =>
+      st.id === updatedSubtask.id ? { ...st, ...updatedSubtask } : st
+    );
+    const updatedParent = { ...currentParent, subtasks: newSubtasks };
+    parentTaskRef.current = updatedParent;
+    if (onUpdateTask) onUpdateTask(updatedParent);
+    useAppStore.getState().updateTask(updatedParent);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
+  }, [parentTask, onUpdateTask, setActiveSubtask]);
+
   const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(() => subtask?.assigneeRoleRestrictions || []);
   const latestRoleRestrictionsRef = useRef<string[]>(subtask?.assigneeRoleRestrictions || []);
   const lastRoleUpdateTimestampRef = useRef<number>(0);
@@ -3543,8 +3595,10 @@ export function SubtaskDetailView({
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [localDesc, setLocalDesc] = useState(subtask.description || '');
+  const [isLocalEditing, setIsLocalEditing] = useState(false);
   const [localStatus, setLocalStatus] = useState<string>(subtask.status || 'Pending');
   const [localCompleted, setLocalCompleted] = useState<boolean>(!!subtask.completed);
   const lastStatusUpdateTimestampRef = useRef<number>(0);
@@ -3679,12 +3733,8 @@ export function SubtaskDetailView({
             mimeType: file.type,
           };
           const { attachment } = await tasksApi.createTaskAttachment(subtask.id, payload);
-          const updatedSubtask = { ...subtask, attachments: [...(subtask.attachments || []), attachment] };
-          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-          if (onUpdateTask) {
-            const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-            onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-          }
+          const updatedSubtask = { ...subtaskRef.current, attachments: [...(subtaskRef.current.attachments || []), attachment] };
+          syncSubtaskToParent(updatedSubtask);
         }
       } catch (err: any) {
         console.error('Failed to upload file:', err);
@@ -3705,7 +3755,7 @@ export function SubtaskDetailView({
   const [isCheckLocked, setIsCheckLocked] = useState(false);
 
   const handleStatusChangeAction = async (newStatus: string) => {
-    if (!subtask || isSubmitting) return;
+    if (!subtask || isSubmittingStatus) return;
 
     const currentSubtask = subtaskRef.current || subtask;
     const transitionCheck = canTransitionTaskStatus(currentSubtask, newStatus);
@@ -3719,9 +3769,8 @@ export function SubtaskDetailView({
           openSubtasks: transitionCheck.openSubtasks,
         }
       }));
-      if (transitionCheck.uncheckedAudits.length > 0) {
-        toast.error(`Audits required before moving to ${newStatus}`);
-      } else if (transitionCheck.openSubtasks.length > 0) {
+      // Missing audits: the Audit section's floating card says which ones, so no toast
+      if (transitionCheck.uncheckedAudits.length === 0 && transitionCheck.openSubtasks.length > 0) {
         toast.error(`All subtasks must be closed before moving to ${newStatus}`);
       }
       return;
@@ -3755,7 +3804,6 @@ export function SubtaskDetailView({
       completed: isCompleted,
       checklists: updatedChecklists
     };
-    subtaskRef.current = updatedSubtask;
 
     // 2. Instantly append optimistic activity to local subtask feed
     const optimisticId = `optimistic-status-${Date.now()}`;
@@ -3771,17 +3819,11 @@ export function SubtaskDetailView({
     };
     setActivities(prev => [...prev, optimisticActivity]);
 
-    // 3. Instantly update parent task & global store
-    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-    const newSubtasks = parentTask.subtasks?.map((st: any) => 
-      st.id === updatedSubtask.id ? updatedSubtask : st
-    ) || [];
-    const updatedParent = { ...parentTask, subtasks: newSubtasks };
-    if (onUpdateTask) onUpdateTask(updatedParent);
-    useAppStore.getState().updateTask(updatedParent);
+    // 3. Instantly update parent task, app store, and broadcast real-time event
+    syncSubtaskToParent(updatedSubtask);
 
     // 4. Background DB update
-    setIsSubmitting(true);
+    setIsSubmittingStatus(true);
     try {
       const res = await tasksApi.updateSubtask(parentTask.id, subtask.id, {
         status: newStatus,
@@ -3796,16 +3838,10 @@ export function SubtaskDetailView({
       setLocalStatus(oldStatus);
       setLocalCompleted(oldCompleted);
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
-      if (setActiveSubtask) setActiveSubtask(currentSubtask);
-      const revertedSubtasks = parentTask.subtasks?.map((st: any) => 
-        st.id === currentSubtask.id ? currentSubtask : st
-      ) || [];
-      const revertedParent = { ...parentTask, subtasks: revertedSubtasks };
-      if (onUpdateTask) onUpdateTask(revertedParent);
-      useAppStore.getState().updateTask(revertedParent);
+      syncSubtaskToParent(currentSubtask);
       toast.error(err?.message || 'Failed to update subtask status');
     } finally {
-      setIsSubmitting(false);
+      setIsSubmittingStatus(false);
     }
   };
 
@@ -3846,22 +3882,16 @@ export function SubtaskDetailView({
   };
 
   useEffect(() => {
-    setLocalDesc(subtask.description || '');
-    setLocalTitle(subtask.title || '');
-  }, [subtask.description, subtask.title]);
-
-  const subtaskRef = useRef(subtask);
-  useEffect(() => {
-    subtaskRef.current = subtask;
-  }, [subtask]);
-
-  const parentTaskRef = useRef(parentTask);
-  useEffect(() => {
-    parentTaskRef.current = parentTask;
-  }, [parentTask]);
+    if (!isLocalEditing) {
+      setLocalDesc(subtask.description || '');
+    }
+    if (!isEditingTitle) {
+      setLocalTitle(subtask.title || '');
+    }
+  }, [subtask.description, subtask.title, isLocalEditing, isEditingTitle]);
 
   useEffect(() => {
-    if (!socket || !subtask) return;
+    if (!socket || !subtask?.id) return;
 
     const handleEditingStart = (data: { taskId: string; userName: string }) => {
       if (data.taskId === subtask.id && data.userName !== currentUser?.name) {
@@ -3886,7 +3916,13 @@ export function SubtaskDetailView({
       const currentSubtask = subtaskRef.current;
       const currentParentTask = parentTaskRef.current;
 
-      if (data.taskId === currentParentTask?.id && data.activity?.subtaskTitle === currentSubtask?.title) {
+      const isForThisSubtask =
+        data.taskId === currentParentTask?.id &&
+        (data.activity?.subtaskId === currentSubtask?.id ||
+          (data.activity?.subtaskTitle && currentSubtask?.title &&
+            data.activity.subtaskTitle.toLowerCase() === currentSubtask.title.toLowerCase()));
+
+      if (isForThisSubtask) {
         setActivities(prev => {
           if (prev.some(a => a.id === data.activity.id)) return prev;
           // The acting client already shows an optimistic entry for its own assignment —
@@ -3925,23 +3961,15 @@ export function SubtaskDetailView({
             const updatedSubtask = {
               ...currentSubtask,
               status: data.activity.newStatus,
-              completed: data.activity.newStatus === 'Closed' || data.activity.newStatus === 'CLOSED' || data.activity.newStatus === 'DONE'
+              completed: data.activity.newStatus.toLowerCase() === 'closed' || data.activity.newStatus.toLowerCase() === 'done' || data.activity.newStatus.toLowerCase() === 'completed'
             };
-            if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-            if (onUpdateTask) {
-              const newSubtasks = currentParentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-              onUpdateTask({ ...currentParentTask, subtasks: newSubtasks });
-            }
+            syncSubtaskToParent(updatedSubtask);
           }
         }
         if (data.activity.type === 'priority_change' && data.activity.newPriority) {
           if (currentSubtask.priority !== data.activity.newPriority) {
             const updatedSubtask = { ...currentSubtask, priority: data.activity.newPriority };
-            if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-            if (onUpdateTask) {
-              const newSubtasks = currentParentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-              onUpdateTask({ ...currentParentTask, subtasks: newSubtasks });
-            }
+            syncSubtaskToParent(updatedSubtask);
           }
         }
       }
@@ -4031,7 +4059,7 @@ export function SubtaskDetailView({
       socket.off('task:comment_updated', handleCommentUpdated);
       socket.off('task:comment_deleted', handleCommentDeleted);
     };
-  }, [socket, subtask?.id, currentUser?.name, parentTask.id, subtask?.title]);
+  }, [socket, subtask?.id, currentUser?.name, parentTask.id, syncSubtaskToParent]);
 
   const [localAssignees, setLocalAssignees] = useState<any[]>(() => {
     return subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
@@ -4052,6 +4080,7 @@ export function SubtaskDetailView({
     }
   }, [subtask.assignees, subtask.User, subtask.assignee]);
 
+  // Comprehensive cross-client and window real-time sync for subtask
   useEffect(() => {
     const handleWindowTaskUpdated = (e: any) => {
       const incoming = e.detail?.task;
@@ -4074,11 +4103,33 @@ export function SubtaskDetailView({
             latestRoleRestrictionsRef.current = targetSubtask.assigneeRoleRestrictions;
           }
         }
+        if (Date.now() - lastStatusUpdateTimestampRef.current > 1500 && targetSubtask.status !== undefined) {
+          setLocalStatus(targetSubtask.status);
+          const isDone = targetSubtask.status.toLowerCase() === 'closed' || targetSubtask.status.toLowerCase() === 'done' || targetSubtask.status.toLowerCase() === 'completed';
+          setLocalCompleted(isDone || !!targetSubtask.completed);
+        }
+        if (!isEditingTitle && targetSubtask.title !== undefined) {
+          setLocalTitle(targetSubtask.title);
+        }
+        if (!isLocalEditing && targetSubtask.description !== undefined) {
+          setLocalDesc(targetSubtask.description || '');
+        }
+        const mergedSubtask = {
+          ...subtaskRef.current,
+          ...targetSubtask,
+        };
+        subtaskRef.current = mergedSubtask;
+        if (setActiveSubtask) {
+          setActiveSubtask(mergedSubtask);
+        }
+      }
+      if (incoming.id === parentTask.id) {
+        parentTaskRef.current = { ...parentTaskRef.current, ...incoming };
       }
     };
     window.addEventListener('task:updated', handleWindowTaskUpdated);
     return () => window.removeEventListener('task:updated', handleWindowTaskUpdated);
-  }, [subtask.id]);
+  }, [subtask.id, isEditingTitle, isLocalEditing, setActiveSubtask, parentTask.id]);
 
   const applyAssigneesLocally = (updatedAssignees: any[]) => {
     lastAssigneeUpdateTimestampRef.current = Date.now();
@@ -4086,15 +4137,8 @@ export function SubtaskDetailView({
     setLocalAssignees(updatedAssignees);
     subtask.assignees = updatedAssignees;
     subtask.assigneeIds = updatedAssignees.map((a: any) => a.id);
-    const updatedSubtask = { ...subtask, assignees: updatedAssignees, assigneeIds: updatedAssignees.map((a: any) => a.id) };
-    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-    if (onUpdateTask) {
-      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-      const updatedParent = { ...parentTask, subtasks: newSubtasks };
-      onUpdateTask(updatedParent);
-      useAppStore.getState().updateTask(updatedParent);
-      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
-    }
+    const updatedSubtask = { ...subtaskRef.current, assignees: updatedAssignees, assigneeIds: updatedAssignees.map((a: any) => a.id) };
+    syncSubtaskToParent(updatedSubtask);
   };
 
   const persistAssignees = (previous: any[], next: any[]) => {
@@ -4146,17 +4190,11 @@ export function SubtaskDetailView({
   };
 
   const handleUpdatePriority = (newPriority: string | null) => {
-    const updatedSubtask = { ...subtask, priority: newPriority };
-    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-    if (onUpdateTask) {
-      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-    }
+    const updatedSubtask = { ...subtaskRef.current, priority: newPriority };
+    syncSubtaskToParent(updatedSubtask);
     tasksApi.updateSubtask(parentTask.id, subtask.id, { priority: newPriority } as any).catch(console.error);
     setIsPriorityOpen(false);
   };
-
-  const [isLocalEditing, setIsLocalEditing] = useState(false);
 
   const handleStartEditing = () => {
     if (socket && subtask) {
@@ -4182,28 +4220,104 @@ export function SubtaskDetailView({
     }
   };
 
+  const isMountedRef = useRef(true);
   useEffect(() => {
-    const load = async () => {
-      try {
-        setLoadingActivities(true);
-        setLoadError(null);
-        const [actRes, commentRes] = await Promise.all([
-          tasksApi.getActivities(parentTask.id),
-          tasksApi.getComments(parentTask.id, subtask.id)
-        ]);
-        if (actRes?.activities) {
-          setActivities(actRes.activities.filter((a: any) => a.subtaskTitle === subtask.title));
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  const commentsBootstrappedRef = useRef<string | null>(null);
+
+  const loadActivities = useCallback(async (silent = false) => {
+    if (!subtask?.id || !parentTask?.id || !currentUser) return;
+    try {
+      const cacheKey = `subtask:${subtask.id}`;
+      const cached = activityCache.get(cacheKey);
+      const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
+      const cacheValid = cacheAge < ACTIVITY_CACHE_TTL_MS;
+
+      if (cached && cacheValid) {
+        // Serve cached data right away — zero skeleton flicker
+        setActivities(cached.activities);
+        setRichComments(cached.comments);
+        setLoadingActivities(false);
+      } else {
+        // Only show skeleton on first load if we don't already have activities or comments
+        if (!silent && activities.length === 0 && richComments.length === 0) {
+          setLoadingActivities(true);
         }
-        if (commentRes?.comments) setRichComments(commentRes.comments);
-      } catch (err: any) {
-        console.error('Failed to load comments/activities:', err);
-        setLoadError(err?.message || String(err));
-      } finally {
+      }
+
+      setLoadError(null);
+
+      // Background refresh: always fetch fresh data
+      const [actRes, commentRes] = await Promise.all([
+        tasksApi.getActivities(parentTask.id),
+        tasksApi.getComments(parentTask.id, subtask.id)
+      ]);
+
+      if (!isMountedRef.current) return;
+
+      const currentTitle = subtaskRef.current?.title || subtask.title;
+      let fetchedActivities: any[] = [];
+      if (actRes?.activities) {
+        fetchedActivities = actRes.activities.filter(
+          (a: any) => a.subtaskId === subtask.id || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase())
+        );
+      }
+
+      const fetchedComments = commentRes?.comments || [];
+
+      // Save to cache
+      activityCache.set(cacheKey, {
+        activities: fetchedActivities,
+        comments: fetchedComments,
+        timestamp: Date.now(),
+      });
+
+      // Merge activities preserving optimistic entries
+      setActivities(prev => {
+        const optimistic = prev.filter(
+          a => typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))
+        );
+        const fetchedIds = new Set(fetchedActivities.map((a: any) => a.id));
+        const recentReal = prev.filter(
+          a => !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) && !fetchedIds.has(a.id)
+        );
+        const merged = [...fetchedActivities, ...recentReal, ...optimistic];
+        return merged.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      });
+
+      // Merge comments preserving optimistic entries
+      setRichComments(prev => {
+        const fetchedIds = new Set(fetchedComments.map((c: any) => c.id));
+        const optimistic = prev.filter(
+          c => typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))
+        );
+        const recentReal = prev.filter(
+          c => !(typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))) && !fetchedIds.has(c.id)
+        );
+        return [...fetchedComments, ...recentReal, ...optimistic].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+      });
+    } catch (err: any) {
+      console.error('Failed to load comments/activities:', err);
+      setLoadError(err?.message || String(err));
+    } finally {
+      if (isMountedRef.current) {
         setLoadingActivities(false);
       }
-    };
-    load();
-  }, [parentTask.id, subtask.id, subtask.title]);
+    }
+  }, [subtask?.id, parentTask?.id, currentUser, activities.length, richComments.length]);
+
+  useEffect(() => {
+    if (!subtask?.id) return;
+    if (commentsBootstrappedRef.current !== subtask.id) {
+      commentsBootstrappedRef.current = subtask.id;
+      loadActivities();
+    }
+  }, [subtask?.id, loadActivities]);
 
   const handleCommentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -4220,7 +4334,7 @@ export function SubtaskDetailView({
   const handleAddComment = async () => {
     const trimmed = isBlankCommentHtml(comment) ? '' : trimCommentHtml(comment);
     if (!trimmed && stagedFiles.length === 0) return;
-    if (!currentUser?.id || isSubmitting || isUploading || isUploadingInline) return;
+    if (!currentUser?.id || isSubmittingComment || isUploading || isUploadingInline) return;
 
     const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const draftHtml = comment;
@@ -4228,7 +4342,7 @@ export function SubtaskDetailView({
       let content = trimmed;
       // Only uploads hold the editor: files need their URLs before the comment can be shown or sent
       if (stagedFiles.length > 0) {
-        setIsSubmitting(true);
+        setIsSubmittingComment(true);
         setIsUploading(true);
         for (const file of stagedFiles) {
           const res = await uploadApi.uploadFile(file, 'comment');
@@ -4259,7 +4373,7 @@ export function SubtaskDetailView({
         if (el) el.style.height = '80px';
       }, 10);
       setStagedFiles([]);
-      setIsSubmitting(false);
+      setIsSubmittingComment(false);
 
       const res = await tasksApi.addComment(parentTask.id, content, currentUser.id, parentTask.listId, [], undefined, subtask.id);
       const saved = res?.comment;
@@ -4271,16 +4385,11 @@ export function SubtaskDetailView({
       }
 
       // Reflect comment count in the parent task modal's SubtasksSection
-      // If the subtask's comments were never loaded, bump the server count instead of inventing a
-      // one-item comments array (which would also stop the comments tab from fetching the real ones).
+      const count = (subtaskRef.current._count?.comments || 0) + 1;
       const updatedSubtask = subtask.comments
-        ? { ...subtask, comments: [...subtask.comments, saved || { id: Date.now().toString() }] }
-        : { ...subtask, _count: { ...(subtask._count || {}), comments: (subtask._count?.comments ?? 0) + 1 } };
-      if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-      if (onUpdateTask) {
-        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-        onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-      }
+        ? { ...subtaskRef.current, comments: [...(subtaskRef.current.comments || []), saved || { id: Date.now().toString() }] }
+        : { ...subtaskRef.current, _count: { ...(subtaskRef.current._count || {}), comments: count } };
+      syncSubtaskToParent(updatedSubtask);
     } catch (err: any) {
       console.error('Failed to post comment:', err);
       // Take the unsent comment back out and give the text back if nothing new was typed
@@ -4289,7 +4398,7 @@ export function SubtaskDetailView({
       toast.error(err?.message || 'Failed to post comment');
       setIsUploading(false);
     } finally {
-      setIsSubmitting(false);
+      setIsSubmittingComment(false);
     }
   };
 
@@ -4389,14 +4498,15 @@ export function SubtaskDetailView({
   };
 
   const handleTitleBlur = () => {
-    if (localTitle !== subtask.title) {
-      if (onUpdateTask) {
-        const updatedSubtask = { ...subtask, title: localTitle };
-        if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-        onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-      }
-      tasksApi.updateSubtask(parentTask.id, subtask.id, { title: localTitle }).catch(err => console.error(err));
+    const trimmed = localTitle.trim();
+    if (!trimmed) {
+      setLocalTitle(subtaskRef.current.title || '');
+      return;
+    }
+    if (trimmed !== subtaskRef.current.title) {
+      const updatedSubtask = { ...subtaskRef.current, title: trimmed };
+      syncSubtaskToParent(updatedSubtask);
+      tasksApi.updateSubtask(parentTask.id, subtask.id, { title: trimmed }).catch(err => console.error(err));
     }
   };
 
@@ -4822,23 +4932,14 @@ export function SubtaskDetailView({
                                         subtask.assignees = matchingUsers;
                                         subtask.assigneeIds = matchingIds;
                                         const updatedSubtask = {
-                                          ...subtask,
+                                          ...subtaskRef.current,
                                           assigneeRoleRestrictions: next,
                                           assignees: matchingUsers,
                                           assigneeIds: matchingIds,
                                           assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
                                           assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
                                         };
-                                        if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-                                        if (onUpdateTask) {
-                                          const updatedTask = {
-                                            ...parentTask,
-                                            subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
-                                          };
-                                          onUpdateTask(updatedTask);
-                                          useAppStore.getState().updateTask(updatedTask);
-                                          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-                                        }
+                                        syncSubtaskToParent(updatedSubtask);
                                         tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
                                       }}
                                     className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-accent/30 ${hasRoles ? 'cursor-pointer hover:bg-accent/50 hover:text-foreground transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-muted-foreground'}`}
@@ -4885,23 +4986,14 @@ export function SubtaskDetailView({
                                           subtask.assignees = matchingUsers;
                                           subtask.assigneeIds = matchingIds;
                                           const updatedSubtask = {
-                                            ...subtask,
+                                            ...subtaskRef.current,
                                             assigneeRoleRestrictions: next,
                                             assignees: matchingUsers,
                                             assigneeIds: matchingIds,
                                             assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
                                             assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
                                           };
-                                          if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-                                          if (onUpdateTask) {
-                                            const updatedTask = {
-                                              ...parentTask,
-                                              subtasks: parentTask.subtasks.map((s: any) => s.id === subtask.id ? updatedSubtask : s)
-                                            };
-                                            onUpdateTask(updatedTask);
-                                            useAppStore.getState().updateTask(updatedTask);
-                                            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-                                          }
+                                          syncSubtaskToParent(updatedSubtask);
 
                                           tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any)
                                             .catch((err: any) => {
@@ -5181,7 +5273,9 @@ export function SubtaskDetailView({
                       setIsLocalEditing(false);
                       const sanitizedDesc = (localDesc === '<p></p>' || localDesc === '<p><br></p>') ? '' : localDesc;
                       
-                      if (sanitizedDesc !== subtask.description) {
+                      if (sanitizedDesc !== subtaskRef.current.description) {
+                        const updatedSubtask = { ...subtaskRef.current, description: sanitizedDesc };
+                        syncSubtaskToParent(updatedSubtask);
                         tasksApi.updateSubtask(parentTask.id, subtask.id, { description: sanitizedDesc }).catch(err => console.error(err));
                         if (socket) {
                           socket.emit('task_editing_stop', {
@@ -5192,10 +5286,6 @@ export function SubtaskDetailView({
                         }
                       }
                       
-                      if (onUpdateTask) {
-                        const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === subtask.id ? { ...st, description: sanitizedDesc } : st) || [];
-                        onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-                      }
                       if (socket && subtask) {
                         socket.emit('task_editing_end', {
                           listId: parentTask.listId,
@@ -5257,12 +5347,8 @@ export function SubtaskDetailView({
                   checklists={subtask.checklists || []}
                   currentUser={currentUser}
                   onUpdateChecklists={(checklists) => {
-                    const updatedSubtask = { ...subtask, checklists };
-                    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-                    if (onUpdateTask) {
-                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-                    }
+                    const updatedSubtask = { ...subtaskRef.current, checklists };
+                    syncSubtaskToParent(updatedSubtask);
                   }}
                 />
                 <ChecklistsSection
@@ -5272,12 +5358,8 @@ export function SubtaskDetailView({
                   checklists={subtask.checklists || []}
                   currentUser={currentUser}
                   onUpdateChecklists={(checklists) => {
-                    const updatedSubtask = { ...subtask, checklists };
-                    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-                    if (onUpdateTask) {
-                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-                    }
+                    const updatedSubtask = { ...subtaskRef.current, checklists };
+                    syncSubtaskToParent(updatedSubtask);
                   }}
                 />
 
@@ -5289,12 +5371,8 @@ export function SubtaskDetailView({
                   attachments={subtask.attachments || []}
                   onDelete={async (id) => {
                     await tasksApi.deleteTaskAttachment(subtask.id, id);
-                    const updatedSubtask = { ...subtask, attachments: (subtask.attachments || []).filter((a: any) => a.id !== id) };
-                    if (setActiveSubtask) setActiveSubtask(updatedSubtask);
-                    if (onUpdateTask) {
-                      const newSubtasks = parentTask.subtasks?.map((st: any) => st.id === updatedSubtask.id ? updatedSubtask : st) || [];
-                      onUpdateTask({ ...parentTask, subtasks: newSubtasks });
-                    }
+                    const updatedSubtask = { ...subtaskRef.current, attachments: (subtaskRef.current.attachments || []).filter((a: any) => a.id !== id) };
+                    syncSubtaskToParent(updatedSubtask);
                   }}
                 />
               </div>
@@ -5389,15 +5467,17 @@ export function SubtaskDetailView({
                       </div>
 
                       {editingCommentId === c.id ? (
-                        <EditCommentForm
-                          commentId={c.id}
-                          initialContent={c.content || ''}
-                          workspaceUsers={workspaceUsers}
-                          currentUser={currentUser}
-                          onSave={(newContent) => handleSaveEdit(c.id, newContent)}
-                          onCancel={() => setEditingCommentId(null)}
-                          onPreviewImage={setLightboxImage}
-                        />
+                        <div className="w-full mt-1.5">
+                          <EditCommentForm
+                            commentId={c.id}
+                            initialContent={c.content || ''}
+                            workspaceUsers={workspaceUsers}
+                            currentUser={currentUser}
+                            onSave={(newContent) => handleSaveEdit(c.id, newContent)}
+                            onCancel={() => setEditingCommentId(null)}
+                            onPreviewImage={setLightboxImage}
+                          />
+                        </div>
                       ) : (
                         <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                           <CommentMarkdown content={c.content || ''} components={markdownComponents} />
@@ -5797,8 +5877,8 @@ export function SubtaskDetailView({
                       onUploadImage={uploadCommentImage}
                       onUploadImageUrl={copyCommentImage}
                       onUploadingChange={setIsUploadingInline}
-                      disabled={isSubmitting}
-                      placeholder={isSubmitting ? "Posting comment..." : "Write a comment..."}
+                      disabled={isSubmittingComment}
+                      placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
                       footer={
                         <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
                           <Paperclip className="w-4 h-4" />
@@ -5807,10 +5887,10 @@ export function SubtaskDetailView({
                       footerEnd={
                         <ComposerSendButton
                           onClick={handleAddComment}
-                          disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmitting}
+                          disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
                           title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
                         >
-                          {isSubmitting ? 'Sending…' : 'Send'}
+                          {isSubmittingComment ? 'Sending…' : 'Send'}
                         </ComposerSendButton>
                       }
                     />

@@ -97,7 +97,12 @@ export function getAssignDeniedMessage(workspaceRoles: { name: string }[] = []):
   return `You can't change this. Only ${label} and Admins can set Team Role and Assignees.`;
 }
 
-export const RESTRICTED_GATE_STATUSES =['in review', 'inreview', 'in-review', 'checking', 'closed', 'crm', 'done', 'completed'];
+/** Entering In Review only needs every subtask Closed — auditing happens during review. */
+export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review'];
+/** Post-review statuses need every subtask Closed AND every required audit checked. */
+export const COMPLETION_GATE_STATUSES = ['checking', 'closed', 'crm', 'done', 'completed'];
+/** Every status that has any gate (kept for existing imports). */
+export const RESTRICTED_GATE_STATUSES = [...IN_REVIEW_STATUSES, ...COMPLETION_GATE_STATUSES];
 
 export interface TransitionCheckResult {
   allowed: boolean;
@@ -109,7 +114,8 @@ export interface TransitionCheckResult {
 
 /**
  * Validates whether a task can transition to a restricted status.
- * Requires all subtasks to be Closed, and all required Audit checklist items to be checked.
+ * - In Review: all subtasks must be Closed (no subtasks = allowed). Audits are NOT required yet.
+ * - Checking / CRM / Closed / Done / Completed: all subtasks Closed AND all required audits checked.
  */
 export function canTransitionTaskStatus(
   task: any,
@@ -128,26 +134,27 @@ export function canTransitionTaskStatus(
   }
 
   if (RESTRICTED_GATE_STATUSES.includes(targetStatusNorm)) {
+    const needsAudits = COMPLETION_GATE_STATUSES.includes(targetStatusNorm);
     const subtaskStatus = getTaskSubtaskStatus(task);
-    const auditStatus = getTaskAuditStatus(task);
+    const auditStatus = needsAudits ? getTaskAuditStatus(task) : null;
 
     const subtasksIncomplete = !subtaskStatus.isComplete;
-    const auditsIncomplete = !auditStatus.isComplete;
+    const auditsIncomplete = !!auditStatus && !auditStatus.isComplete;
 
     if (subtasksIncomplete || auditsIncomplete) {
       let reason = '';
       if (subtasksIncomplete && auditsIncomplete) {
-        reason = `Cannot move to ${newStatus}: ${subtaskStatus.openCount} subtask(s) still open and Audits need checking (${auditStatus.completedCount}/${auditStatus.totalCount} completed).`;
+        reason = `Cannot move to ${newStatus}: ${subtaskStatus.openCount} subtask(s) still open and Audits need checking (${auditStatus!.completedCount}/${auditStatus!.totalCount} completed).`;
       } else if (subtasksIncomplete) {
         reason = `Cannot move to ${newStatus}: All subtasks must be Closed first (${subtaskStatus.openCount} open).`;
       } else {
-        reason = `Cannot move to ${newStatus}: All Audits must be checked first (${auditStatus.completedCount}/${auditStatus.totalCount} completed). Needs check: ${auditStatus.uncheckedAudits.join(', ')}.`;
+        reason = `Cannot move to ${newStatus}: All Audits must be checked first (${auditStatus!.completedCount}/${auditStatus!.totalCount} completed). Needs check: ${auditStatus!.uncheckedAudits.join(', ')}.`;
       }
 
       return {
         allowed: false,
         reason,
-        uncheckedAudits: auditStatus.uncheckedAudits,
+        uncheckedAudits: auditsIncomplete ? auditStatus!.uncheckedAudits : [],
         openSubtasks: subtaskStatus.openSubtasks,
         targetStatus: newStatus,
       };

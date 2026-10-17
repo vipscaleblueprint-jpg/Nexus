@@ -39,6 +39,18 @@ export const getStatusColor = (status: string) => {
   return match ? match[1] : '#3b82f6';
 };
 
+// The last words of a title wrap together with the chip's controls (status, priority, role, assignees),
+// so a wrapped chip never leaves a lone icon on a line of its own.
+const TITLE_WORDS_KEPT_WITH_CONTROLS = 2;
+
+/** Splits a title into the part that may wrap freely and the tail kept on one line with the controls. */
+export function splitTitleForWrap(title: string): [string, string] {
+  const words = (title || '').split(' ');
+  if (words.length <= TITLE_WORDS_KEPT_WITH_CONTROLS) return ['', title || ''];
+  const cut = words.length - TITLE_WORDS_KEPT_WITH_CONTROLS;
+  return [`${words.slice(0, cut).join(' ')} `, words.slice(cut).join(' ')];
+}
+
 export const TaskMentionNode = (props: NodeViewProps) => {
   const { node, updateAttributes, getPos, editor } = props;
   const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData, taskListName } = node.attrs;
@@ -156,6 +168,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const [localPriority, setLocalPriority] = useState<string>(taskPriority || '');
   const [localAssignees, setLocalAssignees] = useState<string>(taskAssignees || '');
   const [localTeam, setLocalTeam] = useState<string>(node.attrs.taskTeam || '');
+  // The title is split in two spans (see splitTitleForWrap); hover underlines both together
+  const [isTitleHovered, setIsTitleHovered] = useState(false);
 
   // Sync local state when node.attrs change from outside (e.g., initial load)
   useEffect(() => {
@@ -318,7 +332,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         >
           {statusName}
         </span>
-        <span className="inline-block w-1 cursor-text">&#8203;</span>
+        <span className="pl-1 cursor-text">&#8203;</span>
       </NodeViewWrapper>
     );
   }
@@ -352,6 +366,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || !taskData) return;
 
+    // Subtasks skip this: the mention's subtask data has no checklists, so the check can't see their audits.
+    // The server checks them, and a refusal reverts the chip below.
     if (mentionType !== 'subtask') {
       const transitionCheck = canTransitionTaskStatus(taskData, newStatus);
       if (!transitionCheck.allowed) {
@@ -359,6 +375,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         return;
       }
     }
+
+    const previousTask = taskData;
+    const previousStatusAttr = taskStatus;
+    const previousLocalStatus = localStatus;
 
     // Optimistic UI updates
     const optimisticTask = { ...taskData, status: newStatus };
@@ -376,7 +396,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       toast.success('Status updated');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update status');
-      // Revert could be added here if needed
+      // The server refused (e.g. audits not done): put the chip back to the status it really has
+      updateTaskStore(previousTask);
+      try { updateAttributes({ taskStatus: previousStatusAttr }); } catch (err) {}
+      setLocalStatus(previousLocalStatus);
     }
   };
 
@@ -478,6 +501,19 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
   const isSubtask = mentionType === 'subtask';
+  const [titleHead, titleTail] = splitTitleForWrap(label || '');
+  const titleClass = `cursor-pointer border-b pb-[1px] transition-all duration-300 align-middle ${isTitleHovered ? 'border-zinc-500' : 'border-transparent'} ${
+    isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'
+  }`;
+  const titleProps = {
+    title: 'Open Task Detail',
+    onMouseEnter: () => setIsTitleHovered(true),
+    onMouseLeave: () => setIsTitleHovered(false),
+    onClick: (e: React.MouseEvent) => {
+      e.stopPropagation();
+      window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id, task: taskData } }));
+    },
+  };
   const isClosedNode = (parsedStatusName || '').toUpperCase() === 'CLOSED' || (parsedStatusName || '').toUpperCase() === 'DONE';
   // Chip surface comes from theme variables (globals.css) so it follows light mode; avatar rings
   // use the same colour so stacked avatars read as cut-outs instead of outlined circles.
@@ -520,20 +556,17 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           ))}
         </span>
 
-        <span 
-          className={`cursor-pointer border-b border-transparent hover:border-zinc-500 pb-[1px] transition-all duration-300 mr-1.5 align-middle ${
-            isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'
-          }`}
-          onClick={(e) => {
-            e.stopPropagation();
-            window.dispatchEvent(new CustomEvent('open-task-detail', { detail: { taskId: id, task: taskData } }));
-          }}
-          title="Open Task Detail"
-        >
-          {label}
-        </span>
-        
+        {titleHead && (
+          <span className={titleClass} {...titleProps}>
+            {titleHead}
+          </span>
+        )}
 
+        {/* Title tail + controls wrap as one unit */}
+        <span className="whitespace-nowrap">
+        <span className={`${titleClass} mr-1.5`} {...titleProps}>
+          {titleTail}
+        </span>
 
         <span
           ref={descTriggerRef}
@@ -667,8 +700,10 @@ export const TaskMentionNode = (props: NodeViewProps) => {
             )}
           </AnimatePresence>
         </motion.span>
+        </span>
       </motion.span>
-      <span className="inline-block w-1 cursor-text">&#8203;</span>
+      {/* Inline (not inline-block) so this cursor spacer can never wrap onto an empty line of its own */}
+      <span className="pl-1 cursor-text">&#8203;</span>
 
       {openDropdown === 'status' && (
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>

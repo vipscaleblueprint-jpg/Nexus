@@ -31,7 +31,7 @@ import activityRoutes from './routes/activity.routes';
 // Import workers to initialize them
 import './workers/task.worker';
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
-import './workers/dailyRollover.worker';
+import { JOURNAL_CATCH_UP_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 
@@ -45,6 +45,15 @@ const server = http.createServer(app);
       pattern: '0 0 * * *', // Every day at midnight
       tz: 'Asia/Singapore'
     }
+  });
+
+  // Safety net for the journal auto-append (appendMissingTasksToJournal), every 5 minutes. Kept in Redis, so a
+  // server restart doesn't lose it.
+  await dailyRolloverQueue.add(JOURNAL_CATCH_UP_JOB, {}, {
+    repeat: { every: 5 * 60 * 1000 },
+    jobId: 'journal-catch-up',
+    attempts: 1, // the next scheduled run is the retry
+    removeOnFail: 50,
   });
 
   // Two-way user sync with the tools (VIPScale), every 10 minutes.

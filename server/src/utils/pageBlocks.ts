@@ -42,7 +42,7 @@ export function taskMentionIds(content: string | null | undefined): Set<string> 
 
 const isEmptyBlock = (b: any) =>
   b?.type === 'text' && /^(<p>(\s|&nbsp;|<br\s*\/?>)*<\/p>)?$/i.test(String(b.content ?? '').trim());
-// Sections of the journal day page are delimited by h2/h3 headings (client names, "New Tasks")
+// Sections of the journal day page are delimited by h2/h3 headings (client names; older pages also have "New Tasks")
 const isSectionHeading = (b: any) => b?.type === 'text' && /^<h[23]/i.test(String(b.content ?? ''));
 const findHeading = (blocks: Block[], name: string) =>
   blocks.findIndex((b) =>
@@ -74,12 +74,22 @@ function appendToSection(blocks: Block[], headerIndex: number, block: Block, tag
   }
 }
 
+// Orange pill after a new task's line on today's journal page: the editor's Badge mark in its Orange preset
+// (frontend extensions/Badge.ts). Each rollover rebuilds the task lines from the tasks, so it stays on that day.
+export const NEW_TASK_BADGE = '<span data-badge="#f57c00" style="background-color: #f57c00; color: #ffffff">NEW TASK ADDED</span>';
+// Also matches the badge once the editor has re-saved it (it rewrites the inline colours), with the space before it
+const NEW_TASK_BADGE_HTML = /\s*<span\b[^>]*\bdata-badge\b[^>]*>\s*NEW TASK ADDED\s*<\/span>/gi;
+
+/** Drops NEW TASK ADDED badges from blocks carried onto another day's page. */
+export function stripNewTaskBadges(blocks: Block[]): Block[] {
+  return blocks.map((b) => (typeof b?.content === 'string' ? { ...b, content: b.content.replace(NEW_TASK_BADGE_HTML, '') } : b));
+}
+
 /**
- * Appends a new task to the journal day page: once under its client's heading and once under "New Tasks".
- * A missing client heading is created just above "New Tasks" (with the other clients) rather than at the
- * very bottom of the page. Mutates `blocks`.
+ * Appends a task line to the journal day page under its client's heading. A missing client heading is created
+ * after the other clients (above the "New Tasks" heading older pages still have). Mutates `blocks`.
  */
-export function appendTaskToJournal(blocks: Block[], clientName: string, makeTaskBlock: (section: 'c' | 'n') => Block) {
+export function appendTaskToJournal(blocks: Block[], clientName: string, taskBlock: Block) {
   const tag = clientName.replace(/\s+/g, '');
 
   let clientIndex = findHeading(blocks, clientName);
@@ -88,14 +98,7 @@ export function appendTaskToJournal(blocks: Block[], clientName: string, makeTas
     clientIndex = newTasksIndex === -1 ? blocks.length : newTasksIndex;
     blocks.splice(clientIndex, 0, { id: `blk-h-${Date.now()}-${tag}`, type: 'text', content: `<h2>${clientName}</h2>` });
   }
-  appendToSection(blocks, clientIndex, makeTaskBlock('c'), tag);
-
-  let newTasksIndex = findHeading(blocks, 'new tasks');
-  if (newTasksIndex === -1) {
-    blocks.push({ id: `blk-h-${Date.now()}-NewTasks`, type: 'text', content: '<h3>New Tasks</h3>' });
-    newTasksIndex = blocks.length - 1;
-  }
-  appendToSection(blocks, newTasksIndex, makeTaskBlock('n'), 'NewTasks');
+  appendToSection(blocks, clientIndex, taskBlock, tag);
 }
 
 /**

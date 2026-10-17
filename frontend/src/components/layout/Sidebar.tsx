@@ -18,6 +18,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
 import { spacesApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
+import { SIDEBAR_SESSION_KEY } from '@/lib/sidebarSession';
 
 import {
   DndContext,
@@ -191,9 +192,34 @@ function writeTreePref(key: string, id: string, value: unknown) {
   }
 }
 
+/**
+ * Once per login / new tab: forget the remembered folder open states, so folders start collapsed
+ * (Client Dashboard open, see FolderItem). Within the session a reload keeps what the user opened.
+ */
+function startSidebarSessionIfNew() {
+  if (typeof window === 'undefined') return;
+  try {
+    if (sessionStorage.getItem(SIDEBAR_SESSION_KEY)) return;
+    sessionStorage.setItem(SIDEBAR_SESSION_KEY, '1');
+    const prefs = readTreePrefs<boolean>(TREE_OPEN_KEY);
+    Object.keys(prefs).forEach((id) => {
+      if (id.startsWith('folder-')) delete prefs[id];
+    });
+    localStorage.setItem(TREE_OPEN_KEY, JSON.stringify(prefs));
+  } catch {
+    // Storage unavailable: folders just use their defaults.
+  }
+}
+
+/** The client folder stays open when the sidebar starts fresh. */
+function isClientFolder(folder: Folder) {
+  return (folder.name || '').trim().toLowerCase() === 'client dashboard';
+}
+
 /** Open/closed state for one tree row, remembered across reloads. */
 function usePersistedOpen(id: string, defaultOpen: boolean) {
   const [isOpen, setOpen] = useState<boolean>(() => {
+    startSidebarSessionIfNew();
     const saved = readTreePrefs<boolean>(TREE_OPEN_KEY)[id];
     return typeof saved === 'boolean' ? saved : defaultOpen;
   });
@@ -1593,7 +1619,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
   onAddList: (spaceId?: string, folderId?: string) => void;
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
-  const [isOpen, setIsOpen] = usePersistedOpen(`folder-${folder.id}`, true);
+  const [isOpen, setIsOpen] = usePersistedOpen(`folder-${folder.id}`, isClientFolder(folder));
   const [sort, setSort] = usePersistedSort(`folder-${folder.id}`);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(folder.name);

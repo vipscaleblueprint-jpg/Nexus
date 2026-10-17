@@ -12,7 +12,8 @@ import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
-import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions } from './TaskDetailModal';
+import { useAppStore } from '@/lib/store';
+import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, prefetchSubtaskActivities } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -877,6 +878,9 @@ function SubtaskRow({
   return (
     <div
       ref={resizeRef}
+      onMouseEnter={() => {
+        if (taskId) prefetchSubtaskActivities(taskId, subtask.id, subtask.title);
+      }}
       style={cardHeight && !isCollapsed ? { minHeight: cardHeight } : undefined}
       className={`relative flex flex-col px-4 transition-colors duration-200 group group/desc ${isCollapsed ? 'py-1.5 hover:bg-zinc-800/30' : 'py-4 bg-zinc-800/20'}`}
     >
@@ -1761,7 +1765,10 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
     });
 
     setLocalSubtasks(optimisticSubtasks);
-    onUpdateTask({ ...task, subtasks: optimisticSubtasks }); // Update parent instantly
+    const updatedParent = { ...task, subtasks: optimisticSubtasks };
+    onUpdateTask(updatedParent); // Update parent instantly
+    useAppStore.getState().updateTask(updatedParent);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
 
     // Step 2: persist to DB and reconcile with server response
     pendingUpdates.current++;
@@ -1770,12 +1777,18 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
       if (!isMounted.current) return; // Modal was closed — do nothing
       const updated = localSubtasksRef.current.map(s => s.id === subtaskId ? { ...s, ...resSubtask } : s);
       setLocalSubtasks(updated);
-      onUpdateTask({ ...task, subtasks: updated });
+      const serverParent = { ...task, subtasks: updated };
+      onUpdateTask(serverParent);
+      useAppStore.getState().updateTask(serverParent);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: serverParent } }));
     } catch (err) {
       console.error('Failed to update subtask:', err);
       if (!isMounted.current) return;
       setLocalSubtasks(task.subtasks || []);
-      onUpdateTask({ ...task, subtasks: task.subtasks || [] });
+      const rollbackParent = { ...task, subtasks: task.subtasks || [] };
+      onUpdateTask(rollbackParent);
+      useAppStore.getState().updateTask(rollbackParent);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: rollbackParent } }));
     } finally {
       pendingUpdates.current = Math.max(0, pendingUpdates.current - 1);
     }
@@ -1795,7 +1808,10 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
       });
       const updated = [...localSubtasks, subtask];
       setLocalSubtasks(updated);
-      onUpdateTask({ ...task, subtasks: updated });
+      const updatedParent = { ...task, subtasks: updated };
+      onUpdateTask(updatedParent);
+      useAppStore.getState().updateTask(updatedParent);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
       setNewSubtaskTitle('');
       setAddingSubtask(false);
       setShowAllSubtasks(true); // Auto-expand when adding a new subtask
@@ -1895,7 +1911,10 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
                 const currentLocal = localSubtasksRef.current;
                 const optimisticSubtasks = currentLocal.map(s => s.id === subtaskId ? { ...s, comments } : s);
                 setLocalSubtasks(optimisticSubtasks);
-                onUpdateTask({ ...task, subtasks: optimisticSubtasks });
+                const updatedParent = { ...task, subtasks: optimisticSubtasks };
+                onUpdateTask(updatedParent);
+                useAppStore.getState().updateTask(updatedParent);
+                window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
               }}
               canEditTask={canEditTask}
               teams={teams}

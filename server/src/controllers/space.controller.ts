@@ -8,6 +8,7 @@ import {
   extractPrioritiesSection,
   hasCustomPriorities,
   cloneBlocksWithNewIds,
+  stripNewTaskBadges,
 } from '../utils/pageBlocks';
 import { writePageIfUnchanged, updatePageBlocks } from '../services/pageContentService';
 import { syncClients } from './webhook.controller';
@@ -874,7 +875,7 @@ export async function carryOverPriorities(req: Request, res: Response) {
       return res.status(400).json({ error: 'Previous page has no custom priorities to carry over' });
     }
 
-    const clonedBlocks = cloneBlocksWithNewIds(contentBlocks, 'blk-prio');
+    const clonedBlocks = cloneBlocksWithNewIds(stripNewTaskBadges(contentBlocks), 'blk-prio');
 
     const written = await updatePageBlocks(targetPage, (blocks) => {
       const targetSection = extractPrioritiesSection(blocks);

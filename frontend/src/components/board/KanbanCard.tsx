@@ -1055,7 +1055,7 @@ const CardContent = memo(({
                 }));
               }, 350);
             }}
-            reviewButtonText="Open Task & Review Audits"
+            reviewButtonText={blockedAuditAlert.uncheckedAudits.length > 0 ? 'Open Task & Review Audits' : 'Open Task & Review Subtasks'}
           />
         </div>,
         document.body

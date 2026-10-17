@@ -352,7 +352,7 @@ export function EditCommentForm({
   return (
     <div
       onPasteCapture={handleOuterPasteCapture}
-      className="pl-11 flex flex-col gap-2.5 w-full bg-zinc-900/40 p-3 rounded-xl border border-zinc-700/60 focus-within:border-indigo-500/70 transition-colors"
+      className="flex flex-col gap-2.5 w-full bg-zinc-900/40 p-3 rounded-xl border border-zinc-700/60 focus-within:border-indigo-500/70 transition-colors"
     >
       {/* Existing and Staged Attachments Strip */}
       {totalAttachmentsCount > 0 && (
@@ -524,57 +524,62 @@ export function EditCommentForm({
       )}
 
       {/* Action Toolbar */}
-      <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-800/60">
-        <div className="flex items-center gap-2">
-          <input
-            type="file"
-            ref={fileInputRef}
-            multiple
-            className="hidden"
-            onChange={handleFileInputChange}
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isSaving}
-            className="p-1.5 rounded-md hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5 text-xs cursor-pointer"
-            title="Attach files or images"
-          >
-            <Paperclip className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline text-[11px] text-zinc-400 font-medium">Attach</span>
-          </button>
-          <span className="text-[11px] text-zinc-500 hidden md:inline">
-            • Type @ to mention • Paste images (Ctrl+V)
-          </span>
+      <div className="flex flex-col gap-2 pt-2 border-t border-zinc-800/60">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <input
+              type="file"
+              ref={fileInputRef}
+              multiple
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isSaving}
+              className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5 text-xs cursor-pointer"
+              title="Attach files or images"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+              <span className="text-[11px] text-zinc-400 font-medium">Attach</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={isSaving}
+              className="px-3 py-1.5 rounded-lg border border-zinc-700/60 bg-zinc-800/60 hover:bg-zinc-700 hover:text-white text-zinc-300 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving || isUploadingInline || !hasAnyContent || !hasChanged}
+              className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-xs font-semibold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed shrink-0"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Save Changes</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={isSaving}
-            className="px-3 py-1.5 rounded-lg border border-zinc-700/60 bg-zinc-800/60 hover:bg-zinc-700 hover:text-white text-zinc-300 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving || isUploadingInline || !hasAnyContent || !hasChanged}
-            className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-xs font-semibold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
-          >
-            {isSaving ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Saving...</span>
-              </>
-            ) : (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                <span>Save Changes</span>
-              </>
-            )}
-          </button>
+        {/* Micro instructions line: clean, readable, and never squished into narrow columns */}
+        <div className="flex items-center gap-2 text-[11px] text-zinc-500 flex-wrap select-none px-0.5">
+          <span>• Type <span className="text-zinc-400 font-medium">@</span> to mention</span>
+          <span>• Paste images <span className="text-zinc-400 font-mono text-[10px]">(Ctrl+V)</span></span>
         </div>
       </div>
     </div>

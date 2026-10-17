@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { authApi, spacesApi } from '@/api';
 import { FormattedRichText, markdownToBlocks, blocksToMarkdown } from './utils';
@@ -48,6 +48,8 @@ import {
   Check,
   History,
   CaseSensitive,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 import { DocSkeleton } from '@/components/ui/Skeleton';
 import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from '@/lib/pageContentCache';
@@ -744,6 +746,8 @@ const isFromTaskModal = (target: EventTarget | null) =>
   target instanceof Element &&
   !!(target.closest('[data-task-detail-modal]') || target.closest('[data-radix-popper-content-wrapper]'));
 
+const PAGES_PANEL_COLLAPSED_KEY = 'nexus-doc-pages-collapsed';
+
 export default function DocPage({ docId }: { docId?: string }) {
   const params = useParams<{ id: string }>();
   const id = docId || params?.id;
@@ -770,6 +774,19 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const [activePage, setActivePage] = useState<any>(null);
   const activePageRef = useRef<any>(null);
+
+  // Pages panel collapsed to a slim rail (ClickUp-style), remembered across docs and reloads
+  const [isPagesPanelCollapsed, setIsPagesPanelCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try { return localStorage.getItem(PAGES_PANEL_COLLAPSED_KEY) === '1'; } catch { return false; }
+  });
+  const togglePagesPanel = () => {
+    setIsPagesPanelCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(PAGES_PANEL_COLLAPSED_KEY, next ? '1' : '0'); } catch { }
+      return next;
+    });
+  };
   useEffect(() => {
     activePageRef.current = activePage;
   }, [activePage]);
@@ -978,12 +995,23 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [selectedTaskForModal, setSelectedTaskForModal] = useState<Task | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
+  // The Priorities journal opens tasks in the full-screen task page instead of the modal
+  const router = useRouter();
+  const isJournalDocRef = useRef(false);
+  isJournalDocRef.current = !!doc?.isDailyRollover;
+
   // Opens the task modal for a task id OR a subtask id.
   // The modal only works on real Task records: given a subtask it would call /api/tasks/<subtaskId>/…
   // endpoints, which 404 ("Task not found"). Subtask records carry their parent in `taskId`, so a
   // subtask opens its PARENT task with `?subtask=<id>` — the modal reads that on mount and shows the
   // subtask's own detail view (with the correct activity/comments).
   const openTaskDetail = useCallback(async (taskId: string, taskObj?: Task & { taskId?: string }) => {
+    if (isJournalDocRef.current) {
+      // The task page resolves task and subtask ids itself; ?from= brings "back" to this journal day (?page=)
+      const fromPath = window.location.pathname + window.location.search;
+      router.push(`/tasks/${taskId}?from=${encodeURIComponent(fromPath)}`);
+      return;
+    }
     const setSubtaskParam = (subtaskId: string | null) => {
       const url = new URL(window.location.href);
       if (subtaskId) url.searchParams.set('subtask', subtaskId);
@@ -1018,7 +1046,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     } catch (err) {
       console.error('Could not load task detail:', err);
     }
-  }, []);
+  }, [router]);
 
   // Native click handler for mention nodes — works even in read-only BlockEditor
   useEffect(() => {
@@ -2776,8 +2804,29 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   return (
     <div className="flex h-full w-full bg-background text-foreground overflow-hidden font-sans">
-      {/* Hidden (not unmounted) in page focus mode so the tree keeps its expand state */}
-      <aside className={`w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none ${activePage && pageStyles.focusPage ? 'hidden' : ''}`}>
+      {/* Collapsed pages panel: a slim rail to bring it back */}
+      {isPagesPanelCollapsed && (
+        <aside className={`w-12 shrink-0 bg-card border-r border-zinc-800/60 py-3 flex flex-col items-center gap-2 h-full select-none ${activePage && pageStyles.focusPage ? 'hidden' : ''}`}>
+          <button
+            onClick={togglePagesPanel}
+            title="Expand pages"
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
+          >
+            <ChevronsRight className="w-4 h-4" />
+          </button>
+          <div className="w-6 border-t border-zinc-800/60" />
+          <button
+            onClick={() => { pageLoadSeqRef.current++; setPageContentState('ready'); resetUndoForPageSwitch(); setActivePage(null); }}
+            title={doc?.title || 'Document'}
+            className="p-1 rounded-md hover:bg-zinc-800 transition-colors cursor-pointer"
+          >
+            <FileText className="w-4 h-4 text-purple-400" />
+          </button>
+        </aside>
+      )}
+
+      {/* Hidden (not unmounted) when collapsed or in page focus mode so the tree keeps its expand state */}
+      <aside className={`w-60 shrink-0 bg-card border-r border-zinc-800/60 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar select-none ${(activePage && pageStyles.focusPage) || isPagesPanelCollapsed ? 'hidden' : ''}`}>
         <div
           onClick={() => { pageLoadSeqRef.current++; setPageContentState('ready'); resetUndoForPageSwitch(); setActivePage(null); }}
           className="mb-5 pb-3 border-b border-zinc-800/60 cursor-pointer group hover:opacity-90 transition-all"
@@ -2785,6 +2834,13 @@ export default function DocPage({ docId }: { docId?: string }) {
           <div className="flex items-center gap-2 text-zinc-400 mb-1">
             <FileText className="w-4 h-4 text-purple-400 shrink-0" />
             <span className="text-[11px] uppercase tracking-wider font-semibold text-zinc-500 group-hover:text-purple-400 transition-colors truncate">Document</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); togglePagesPanel(); }}
+              title="Collapse pages"
+              className="ml-auto -my-1 p-1 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
           </div>
           <h2 className="text-base font-bold text-zinc-100 group-hover:text-white transition-colors truncate">{doc?.title || 'Priorities for Today'}</h2>
         </div>

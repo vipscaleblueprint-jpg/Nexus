@@ -1,12 +1,55 @@
 import { Worker } from 'bullmq';
+import { Prisma } from '@prisma/client';
 import { redis } from '../config/redis';
 import { prisma } from '../config/prisma';
 import { logger, errMsg } from '../config/logger';
+import { io } from '../server';
+import { updatePageBlocks } from '../services/pageContentService';
 import {
   extractPrioritiesSection,
   hasCustomPriorities,
   cloneBlocksWithNewIds,
+  stripNewTaskBadges,
+  appendTaskToJournal,
+  taskMentionIds,
+  NEW_TASK_BADGE,
 } from '../utils/pageBlocks';
+
+// KYC, Closed, and Pin Board items never roll over (status is free text, so match any casing)
+const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
+const notClosed = { NOT: { status: { equals: 'CLOSED', mode: 'insensitive' as const } } };
+const notPinboard = {
+  NOT: {
+    OR: [
+      { status: { equals: 'PIN BOARD', mode: 'insensitive' as const } },
+      { status: { equals: 'PINBOARD', mode: 'insensitive' as const } },
+      { status: { equals: 'PIN_BOARD', mode: 'insensitive' as const } },
+    ],
+  },
+};
+
+const isExcludedStatus = (status?: string | null) => {
+  const s = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  return s === 'KYC' || s === 'CLOSED' || s === 'PINBOARD';
+};
+
+// The tasks a day page lists
+const JOURNAL_TASKS: Prisma.TaskWhereInput = {
+  AND: [
+    { status: { notIn: ['Closed', 'CLOSED'] } },
+    notKyc,
+    notClosed,
+    notPinboard,
+    // Erased from a day page by a user: stays off (with its subtasks) until mentioned there again
+    { rolloverExcluded: false },
+  ],
+};
+// Closed/completed subtasks don't roll over either.
+// Subtask.status is nullable; keep null-status subtasks (a bare NOT would drop them in SQL)
+const OPEN_SUBTASKS: Prisma.SubtaskWhereInput = {
+  completed: false,
+  OR: [{ status: null }, { AND: [notKyc, notClosed, notPinboard] }],
+};
 
 /**
  * Runs the Daily Rollover generation for all daily rollover docs.
@@ -32,41 +75,12 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
 
   const getStatusOrder = (status: string) => STATUS_ORDER[(status || '').toUpperCase()] ?? 99;
 
-  // KYC, Closed, and Pin Board items never roll over (status is free text, so match any casing)
-  const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
-  const notClosed = { NOT: { status: { equals: 'CLOSED', mode: 'insensitive' as const } } };
-  const notPinboard = {
-    NOT: {
-      OR: [
-        { status: { equals: 'PIN BOARD', mode: 'insensitive' as const } },
-        { status: { equals: 'PINBOARD', mode: 'insensitive' as const } },
-        { status: { equals: 'PIN_BOARD', mode: 'insensitive' as const } },
-      ],
-    },
-  };
-
-  const isExcludedStatus = (status?: string | null) => {
-    const s = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
-    return s === 'KYC' || s === 'CLOSED' || s === 'PINBOARD';
-  };
-
   const activeTasks = await prisma.task.findMany({
-    where: {
-      AND: [
-        { status: { notIn: ['Closed', 'CLOSED'] } },
-        notKyc,
-        notClosed,
-        notPinboard,
-        // Erased from a day page by a user: stays off (with its subtasks) until mentioned there again
-        { rolloverExcluded: false },
-      ],
-    },
+    where: JOURNAL_TASKS,
     include: {
       list: { select: { id: true, name: true } },
-      // Closed/completed subtasks don't roll over either.
-      // Subtask.status is nullable; keep null-status subtasks (a bare NOT would drop them in SQL)
       subtasks: {
-        where: { completed: false, OR: [{ status: null }, { AND: [notKyc, notClosed, notPinboard] }] },
+        where: OPEN_SUBTASKS,
         orderBy: { createdAt: 'asc' },
       },
     },
@@ -227,7 +241,8 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
               id: `blk-${Date.now()}-prio-head`,
             };
           }
-          carriedPriorityBlocks = cloneBlocksWithNewIds(contentBlocks, 'blk-prio');
+          // A task's NEW TASK ADDED badge belongs to the day it was added
+          carriedPriorityBlocks = cloneBlocksWithNewIds(stripNewTaskBadges(contentBlocks), 'blk-prio');
           logger.info(`Carried over ${carriedPriorityBlocks.length} priority block(s) from "${previousPage.title}" to "${dayTitle}" in Doc ${doc.id}`);
         }
       } catch (err) {
@@ -241,18 +256,13 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
       content: `<h2>👀 ACTIVE CLIENT</h2>`
     };
 
-    const newTasksHeader = {
-      id: `blk-${Date.now()}-new-tasks`,
-      type: 'text',
-      content: `<h3>New Tasks</h3>`
-    };
-
+    // Tasks added during the day go under their client with a NEW TASK ADDED badge (appendTaskToJournal);
+    // the lines above are rebuilt from the tasks, so that badge does not roll over.
     const docBlocks = [
       carriedPrioritiesHeader,
       ...carriedPriorityBlocks,
       activeClientHeader,
       ...tiptapNodes,
-      newTasksHeader
     ];
 
     const contentString = JSON.stringify(docBlocks);
@@ -308,9 +318,107 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
   return results;
 }
 
+export const JOURNAL_CATCH_UP_JOB = 'journalCatchUp';
+
+// What the previous catch-up run found missing, per day page. A task is only added once two runs in a row miss it, so
+// the append made when it was created, or a user's erase still being recorded, always finishes first.
+let missingLastRun = new Map<string, Set<string>>();
+
+const escapeAttr = (s: string) => s.replace(/"/g, '&quot;');
+
+/**
+ * Safety net for the journal auto-append, run every few minutes: puts on today's page any task that belongs there (the
+ * rollover's rules) but isn't, e.g. the server restarted before its append, the page kept changing, or the task came in
+ * through the ClickUp pull. A task unchanged since the page was built was listed by the rollover, so only tasks changed
+ * since then are checked. Tasks erased by a user are rolloverExcluded and stay off.
+ */
+export async function appendMissingTasksToJournal() {
+  const docs = await prisma.doc.findMany({ where: { isDailyRollover: true }, select: { id: true, rolloverTimezone: true } });
+  const missingThisRun = new Map<string, Set<string>>();
+
+  for (const doc of docs) {
+    const dayTitle = new Intl.DateTimeFormat('en-US', {
+      timeZone: doc.rolloverTimezone || 'Asia/Singapore',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(new Date());
+    const dayPage = await prisma.page.findFirst({
+      where: { docId: doc.id, title: dayTitle, parentPageId: { not: null } },
+      select: { id: true, content: true, createdAt: true, updatedAt: true },
+    });
+    // The rollover hasn't made today's page yet; it will list every task itself
+    if (!dayPage) continue;
+
+    const changed = await prisma.task.findMany({
+      where: { AND: [JOURNAL_TASKS, { updatedAt: { gte: dayPage.createdAt } }] },
+      select: { id: true, status: true },
+    });
+    const onPage = taskMentionIds(dayPage.content);
+    const missingIds = changed.filter((t) => !isExcludedStatus(t.status) && !onPage.has(t.id)).map((t) => t.id);
+    const confirmedIds = missingIds.filter((id) => missingLastRun.get(dayPage.id)?.has(id));
+    missingThisRun.set(dayPage.id, new Set(missingIds));
+    if (confirmedIds.length === 0) continue;
+
+    const tasks = await prisma.task.findMany({
+      where: { id: { in: confirmedIds } },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        createdAt: true,
+        list: { select: { name: true } },
+        assignees: { select: { id: true, name: true, avatarUrl: true } },
+        subtasks: { where: OPEN_SUBTASKS, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, status: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    let added: string[] = [];
+    const written = await updatePageBlocks(dayPage, (blocks) => {
+      const present = taskMentionIds(JSON.stringify(blocks));
+      const toAdd = tasks.filter((t) => !present.has(t.id));
+      added = toAdd.map((t) => t.title);
+      if (toAdd.length === 0) return false;
+
+      for (const t of toAdd) {
+        // Same lines the append at creation and the rollover write; only tasks created today get the badge
+        const title = escapeAttr(t.title);
+        const status = escapeAttr(JSON.stringify({ name: t.status, color: '#3b82f6' }));
+        const assignees = escapeAttr(JSON.stringify(t.assignees));
+        const isNew = t.createdAt.getTime() >= dayPage.createdAt.getTime();
+        const taskBlock = {
+          id: `blk-tk-${Date.now()}-${t.id}`,
+          type: 'text',
+          content: `<p><span data-type="mention" data-id="${t.id}" data-label="${title}" data-mention-type="task" data-task-status="${status}" data-task-assignees="${assignees}" data-task-list-name="${escapeAttr(t.list.name)}">@${title}</span>${isNew ? ` ${NEW_TASK_BADGE}` : ''}</p>`,
+        };
+        appendTaskToJournal(blocks, t.list.name, taskBlock);
+
+        const subtaskBlocks = t.subtasks
+          .filter((s) => !isExcludedStatus(s.status))
+          .map((s) => ({
+            id: `blk-st-${Date.now()}-${s.id}`,
+            type: 'text',
+            content: `<p>&nbsp;&nbsp;&nbsp;&nbsp;└─ <span data-type="mention" data-id="${s.id}" data-label="${escapeAttr(s.title)}" data-mention-type="subtask">@${escapeAttr(s.title)}</span></p>`,
+          }));
+        blocks.splice(blocks.indexOf(taskBlock) + 1, 0, ...subtaskBlocks);
+      }
+    });
+
+    if (written) {
+      io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: dayPage.id });
+      logger.info(`Journal catch-up: added ${added.length} missed task(s) to "${dayTitle}": ${added.join(' | ')}`);
+    }
+  }
+
+  missingLastRun = missingThisRun;
+}
+
 export const dailyRolloverWorker = new Worker(
   'DailyRollover',
   async (job) => {
+    // On the rollover's queue so it never runs while the rollover is building today's page
+    if (job.name === JOURNAL_CATCH_UP_JOB) return appendMissingTasksToJournal();
     logger.info('Running DailyRollover job (Dynamic Generation)...');
     await runDailyRollover(job.data);
     logger.info('Finished DailyRollover job.');
@@ -320,6 +428,7 @@ export const dailyRolloverWorker = new Worker(
 
 // Listeners for logging
 dailyRolloverWorker.on('completed', (job) => {
+  if (job.name === JOURNAL_CATCH_UP_JOB) return; // runs every few minutes; it logs when it adds something
   logger.info(`DailyRollover job ${job.id} has completed!`);
 });
 

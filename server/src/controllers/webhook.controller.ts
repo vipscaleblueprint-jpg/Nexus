@@ -5,7 +5,7 @@ import { prisma } from '../config/prisma';
 import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
-import { appendTaskToJournal } from '../utils/pageBlocks';
+import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { updatePageBlocks } from '../services/pageContentService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
@@ -546,16 +546,16 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
           const taskStatusStr = JSON.stringify({ name: fullyLoadedTask?.status || newTask.status, color: statusColor }).replace(/"/g, '&quot;');
           const assigneesStr = JSON.stringify(fullyLoadedTask?.assignees || []).replace(/"/g, '&quot;');
 
-          const getNewTaskBlock = (suffix: string) => ({
-            id: `blk-tk-${Date.now()}-${newTask.id}-${suffix}`,
+          const taskBlock = {
+            id: `blk-tk-${Date.now()}-${newTask.id}`,
             type: "text",
-            content: `<p><span data-type="mention" data-id="${newTask.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${journalClientName}">@${escapedTitle}</span></p>`
-          });
+            content: `<p><span data-type="mention" data-id="${newTask.id}" data-label="${escapedTitle}" data-mention-type="task" data-task-status="${taskStatusStr}" data-task-assignees="${assigneesStr}" data-task-list-name="${journalClientName}">@${escapedTitle}</span> ${NEW_TASK_BADGE}</p>`
+          };
 
-          // Under the client and under New Tasks; subtasks are added under these lines as they arrive
+          // Under the client, badged as new; subtasks are added under this line as they arrive
           // (see handleGalaxySubtask).
           const written = await updatePageBlocks(todayPage, (blocks) => {
-            appendTaskToJournal(blocks, journalClientName, getNewTaskBlock);
+            appendTaskToJournal(blocks, journalClientName, taskBlock);
           });
 
           if (written) io.to(`doc:${doc.id}`).emit('page_updated', { docId: doc.id, pageId: todayPage.id });

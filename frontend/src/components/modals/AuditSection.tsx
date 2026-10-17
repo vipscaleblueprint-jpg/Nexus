@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
-import { ChevronDown, ChevronRight, User, Check, X, ArrowDown, ArrowUp } from 'lucide-react';
+import { ChevronDown, ChevronRight, User, Check, X, ArrowDown, ArrowUp, ClipboardCheck } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { isNexusAuditChecklist, getRequiredAudits } from '@/lib/auditChecklist';
 import { getAssigneeAvatarColor } from './TaskDetailModal';
@@ -25,6 +26,7 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   const [blockedInfo, setBlockedInfo] = useState<{
     targetStatus: string;
     uncheckedAudits: string[];
+    openSubtasks: string[];
   } | null>(null);
 
   const [scrollDirection, setScrollDirection] = useState<'down' | 'up' | 'at'>('down');
@@ -42,11 +44,18 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
         return;
       }
 
+      // Blocked only by open subtasks (e.g. moving to In Review): audits aren't the issue, so don't point at them
+      const isBlockEvent = Array.isArray(detail?.uncheckedAudits);
+      if (isBlockEvent && detail.uncheckedAudits.length === 0 && (detail.openSubtasks?.length ?? 0) > 0) {
+        return;
+      }
+
       setIsExpanded(true);
       if (detail?.targetStatus || detail?.uncheckedAudits) {
         setBlockedInfo({
           targetStatus: detail.targetStatus || '',
           uncheckedAudits: detail.uncheckedAudits || [],
+          openSubtasks: detail.openSubtasks || [],
         });
       }
       setIsShaking(true);
@@ -131,8 +140,11 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   }, [blockedInfo, subtaskId]);
 
   const handleScrollToAudits = () => {
+    setIsExpanded(true);
     const el = document.getElementById(subtaskId ? `audit-box-${subtaskId}` : 'task-modal-audit-box');
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setIsShaking(true);
+    setTimeout(() => setIsShaking(false), 700);
   };
 
 
@@ -336,51 +348,125 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
               </div>
             </div>
 
-            {/* Formal Floating Flashcard Alert when move blocked */}
-            {isAuditRequired && (
+            {/* Floating flashcard when a move is blocked: portalled to the bottom right of the screen, above the
+                task modal (z-99999) and below image lightboxes (z-200000), styled as a sleek instruction flashcard */}
+            {isAuditRequired && typeof document !== 'undefined' && createPortal(
               <div
                 onMouseEnter={() => setIsHovered(true)}
                 onMouseLeave={() => setIsHovered(false)}
-                className="relative mx-3 mt-3 mb-2 p-3.5 rounded-xl bg-zinc-900/95 border border-zinc-700/80 border-l-4 border-l-emerald-500 shadow-xl shadow-black/40 backdrop-blur-md flex items-start justify-between gap-3 text-xs transition-all duration-200 animate-in fade-in slide-in-from-top-1"
+                className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[150000] w-[360px] max-w-[calc(100vw-2rem)] rounded-2xl bg-[#141518]/95 border border-zinc-700/80 shadow-[0_16px_40px_rgba(0,0,0,0.65)] backdrop-blur-xl flex flex-col overflow-hidden text-xs animate-in fade-in slide-in-from-bottom-4 duration-200"
               >
-                <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-zinc-100 text-xs tracking-tight">
-                      Audit Verification Required
-                    </span>
+                {/* Flashcard top accent banner line */}
+                <div className="h-1 w-full bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500 shrink-0" />
+
+                <div className="p-4 flex flex-col gap-3">
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                        <ClipboardCheck className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block">
+                          Instruction Flashcard
+                        </span>
+                        <h4 className="font-semibold text-zinc-100 text-sm tracking-tight leading-tight">
+                          Audit Verification Required
+                        </h4>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setBlockedInfo(null)}
+                      className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer shrink-0"
+                      title="Dismiss instruction card"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Body explanation */}
+                  <p className="text-zinc-400 text-xs leading-relaxed">
+                    This {subtaskId ? 'subtask' : 'task'} cannot be moved to{' '}
+                    <span className="font-bold text-zinc-200 uppercase px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/60 text-[11px]">
+                      {blockedInfo?.targetStatus || 'the selected status'}
+                    </span>{' '}
+                    until the following {blockedInfo?.uncheckedAudits?.length === 1 ? 'audit is' : 'audits are'} verified:
+                  </p>
+
+                  {/* Interactive checklist requirement cards */}
+                  <div className="flex flex-col gap-1.5">
+                    {(blockedInfo?.uncheckedAudits || []).map((audit) => (
+                      <button
+                        key={audit}
+                        type="button"
+                        onClick={handleScrollToAudits}
+                        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-900/90 hover:bg-zinc-800/80 border border-zinc-800 hover:border-emerald-500/40 text-left transition-all cursor-pointer group"
+                        title="Click to jump to this audit in the checklist"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 group-hover:scale-125 transition-transform" />
+                          <span className="font-medium text-zinc-200 group-hover:text-emerald-300 transition-colors truncate">
+                            {audit}
+                          </span>
+                        </div>
+                        <span className="text-[10px] uppercase font-semibold text-emerald-400/90 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 shrink-0 tracking-wider">
+                          Required
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Open subtasks note if any */}
+                  {(blockedInfo?.openSubtasks?.length ?? 0) > 0 && (
+                    <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-start gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 mt-1" />
+                      <div className="min-w-0 text-[11px] leading-relaxed">
+                        <span className="font-semibold text-amber-300">Open subtasks remaining:</span>{' '}
+                        <span className="text-zinc-300">
+                          Close {blockedInfo!.openSubtasks.length} subtask{blockedInfo!.openSubtasks.length === 1 ? '' : 's'} ({blockedInfo!.openSubtasks.slice(0, 2).join(', ')}{blockedInfo!.openSubtasks.length > 2 ? '…' : ''})
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Flashcard Footer */}
+                  <div className="flex items-center justify-between pt-2.5 border-t border-zinc-800/80 mt-0.5">
                     <button
                       type="button"
                       onClick={handleScrollToAudits}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300 text-[10px] font-medium transition-all cursor-pointer border border-zinc-700/60 shadow-sm group/arrow"
-                      title={scrollDirection === 'up' ? "Scroll up to audit items" : "Scroll down to audit items"}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 text-xs font-medium border border-emerald-500/20 transition-all cursor-pointer group"
                     >
                       {scrollDirection === 'up' ? (
                         <>
-                          <ArrowUp className="w-3 h-3 group-hover/arrow:-translate-y-0.5 transition-transform" />
-                          <span>Audits above</span>
+                          <ArrowUp className="w-3.5 h-3.5 group-hover:-translate-y-0.5 transition-transform" />
+                          <span>Scroll up to Audits</span>
+                        </>
+                      ) : scrollDirection === 'down' ? (
+                        <>
+                          <ArrowDown className="w-3.5 h-3.5 group-hover:translate-y-0.5 transition-transform" />
+                          <span>Scroll down to Audits</span>
                         </>
                       ) : (
                         <>
-                          <ArrowDown className="w-3 h-3 group-hover/arrow:translate-y-0.5 transition-transform" />
-                          <span>{scrollDirection === 'at' ? 'Audits below' : 'Scroll to audits'}</span>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Audits in view</span>
                         </>
                       )}
                     </button>
-                  </div>
-                  <p className="text-zinc-400 text-xs leading-relaxed">
-                    This task cannot be moved to <span className="font-semibold text-zinc-200 uppercase">{blockedInfo?.targetStatus || 'the selected status'}</span> until all required audit items are verified.
-                  </p>
-                </div>
 
-                <button
-                  type="button"
-                  onClick={() => setBlockedInfo(null)}
-                  className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors ml-2 shrink-0 cursor-pointer"
-                  title="Dismiss alert"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+                    <button
+                      type="button"
+                      onClick={() => setBlockedInfo(null)}
+                      className="text-xs text-zinc-400 hover:text-zinc-200 px-2 py-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>,
+              document.body
             )}
 
             {/* Items */}

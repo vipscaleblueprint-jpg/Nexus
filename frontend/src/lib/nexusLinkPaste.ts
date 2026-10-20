@@ -119,6 +119,11 @@ export function transformNexusLinksInHtml(html: string): string {
   return transformed;
 }
 
+// Alt text that is only emoji (with skin tones, ZWJ sequences, flags and keycaps), e.g. "™️" or "👍🏽"
+const EMOJI_ONLY_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|[‍️⃣#*0-9])+$/u;
+const HAS_EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u;
+const isEmojiText = (text: string) => EMOJI_ONLY_RE.test(text) && HAS_EMOJI_RE.test(text);
+
 /**
  * Strips foreign formatting, colors, backgrounds, font styles (bold, italic, underline, strike),
  * and fonts from pasted HTML, while preserving paragraphs, line breaks, images, links, and Nexus task chips.
@@ -127,9 +132,14 @@ export function cleanPastedHtml(html: string): string {
   if (typeof DOMParser === 'undefined' || !html) return html;
   const doc = new DOMParser().parseFromString(html, 'text/html');
 
-  // 1. Remove dangerous or non-web images (blob:, file:, etc.)
+  // 1. Emoji pasted as images become emoji text (some apps draw them with CSS over a transparent
+  //    placeholder src, which would otherwise be uploaded as a blank image); remove dangerous or
+  //    non-web images (blob:, file:, etc.)
   doc.querySelectorAll('img').forEach((img) => {
-    if (!/^(https?:|data:image\/)/i.test(img.getAttribute('src') || '')) {
+    const alt = img.getAttribute('alt')?.trim() || '';
+    if (isEmojiText(alt)) {
+      img.replaceWith(alt);
+    } else if (!/^(https?:|data:image\/)/i.test(img.getAttribute('src') || '')) {
       img.remove();
     }
   });

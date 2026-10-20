@@ -597,18 +597,91 @@ export async function deleteClickUpTask(taskId: string): Promise<any> {
 }
 
 /**
+ * Uploads a file attachment to a ClickUp task.
+ */
+export async function uploadClickUpTaskAttachment(
+  taskId: string,
+  buffer: Buffer,
+  filename: string,
+  mimetype = 'application/octet-stream'
+): Promise<{ id: string; name: string; url: string; [key: string]: any } | null> {
+  const apiKey = getApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const cleanTaskId = extractClickUpTaskId(taskId);
+    const formData = new FormData();
+    const blob = new Blob([new Uint8Array(buffer)], { type: mimetype });
+    formData.append('attachment', blob, filename || 'image.png');
+
+    let res: Response;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await fetch(`${CLICKUP_API_BASE}/task/${cleanTaskId}/attachment`, {
+          method: 'POST',
+          headers: {
+            Authorization: apiKey,
+          },
+          body: formData,
+        });
+      } catch (err) {
+        if (attempt >= MAX_RATE_LIMIT_RETRIES) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+        continue;
+      }
+      if (res.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) break;
+      await new Promise((resolve) => setTimeout(resolve, rateLimitDelayMs(res)));
+    }
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`[ClickUp] uploadClickUpTaskAttachment error ${res.status}: ${body}`);
+      return null;
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.error('[ClickUp] uploadClickUpTaskAttachment error:', err);
+    return null;
+  }
+}
+
+/**
  * Posts a comment on a ClickUp task.
+ * Accepts either a plain text string or an object with rich comment segments and fallback text.
  */
 export async function createClickUpComment(
   taskId: string,
-  commentText: string,
+  payload: string | { comment?: any[]; comment_text?: string },
   notify_all = false
 ): Promise<any> {
+  const body =
+    typeof payload === 'string'
+      ? { comment_text: payload, notify_all }
+      : { ...payload, notify_all };
   return clickupFetch(`/task/${taskId}/comment`, {
     method: 'POST',
-    body: JSON.stringify({ comment_text: commentText, notify_all }),
+    body: JSON.stringify(body),
   });
 }
+
+/**
+ * Updates an existing comment on ClickUp.
+ */
+export async function updateClickUpComment(
+  commentId: string,
+  payload: string | { comment?: any[]; comment_text?: string }
+): Promise<any> {
+  const body =
+    typeof payload === 'string'
+      ? { comment_text: payload }
+      : { ...payload };
+  return clickupFetch(`/comment/${commentId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
 export async function deleteClickUpComment(commentId: string): Promise<any> {
   return clickupFetch(`/comment/${commentId}`, {
     method: 'DELETE',
@@ -1088,16 +1161,33 @@ export async function safeSyncClickUpAssignees(
  */
 export async function safeCreateClickUpComment(
   clickUpTaskId: string | null | undefined,
-  commentText: string
+  payload: string | { comment?: any[]; comment_text?: string }
 ): Promise<string | null> {
   if (!clickUpTaskId || !getApiKey()) return null;
   try {
     // Normalise: support both full URL and bare ID
     const id = extractClickUpTaskId(clickUpTaskId);
-    const res = await createClickUpComment(id, commentText);
+    const res = await createClickUpComment(id, payload);
     return res?.id || null;
   } catch (err) {
     console.error('[ClickUp] safeCreateClickUpComment error:', err);
+    return null;
+  }
+}
+
+/**
+ * Safely updates an existing comment in ClickUp.
+ */
+export async function safeUpdateClickUpComment(
+  commentId: string | null | undefined,
+  payload: string | { comment?: any[]; comment_text?: string }
+): Promise<string | null> {
+  if (!commentId || !getApiKey()) return null;
+  try {
+    const res = await updateClickUpComment(commentId, payload);
+    return res?.id || null;
+  } catch (err) {
+    console.error('[ClickUp] safeUpdateClickUpComment error:', err);
     return null;
   }
 }

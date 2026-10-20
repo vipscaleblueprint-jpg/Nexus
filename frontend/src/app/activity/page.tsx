@@ -1,14 +1,16 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { notificationsApi, TaskNotification } from '@/api/notifications';
 import { useRouter } from 'next/navigation';
 import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, Users, MessageSquare, Activity, Globe } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
 import { tasksApi } from '@/api/tasks';
 import { CommentContent } from '@/components/ui/CommentContent';
+import { extractImagesFromContent } from '@/lib/commentImages';
 
 type ViewMode = 'for_me' | 'show_all';
 type Category = 'all' | 'status' | 'checklists' | 'audits' | 'assigned' | 'comments';
@@ -93,9 +95,20 @@ const formatActivityMessage = (log: any) => {
   return `${message} on ${targetName}`;
 };
 
+interface ActivityFeedCache {
+  notifications: TaskNotification[];
+  auditLogs: any[];
+  myAuditLogs: any[];
+  timestamp: number;
+  scrollY: number;
+}
+
+let feedCache: ActivityFeedCache | null = null;
+const FEED_CACHE_TTL_MS = 60_000;
+
 export default function ActivityPage() {
   const router = useRouter();
-  const { decrementUnreadNotifications, workspaceRoles, currentUser } = useAppStore();
+  const { decrementUnreadNotifications, workspaceRoles, currentUser, tasksIndex, tasks } = useAppStore();
   const isPrivileged = currentUser?.systemRole === 'ADMIN' || currentUser?.roles?.some((r: string) => /project\s*manager|^pm$|\bsenior\b/i.test(r?.trim()));
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     const user = useAppStore.getState().currentUser;
@@ -116,18 +129,30 @@ export default function ActivityPage() {
   const [category, setCategory] = useState<Category>('all');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [notifications, setNotifications] = useState<TaskNotification[]>([]);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [myAuditLogs, setMyAuditLogs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const initialCacheValid = !!feedCache && (Date.now() - feedCache.timestamp < FEED_CACHE_TTL_MS);
+  const [notifications, setNotifications] = useState<TaskNotification[]>(() => initialCacheValid ? feedCache!.notifications : []);
+  const [auditLogs, setAuditLogs] = useState<any[]>(() => initialCacheValid ? feedCache!.auditLogs : []);
+  const [myAuditLogs, setMyAuditLogs] = useState<any[]>(() => initialCacheValid ? feedCache!.myAuditLogs : []);
+  const [loading, setLoading] = useState<boolean>(() => !initialCacheValid);
   const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const feedScrollRef = useRef<HTMLDivElement>(null);
   const currentUserIdRef = useRef<string | undefined>(currentUser?.id);
   currentUserIdRef.current = currentUser?.id;
 
-  // silent = live refresh from a socket event: keep the current list on screen instead of the spinner
+  // Restore scroll position on initial cache mount
+  useEffect(() => {
+    if (feedCache?.scrollY && feedScrollRef.current) {
+      feedScrollRef.current.scrollTop = feedCache.scrollY;
+    }
+  }, []);
+
+  // silent = live refresh from a socket event or background update: keep the current list on screen
   const fetchData = async (silent = false) => {
-    if (!silent) setLoading(true);
+    const hasData = notifications.length > 0 || auditLogs.length > 0 || !!feedCache?.notifications.length;
+    if (!silent && !hasData) setLoading(true);
     try {
       const userId = currentUserIdRef.current;
       const { activityApi } = await import('@/api/activity');
@@ -137,13 +162,25 @@ export default function ActivityPage() {
         // The user's own actions are fetched separately so they aren't crowded out of the global window
         userId ? activityApi.getAuditLogs(userId) : Promise.resolve({ logs: [] }),
       ]);
-      setNotifications(notifRes.notifications);
-      setAuditLogs(auditRes.logs || []);
-      setMyAuditLogs(myAuditRes.logs || []);
+      const newNotifs = notifRes.notifications || [];
+      const newLogs = auditRes.logs || [];
+      const newMyLogs = myAuditRes.logs || [];
+
+      setNotifications(newNotifs);
+      setAuditLogs(newLogs);
+      setMyAuditLogs(newMyLogs);
+
+      feedCache = {
+        notifications: newNotifs,
+        auditLogs: newLogs,
+        myAuditLogs: newMyLogs,
+        timestamp: Date.now(),
+        scrollY: feedScrollRef.current ? feedScrollRef.current.scrollTop : (feedCache?.scrollY || 0),
+      };
     } catch (err) {
       console.error(err);
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -159,7 +196,37 @@ export default function ActivityPage() {
       handleMarkAsRead(n.id);
     }
     if (!taskId) return;
-    router.push(`/tasks/${taskId}`);
+
+    // Preserve scroll position before opening task
+    if (feedScrollRef.current) {
+      if (feedCache) {
+        feedCache.scrollY = feedScrollRef.current.scrollTop;
+      } else {
+        feedCache = {
+          notifications,
+          auditLogs,
+          myAuditLogs,
+          timestamp: Date.now(),
+          scrollY: feedScrollRef.current.scrollTop,
+        };
+      }
+    }
+
+    const taskObj = (typeof n === 'object' && n.task?.id === taskId) ? n.task : (tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId));
+    if (taskObj) {
+      setSelectedTask(taskObj);
+      return;
+    }
+    try {
+      const res = await tasksApi.getTask(taskId);
+      if (res?.task) {
+        setSelectedTask(res.task);
+        return;
+      }
+    } catch (err) {
+      console.warn('Failed to load task for modal:', err);
+    }
+    router.push(`/tasks/${taskId}?from=/activity`);
   };
 
   // Refetch once the current user is known so the "For Me" feed can load their own logs
@@ -210,7 +277,11 @@ export default function ActivityPage() {
   const handleClear = async (id: string) => {
     try {
       await notificationsApi.clearNotification(id);
-      setNotifications(prev => prev.filter(n => n.id !== id));
+      setNotifications(prev => {
+        const next = prev.filter(n => n.id !== id);
+        if (feedCache) feedCache.notifications = next;
+        return next;
+      });
       decrementUnreadNotifications();
     } catch (err) { console.error(err); }
   };
@@ -218,7 +289,11 @@ export default function ActivityPage() {
   const handleMarkAsRead = async (id: string) => {
     try {
       await notificationsApi.markAsRead(id);
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+      setNotifications(prev => {
+        const next = prev.map(n => n.id === id ? { ...n, isRead: true } : n);
+        if (feedCache) feedCache.notifications = next;
+        return next;
+      });
       decrementUnreadNotifications();
     } catch (err) { console.error(err); }
   };
@@ -226,7 +301,11 @@ export default function ActivityPage() {
   const handleMarkAllAsRead = async () => {
     try {
       await notificationsApi.markAllAsRead();
-      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setNotifications(prev => {
+        const next = prev.map(n => ({ ...n, isRead: true }));
+        if (feedCache) feedCache.notifications = next;
+        return next;
+      });
       useAppStore.getState().setUnreadNotifications(0);
     } catch (err) { console.error(err); }
   };
@@ -235,6 +314,7 @@ export default function ActivityPage() {
     try {
       await notificationsApi.clearAll();
       setNotifications([]);
+      if (feedCache) feedCache.notifications = [];
       useAppStore.getState().setUnreadNotifications(0);
     } catch (err) { console.error(err); }
   };
@@ -321,6 +401,34 @@ export default function ActivityPage() {
   }
 
   const grouped = groupByDate(filteredByTime);
+
+  const allFeedImages = useMemo(() => {
+    const urls: string[] = [];
+    filteredByTime.forEach((item: any) => {
+      const text = item.details?.text || item.content;
+      if (text) {
+        const imgs = extractImagesFromContent(text);
+        imgs.forEach((u) => {
+          if (!urls.includes(u)) urls.push(u);
+        });
+      }
+    });
+    return urls;
+  }, [filteredByTime]);
+
+  const handlePreviewImage = useCallback((src: string, commentImages?: string[]) => {
+    setLightboxImage(src);
+    if (commentImages && commentImages.length > 0) {
+      setLightboxImages(commentImages);
+    } else {
+      setLightboxImages([src]);
+    }
+  }, []);
+
+  const handleCloseLightbox = useCallback(() => {
+    setLightboxImage(null);
+  }, []);
+
   return (
     <div className="flex flex-col h-full bg-background text-foreground relative pt-8">
       <div className="px-8 flex items-center justify-between mb-4">
@@ -444,7 +552,15 @@ export default function ActivityPage() {
         })}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-8 pr-2 custom-scrollbar space-y-8">
+      <div
+        ref={feedScrollRef}
+        onScroll={(e) => {
+          if (feedCache) {
+            feedCache.scrollY = e.currentTarget.scrollTop;
+          }
+        }}
+        className="flex-1 overflow-y-auto px-8 pr-2 custom-scrollbar space-y-8"
+      >
         {loading ? (
           <div className="flex items-center justify-center h-40">
             <div className="w-6 h-6 border-2 border-[#5f5ce6] border-t-transparent rounded-full animate-spin"></div>
@@ -525,6 +641,7 @@ export default function ActivityPage() {
                             <CommentContent
                               content={log.details.text}
                               className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0"
+                              onPreviewImage={handlePreviewImage}
                             />
                           )}
                           
@@ -619,6 +736,7 @@ export default function ActivityPage() {
                             <CommentContent
                               content={n.content}
                               className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0"
+                              onPreviewImage={handlePreviewImage}
                             />
                           )}
 
@@ -657,11 +775,34 @@ export default function ActivityPage() {
 
       <TaskDetailModal
         isOpen={!!selectedTask}
-        onClose={() => setSelectedTask(null)}
+        onClose={() => {
+          setSelectedTask(null);
+          if (typeof window !== 'undefined') {
+            const u = new URL(window.location.href);
+            u.searchParams.delete('task');
+            window.history.replaceState({}, '', u.pathname + (u.search || ''));
+          }
+          if (feedCache?.scrollY && feedScrollRef.current) {
+            const targetY = feedCache.scrollY;
+            requestAnimationFrame(() => {
+              if (feedScrollRef.current) {
+                feedScrollRef.current.scrollTop = targetY;
+              }
+            });
+          }
+        }}
         task={selectedTask}
         mode="full"
         workspaceRoles={workspaceRoles}
         onUpdateTask={(updatedTask) => setSelectedTask(updatedTask)}
+      />
+
+      <ImageLightboxModal
+        isOpen={!!lightboxImage}
+        onClose={handleCloseLightbox}
+        currentSrc={lightboxImage}
+        images={lightboxImages}
+        onNavigate={(newSrc) => setLightboxImage(newSrc)}
       />
     </div>
   );

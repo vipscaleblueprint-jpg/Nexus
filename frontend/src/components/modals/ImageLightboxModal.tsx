@@ -76,7 +76,13 @@ export function ImageLightboxModal({
   return createPortal(
     <div
       className="fixed inset-0 z-[200000] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer select-none"
-      onClick={onClose}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
     >
       {/* Top right control bar */}
       <div
@@ -108,7 +114,11 @@ export function ImageLightboxModal({
         )}
         <button
           type="button"
-          onClick={onClose}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          }}
           className="p-2 sm:p-2.5 rounded-full bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-300 hover:text-white shadow-lg backdrop-blur-md transition-all cursor-pointer flex items-center justify-center"
           title="Close (Esc)"
           aria-label="Close"

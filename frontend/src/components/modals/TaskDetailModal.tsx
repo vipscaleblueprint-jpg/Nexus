@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck } from 'lucide-react';
+import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -293,45 +293,148 @@ export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[]
   });
 }
 
+const modalPreloadedMediaUrls = new Set<string>();
+
 function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
+  const [shouldLoad, setShouldLoad] = useState(() => (src ? modalPreloadedMediaUrls.has(src) : false));
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    if (src && modalPreloadedMediaUrls.has(src)) {
+      setShouldLoad(true);
+    }
+  }, [src]);
+
+  useEffect(() => {
+    if (shouldLoad && imgRef.current) {
+      if (imgRef.current.complete) {
+        if (imgRef.current.naturalWidth > 0) {
+          setLoaded(true);
+        } else {
+          setFailed(true);
+        }
+      }
+    }
+  }, [shouldLoad]);
+
+  const cleanFileName = useMemo(() => {
+    if (alt && alt !== 'attachment' && alt !== 'image') return alt;
+    try {
+      const urlObj = new URL(src, 'http://localhost');
+      const pathname = urlObj.pathname;
+      const last = pathname.split('/').filter(Boolean).pop();
+      if (last && /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(last)) {
+        return decodeURIComponent(last);
+      }
+    } catch {
+      // ignore
+    }
+    return alt || 'Image';
+  }, [src, alt]);
+
+  const handleStartLoad = () => {
+    if (src) modalPreloadedMediaUrls.add(src);
+    setFailed(false);
+    setLoaded(false);
+    setShouldLoad(true);
+  };
 
   // An image that won't load (e.g. pasted from an app that needs its own login) shows as a link to it
   if (failed) {
     return (
-      <a href={src} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-        className="my-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-700/50 bg-secondary text-xs text-zinc-300 hover:border-zinc-500 no-underline"
-        title="This image couldn't be loaded. It may need a login to the app it was copied from.">
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleStartLoad();
+        }}
+        className="my-1.5 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-zinc-700/60 bg-secondary text-xs text-zinc-300 hover:border-zinc-500 cursor-pointer select-none"
+        title="Failed to load image. Click to retry."
+      >
         <ImageIcon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-        <span className="truncate max-w-[220px]">{alt || 'Image'}</span>
-        <span className="text-zinc-500">· unavailable</span>
-      </a>
+        <span className="truncate max-w-[200px]">{cleanFileName}</span>
+        <span className="text-zinc-500 text-[11px]">· unavailable (click to retry)</span>
+      </span>
+    );
+  }
+
+  if (!shouldLoad) {
+    return (
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleStartLoad();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            handleStartLoad();
+          }
+        }}
+        className="my-2 inline-flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-zinc-700/70 bg-secondary/80 hover:bg-secondary hover:border-indigo-500/60 cursor-pointer transition-all duration-150 group shadow-sm select-none max-w-full"
+        title="Click to preload image"
+      >
+        <span className="p-2 rounded-md bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500/20 group-hover:scale-105 transition-all shrink-0">
+          <ImageIcon className="w-4 h-4" />
+        </span>
+        <span className="flex flex-col min-w-0 pr-1 text-left">
+          <span className="font-medium text-xs text-zinc-200 group-hover:text-white transition-colors truncate max-w-[240px] sm:max-w-xs">
+            {cleanFileName}
+          </span>
+          <span className="text-[11px] text-zinc-400 group-hover:text-indigo-300 flex items-center gap-1.5 transition-colors">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+            Click to preload image
+          </span>
+        </span>
+      </span>
     );
   }
 
   return (
-    <span className="mt-2 mb-2 inline-block relative group cursor-pointer max-w-full" onClick={(e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onPreview(src);
-    }}>
+    <span
+      role="button"
+      tabIndex={0}
+      className="mt-2 mb-2 inline-block relative group cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (loaded) {
+          onPreview(src);
+        }
+      }}
+    >
       {!loaded && (
         <span className="inline-flex items-center justify-center w-[200px] h-[140px] bg-secondary/60 border border-zinc-800/80 rounded-lg animate-pulse">
-          <ImageIcon className="w-8 h-8 text-zinc-600 opacity-40" />
+          <span className="flex flex-col items-center gap-2 text-zinc-500">
+            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+            <span className="text-[11px] font-medium text-zinc-400">Loading image...</span>
+          </span>
         </span>
       )}
       <img
+        ref={imgRef}
         src={src}
         alt={alt}
-        loading="lazy"
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
-        className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm ${loaded ? 'block' : 'hidden'}`}
+        className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-transform duration-150 ${
+          loaded ? 'block group-hover:brightness-95' : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
+        }`}
       />
       {loaded && (
         <span className="absolute inset-0 bg-secondary/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
-          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
+          <span className="text-xs font-medium text-white bg-black/60 px-2.5 py-1 rounded-md flex items-center gap-1.5">
+            <Maximize2 className="w-3.5 h-3.5" />
+            Click to preview
+          </span>
         </span>
       )}
     </span>
@@ -902,7 +1005,7 @@ export function TaskDetailModalContent({
   // a long-open modal still eventually picks up new comments.
   // ---------------------------------------------------------------------------
   const loadActivities = useCallback(async (silent = false) => {
-    if (!task?.id || !currentUser) return;
+    if (!task?.id) return;
     try {
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
@@ -978,10 +1081,11 @@ export function TaskDetailModalContent({
     } catch (err: any) {
       console.error('Failed to load task data:', err);
       setLoadError(err?.message || String(err));
+      commentsBootstrappedRef.current = null;
     } finally {
       if (isMountedRef.current) setLoadingActivities(false);
     }
-  }, [task?.id, currentUser]);
+  }, [task?.id]);
 
   const handleToggleReaction = async (commentId: string, emoji: string) => {
     if (!task?.id || !currentUser?.id) return;
@@ -1960,17 +2064,19 @@ export function TaskDetailModalContent({
     }
   };
   const handleReturnToList = () => {
-    onClose();
     const targetListId = task?.list?.id || task?.listId;
     if (typeof window !== 'undefined') {
-      const isCurrentList = !targetListId || window.location.pathname === `/lists/${targetListId}`;
+      const isCurrentList = !!targetListId && window.location.pathname === `/lists/${targetListId}`;
       if (isCurrentList) {
+        onClose();
         const url = new URL(window.location.href);
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
         window.history.replaceState(null, '', url.pathname + (url.search || ''));
       } else if (targetListId) {
         router.push(`/lists/${targetListId}`);
+      } else {
+        router.push('/');
       }
     }
   };
@@ -2017,7 +2123,14 @@ export function TaskDetailModalContent({
                 {task.list.space && (
                   <>
                     <button
-                      onClick={() => { onClose(); router.push('/'); }}
+                      onClick={() => {
+                        const targetListId = task?.list?.id || task?.listId;
+                        if (targetListId) {
+                          router.push(`/lists/${targetListId}`);
+                        } else {
+                          router.push('/');
+                        }
+                      }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -2032,7 +2145,14 @@ export function TaskDetailModalContent({
                 {task.list.folder && (
                   <>
                     <button
-                      onClick={() => { onClose(); router.push('/'); }}
+                      onClick={() => {
+                        const targetListId = task?.list?.id || task?.listId;
+                        if (targetListId) {
+                          router.push(`/lists/${targetListId}`);
+                        } else {
+                          router.push('/');
+                        }
+                      }}
                       className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                     >
                       <Folder className="w-3.5 h-3.5 shrink-0" style={{ color: getFolderColor(task.list.folder) }} />
@@ -4282,7 +4402,7 @@ export function SubtaskDetailView({
   const commentsBootstrappedRef = useRef<string | null>(null);
 
   const loadActivities = useCallback(async (silent = false) => {
-    if (!subtask?.id || !parentTask?.id || !currentUser) return;
+    if (!subtask?.id || !parentTask?.id) return;
     try {
       const cacheKey = `subtask:${subtask.id}`;
       const cached = activityCache.get(cacheKey);
@@ -4296,7 +4416,7 @@ export function SubtaskDetailView({
         setLoadingActivities(false);
       } else {
         // Only show skeleton on first load if we don't already have activities or comments
-        if (!silent && activities.length === 0 && richComments.length === 0) {
+        if (!silent) {
           setLoadingActivities(true);
         }
       }
@@ -4357,12 +4477,13 @@ export function SubtaskDetailView({
     } catch (err: any) {
       console.error('Failed to load comments/activities:', err);
       setLoadError(err?.message || String(err));
+      commentsBootstrappedRef.current = null;
     } finally {
       if (isMountedRef.current) {
         setLoadingActivities(false);
       }
     }
-  }, [subtask?.id, parentTask?.id, currentUser, activities.length, richComments.length]);
+  }, [subtask?.id, parentTask?.id]);
 
   useEffect(() => {
     if (!subtask?.id) return;
@@ -4566,21 +4687,23 @@ export function SubtaskDetailView({
 
   const handleReturnToList = () => {
     if (setActiveSubtask) setActiveSubtask(null);
-    if (onCloseModal) {
-      onCloseModal();
-    } else {
-      onClose();
-    }
     const targetListId = parentTask?.list?.id || parentTask?.listId;
     if (typeof window !== 'undefined') {
-      const isCurrentList = !targetListId || window.location.pathname === `/lists/${targetListId}`;
+      const isCurrentList = !!targetListId && window.location.pathname === `/lists/${targetListId}`;
       if (isCurrentList) {
+        if (onCloseModal) {
+          onCloseModal();
+        } else {
+          onClose();
+        }
         const url = new URL(window.location.href);
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
         window.history.replaceState(null, '', url.pathname + (url.search || ''));
       } else if (targetListId) {
         router.push(`/lists/${targetListId}`);
+      } else {
+        router.push('/');
       }
     }
   };
@@ -4608,8 +4731,12 @@ export function SubtaskDetailView({
                   <button
                     onClick={() => {
                       if (setActiveSubtask) setActiveSubtask(null);
-                      if (onCloseModal) onCloseModal(); else onClose();
-                      router.push('/');
+                      const targetListId = parentTask?.list?.id || parentTask?.listId;
+                      if (targetListId) {
+                        router.push(`/lists/${targetListId}`);
+                      } else {
+                        router.push('/');
+                      }
                     }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >
@@ -4626,8 +4753,12 @@ export function SubtaskDetailView({
                   <button
                     onClick={() => {
                       if (setActiveSubtask) setActiveSubtask(null);
-                      if (onCloseModal) onCloseModal(); else onClose();
-                      router.push('/');
+                      const targetListId = parentTask?.list?.id || parentTask?.listId;
+                      if (targetListId) {
+                        router.push(`/lists/${targetListId}`);
+                      } else {
+                        router.push('/');
+                      }
                     }}
                     className="flex items-center gap-1.5 hover:text-zinc-200 transition-colors cursor-pointer"
                   >

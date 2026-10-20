@@ -11,7 +11,7 @@ import {
   getClickUpTask,
   resolveClickUpListId,
 } from '../services/clickupService';
-import { startClickUpSync, getClickUpSyncState } from '../services/clickupSyncService';
+import { startClickUpSync, getClickUpSyncState, syncTaskComments } from '../services/clickupSyncService';
 import { autoLinkClientDashboardLists, getMappingBoard } from '../services/clickupMappingService';
 
 // ---------------------------------------------------------------------------
@@ -303,4 +303,60 @@ export async function syncAllClickUp(req: Request, res: Response) {
 // ---------------------------------------------------------------------------
 export async function getClickUpSyncStatus(req: Request, res: Response) {
   return res.json(getClickUpSyncState());
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/clickup/tasks/:taskId/sync-comments
+// Pulls all comments for a specific ClickUp task or Nexus task and upserts them.
+// ---------------------------------------------------------------------------
+export async function syncTaskCommentsHandler(req: Request, res: Response) {
+  try {
+    const { taskId } = req.params;
+    if (!taskId) return res.status(400).json({ error: 'taskId is required' });
+
+    // Look up task or subtask in Nexus
+    let task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { id: true, externalId: true, listId: true },
+    });
+
+    if (!task) {
+      task = await prisma.task.findFirst({
+        where: { externalId: taskId },
+        select: { id: true, externalId: true, listId: true },
+      });
+    }
+
+    let subtask: { id: string; taskId: string; externalId: string | null } | null = null;
+    if (!task) {
+      subtask = await prisma.subtask.findFirst({
+        where: { OR: [{ id: taskId }, { externalId: taskId }] },
+        select: { id: true, taskId: true, externalId: true },
+      });
+    }
+
+    const cuTaskId = subtask?.externalId ?? task?.externalId ?? taskId;
+    if (!task && !subtask) {
+      return res.status(404).json({ error: `Task not found for id "${taskId}"` });
+    }
+
+    const target = subtask
+      ? { taskId: subtask.taskId, subtaskId: subtask.id }
+      : { taskId: task!.id, subtaskId: null };
+
+    const result = await syncTaskComments(cuTaskId, target, (room, event, payload) =>
+      io.to(room).emit(event, payload)
+    );
+
+    // Notify connected clients to refresh comments
+    io.emit('task:comments_synced', {
+      taskId: target.taskId,
+      subtaskId: target.subtaskId,
+      count: result.count,
+    });
+
+    return res.json({ ok: true, count: result.count, comments: result.comments });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 }

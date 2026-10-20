@@ -5,8 +5,9 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markd
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { useAppStore } from '@/lib/store';
-import { commentHtmlForMarkdown, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
+import { commentHtmlForMarkdown, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink } from '@/lib/links';
 import { UserMentionChip } from './UserMentionChip';
+import { TaskMentionChip } from './TaskMentionChip';
 
 // Shared across instances so a feed of many comments requests the user list only once
 let usersRequested = false;
@@ -20,6 +21,16 @@ const components: Components = {
     if (target.startsWith('mention://')) {
       return <UserMentionChip userId={target.replace('mention://', '')}>{children}</UserMentionChip>;
     }
+    const nexus = parseNexusTaskLink(target);
+    if (nexus) {
+      return (
+        <TaskMentionChip
+          taskId={nexus.taskId}
+          mentionType={nexus.isSubtask ? 'subtask' : 'task'}
+          initialLabel={typeof children === 'string' && !children.startsWith('http') ? children : undefined}
+        />
+      );
+    }
     return (
       <a
         {...rest}
@@ -32,6 +43,25 @@ const components: Components = {
         {children}
       </a>
     );
+  },
+  span: ({ node, ...rest }: any) => {
+    const dataType = rest['data-type'] || (node?.properties as any)?.dataType;
+    if (dataType === 'mention') {
+      const taskId = rest['data-id'] || (node?.properties as any)?.dataId;
+      const mentionType = rest['data-mention-type'] || (node?.properties as any)?.dataMentionType || 'task';
+      const label = rest['data-label'] || (node?.properties as any)?.dataLabel || '';
+      if (taskId) {
+        return (
+          <TaskMentionChip
+            taskId={taskId}
+            mentionType={mentionType}
+            initialLabel={label}
+            attrs={rest}
+          />
+        );
+      }
+    }
+    return <span {...rest} />;
   },
 };
 

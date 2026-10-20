@@ -11,6 +11,8 @@ import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { Task } from '@/lib/types';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { parseNexusTaskLink } from '@/lib/links';
+import { getTaskSnapshot } from '@/lib/nexusLinkPaste';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { usersApi } from '@/api/users';
@@ -2089,11 +2091,22 @@ export default function DocPage({ docId }: { docId?: string }) {
           const parts = text.split(/\n\n|\n/).map(t => t.trim()).filter(t => t.length > 0);
           if (parts.length === 0) return;
           
-          const newBlocks: DocBlock[] = parts.map(part => ({
-            id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-            type: 'text',
-            content: `<p>${part}</p>`,
-          }));
+          const newBlocks: DocBlock[] = parts.map(part => {
+            const nexus = parseNexusTaskLink(part);
+            if (nexus) {
+              const snapshot = getTaskSnapshot(nexus.taskId);
+              return {
+                id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                type: 'text',
+                content: `<p><span data-type="mention" class="task-mention" data-id="${nexus.taskId}" data-label="${snapshot.title.replace(/"/g, '&quot;')}" data-mention-type="${nexus.isSubtask ? 'subtask' : 'task'}" data-task-status="${(snapshot.status || '').replace(/"/g, '&quot;')}" data-task-assignees="${(snapshot.assignees || '').replace(/"/g, '&quot;')}">${snapshot.title}</span></p>`,
+              };
+            }
+            return {
+              id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              type: 'text',
+              content: `<p>${part}</p>`,
+            };
+          });
           const selectedArr = Array.from(selectedBlockIds);
           const firstSelectedId = selectedArr[0];
           const insertIndex = blocks.findIndex(b => b.id === firstSelectedId);

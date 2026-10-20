@@ -362,8 +362,53 @@ function bookmarkTitle(raw: unknown): string | null {
   }
 }
 
+/** Converts ClickUp emoticon hex code (e.g. "1F60A", "1f562", or "1f44d-1f3fb") to Unicode emoji character. */
+export function clickupEmoticonToEmoji(code?: string | null, text?: string | null): string {
+  const cleanCode = String(code ?? '').trim();
+  const cleanText = String(text ?? '').trim();
+
+  // If code is hex code point(s), decode it
+  if (/^[0-9a-f]+(-[0-9a-f]+)*$/i.test(cleanCode)) {
+    try {
+      return String.fromCodePoint(...cleanCode.split('-').map((cp) => parseInt(cp, 16)));
+    } catch {
+      // ignore
+    }
+  }
+
+  // ClickUp frequently sets seg.text to the hex string (e.g. "1F60A" or "1F562")
+  if (/^[0-9a-f]{4,6}(-[0-9a-f]{4,6})*$/i.test(cleanText)) {
+    try {
+      return String.fromCodePoint(...cleanText.split('-').map((cp) => parseInt(cp, 16)));
+    } catch {
+      // ignore
+    }
+  }
+
+  // If text is already an emoji or non-empty string
+  if (cleanText) return cleanText;
+
+  return cleanCode;
+}
+
+/** Decodes standalone Unicode emoji hex tokens (e.g. 1F60A, 1F562, 26A1) in text strings */
+export function decodeEmojiHexTokens(text: string): string {
+  if (!text) return '';
+  return text.replace(/\b(1F[0-9A-Fa-f]{3,4}|2[67][0-9A-Fa-f]{2})\b/g, (match) => {
+    try {
+      const code = parseInt(match, 16);
+      if ((code >= 0x1F000 && code <= 0x1FAFF) || (code >= 0x2600 && code <= 0x27BF)) {
+        return String.fromCodePoint(code);
+      }
+      return match;
+    } catch {
+      return match;
+    }
+  });
+}
+
 function formatInline(text: string, attrs: any): string {
-  let html = escapeHtml(text);
+  let html = escapeHtml(decodeEmojiHexTokens(text));
   if (!html) return '';
   if (attrs.code) html = `<code>${html}</code>`;
   if (attrs.bold) html = `<strong>${html}</strong>`;
@@ -400,11 +445,7 @@ export function clickupCommentToHtml(segments: any[], mentionUserId: (cuUser: an
         continue;
       }
       case 'emoticon': {
-        const code = String(seg.emoticon?.code ?? '');
-        let emoji = seg.text || '';
-        if (!emoji && /^[0-9a-f]+(-[0-9a-f]+)*$/i.test(code)) {
-          emoji = String.fromCodePoint(...code.split('-').map((cp) => parseInt(cp, 16)));
-        }
+        const emoji = clickupEmoticonToEmoji(seg.emoticon?.code, seg.text);
         line += escapeHtml(emoji);
         continue;
       }

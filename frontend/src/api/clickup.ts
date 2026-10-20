@@ -162,6 +162,11 @@ export const clickUpApi = {
     return apiClient(`/api/clickup/tasks/${taskId}`);
   },
 
+  /** Pull fresh comments from ClickUp for a specific task or subtask. */
+  async syncTaskComments(taskId: string): Promise<{ ok: boolean; count: number; comments: any[] }> {
+    return apiClient(`/api/clickup/tasks/${taskId}/sync-comments`, { method: 'POST' });
+  },
+
   /**
    * Start pulling every mapped ClickUp list into Nexus (active tasks unless includeClosed).
    * Runs in the background; poll getSyncStatus. started=false means one is already running.

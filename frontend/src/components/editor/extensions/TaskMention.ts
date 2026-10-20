@@ -7,6 +7,10 @@ export const TaskMention = Mention.extend({
   inline: true,
   group: 'inline',
 
+  renderText({ node }) {
+    return node.attrs.label || '';
+  },
+
   addAttributes() {
     return {
       ...this.parent?.(),

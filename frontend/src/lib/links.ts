@@ -125,13 +125,32 @@ export function isBlankCommentHtml(html: string): boolean {
   return !html.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim();
 }
 
+/** Decodes standalone Unicode emoji hex tokens (e.g. 1F60A, 1F562, 26A1) in text strings */
+export function decodeEmojiHexTokens(text: string): string {
+  if (!text) return '';
+  return text.replace(/\b(1F[0-9A-Fa-f]{3,4}|2[67][0-9A-Fa-f]{2})\b/g, (match) => {
+    try {
+      const code = parseInt(match, 16);
+      if ((code >= 0x1F000 && code <= 0x1FAFF) || (code >= 0x2600 && code <= 0x27BF)) {
+        return String.fromCodePoint(code);
+      }
+      return match;
+    } catch {
+      return match;
+    }
+  });
+}
+
 /**
  * Comment HTML from the editor can begin with an inline-placed image. Markdown only treats a line
  * as raw HTML when it opens with a block tag, so an <img> first would turn the rest into markdown;
  * an empty leading <p> keeps the whole comment as HTML.
+ * Also safely decodes any ClickUp emoji hex codes (e.g. 1F60A, 1F562) into real Unicode emojis.
  */
 export function commentHtmlForMarkdown(content: string): string {
-  return /^\s*<img\b/i.test(content) ? `<p></p>${content}` : content;
+  if (!content) return '';
+  const decoded = decodeEmojiHexTokens(content);
+  return /^\s*<img\b/i.test(decoded) ? `<p></p>${decoded}` : decoded;
 }
 
 /**
@@ -153,5 +172,92 @@ export function rehypeUnknownTagsToText() {
 export function rehypeLinkify() {
   return (tree: Root) => {
     walk(tree);
+  };
+}
+
+export interface NexusTaskLinkInfo {
+  taskId: string;
+  subtaskId?: string;
+  listId?: string;
+  isSubtask: boolean;
+  originalUrl: string;
+}
+
+/**
+ * Checks if a string or URL is specifically a Nexus task or subtask link.
+ * Strict check: returns null for any third-party domain (e.g. GitHub, Google, ClickUp).
+ */
+export function parseNexusTaskLink(input: string | null | undefined): NexusTaskLinkInfo | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  let url: URL;
+  try {
+    if (trimmed.startsWith('/') || trimmed.startsWith('?')) {
+      url = new URL(trimmed, 'https://nexus.vipscaleph.com');
+    } else if (/^https?:\/\//i.test(trimmed)) {
+      url = new URL(trimmed);
+    } else if (/^(?:www\.)?nexus\.vipscaleph\.com/i.test(trimmed)) {
+      url = new URL(`https://${trimmed.replace(/^\/\//, '')}`);
+    } else {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  // Domain verification: must strictly be a Nexus host or local development origin
+  const hostname = url.hostname.toLowerCase();
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
+  const isNexusDomain =
+    hostname === 'nexus.vipscaleph.com' ||
+    hostname.endsWith('.vipscaleph.com') ||
+    (currentHost && (hostname === currentHost || hostname === 'localhost' || hostname === '127.0.0.1')) ||
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1';
+
+  if (!isNexusDomain) {
+    return null;
+  }
+
+  const pathname = url.pathname;
+  const taskQuery = url.searchParams.get('task');
+  const subtaskQuery = url.searchParams.get('subtask');
+
+  let listId: string | undefined;
+  let taskId: string | undefined;
+  let subtaskId: string | undefined;
+
+  const listMatch = pathname.match(/\/lists\/([a-zA-Z0-9_-]+)/);
+  if (listMatch) {
+    listId = listMatch[1];
+  }
+
+  const taskMatch = pathname.match(/\/tasks\/([a-zA-Z0-9_-]+)/);
+  if (taskMatch) {
+    taskId = taskMatch[1];
+  }
+
+  if (taskQuery) {
+    taskId = taskQuery;
+  }
+  if (subtaskQuery) {
+    subtaskId = subtaskQuery;
+  }
+
+  if (!taskId && !subtaskId) {
+    return null;
+  }
+
+  const effectiveId = subtaskId || taskId!;
+  const isSubtask = Boolean(subtaskId);
+
+  return {
+    taskId: effectiveId,
+    subtaskId: subtaskId || undefined,
+    listId,
+    isSubtask,
+    originalUrl: trimmed,
   };
 }

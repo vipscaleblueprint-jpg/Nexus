@@ -15,6 +15,7 @@ import {
   getClickUpSyncStatus,
   autoLinkMappings,
   getMappingBoardHandler,
+  syncTaskCommentsHandler,
 } from '../controllers/clickup.controller';
 import { requireSystemRole } from '../middleware/auth.middleware';
 
@@ -41,6 +42,7 @@ router.delete('/mappings/:nexusListId', adminOnly, deleteMapping);
 
 // Proxy task info from ClickUp
 router.get('/tasks/:taskId', getClickUpTaskProxy);
+router.post('/tasks/:taskId/sync-comments', syncTaskCommentsHandler);
 
 // Recent synced activity (for the header panel)
 router.get('/recent-activity', getRecentSyncedActivity);

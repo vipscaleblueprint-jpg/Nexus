@@ -9,7 +9,8 @@ import Highlight from '@tiptap/extension-highlight';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import Link from '@tiptap/extension-link';
-import { openExternalLink } from '@/lib/links';
+import { openExternalLink, parseNexusTaskLink } from '@/lib/links';
+import { insertNexusTaskMention, cleanPastedHtml, stripMarksFromSlice } from '@/lib/nexusLinkPaste';
 import { TaskMention } from '../editor/extensions/TaskMention';
 import { Badge, EndBadgeOnNewLine } from '../editor/extensions/Badge';
 import { TextColorPanel } from '../editor/TextColorPanel';
@@ -154,9 +155,24 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       attributes: {
         class: BLOCK_EDITOR_CONTENT_CLASS,
       },
-      // Task 2: Preserve all data-* attributes on mention spans during paste.
+      handlePaste: (view, event) => {
+        const text = event.clipboardData?.getData('text/plain')?.trim();
+        if (text) {
+          const nexus = parseNexusTaskLink(text);
+          if (nexus) {
+            event.preventDefault();
+            insertNexusTaskMention(view, nexus);
+            return true;
+          }
+        }
+        return false;
+      },
+      // Sanitize pasted HTML, strip external formatting, and convert Nexus links to task mentions
       transformPastedHTML(html: string) {
-        return html;
+        return cleanPastedHtml(html);
+      },
+      transformPasted(slice, view) {
+        return stripMarksFromSlice(slice, view.state.schema);
       },
       handleDOMEvents: {
         click: (view, event) => {

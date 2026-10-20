@@ -12,8 +12,10 @@ import Image from '@tiptap/extension-image';
 import { Extension, type Editor } from '@tiptap/core';
 import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import { GapCursor } from '@tiptap/pm/gapcursor';
-import { normalizeHref } from '@/lib/links';
+import { normalizeHref, parseNexusTaskLink } from '@/lib/links';
 import { Badge, EndBadgeOnNewLine } from '@/components/editor/extensions/Badge';
+import { TaskMention } from '@/components/editor/extensions/TaskMention';
+import { insertNexusTaskMention, cleanPastedHtml, stripMarksFromSlice } from '@/lib/nexusLinkPaste';
 import { TextColorPanel } from '@/components/editor/TextColorPanel';
 import { toast } from '@/lib/toast';
 import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2 } from 'lucide-react';
@@ -142,23 +144,6 @@ const CommentBlocks = Extension.create({
 const htmlHasText = (html: string) =>
   typeof DOMParser !== 'undefined' && !!new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim();
 
-// Rich text copied from other apps (ClickUp, Slack, Docs...) carries runs of empty paragraphs and
-// images we can't load (local file paths, other pages' blobs). Keep one blank line, drop those images.
-const cleanPastedHtml = (html: string) => {
-  if (typeof DOMParser === 'undefined') return html;
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  doc.querySelectorAll('img').forEach(img => {
-    if (!/^(https?:|data:image\/)/i.test(img.getAttribute('src') || '')) img.remove();
-  });
-  const isEmpty = (el: Element) => !el.textContent?.trim() && !el.querySelector('img, video');
-  doc.body.querySelectorAll('p, div').forEach(el => {
-    if (!el.isConnected || !isEmpty(el)) return;
-    const prev = el.previousElementSibling;
-    if (!prev || (prev.matches('p, div, br') && isEmpty(prev))) el.remove();
-  });
-  return doc.body.innerHTML.replace(/(<br\s*\/?>\s*){3,}/gi, '<br><br>');
-};
-
 const fileNameFromSrc = (src: string, type: string) => {
   const ext = (type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
   const last = src.startsWith('data:') ? '' : src.split(/[?#]/)[0].split('/').pop() || '';
@@ -195,6 +180,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       EndBadgeOnNewLine,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder }),
+      TaskMention,
       Link.configure({
         openOnClick: false,
         protocols: ['mention'],
@@ -226,6 +212,18 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         }
         return false;
       },
+      handlePaste: (view, event) => {
+        const text = event.clipboardData?.getData('text/plain')?.trim();
+        if (text) {
+          const nexus = parseNexusTaskLink(text);
+          if (nexus) {
+            event.preventDefault();
+            insertNexusTaskMention(view, nexus);
+            return true;
+          }
+        }
+        return false;
+      },
       handleDrop: (view, event, _slice, moved) => {
         if (moved || !onUploadImage) return false;
         const images = Array.from(event.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'));
@@ -237,14 +235,14 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       },
       transformPastedHTML: cleanPastedHtml,
       // Images in pasted rich text still point at the other app; copy them into our storage
-      transformPasted: (slice) => {
+      transformPasted: (slice, view) => {
         const srcs: string[] = [];
         slice.content.descendants(node => {
           const src = node.type.name === 'image' ? String(node.attrs.src || '') : '';
           if (/^(https?:|data:)/i.test(src)) srcs.push(src);
         });
         if (srcs.length > 0) setTimeout(() => rehostImagesRef.current(srcs), 0);
-        return slice;
+        return stripMarksFromSlice(slice, view.state.schema);
       }
     }
   });

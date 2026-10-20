@@ -28,7 +28,8 @@ import { AttachmentsGrid } from './AttachmentsGrid';
 import { getFolderColor } from '@/components/layout/Sidebar';
 import { CommentEditor, ComposerSendButton, ComposerToolButton } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
-import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText } from '@/lib/links';
+import { TaskMentionChip } from '../ui/TaskMentionChip';
+import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EditCommentForm } from './EditCommentForm';
 import { UncheckedAuditsModal } from './UncheckedAuditsModal';
@@ -306,39 +307,30 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
     );
   }
 
-  if (!loaded) {
-    return (
-      <span
-        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-secondary border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setLoaded(true);
-        }}
-      >
-        <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
-        <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
-          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
-        </span>
-      </span>
-    );
-  }
-
   return (
-    <span className="mt-2 mb-2 inline-block relative group cursor-pointer" onClick={(e) => {
+    <span className="mt-2 mb-2 inline-block relative group cursor-pointer max-w-full" onClick={(e) => {
       e.preventDefault();
       e.stopPropagation();
       onPreview(src);
     }}>
+      {!loaded && (
+        <span className="inline-flex items-center justify-center w-[200px] h-[140px] bg-secondary/60 border border-zinc-800/80 rounded-lg animate-pulse">
+          <ImageIcon className="w-8 h-8 text-zinc-600 opacity-40" />
+        </span>
+      )}
       <img
         src={src}
         alt={alt}
-        className="max-w-[200px] max-h-[150px] object-cover rounded-lg"
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
+        className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm ${loaded ? 'block' : 'hidden'}`}
       />
-      <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg pointer-events-none">
-        <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
-      </span>
+      {loaded && (
+        <span className="absolute inset-0 bg-secondary/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
+          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
+        </span>
+      )}
     </span>
   );
 }
@@ -576,6 +568,20 @@ export function TaskDetailModalContent({
   }, [task?.subtasks, activeSubtask]);
 
   useEffect(() => {
+    const handleOpenDetailInContent = (e: any) => {
+      const { subtaskId } = e.detail || {};
+      if (subtaskId && task?.subtasks) {
+        const found = task.subtasks.find((s: any) => s.id === subtaskId);
+        if (found) {
+          setActiveSubtask(found);
+        }
+      }
+    };
+    window.addEventListener('open-task-detail', handleOpenDetailInContent);
+    return () => window.removeEventListener('open-task-detail', handleOpenDetailInContent);
+  }, [task?.subtasks]);
+
+  useEffect(() => {
     const handleWindowTaskUpdated = (e: any) => {
       const incoming = e.detail?.task;
       if (!incoming) return;
@@ -740,17 +746,48 @@ export function TaskDetailModalContent({
         const userId = href.replace('mention://', '');
         return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
       }
+      const nexus = parseNexusTaskLink(href);
+      if (nexus) {
+        return (
+          <TaskMentionChip
+            taskId={nexus.taskId}
+            mentionType={nexus.isSubtask ? 'subtask' : 'task'}
+            parentTaskId={nexus.subtaskId ? (task?.id || nexus.taskId) : undefined}
+            initialLabel={typeof rest.children === 'string' && !rest.children.startsWith('http') ? rest.children : undefined}
+          />
+        );
+      }
       return (
         <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
     },
+    span: (props: any) => {
+      const { node, ...rest } = props;
+      const dataType = rest['data-type'] || (node?.properties as any)?.dataType;
+      if (dataType === 'mention') {
+        const taskId = rest['data-id'] || (node?.properties as any)?.dataId;
+        const mentionType = rest['data-mention-type'] || (node?.properties as any)?.dataMentionType || 'task';
+        const label = rest['data-label'] || (node?.properties as any)?.dataLabel || '';
+        if (taskId) {
+          return (
+            <TaskMentionChip
+              taskId={taskId}
+              mentionType={mentionType}
+              initialLabel={label}
+              attrs={rest}
+            />
+          );
+        }
+      }
+      return <span {...rest} />;
+    },
     img: (props: any) => {
       const { node, ...rest } = props;
       return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} />;
     }
-  }), []);
+  }), [task?.id]);
 
   // Select only what the modal uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
   const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists } = useAppStore(useShallow((s) => ({
@@ -3341,12 +3378,12 @@ export function TaskDetailModalContent({
 
                           // Mention logic
                           const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
-                          const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+                          const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
 
-                          if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
+                          if (match) {
                             setShowMentionMenu(true);
-                            setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
-                            setMentionStartIndex(lastAtIndex);
+                            setMentionSearch(match[1]);
+                            setMentionStartIndex(textBeforeCursor.lastIndexOf('@'));
                             setMentionSelectedIndex(0);
                           } else {
                             setShowMentionMenu(false);
@@ -3691,17 +3728,48 @@ export function SubtaskDetailView({
         const userId = href.replace('mention://', '');
         return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
       }
+      const nexus = parseNexusTaskLink(href);
+      if (nexus) {
+        return (
+          <TaskMentionChip
+            taskId={nexus.taskId}
+            mentionType={nexus.isSubtask ? 'subtask' : 'task'}
+            parentTaskId={nexus.subtaskId ? (parentTask?.id || nexus.taskId) : undefined}
+            initialLabel={typeof rest.children === 'string' && !rest.children.startsWith('http') ? rest.children : undefined}
+          />
+        );
+      }
       return (
         <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
           {rest.children}
         </a>
       );
     },
+    span: (props: any) => {
+      const { node, ...rest } = props;
+      const dataType = rest['data-type'] || (node?.properties as any)?.dataType;
+      if (dataType === 'mention') {
+        const taskId = rest['data-id'] || (node?.properties as any)?.dataId;
+        const mentionType = rest['data-mention-type'] || (node?.properties as any)?.dataMentionType || 'task';
+        const label = rest['data-label'] || (node?.properties as any)?.dataLabel || '';
+        if (taskId) {
+          return (
+            <TaskMentionChip
+              taskId={taskId}
+              mentionType={mentionType}
+              initialLabel={label}
+              attrs={rest}
+            />
+          );
+        }
+      }
+      return <span {...rest} />;
+    },
     img: (props: any) => {
       const { node, ...rest } = props;
       return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} />;
     }
-  }), []);
+  }), [parentTask?.id]);
   const editorRef = useRef<any>(null);
   const activityPanelRef = useRef<HTMLDivElement>(null);
   // Task edits are open to all
@@ -5833,12 +5901,12 @@ export function SubtaskDetailView({
                         
                         // Mention logic
                         const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
-                        const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+                        const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
 
-                        if (lastAtIndex !== -1 && !textBeforeCursor.substring(lastAtIndex).includes(' ')) {
+                        if (match) {
                           setShowMentionMenu(true);
-                          setMentionSearch(textBeforeCursor.substring(lastAtIndex + 1));
-                          setMentionStartIndex(lastAtIndex);
+                          setMentionSearch(match[1]);
+                          setMentionStartIndex(textBeforeCursor.lastIndexOf('@'));
                           setMentionSelectedIndex(0);
                         } else {
                           setShowMentionMenu(false);
@@ -6011,6 +6079,38 @@ export function TaskDetailModal(props: Props) {
     window.addEventListener('task:updated', handleTaskUpdated);
     return () => window.removeEventListener('task:updated', handleTaskUpdated);
   }, [fullTask?.id]);
+
+  useEffect(() => {
+    if (!props.isOpen) return;
+    const handleOpenTaskDetail = async (e: any) => {
+      const { taskId, subtaskId, task: providedTask } = e.detail || {};
+      if (!taskId) return;
+      if (props.onUpdateTask && providedTask) {
+        props.onUpdateTask(providedTask);
+      }
+      if (providedTask && providedTask.id === taskId) {
+        setFullTask(providedTask);
+      } else {
+        try {
+          const res = await tasksApi.getTask(taskId);
+          if (res?.task) {
+            setFullTask(res.task);
+          }
+        } catch (err) {
+          console.error('[TaskDetailModal] Failed to switch task:', err);
+        }
+      }
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        url.searchParams.set('task', taskId);
+        if (subtaskId) url.searchParams.set('subtask', subtaskId);
+        else url.searchParams.delete('subtask');
+        window.history.pushState(null, '', url.pathname + url.search);
+      }
+    };
+    window.addEventListener('open-task-detail', handleOpenTaskDetail);
+    return () => window.removeEventListener('open-task-detail', handleOpenTaskDetail);
+  }, [props.isOpen]);
 
   useEffect(() => {
     const main = document.getElementById('main-scroll-container');

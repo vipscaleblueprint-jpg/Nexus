@@ -12,6 +12,7 @@ import { BLOCK_EDITOR_CONTENT_CLASS } from '@/components/ui/BlockEditor';
 import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import { getStatusColor, splitTitleForWrap } from '@/components/editor/nodes/TaskMentionNode';
 import { getPriorityConfig } from '@/lib/priority';
+import { parseNexusTaskLink } from '@/lib/links';
 
 const PASS_THROUGH_TAGS = new Set([
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'u', 's', 'code', 'pre', 'blockquote',
@@ -151,8 +152,21 @@ function toReact(node: Node, key: number): React.ReactNode {
   const children = Array.from(el.childNodes).map((child, i) => toReact(child, i));
   const mapped = TAG_ALIASES[tag] || tag;
   if (PASS_THROUGH_TAGS.has(mapped)) return React.createElement(mapped, { key, style: safeStyle(el) }, ...children);
-  // Links render as text styled like links (no navigation from a preview); other spans keep only colours
-  if (tag === 'a') return <span key={key} className="underline text-blue-400">{children}</span>;
+  // Links render as text styled like links (no navigation from a preview); Nexus links render as task chips
+  if (tag === 'a') {
+    const href = el.getAttribute('href') || '';
+    const nexus = parseNexusTaskLink(href);
+    if (nexus) {
+      const mockSpan = document.createElement('span');
+      mockSpan.setAttribute('data-type', 'mention');
+      mockSpan.setAttribute('data-id', nexus.taskId);
+      mockSpan.setAttribute('data-mention-type', nexus.isSubtask ? 'subtask' : 'task');
+      const labelText = typeof el.textContent === 'string' && !el.textContent.startsWith('http') ? el.textContent : '';
+      if (labelText) mockSpan.setAttribute('data-label', labelText);
+      return <MentionChipPreview key={key} el={mockSpan} />;
+    }
+    return <span key={key} className="underline text-blue-400">{children}</span>;
+  }
   // data-badge keeps the badge pill shape (globals.css); its colours come through safeStyle
   if (tag === 'span') return <span key={key} style={safeStyle(el)} data-badge={el.hasAttribute('data-badge') ? '' : undefined}>{children}</span>;
   return <React.Fragment key={key}>{children}</React.Fragment>;

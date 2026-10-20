@@ -787,11 +787,19 @@ async function syncComments(cuTaskId: string, target: Target, ctx: SyncContext) 
       await prisma.taskComment.update({ where: { id: commentId }, data: { replyCount: replies.length } });
     }
   }
+
+  // Clear Redis comment cache so subsequent client fetches get fresh comments
+  if (target.taskId) {
+    await redis.del(`comments:list:${target.taskId}`).catch(() => {});
+    if (target.subtaskId) {
+      await redis.del(`comments:list:${target.taskId}:sub:${target.subtaskId}`).catch(() => {});
+    }
+  }
 }
 
 /**
- * Creates the comment once. Existing rows (including ones Nexus pushed to ClickUp or edited
- * in Nexus) are left as-is, except untouched plain-text imports, which are upgraded to rich HTML.
+ * Creates or updates comments from ClickUp. When content differs (e.g. improved emoji parsing,
+ * edits made in ClickUp, or attachments added), existing rows are updated.
  */
 async function upsertComment(c: any, target: Target, parentCommentId: string | null, ctx: SyncContext) {
   const userId = userIdFor(c.user, ctx);
@@ -804,12 +812,24 @@ async function upsertComment(c: any, target: Target, parentCommentId: string | n
     : '';
   const content = richHtml ? (userId ? richHtml : `<p>${escapeHtml(deactivated)}</p>${richHtml}`) : plainContent;
 
+  const files = (c.comment ?? [])
+    .map((seg: any) => (seg?.type === 'image' ? seg.image : seg?.type === 'attachment' ? seg.attachment : null))
+    .filter((f: any) => f?.url);
+
   const existing = await prisma.taskComment.findUnique({ where: { externalId: String(c.id) }, select: { id: true, content: true } });
   if (existing) {
-    // Earlier syncs stored only comment_text; upgrade those if nobody has edited them since.
-    if (existing.content === plainContent && content !== plainContent) {
+    if (existing.content !== content) {
       await prisma.taskComment.update({ where: { id: existing.id }, data: { content } });
       ctx.summary.comments++;
+      if (target.taskId) {
+        await redis.del(`comments:list:${target.taskId}`).catch(() => {});
+        if (target.subtaskId) {
+          await redis.del(`comments:list:${target.taskId}:sub:${target.subtaskId}`).catch(() => {});
+        }
+      }
+    }
+    if (files.length > 0) {
+      await syncAttachments(files, { taskCommentId: existing.id }, ctx);
     }
     return existing.id;
   }
@@ -828,11 +848,65 @@ async function upsertComment(c: any, target: Target, parentCommentId: string | n
   ctx.summary.comments++;
 
   // Inline images/files are segments of the rich comment array.
-  const files = (c.comment ?? [])
-    .map((seg: any) => (seg?.type === 'image' ? seg.image : seg?.type === 'attachment' ? seg.attachment : null))
-    .filter((f: any) => f?.url);
   await syncAttachments(files, { taskCommentId: created.id }, ctx);
   return created.id;
+}
+
+/**
+ * On-demand pull for all comments of a specific ClickUp task or subtask.
+ */
+export async function syncTaskComments(
+  cuTaskId: string,
+  target: Target,
+  emit?: SyncEmit
+): Promise<{ count: number; comments: any[] }> {
+  const users = await prisma.user.findMany({ select: { id: true, email: true } });
+  const summary: ClickUpSyncSummary = {
+    startedAt: new Date().toISOString(),
+    lists: 0,
+    tasksCreated: 0,
+    tasksUpdated: 0,
+    subtasks: 0,
+    checklists: 0,
+    checklistItems: 0,
+    comments: 0,
+    attachments: 0,
+    statusesCreated: 0,
+    unmatchedUsers: [],
+    errors: [],
+    listResults: [],
+    activity: [],
+    full: true,
+  };
+  const ctx: SyncContext = {
+    summary,
+    emit: emit ?? (() => {}),
+    includeClosed: true,
+    userIndex: new Map(users.map((u) => [u.email.toLowerCase(), u.id])),
+    fallbackUserId: (await getOrCreateClickUpUser()).id,
+    statusCache: new Map(),
+    statusCreates: new Map(),
+    unmatched: new Set(),
+    listName: 'Task Comments',
+  };
+
+  await syncComments(cuTaskId, target, ctx);
+
+  const updatedComments = await prisma.taskComment.findMany({
+    where: { taskId: target.taskId, ...(target.subtaskId ? { subtaskId: target.subtaskId } : { subtaskId: null }) },
+    include: {
+      reactions: { include: { user: { select: { id: true, name: true } } } },
+      replies: {
+        include: { reactions: { include: { user: { select: { id: true, name: true } } } } },
+        orderBy: { createdAt: 'asc' },
+      },
+      attachments: true,
+      user: { select: { id: true, name: true, avatarUrl: true, email: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  return { count: summary.comments, comments: updatedComments };
 }
 
 async function syncAttachments(

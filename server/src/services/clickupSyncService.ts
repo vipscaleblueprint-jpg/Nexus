@@ -797,9 +797,19 @@ async function syncComments(cuTaskId: string, target: Target, ctx: SyncContext) 
   }
 }
 
+// Comments written in Nexus are mirrored to ClickUp as "[Author] …" (older mirrors: "**[Author]** …")
+const MIRROR_PREFIX_RE = /^(?:\*\*)?\[([^\]\n]{1,80})\](?:\*\*)?(?:\s|$)/;
+
+function isNexusMirrorOf(clickUpText: string, authorName: string | null | undefined): boolean {
+  const name = clickUpText.match(MIRROR_PREFIX_RE)?.[1]?.trim().toLowerCase();
+  return !!name && name === (authorName || 'Nexus').trim().toLowerCase();
+}
+
 /**
  * Creates or updates comments from ClickUp. When content differs (e.g. improved emoji parsing,
- * edits made in ClickUp, or attachments added), existing rows are updated.
+ * edits made in ClickUp, or attachments added), existing rows are updated — except comments written
+ * in Nexus: their ClickUp copy is a lossy mirror (no images, mentions or formatting), so the Nexus
+ * row linked to it by externalId is left as it is.
  */
 async function upsertComment(c: any, target: Target, parentCommentId: string | null, ctx: SyncContext) {
   const userId = userIdFor(c.user, ctx);
@@ -816,8 +826,12 @@ async function upsertComment(c: any, target: Target, parentCommentId: string | n
     .map((seg: any) => (seg?.type === 'image' ? seg.image : seg?.type === 'attachment' ? seg.attachment : null))
     .filter((f: any) => f?.url);
 
-  const existing = await prisma.taskComment.findUnique({ where: { externalId: String(c.id) }, select: { id: true, content: true } });
+  const existing = await prisma.taskComment.findUnique({
+    where: { externalId: String(c.id) },
+    select: { id: true, content: true, user: { select: { name: true } } },
+  });
   if (existing) {
+    if (isNexusMirrorOf(text, existing.user?.name)) return existing.id;
     if (existing.content !== content) {
       await prisma.taskComment.update({ where: { id: existing.id }, data: { content } });
       ctx.summary.comments++;

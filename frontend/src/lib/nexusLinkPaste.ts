@@ -123,6 +123,8 @@ export function transformNexusLinksInHtml(html: string): string {
 const EMOJI_ONLY_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|[‍️⃣#*0-9])+$/u;
 const HAS_EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u;
 const isEmojiText = (text: string) => EMOJI_ONLY_RE.test(text) && HAS_EMOJI_RE.test(text);
+// ™ © ® as plain text symbols, matching how they're typed elsewhere (with U+FE0F they render as boxy emoji)
+const plainSymbols = (text: string) => text.replace(/([©®™])️/g, '$1');
 
 /**
  * Strips foreign formatting, colors, backgrounds, font styles (bold, italic, underline, strike),
@@ -138,7 +140,7 @@ export function cleanPastedHtml(html: string): string {
   doc.querySelectorAll('img').forEach((img) => {
     const alt = img.getAttribute('alt')?.trim() || '';
     if (isEmojiText(alt)) {
-      img.replaceWith(alt);
+      img.replaceWith(plainSymbols(alt));
     } else if (!/^(https?:|data:image\/)/i.test(img.getAttribute('src') || '')) {
       img.remove();
     }

@@ -655,10 +655,16 @@ export async function createClickUpComment(
   payload: string | { comment?: any[]; comment_text?: string },
   notify_all = false
 ): Promise<any> {
-  const body =
-    typeof payload === 'string'
-      ? { comment_text: payload, notify_all }
-      : { ...payload, notify_all };
+  let body: any;
+  if (typeof payload === 'string') {
+    body = { comment_text: payload, notify_all };
+  } else if (payload.comment && Array.isArray(payload.comment) && payload.comment.length > 0) {
+    // ClickUp API expects EITHER "comment" (rich array) OR "comment_text" (plain text).
+    // Sending both in the same payload causes ClickUp to create duplicate comments.
+    body = { comment: payload.comment, notify_all };
+  } else {
+    body = { comment_text: payload.comment_text || '', notify_all };
+  }
   return clickupFetch(`/task/${taskId}/comment`, {
     method: 'POST',
     body: JSON.stringify(body),
@@ -672,10 +678,14 @@ export async function updateClickUpComment(
   commentId: string,
   payload: string | { comment?: any[]; comment_text?: string }
 ): Promise<any> {
-  const body =
-    typeof payload === 'string'
-      ? { comment_text: payload }
-      : { ...payload };
+  let body: any;
+  if (typeof payload === 'string') {
+    body = { comment_text: payload };
+  } else if (payload.comment && Array.isArray(payload.comment) && payload.comment.length > 0) {
+    body = { comment: payload.comment };
+  } else {
+    body = { comment_text: payload.comment_text || '' };
+  }
   return clickupFetch(`/comment/${commentId}`, {
     method: 'PUT',
     body: JSON.stringify(body),

@@ -513,7 +513,7 @@ export function convertCommentHtmlToClickUp(html: string, authorName?: string): 
     if (block.type === 'img') {
       const imgUrl = block.imgSrc || '';
       const imgName = block.imgAlt || imgUrl.split('/').pop() || 'image';
-      // In segments: represent as image block and preview link
+      // In segments: represent as image block
       commentSegments.push({
         type: 'image',
         text: imgName,
@@ -522,8 +522,6 @@ export function convertCommentHtmlToClickUp(html: string, authorName?: string): 
           url: imgUrl,
         },
       });
-      commentSegments.push({ text: '\n' });
-      commentSegments.push({ text: imgUrl, attributes: { link: imgUrl } });
       commentSegments.push({ text: '\n' });
       textLines.push(imgUrl);
       continue;

@@ -1363,6 +1363,14 @@ export async function createTaskComment(req: Request, res: Response) {
         }
         
         if (clickUpTaskId && !parentCommentId) {
+          // Deduplicate rapid double submissions for ClickUp mirror (10s lock per comment ID)
+          const dedupeKey = `dedupe:clickup_comment:${clickUpTaskId}:${comment.id}`;
+          const isFirst = await redis.set(dedupeKey, '1', 'EX', 10, 'NX').catch(() => 'OK');
+          if (!isFirst) {
+            console.log('[ClickUp] Skipping duplicate comment mirror for task', clickUpTaskId);
+            return;
+          }
+
           // Only mirror top-level comments (not internal thread replies)
           const authorName = user?.name || 'Nexus';
           const conversion = convertCommentHtmlToClickUp(content, authorName);
@@ -1400,10 +1408,13 @@ export async function createTaskComment(req: Request, res: Response) {
             }
           }
 
-          const clickupCommentId = await safeCreateClickUpComment(clickUpTaskId, {
-            comment: conversion.comment,
-            comment_text: conversion.comment_text,
-          });
+          // Send either rich comment array OR plain text fallback, never both
+          const commentPayload =
+            conversion.comment && conversion.comment.length > 0
+              ? { comment: conversion.comment }
+              : { comment_text: conversion.comment_text };
+
+          const clickupCommentId = await safeCreateClickUpComment(clickUpTaskId, commentPayload);
           if (clickupCommentId) {
             await prisma.taskComment.update({
               where: { id: comment.id },
@@ -1466,10 +1477,11 @@ export async function updateTaskComment(req: Request, res: Response) {
         try {
           const authorName = comment.user?.name || 'Nexus';
           const conversion = convertCommentHtmlToClickUp(comment.content, authorName);
-          await safeUpdateClickUpComment(previous.externalId!, {
-            comment: conversion.comment,
-            comment_text: conversion.comment_text,
-          });
+          const commentPayload =
+            conversion.comment && conversion.comment.length > 0
+              ? { comment: conversion.comment }
+              : { comment_text: conversion.comment_text };
+          await safeUpdateClickUpComment(previous.externalId!, commentPayload);
         } catch (err) {
           console.error('[ClickUp] updateTaskComment sync error:', err);
         }

@@ -1932,6 +1932,8 @@ export function TaskDetailModalContent({
     if (!task) return;
     if (isUploading || isUploadingInline || isSubmittingComment) return;
 
+    setIsSubmittingComment(true);
+
     let finalComment = trimmed;
     const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const draftHtml = comment;
@@ -1939,7 +1941,6 @@ export function TaskDetailModalContent({
     try {
       // Only uploads hold the editor: files need their URLs before the comment can be shown or sent
       if (stagedFiles.length > 0) {
-        setIsSubmittingComment(true);
         setIsUploading(true);
         for (const file of stagedFiles) {
           const res = await uploadApi.uploadFile(file, 'comments');
@@ -1955,6 +1956,7 @@ export function TaskDetailModalContent({
 
       if (!finalComment.trim()) {
         setIsUploading(false);
+        setIsSubmittingComment(false);
         return;
       }
 
@@ -1981,7 +1983,6 @@ export function TaskDetailModalContent({
       setStagedFiles([]);
       setMentionedUsers([]);
       setIsUploading(false);
-      setIsSubmittingComment(false);
 
       const res = await tasksApi.addComment(
         targetId,

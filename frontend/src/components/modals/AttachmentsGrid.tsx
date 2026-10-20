@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { X, File, ImageIcon } from 'lucide-react';
-import * as Dialog from '@radix-ui/react-dialog';
+import { ImageLightboxModal } from './ImageLightboxModal';
 
 interface Attachment {
   id: string;
@@ -19,6 +19,52 @@ interface AttachmentsGridProps {
 export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps) {
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+
+  const imageAttachments = useMemo(() => {
+    return (attachments || []).filter((att) => {
+      const mime = (att.mimeType || '').toLowerCase();
+      const name = (att.fileName || '').toLowerCase();
+      const url = (att.fileUrl || '').toLowerCase();
+      return (
+        mime.startsWith('image/') ||
+        /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(name) ||
+        /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(url)
+      );
+    });
+  }, [attachments]);
+
+  const imageAttachmentUrls = useMemo(() => {
+    return imageAttachments.map((a) => a.fileUrl);
+  }, [imageAttachments]);
+
+  const handleNavigateImage = useCallback(
+    (newUrl: string) => {
+      const target = imageAttachments.find(
+        (a) => a.fileUrl === newUrl || decodeURIComponent(a.fileUrl) === decodeURIComponent(newUrl)
+      );
+      if (target) {
+        setPreviewAttachment(target);
+        setLoadedImages((prev) => {
+          const newSet = new Set(prev);
+          newSet.add(target.id);
+          return newSet;
+        });
+      }
+    },
+    [imageAttachments]
+  );
+
+  const isImageAttachment = useMemo(() => {
+    if (!previewAttachment) return false;
+    const mime = (previewAttachment.mimeType || '').toLowerCase();
+    const name = (previewAttachment.fileName || '').toLowerCase();
+    const url = (previewAttachment.fileUrl || '').toLowerCase();
+    return (
+      mime.startsWith('image/') ||
+      /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(name) ||
+      /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(url)
+    );
+  }, [previewAttachment]);
 
   if (attachments.length === 0) {
     return null;
@@ -100,65 +146,30 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
       </div>
 
       {/* Lightbox Preview */}
-      <Dialog.Root open={!!previewAttachment} onOpenChange={(open) => !open && setPreviewAttachment(null)}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/90 z-[200000] animate-in fade-in backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[200001] w-full max-w-[95vw] h-full max-h-[95vh] flex flex-col items-center justify-center outline-none">
-            {previewAttachment && (
-              <>
-                <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
-                  <a
-                    href={previewAttachment.fileUrl}
-                    download={previewAttachment.fileName}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-2 bg-card/90 hover:bg-muted border border-border text-muted-foreground hover:text-foreground rounded-full shadow-lg transition-colors backdrop-blur-md"
-                    title="Download"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                  </a>
-                  <Dialog.Close asChild>
-                    <button title="Close" className="p-2 bg-card/90 hover:bg-muted border border-border text-muted-foreground hover:text-foreground rounded-full shadow-lg transition-colors backdrop-blur-md cursor-pointer">
-                      <X className="w-5 h-5" />
-                    </button>
-                  </Dialog.Close>
-                </div>
-                
-                <div className="relative w-full h-full flex items-center justify-center p-4">
-                  {previewAttachment.mimeType.startsWith('image/') ? (
-                    <img 
-                      src={previewAttachment.fileUrl} 
-                      alt={previewAttachment.fileName}
-                      className="max-w-full max-h-full object-contain rounded-md shadow-2xl"
-                    />
-                  ) : previewAttachment.mimeType.startsWith('video/') ? (
-                    <video 
-                      src={previewAttachment.fileUrl} 
-                      controls
-                      autoPlay
-                      className="max-w-full max-h-full rounded-md shadow-2xl"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center p-12 bg-secondary rounded-xl border border-zinc-800">
-                      <File className="w-24 h-24 text-zinc-600 mb-6" />
-                      <h3 className="text-xl font-medium text-zinc-200 mb-2">{previewAttachment.fileName}</h3>
-                      <p className="text-zinc-500 mb-8 uppercase tracking-widest">{previewAttachment.mimeType}</p>
-                      <a
-                        href={previewAttachment.fileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors shadow-lg shadow-blue-500/20"
-                      >
-                        Open File in Browser
-                      </a>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      <ImageLightboxModal
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+        currentSrc={previewAttachment?.fileUrl || null}
+        fileName={previewAttachment?.fileName}
+        images={isImageAttachment ? imageAttachmentUrls : []}
+        onNavigate={handleNavigateImage}
+      >
+        {previewAttachment && !isImageAttachment && !previewAttachment.mimeType?.startsWith('video/') && (
+          <div className="flex flex-col items-center p-12 bg-secondary rounded-xl border border-zinc-800">
+            <File className="w-24 h-24 text-zinc-600 mb-6" />
+            <h3 className="text-xl font-medium text-zinc-200 mb-2">{previewAttachment.fileName}</h3>
+            <p className="text-zinc-500 mb-8 uppercase tracking-widest">{previewAttachment.mimeType}</p>
+            <a
+              href={previewAttachment.fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors shadow-lg shadow-blue-500/20"
+            >
+              Open File in Browser
+            </a>
+          </div>
+        )}
+      </ImageLightboxModal>
     </div>
   );
 }

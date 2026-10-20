@@ -26,7 +26,7 @@ const colors = [
 
 interface CommentEditorProps {
   value: string;
-  onChange: (value: string, text?: string, selectionStart?: number) => void;
+  onChange: (value: string, text?: string, selectionStart?: number, textBeforeCursor?: string) => void;
   placeholder?: string;
   autoFocus?: boolean;
   id?: string;
@@ -193,9 +193,13 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     content: value,
     editable: !disabled,
     onUpdate: ({ editor }) => {
+      const { $from } = editor.state.selection;
+      const textBeforeCursor = $from.parent.isTextblock
+        ? $from.parent.textBetween(0, $from.parentOffset, undefined, '￼')
+        : '';
       const text = editor.getText();
       const selectionStart = editor.state.selection.from - 1;
-      onChange(editor.getHTML(), text, selectionStart);
+      onChange(editor.getHTML(), text, selectionStart, textBeforeCursor);
     },
     editorProps: {
       attributes: {

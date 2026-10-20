@@ -153,10 +153,11 @@ export function EditCommentForm({
     const rect = editorWrapperRef.current.getBoundingClientRect();
     const dropdownHeight = 220;
     const spaceBelow = window.innerHeight - rect.bottom;
-    const showAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+    const spaceAbove = rect.top;
+    const showAbove = spaceBelow < dropdownHeight && spaceAbove > spaceBelow;
 
     setMenuPosition({
-      top: showAbove ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
+      top: showAbove ? Math.max(10, rect.top - dropdownHeight - 6) : Math.min(rect.bottom + 6, window.innerHeight - dropdownHeight - 10),
       left: Math.max(16, Math.min(rect.left, window.innerWidth - 300)),
       width: Math.min(300, Math.max(240, rect.width)),
     });
@@ -314,7 +315,7 @@ export function EditCommentForm({
         setSelectedIndex(prev => (prev - 1 + filteredUsers.length) % filteredUsers.length);
         return;
       }
-      if (e.key === 'Tab') {
+      if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
         e.stopPropagation();
         const user = filteredUsers[selectedIndex] || filteredUsers[0];
@@ -443,18 +444,22 @@ export function EditCommentForm({
           ref={commentEditorRef}
           id={`edit-${commentId}`}
           value={text}
-          onChange={(html, textContent, cursorPosition) => {
+          onChange={(html, textContent, cursorPosition, textBefore) => {
             setText(html);
             const textStr = textContent || '';
-            const textBeforeCursor = (cursorPosition !== undefined && cursorPosition >= 0)
-              ? textStr.substring(0, Math.min(textStr.length, cursorPosition))
-              : textStr;
+            const textBeforeCursor = textBefore !== undefined
+              ? textBefore
+              : (cursorPosition !== undefined && cursorPosition >= 0)
+                ? textStr.substring(0, Math.min(textStr.length, cursorPosition))
+                : textStr;
 
             // Trigger mention dropdown when '@' follows start of text or whitespace
             const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
             if (match) {
+              updateMenuPosition();
               setShowMentionMenu(true);
               setMentionSearch(match[1]);
+              setSelectedIndex(0);
             } else {
               setShowMentionMenu(false);
             }
@@ -486,7 +491,7 @@ export function EditCommentForm({
         >
           <div className="p-2 border-b border-zinc-800/60 text-xs font-semibold text-zinc-400 bg-zinc-900/60 flex items-center justify-between">
             <span>People</span>
-            <span className="text-[10px] text-zinc-500 font-normal">↑↓ to navigate, Enter to select</span>
+            <span className="text-[10px] text-zinc-500 font-normal">↑↓ navigate, Enter/Tab select</span>
           </div>
           <div className="max-h-48 overflow-y-auto custom-scrollbar">
             {filteredUsers.map((u: any, idx: number) => {

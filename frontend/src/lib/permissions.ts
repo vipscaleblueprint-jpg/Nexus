@@ -75,25 +75,25 @@ export function canUserEditTask(
   };
 }
 
-const PROJECT_MANAGER_ROLE = /project\s*manager|^pm$/i;
+const PROJECT_MANAGER_OR_SENIOR_ROLE = /project\s*manager|^pm$|\bsenior\b/i;
 
 /**
- * Only Project Managers and Admins can set a task's Team Role and Assignees.
- * Same PM match as the server (server/src/utils/assignPermission.ts).
+ * Only Project Managers, Seniors, and Admins can set a task's Team Role and Assignees.
+ * Same PM/Senior match as the server (server/src/utils/assignPermission.ts).
  */
 export function isProjectManagerOrAdmin(user: User | null | undefined): boolean {
   if (!user) return false;
   if (user.systemRole === 'ADMIN') return true;
-  return (user.roles || []).some((r) => PROJECT_MANAGER_ROLE.test((r || '').trim()));
+  return (user.roles || []).some((r) => PROJECT_MANAGER_OR_SENIOR_ROLE.test((r || '').trim()));
 }
 
 /**
- * Message shown to users who can't set Team Role / Assignees, naming the PM role(s) exactly as they are
+ * Message shown to users who can't set Team Role / Assignees, naming the PM/Senior role(s) exactly as they are
  * written in the WorkspaceRole table. Same text as the server (server/src/utils/assignPermission.ts).
  */
 export function getAssignDeniedMessage(workspaceRoles: { name: string }[] = []): string {
-  const pmRoles = workspaceRoles.map((r) => r.name).filter((n) => PROJECT_MANAGER_ROLE.test((n || '').trim()));
-  const label = pmRoles.length > 0 ? pmRoles.join(' or ') : 'Project Manager';
+  const privilegedRoles = workspaceRoles.map((r) => r.name).filter((n) => PROJECT_MANAGER_OR_SENIOR_ROLE.test((n || '').trim()));
+  const label = privilegedRoles.length > 0 ? privilegedRoles.join(' or ') : 'Project Manager, Senior';
   return `You can't change this. Only ${label} and Admins can set Team Role and Assignees.`;
 }
 

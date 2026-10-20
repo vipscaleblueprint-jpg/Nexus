@@ -96,22 +96,22 @@ const formatActivityMessage = (log: any) => {
 export default function ActivityPage() {
   const router = useRouter();
   const { decrementUnreadNotifications, workspaceRoles, currentUser } = useAppStore();
-  const isPM = currentUser?.roles?.some((r: string) => /project\s*manager|^pm$/i.test(r?.trim()));
+  const isPrivileged = currentUser?.systemRole === 'ADMIN' || currentUser?.roles?.some((r: string) => /project\s*manager|^pm$|\bsenior\b/i.test(r?.trim()));
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     const user = useAppStore.getState().currentUser;
-    const isPmUser = user?.roles?.some((r: string) => /project\s*manager|^pm$/i.test(r?.trim()));
-    return isPmUser ? 'show_all' : 'for_me';
+    const isPrivilegedUser = user?.systemRole === 'ADMIN' || user?.roles?.some((r: string) => /project\s*manager|^pm$|\bsenior\b/i.test(r?.trim()));
+    return isPrivilegedUser ? 'show_all' : 'for_me';
   });
   const hasInitializedViewMode = useRef(false);
 
   useEffect(() => {
     if (currentUser && !hasInitializedViewMode.current) {
-      if (isPM) {
+      if (isPrivileged) {
         setViewMode('show_all');
       }
       hasInitializedViewMode.current = true;
     }
-  }, [currentUser, isPM]);
+  }, [currentUser, isPrivileged]);
 
   const [category, setCategory] = useState<Category>('all');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');

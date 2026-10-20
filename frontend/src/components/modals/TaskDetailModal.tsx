@@ -32,7 +32,10 @@ import { TaskMentionChip } from '../ui/TaskMentionChip';
 import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EditCommentForm } from './EditCommentForm';
+import { CommentReplyInput } from './CommentReplyInput';
 import { UncheckedAuditsModal } from './UncheckedAuditsModal';
+import { ImageLightboxModal } from './ImageLightboxModal';
+import { extractImagesFromComments } from '@/lib/commentImages';
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
@@ -703,6 +706,9 @@ export function TaskDetailModalContent({
 
   // Comments with reactions + replies
   const [richComments, setRichComments] = useState<any[]>([]);
+  const commentImages = useMemo(() => {
+    return extractImagesFromComments(richComments);
+  }, [richComments]);
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
@@ -991,12 +997,13 @@ export function TaskDetailModalContent({
     } catch (err) { console.warn('Reaction failed:', err); }
   };
 
-  const handleSubmitReply = async (parentCommentId: string) => {
-    if (!replyText.trim() || !task?.id || !currentUser?.id) return;
+  const handleSubmitReply = async (parentCommentId: string, replyContent?: string, mentionIds?: string[]) => {
+    const textToSubmit = (replyContent !== undefined ? replyContent : replyText).trim();
+    if (!textToSubmit || !task?.id || !currentUser?.id) return;
     const isSubtask = !!(task as any).parentTaskId;
     const targetId = isSubtask ? (task as any).parentTaskId : task.id;
     const subtaskId = isSubtask ? task.id : undefined;
-    const text = replyText.trim();
+    const text = textToSubmit;
     const tempId = `temp-reply-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const withReplies = (map: (replies: any[]) => any[]) => (prev: any[]) =>
       prev.map(c => c.id === parentCommentId ? { ...c, replies: map(c.replies || []) } : c);
@@ -1014,7 +1021,7 @@ export function TaskDetailModalContent({
     setReplyText('');
     setReplyingToId(null);
     try {
-      const res = await tasksApi.addComment(targetId, text, currentUser.id, undefined, [], parentCommentId, subtaskId);
+      const res = await tasksApi.addComment(targetId, text, currentUser.id, undefined, mentionIds || [], parentCommentId, subtaskId);
       if (res?.comment) {
         setRichComments(withReplies(replies => replies.some(r => r.id === res.comment.id)
           ? replies.filter(r => r.id !== tempId)
@@ -3009,18 +3016,15 @@ export function TaskDetailModalContent({
                         </div>
                         {/* Reply input */}
                         {!isReply && replyingToId === comment.id && (
-                          <div className="pl-11 flex gap-2 mt-1">
-                            <input
-                              value={replyText}
-                              onChange={e => setReplyText(e.target.value)}
-                              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(comment.id); } }}
-                              placeholder="Write a reply..."
-                              className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
-                            />
-                            <button onClick={() => handleSubmitReply(comment.id)} disabled={!replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
-                              <Send className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          <CommentReplyInput
+                            commentId={comment.id}
+                            workspaceUsers={workspaceUsers}
+                            currentUser={currentUser}
+                            onSubmit={async (content, mentionIds) => {
+                              await handleSubmitReply(comment.id, content, mentionIds);
+                            }}
+                            onCancel={() => setReplyingToId(null)}
+                          />
                         )}
                         {/* Replies */}
                         {!isReply && comment.replies?.length > 0 && (
@@ -3373,11 +3377,13 @@ export function TaskDetailModalContent({
                         ref={commentEditorRef}
                         id="main-task-comment"
                         value={comment}
-                        onChange={(html, text, cursorPosition) => {
+                        onChange={(html, text, cursorPosition, textBefore) => {
                           setComment(html);
 
                           // Mention logic
-                          const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
+                          const textBeforeCursor = textBefore !== undefined
+                            ? textBefore
+                            : (text || "").substring(0, cursorPosition || 0);
                           const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
 
                           if (match) {
@@ -3451,37 +3457,13 @@ export function TaskDetailModalContent({
       </div>
 
       {/* Lightbox Modal */}
-      {/* Portaled to body: the modal card's transform would otherwise trap this fixed overlay inside it */}
-      {lightboxImage && createPortal(
-        <div
-          className="fixed inset-0 z-[200000] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
-          onClick={() => setLightboxImage(null)}
-        >
-          <button
-            className="absolute top-6 right-6 p-2 rounded-full bg-card/90 border border-border text-muted-foreground hover:text-foreground hover:bg-muted shadow-lg backdrop-blur-md transition-colors cursor-pointer"
-            onClick={() => setLightboxImage(null)}
-          >
-            <X className="w-6 h-6" />
-          </button>
-          {lightboxImage.match(/\.(mp4|webm|ogg|mov)$/i) ? (
-            <video
-              controls
-              autoPlay
-              src={lightboxImage}
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
-              onClick={e => e.stopPropagation()}
-            />
-          ) : (
-            <img
-              src={lightboxImage}
-              alt="Expanded view"
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
-              onClick={e => e.stopPropagation()}
-            />
-          )}
-        </div>,
-        document.body
-      )}
+      <ImageLightboxModal
+        isOpen={!!lightboxImage}
+        onClose={() => setLightboxImage(null)}
+        currentSrc={lightboxImage}
+        images={commentImages}
+        onNavigate={setLightboxImage}
+      />
       {commentToDelete && (
         <ConfirmDeleteModal
           isOpen={!!commentToDelete}
@@ -3610,6 +3592,9 @@ export function SubtaskDetailView({
   }, [localRoleRestrictions, workspaceUsers, workspaceTeams, currentUser]);
 
   const [richComments, setRichComments] = useState<any[]>([]);
+  const commentImages = useMemo(() => {
+    return extractImagesFromComments(richComments);
+  }, [richComments]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
@@ -4527,9 +4512,10 @@ export function SubtaskDetailView({
     }
   };
 
-  const handleSubmitReply = async (parentCommentId: string) => {
-    if (!replyText.trim() || !parentTask?.id || !currentUser?.id) return;
-    const text = replyText.trim();
+  const handleSubmitReply = async (parentCommentId: string, replyContent?: string, mentionIds?: string[]) => {
+    const textToSubmit = (replyContent !== undefined ? replyContent : replyText).trim();
+    if (!textToSubmit || !parentTask?.id || !currentUser?.id) return;
+    const text = textToSubmit;
     const tempId = `temp-reply-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const withReplies = (map: (replies: any[]) => any[]) => (prev: any[]) =>
       prev.map(c => {
@@ -4552,7 +4538,7 @@ export function SubtaskDetailView({
     setReplyText('');
     setReplyingToId(null);
     try {
-      const res = await tasksApi.addComment(parentTask.id, text, currentUser.id, parentTask.listId, [], parentCommentId, subtask.id);
+      const res = await tasksApi.addComment(parentTask.id, text, currentUser.id, parentTask.listId, mentionIds || [], parentCommentId, subtask.id);
       if (res?.comment) {
         setRichComments(withReplies(replies => replies.some(r => r.id === res.comment.id)
           ? replies.filter(r => r.id !== tempId)
@@ -5607,18 +5593,15 @@ export function SubtaskDetailView({
 
                       {/* Reply input */}
                       {!isReply && replyingToId === c.id && (
-                        <div className="pl-11 flex gap-2 mt-1">
-                          <input
-                            value={replyText}
-                            onChange={e => setReplyText(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitReply(c.id); } }}
-                            placeholder="Write a reply..."
-                            className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
-                          />
-                          <button onClick={() => handleSubmitReply(c.id)} disabled={!replyText.trim()} className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600">
-                            <Send className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        <CommentReplyInput
+                          commentId={c.id}
+                          workspaceUsers={workspaceUsers || []}
+                          currentUser={currentUser}
+                          onSubmit={async (content, mentionIds) => {
+                            await handleSubmitReply(c.id, content, mentionIds);
+                          }}
+                          onCancel={() => setReplyingToId(null)}
+                        />
                       )}
 
                       {/* Replies */}
@@ -5896,11 +5879,13 @@ export function SubtaskDetailView({
                       ref={commentEditorRef}
                       id="subtask-comment"
                       value={comment}
-                      onChange={(html, text, cursorPosition) => {
+                      onChange={(html, text, cursorPosition, textBefore) => {
                         setComment(html);
                         
                         // Mention logic
-                        const textBeforeCursor = (text || "").substring(0, cursorPosition || 0);
+                        const textBeforeCursor = textBefore !== undefined
+                          ? textBefore
+                          : (text || "").substring(0, cursorPosition || 0);
                         const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
 
                         if (match) {
@@ -5979,36 +5964,14 @@ export function SubtaskDetailView({
           itemName="this comment"
         />
       )}
-      {lightboxImage && createPortal(
-        <div
-          className="fixed inset-0 z-[200000] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
-          onClick={() => setLightboxImage(null)}
-        >
-          <button
-            className="absolute top-6 right-6 p-2 rounded-full bg-card/90 border border-border text-muted-foreground hover:text-foreground hover:bg-muted shadow-lg backdrop-blur-md transition-colors cursor-pointer"
-            onClick={() => setLightboxImage(null)}
-          >
-            <X className="w-6 h-6" />
-          </button>
-          {lightboxImage.match(/\.(mp4|webm|ogg|mov)$/i) ? (
-            <video
-              controls
-              autoPlay
-              src={lightboxImage}
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
-              onClick={e => e.stopPropagation()}
-            />
-          ) : (
-            <img
-              src={lightboxImage}
-              alt="Fullscreen"
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
-              onClick={e => e.stopPropagation()}
-            />
-          )}
-        </div>,
-        document.body
-      )}
+      {/* Lightbox Modal */}
+      <ImageLightboxModal
+        isOpen={!!lightboxImage}
+        onClose={() => setLightboxImage(null)}
+        currentSrc={lightboxImage}
+        images={commentImages}
+        onNavigate={setLightboxImage}
+      />
     </div>
   );
 }

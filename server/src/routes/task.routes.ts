@@ -26,6 +26,8 @@ import {
   deleteChecklistItem,
   createTaskAttachment,
   deleteTaskAttachment,
+  setTaskRecurrence,
+  duplicateTaskToPending,
 } from '../controllers/task.controller';
 import { idParams, idAndSubtaskIdParams, idAndChecklistIdParams, idChecklistIdItemIdParams, idAndCommentIdParams, validate } from '../validation';
 import {
@@ -60,6 +62,9 @@ taskRouter.patch('/:id/comments/:commentId', validate({ params: idAndCommentIdPa
 taskRouter.delete('/:id/comments/:commentId', validate({ params: idAndCommentIdParams }), deleteTaskComment);
 taskRouter.post('/:id/comments/:commentId/reactions', toggleCommentReaction);
 taskRouter.get('/:id/activities', validate({ params: idParams }), getTaskActivities);
+
+taskRouter.post('/:id/recurring', optionalAuthenticateToken, validate({ params: idParams }), setTaskRecurrence);
+taskRouter.post('/:id/duplicate-pending', optionalAuthenticateToken, validate({ params: idParams }), duplicateTaskToPending);
 
 taskRouter.post('/:id/subtasks', optionalAuthenticateToken, validate({ params: idParams }), createSubtask);
 taskRouter.patch('/:id/subtasks/:subtaskId', optionalAuthenticateToken, validate({ params: idAndSubtaskIdParams }), updateSubtask);

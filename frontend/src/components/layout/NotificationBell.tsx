@@ -1,15 +1,14 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell,
   Check,
   CheckCheck,
   Clock,
-  Globe,
   MessageSquare,
-  Users,
   AtSign,
   RefreshCw,
   UserPlus,
@@ -38,48 +37,7 @@ export function NotificationBell() {
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      // Mention profile cards render in a portal outside the dropdown; clicks inside them shouldn't close it
-      if ((event.target as Element)?.closest?.('[data-radix-popper-content-wrapper]')) return;
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (isOpen) {
-      loadNotifications(1, activeTab);
-    }
-  }, [isOpen]);
-
-  // Listen for real-time events to reload
-  useEffect(() => {
-    const handleActivity = () => {
-      if (isOpen) {
-        loadNotifications(1, activeTab);
-      } else {
-        // Lightweight unread count sync without fetching notification bodies
-        notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then(res => {
-          if (typeof res.unreadCount === 'number') {
-            setUnreadCount(res.unreadCount);
-          }
-        });
-      }
-    };
-    window.addEventListener("notification_received", handleActivity);
-    return () => window.removeEventListener("notification_received", handleActivity);
-  }, [isOpen, activeTab]);
-
-  const loadNotifications = async (pageNum = 1, tab = activeTab) => {
+  const loadNotifications = useCallback(async (pageNum = 1, tab = activeTab) => {
     if (pageNum === 1) {
       setIsLoading(true);
     } else {
@@ -116,7 +74,42 @@ export function NotificationBell() {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  };
+  }, [activeTab, setUnreadCount]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      // Mention profile cards render in a portal outside the dropdown; clicks inside them shouldn't close it
+      if ((event.target as Element)?.closest?.('[data-radix-popper-content-wrapper]')) return;
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  // Listen for real-time events to reload
+  useEffect(() => {
+    const handleActivity = () => {
+      if (isOpen) {
+        loadNotifications(1, activeTab);
+      } else {
+        // Lightweight unread count sync without fetching notification bodies
+        notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then(res => {
+          if (typeof res.unreadCount === 'number') {
+            setUnreadCount(res.unreadCount);
+          }
+        });
+      }
+    };
+    window.addEventListener("notification_received", handleActivity);
+    return () => window.removeEventListener("notification_received", handleActivity);
+  }, [isOpen, activeTab, loadNotifications, setUnreadCount]);
 
   const loadMore = () => {
     if (!hasMore || isLoading || isLoadingMore) return;
@@ -228,11 +221,20 @@ export function NotificationBell() {
     }
   };
 
+  const handleToggleOpen = () => {
+    const nextOpen = !isOpen;
+    if (nextOpen) {
+      loadNotifications(1, activeTab);
+    }
+    setIsOpen(nextOpen);
+  };
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-zinc-600 dark:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+        onClick={handleToggleOpen}
+        className="relative p-2 rounded-full hover:bg-zinc-800/60 transition-colors text-zinc-400 hover:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 cursor-pointer"
+        title="Notifications"
       >
         <motion.div
           variants={bellVariants}
@@ -245,7 +247,7 @@ export function NotificationBell() {
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 border-2 border-white dark:border-zinc-950 flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
+            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 border-2 border-background flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
           >
             {unreadCount > 99 ? '99+' : unreadCount}
           </motion.div>
@@ -259,37 +261,39 @@ export function NotificationBell() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
-            className="absolute right-0 mt-2 w-88 sm:w-[420px] bg-white dark:bg-[#0f0f0f] border border-zinc-200 dark:border-zinc-800/80 rounded-xl shadow-2xl z-[200] overflow-hidden origin-top-right flex flex-col max-h-[85vh]"
+            className="absolute right-0 mt-2 w-88 sm:w-[420px] bg-card border border-zinc-800/80 rounded-xl shadow-2xl z-[200] overflow-hidden origin-top-right flex flex-col max-h-[85vh]"
           >
             {/* Header */}
-            <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800/80 flex items-center justify-between bg-zinc-50/60 dark:bg-zinc-900/50">
+            <div className="px-4 py-3 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-900/50">
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-sm text-zinc-900 dark:text-zinc-100">Notifications</h3>
+                <h3 className="font-semibold text-sm text-zinc-100">Notifications</h3>
                 {unreadCount > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">
+                  <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 text-[10px] font-bold">
                     {unreadCount} new
                   </span>
                 )}
               </div>
-              {unreadCount > 0 && (
-                <button
-                  onClick={handleMarkAllAsRead}
-                  className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors flex items-center gap-1"
-                >
-                  <CheckCheck className="w-3.5 h-3.5" />
-                  Mark all as read
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {unreadCount > 0 && (
+                  <button
+                    onClick={handleMarkAllAsRead}
+                    className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <CheckCheck className="w-3.5 h-3.5" />
+                    <span>Mark all read</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Segmented Filter Tabs */}
-            <div className="flex items-center px-4 border-b border-zinc-200 dark:border-zinc-800/80 bg-zinc-50/30 dark:bg-zinc-900/30 gap-1">
+            <div className="flex items-center px-4 border-b border-zinc-800/80 bg-zinc-900/30 gap-1">
               <button
                 onClick={() => handleTabChange('all')}
-                className={`relative py-2.5 px-3 text-xs font-medium transition-colors ${
+                className={`relative py-2.5 px-3 text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === 'all'
-                    ? 'text-zinc-900 dark:text-zinc-100 font-semibold'
-                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
+                    ? 'text-zinc-100 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 All
@@ -303,15 +307,15 @@ export function NotificationBell() {
 
               <button
                 onClick={() => handleTabChange('unread')}
-                className={`relative py-2.5 px-3 text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                className={`relative py-2.5 px-3 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer ${
                   activeTab === 'unread'
-                    ? 'text-zinc-900 dark:text-zinc-100 font-semibold'
-                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
+                    ? 'text-zinc-100 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <span>Unread</span>
                 {unreadCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">
+                  <span className="px-1.5 py-0.2 rounded-full bg-indigo-500/15 text-indigo-400 text-[10px] font-bold">
                     {unreadCount > 99 ? '99+' : unreadCount}
                   </span>
                 )}
@@ -325,10 +329,10 @@ export function NotificationBell() {
 
               <button
                 onClick={() => handleTabChange('mentions')}
-                className={`relative py-2.5 px-3 text-xs font-medium transition-colors flex items-center gap-1 ${
+                className={`relative py-2.5 px-3 text-xs font-medium transition-colors flex items-center gap-1 cursor-pointer ${
                   activeTab === 'mentions'
-                    ? 'text-zinc-900 dark:text-zinc-100 font-semibold'
-                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
+                    ? 'text-zinc-100 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <span>Mentions</span>
@@ -344,19 +348,19 @@ export function NotificationBell() {
             {/* List Body with Custom Slim Scrollbar */}
             <div
               onScroll={handleScroll}
-              className="overflow-y-auto overflow-x-hidden flex-1 p-2 space-y-1.5 custom-scrollbar max-h-[460px] bg-white dark:bg-[#0f0f0f]"
+              className="overflow-y-auto overflow-x-hidden flex-1 p-2 space-y-1.5 custom-scrollbar max-h-[460px] bg-card"
             >
               {isLoading && notifications.length === 0 ? (
-                <div className="p-8 text-center text-zinc-500 dark:text-zinc-400 text-xs flex flex-col items-center gap-2">
+                <div className="p-8 text-center text-zinc-400 text-xs flex flex-col items-center gap-2">
                   <div className="w-5 h-5 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
                   Loading notifications...
                 </div>
               ) : displayList.length === 0 ? (
                 <div className="p-8 text-center flex flex-col items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-800/60 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-zinc-800/60 flex items-center justify-center">
                     <Bell className="w-5 h-5 text-zinc-400" />
                   </div>
-                  <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                  <p className="text-xs font-medium text-zinc-400">
                     {activeTab === 'unread'
                       ? "No unread notifications"
                       : activeTab === 'mentions'
@@ -382,8 +386,8 @@ export function NotificationBell() {
                         }}
                         className={`group/notif relative flex items-start gap-3 p-2.5 rounded-lg transition-all cursor-pointer ${
                           !n.isRead
-                            ? 'bg-indigo-50/50 dark:bg-indigo-500/5 hover:bg-indigo-50 dark:hover:bg-indigo-500/10'
-                            : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/40'
+                            ? 'bg-indigo-500/10 hover:bg-indigo-500/15'
+                            : 'hover:bg-zinc-800/40'
                         }`}
                       >
                         {/* Avatar with Micro Icon Badge */}
@@ -392,7 +396,7 @@ export function NotificationBell() {
                             <img
                               src={n.actor.imageUrl || n.actor.avatarUrl || ''}
                               alt=""
-                              className="w-8 h-8 rounded-full object-cover ring-2 ring-white dark:ring-[#0f0f0f]"
+                              className="w-8 h-8 rounded-full object-cover ring-2 ring-card"
                               onError={(e) => {
                                 e.currentTarget.style.display = 'none';
                                 if (e.currentTarget.nextElementSibling) {
@@ -402,13 +406,13 @@ export function NotificationBell() {
                             />
                           ) : null}
                           <div
-                            className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xs font-bold ring-2 ring-white dark:ring-[#0f0f0f]"
+                            className="w-8 h-8 rounded-full bg-indigo-500/15 text-indigo-400 flex items-center justify-center text-xs font-bold ring-2 ring-card"
                             style={{ display: (n.actor?.imageUrl || n.actor?.avatarUrl) ? 'none' : 'flex' }}
                           >
                             {meta.actorName.substring(0, 2).toUpperCase()}
                           </div>
 
-                          <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full ${meta.badgeBg} text-white flex items-center justify-center ring-2 ring-white dark:ring-[#0f0f0f]`}>
+                          <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full ${meta.badgeBg} text-white flex items-center justify-center ring-2 ring-card`}>
                             <meta.Icon className="w-2.5 h-2.5" />
                           </div>
                         </div>
@@ -417,15 +421,15 @@ export function NotificationBell() {
                         <div className="flex-1 min-w-0 pr-1">
                           {/* Row 1: Actor + Action + Timestamp + Unread Dot */}
                           <div className="flex items-center justify-between gap-1.5 leading-snug">
-                            <p className="text-xs text-zinc-900 dark:text-zinc-100 truncate">
-                              <span className="font-semibold text-zinc-900 dark:text-zinc-200">{meta.actorName}</span>
-                              <span className="text-zinc-500 dark:text-zinc-400"> {meta.actionVerb}</span>
+                            <p className="text-xs text-zinc-200 truncate">
+                              <span className="font-semibold text-zinc-100">{meta.actorName}</span>
+                              <span className="text-zinc-400"> {meta.actionVerb}</span>
                             </p>
 
                             <div className="relative shrink-0 ml-1.5 flex items-center">
                               <div className={`flex items-center gap-1.5 transition-opacity ${!n.isRead ? 'group-hover:opacity-0' : ''}`}>
-                                <span className="text-[10px] text-zinc-400 dark:text-zinc-500 flex items-center gap-1">
-                                  <Clock className="w-2.5 h-2.5 text-zinc-400/80" />
+                                <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                                  <Clock className="w-2.5 h-2.5 text-zinc-500" />
                                   {formatNotifTime(n.createdAt)}
                                 </span>
                                 {!n.isRead && (
@@ -436,7 +440,7 @@ export function NotificationBell() {
                               {!n.isRead && (
                                 <button
                                   onClick={(e) => handleMarkAsRead(n.id, e)}
-                                  className="absolute right-0 opacity-0 group-hover/notif:opacity-100 transition-opacity p-1 rounded-md text-zinc-400 hover:text-indigo-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-sm"
+                                  className="absolute right-0 opacity-0 group-hover/notif:opacity-100 transition-opacity p-1 rounded-md text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 bg-secondary border border-zinc-800 shadow-sm cursor-pointer"
                                   title="Mark as read"
                                 >
                                   <Check className="w-3 h-3" />
@@ -448,17 +452,17 @@ export function NotificationBell() {
                           {/* Row 2: Target Task + Status Pill */}
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             {n.task?.title ? (
-                              <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline truncate max-w-[240px]">
+                              <span className="text-xs font-medium text-indigo-400 hover:underline truncate max-w-[240px]">
                                 {n.task.title}
                               </span>
                             ) : (
-                              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                              <span className="text-xs font-medium text-zinc-400">
                                 Workspace
                               </span>
                             )}
 
                             {meta.statusBadge && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25">
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/25">
                                 {meta.statusBadge}
                               </span>
                             )}
@@ -466,10 +470,10 @@ export function NotificationBell() {
 
                           {/* Row 3: Comment or Mention Snippet Quote Box */}
                           {n.content && (
-                            <div className="mt-1.5 px-2.5 py-1.5 rounded-md bg-zinc-100 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800/70 text-xs text-zinc-600 dark:text-zinc-300">
+                            <div className="mt-1.5 px-2.5 py-1.5 rounded-md bg-zinc-800/40 border border-zinc-800/70 text-xs text-zinc-300">
                               <CommentContent
                                 content={n.content}
-                                className="line-clamp-2 [&_p]:inline text-xs text-zinc-600 dark:text-zinc-300"
+                                className="line-clamp-2 [&_p]:inline text-xs text-zinc-300"
                               />
                             </div>
                           )}
@@ -491,7 +495,7 @@ export function NotificationBell() {
                     <div className="py-1 text-center">
                       <button
                         onClick={loadMore}
-                        className="text-[11px] font-medium text-zinc-400 hover:text-indigo-400 dark:hover:text-indigo-300 transition-colors py-1 px-3 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                        className="text-[11px] font-medium text-zinc-400 hover:text-indigo-300 transition-colors py-1 px-3 rounded hover:bg-zinc-800/60 cursor-pointer"
                       >
                         Load more notifications
                       </button>
@@ -502,13 +506,13 @@ export function NotificationBell() {
             </div>
 
             {/* Footer */}
-            <div className="p-2 border-t border-zinc-200 dark:border-zinc-800/80 bg-zinc-50/60 dark:bg-zinc-900/50">
+            <div className="p-2 border-t border-zinc-800/80 bg-zinc-900/50">
               <button
                 onClick={() => {
                   setIsOpen(false);
                   router.push('/activity');
                 }}
-                className="w-full py-2 px-4 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors shadow-sm flex items-center justify-center gap-1.5"
+                className="w-full py-2 px-4 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 transition-colors shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <span>View all activity</span>
                 <ArrowRight className="w-3.5 h-3.5 text-zinc-400" />

@@ -1,6 +1,8 @@
+/* eslint-disable @next/next/no-img-element */
 import React, { useState, useMemo, useCallback } from 'react';
-import { X, File, ImageIcon } from 'lucide-react';
+import { X, File } from 'lucide-react';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { getThumbnailUrl } from '@/lib/thumbnail';
 
 interface Attachment {
   id: string;
@@ -18,7 +20,6 @@ interface AttachmentsGridProps {
 
 export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps) {
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
-  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
 
   const imageAttachments = useMemo(() => {
     return (attachments || []).filter((att) => {
@@ -44,11 +45,6 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
       );
       if (target) {
         setPreviewAttachment(target);
-        setLoadedImages((prev) => {
-          const newSet = new Set(prev);
-          newSet.add(target.id);
-          return newSet;
-        });
       }
     },
     [imageAttachments]
@@ -71,16 +67,7 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
   }
 
   const handleItemClick = (att: Attachment) => {
-    const isImage = att.mimeType.startsWith('image/');
-    if (isImage && !loadedImages.has(att.id)) {
-      setLoadedImages((prev) => {
-        const newSet = new Set(prev);
-        newSet.add(att.id);
-        return newSet;
-      });
-    } else {
-      setPreviewAttachment(att);
-    }
+    setPreviewAttachment(att);
   };
 
   return (
@@ -88,7 +75,6 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {attachments.map((att) => {
           const isImage = att.mimeType.startsWith('image/');
-          const isLoaded = loadedImages.has(att.id);
           
           return (
             <div
@@ -99,21 +85,17 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
               {/* Thumbnail area */}
               <div className="flex-1 w-full bg-secondary flex flex-col items-center justify-center overflow-hidden relative">
                 {isImage ? (
-                  isLoaded ? (
-                    <>
-                      <img src={att.fileUrl} alt={att.fileName} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px]">
-                        <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
-                      <div className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px]">
-                        <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
-                      </div>
-                    </>
-                  )
+                  <>
+                    <img
+                      src={getThumbnailUrl(att.fileUrl, 320, 35)}
+                      alt={att.fileName}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px]">
+                      <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
+                    </div>
+                  </>
                 ) : (
                   <File className="w-10 h-10 text-zinc-500" />
                 )}

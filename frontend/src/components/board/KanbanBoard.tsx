@@ -1009,7 +1009,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       <div
           ref={boardContainerRef}
           onWheel={handleWheelScroll}
-          className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 custom-scrollbar transition-all duration-300`}
+          className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 pb-5 kanban-board-scroll transition-all duration-300`}
         >
           <SortableContext
             items={sortableColumnIds}
@@ -1363,7 +1363,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
         </div>
 
       <DragOverlay>
-        {activeTask ? <KanbanCard task={activeTask} isOverlay /> : null}
+        {activeTask ? <KanbanCard task={activeTask} isOverlay listStatuses={listStatuses} /> : null}
         {activeColumn ? (() => {
           const dbStatus = listStatuses.find((s: any) => s.name === activeColumn);
           return (

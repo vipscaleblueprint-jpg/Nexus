@@ -51,14 +51,7 @@ export async function apiClient<T = any>(
     throw new Error(`Unable to connect to backend server at ${url}. Please make sure the server is running.`);
   }
 
-  const data = await res.json().catch(() => {
-    // Token expired or invalid — clear caches and redirect to login
-    clearAllCaches();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.replace('/login');
-    }
-    return {};
-  });
+  const data = await res.json().catch(() => ({}));
 
   // Measured after the body is parsed, so large payloads show up in the timing
   if (isPerfEnabled()) recordApi(method, url, res.status, performance.now() - startedAt, res.headers.get('server-timing'));

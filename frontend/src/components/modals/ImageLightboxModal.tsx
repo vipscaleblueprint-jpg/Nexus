@@ -1,6 +1,8 @@
-import React, { useEffect, useCallback, useMemo } from 'react';
+/* eslint-disable @next/next/no-img-element */
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ChevronLeft, ChevronRight, Download, ExternalLink } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2 } from 'lucide-react';
+import { getThumbnailUrl } from '@/lib/thumbnail';
 
 export interface ImageLightboxModalProps {
   isOpen: boolean;
@@ -21,6 +23,14 @@ export function ImageLightboxModal({
   onNavigate,
   children,
 }: ImageLightboxModalProps) {
+  // Track which original image has finished loading; reset strictly on currentSrc change (< > navigation)
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const [prevSrc, setPrevSrc] = useState(currentSrc);
+
+  if (prevSrc !== currentSrc) {
+    setPrevSrc(currentSrc);
+    setLoadedSrc(null);
+  }
   const currentIndex = useMemo(() => {
     if (!currentSrc || !images || images.length === 0) return -1;
     const directIdx = images.indexOf(currentSrc);
@@ -179,12 +189,37 @@ export function ImageLightboxModal({
             onClick={(e) => e.stopPropagation()}
           />
         ) : currentSrc ? (
-          <img
-            src={currentSrc}
-            alt={fileName || 'Expanded view'}
-            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default transition-all duration-150"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <div className="relative max-w-full max-h-[90vh] flex items-center justify-center overflow-hidden rounded-lg">
+            {/* Loading indicator while the active original size image downloads */}
+            {loadedSrc !== currentSrc && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-zinc-700/70 text-xs font-medium text-zinc-300 shadow-2xl backdrop-blur-md pointer-events-none">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                <span>Loading original image...</span>
+              </div>
+            )}
+
+            {/* Instant compressed blurred preview (1-15kb, cached from feed) */}
+            {loadedSrc !== currentSrc && getThumbnailUrl(currentSrc, 360, 35) && (
+              <img
+                src={getThumbnailUrl(currentSrc, 360, 35)}
+                alt=""
+                aria-hidden="true"
+                className="max-w-full max-h-[90vh] object-contain rounded-lg filter blur-md scale-[1.02] opacity-80 pointer-events-none transition-opacity duration-200"
+              />
+            )}
+
+            {/* Full-resolution original image: strictly loads ONLY for the active currentSrc */}
+            <img
+              key={currentSrc}
+              src={currentSrc}
+              alt={fileName || 'Expanded view'}
+              onLoad={() => setLoadedSrc(currentSrc)}
+              className={`max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default transition-opacity duration-200 ${
+                loadedSrc === currentSrc ? 'opacity-100' : 'opacity-0 absolute inset-0 m-auto'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
         ) : null}
       </div>
     </div>,

@@ -1,15 +1,17 @@
 'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import { ImageIcon, Loader2, Maximize2, Film } from 'lucide-react';
+import { Film } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { commentHtmlForMarkdown, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink } from '@/lib/links';
 import { extractImagesFromContent } from '@/lib/commentImages';
 import { UserMentionChip } from './UserMentionChip';
 import { TaskMentionChip } from './TaskMentionChip';
+import { BlurUpImage } from './BlurUpImage';
 
 // Shared across instances so a feed of many comments requests the user list only once
 let usersRequested = false;
@@ -30,159 +32,37 @@ const CommentMediaContext = React.createContext<CommentMediaContextValue>({
   autoLoadImages: false,
 });
 
-function PreloadableMarkdownImage(props: any) {
+function CommentMarkdownImage(props: any) {
   const { src, alt } = props;
-  const { onPreviewImage, allImages, autoLoadImages } = React.useContext(CommentMediaContext);
-  const [shouldLoad, setShouldLoad] = useState(() => autoLoadImages || (src ? preloadedMediaUrls.has(src) : false));
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
-
-  useEffect(() => {
-    if (autoLoadImages || (src && preloadedMediaUrls.has(src))) {
-      setShouldLoad(true);
-    }
-  }, [autoLoadImages, src]);
-
-  // Check if image is already loaded from cache when mounted or shouldLoad changes
-  useEffect(() => {
-    if (shouldLoad && imgRef.current) {
-      if (imgRef.current.complete) {
-        if (imgRef.current.naturalWidth > 0) {
-          setLoaded(true);
-        } else {
-          setFailed(true);
-        }
-      }
-    }
-  }, [shouldLoad]);
-
-  const cleanFileName = useMemo(() => {
-    if (alt && alt !== 'attachment' && alt !== 'image') return alt;
-    try {
-      const urlObj = new URL(src, 'http://localhost');
-      const pathname = urlObj.pathname;
-      const last = pathname.split('/').filter(Boolean).pop();
-      if (last && /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(last)) {
-        return decodeURIComponent(last);
-      }
-    } catch {
-      // ignore
-    }
-    return alt || 'Image';
-  }, [src, alt]);
-
-  const handleStartLoad = () => {
-    if (src) preloadedMediaUrls.add(src);
-    setFailed(false);
-    setLoaded(false);
-    setShouldLoad(true);
-  };
-
-  if (failed) {
-    return (
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleStartLoad();
-        }}
-        className="my-1.5 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-zinc-700/60 bg-zinc-900/80 text-xs text-zinc-300 hover:border-zinc-500 cursor-pointer select-none"
-        title="Failed to load image. Click to retry."
-      >
-        <ImageIcon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-        <span className="truncate max-w-[200px]">{cleanFileName}</span>
-        <span className="text-zinc-500 text-[11px]">· unavailable (click to retry)</span>
-      </span>
-    );
-  }
-
-  if (!shouldLoad) {
-    return (
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleStartLoad();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            e.stopPropagation();
-            handleStartLoad();
-          }
-        }}
-        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900/80 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group/load relative select-none"
-        title={cleanFileName ? `${cleanFileName} · Click to load image` : "Click to load image"}
-      >
-        <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
-        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/load:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
-          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
-        </span>
-      </span>
-    );
-  }
+  const { onPreviewImage, allImages } = React.useContext(CommentMediaContext);
+  const srcString = typeof src === 'string' ? src : '';
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      className="my-2 inline-block relative group/image cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (loaded) {
-          if (onPreviewImage) {
-            onPreviewImage(src, allImages);
-          } else {
-            window.open(src, '_blank');
-          }
+    <BlurUpImage
+      src={srcString}
+      alt={alt}
+      onPreview={(url) => {
+        if (onPreviewImage) {
+          onPreviewImage(url, allImages);
+        } else {
+          window.open(url, '_blank');
         }
       }}
-    >
-      {!loaded && (
-        <span className="inline-flex items-center justify-center w-[200px] h-[140px] bg-zinc-900/80 border border-zinc-800/80 rounded-lg animate-pulse">
-          <span className="flex flex-col items-center gap-2 text-zinc-500">
-            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
-            <span className="text-[11px] font-medium text-zinc-400">Loading image...</span>
-          </span>
-        </span>
-      )}
-      <img
-        ref={imgRef}
-        src={src}
-        alt={alt || 'attachment'}
-        onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
-        className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-transform duration-150 ${
-          loaded ? 'block group-hover/image:brightness-95' : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
-        }`}
-      />
-      {loaded && (
-        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
-          <span className="text-xs font-medium text-white bg-black/70 border border-white/10 px-2.5 py-1 rounded-md shadow-md flex items-center gap-1.5">
-            <Maximize2 className="w-3.5 h-3.5" />
-            Click to preview
-          </span>
-        </span>
-      )}
-    </div>
+    />
   );
 }
 
 function PreloadableMarkdownVideo({ src }: { src: string }) {
   const { onPreviewImage, autoLoadImages } = React.useContext(CommentMediaContext);
   const [shouldLoad, setShouldLoad] = useState(() => autoLoadImages || (src ? preloadedMediaUrls.has(src) : false));
+  const [prevSrc, setPrevSrc] = useState(src);
 
-  useEffect(() => {
+  if (prevSrc !== src) {
+    setPrevSrc(src);
     if (autoLoadImages || (src && preloadedMediaUrls.has(src))) {
       setShouldLoad(true);
     }
-  }, [autoLoadImages, src]);
+  }
 
   const handleStartLoad = () => {
     if (src) preloadedMediaUrls.add(src);
@@ -248,7 +128,7 @@ function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
   }
   if (target.match(/\.(jpe?g|png|gif|webp|svg|avif)(\?.*)?$/i)) {
     return (
-      <PreloadableMarkdownImage
+      <CommentMarkdownImage
         src={target}
         alt={typeof children === 'string' && !children.startsWith('http') ? children : 'attachment'}
       />
@@ -304,7 +184,7 @@ function CommentSpan({ node, ...rest }: any) {
 // Static, immutable components map passed to ReactMarkdown so nodes are NEVER remounted
 const staticMarkdownComponents: Components = {
   a: CommentLinkOrMedia,
-  img: PreloadableMarkdownImage,
+  img: CommentMarkdownImage,
   span: CommentSpan,
 };
 

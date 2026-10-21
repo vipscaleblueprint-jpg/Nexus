@@ -134,6 +134,15 @@ export interface Favorite {
   createdAt: string;
 }
 
+export interface RecurringConfig {
+  frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  time: string; // "HH:mm" e.g. "21:00", "21:30"
+  daysOfWeek?: number[]; // [1, 2, 3, 4, 5] for Mon-Fri
+  dayOfMonth?: number; // 1 to 31
+  lastRunAt?: string;
+  timezone?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -142,6 +151,7 @@ export interface Task {
   priority: Priority;
   dueDate?: string | null;
   startDate?: string | null;
+  recurringConfig?: RecurringConfig | null;
   listId: string;
   assigneeId?: string | null;
   assignee?: User | null;

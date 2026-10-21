@@ -43,6 +43,7 @@ import {
   isAuditItem,
   formatChecklistNotificationTitle,
 } from '../utils/roleNotification';
+import { duplicateRecurringTask } from '../services/recurringTaskService';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -87,7 +88,7 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) =>
   return Array.from(audits);
 };
 
-const taskInclude = {
+export const taskInclude = {
   subtasks: {
     orderBy: { createdAt: 'asc' } as any,
     include: {
@@ -381,6 +382,7 @@ export async function createTask(req: Request, res: Response) {
       title, description, status, priority, listId,
       assigneeId, assigneeIds, teamId, creatorId, dueDate, startDate,
       assigneeRoleRestrictions, teamAssignAccessRole, afterTaskId,
+      recurringConfig,
     } = req.body;
 
     let computedAssigneeIds = assigneeIds;
@@ -409,6 +411,7 @@ export async function createTask(req: Request, res: Response) {
         startDate: startDate ? new Date(startDate) : null,
         assigneeRoleRestrictions: assigneeRoleRestrictions || [],
         teamAssignAccessRole: teamAssignAccessRole || null,
+        recurringConfig: recurringConfig || null,
         position,
       },
       include: taskInclude,
@@ -439,6 +442,13 @@ export async function createTask(req: Request, res: Response) {
         io.to(`user:${id}`).emit('notification_received');
       });
     })().catch((err) => console.error('createTask: assignment notifications failed:', err));
+
+    // Duplicate recurring task to PENDING immediately upon creation if set time is provided
+    if (recurringConfig && recurringConfig.time) {
+      duplicateRecurringTask(task.id).catch((err) =>
+        console.error('createTask: immediate recurring duplication failed:', err)
+      );
+    }
 
     // Backend injection into Daily Rollover doc — after the broadcast/response, so boards see the new card
     // without waiting on the journal's page reads and write. Journal viewers get it via page_updated.
@@ -627,7 +637,7 @@ export async function updateTask(req: Request, res: Response) {
     const {
       title, description, status, priority,
       listId, assigneeId, assigneeIds, teamId, dueDate, startDate, currentListId, userId,
-      assigneeRoleRestrictions, teamAssignAccessRole,
+      assigneeRoleRestrictions, teamAssignAccessRole, recurringConfig,
     } = req.body;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
 
@@ -705,6 +715,7 @@ export async function updateTask(req: Request, res: Response) {
       ...(startDate !== undefined ? { startDate: startDate ? new Date(startDate) : null } : {}),
       ...(assigneeRoleRestrictions !== undefined ? { assigneeRoleRestrictions } : {}),
       ...(teamAssignAccessRole !== undefined ? { teamAssignAccessRole } : {}),
+      ...(recurringConfig !== undefined ? { recurringConfig } : {}),
       // Ensure undefined fields are stripped out completely
     };
 
@@ -761,6 +772,13 @@ export async function updateTask(req: Request, res: Response) {
 
     // Return the response immediately so the client doesn't wait
     res.json({ task: payload, queued: true });
+
+    // When set time was added or updated, immediately create a duplicate in PENDING
+    if (recurringConfig && recurringConfig.time) {
+      duplicateRecurringTask(taskId).catch((err) =>
+        console.error('updateTask: immediate recurring duplication failed:', err)
+      );
+    }
 
     // Invalidate activity + task cache in the background (status/priority/assignment write an AuditLog)
     invalidateCache(`task:activities:${taskId}`, `task:${taskId}`).catch(() => {});
@@ -1057,6 +1075,7 @@ export async function moveTask(req: Request, res: Response) {
         assigneeRoleRestrictions: true,
         checklists: { where: { subtaskId: null }, include: { items: true } },
         subtasks: { include: { checklists: { include: { items: true } } } },
+        recurringConfig: true,
       },
     });
 
@@ -1114,9 +1133,17 @@ export async function moveTask(req: Request, res: Response) {
         });
       }
     }
+    const statusUpper = (status || '').toUpperCase();
+    const updateData: any = { status };
+    if (['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper) && (currentTask as any).recurringConfig) {
+      updateData.recurringConfig = {
+        ...(currentTask as any).recurringConfig,
+        frequency: statusUpper,
+      };
+    }
     const updated = await prisma.task.update({
       where: { id },
-      data: { status },
+      data: updateData,
     });
 
     // Broadcast IMMEDIATELY after update
@@ -2945,4 +2972,55 @@ export async function deleteTaskAttachment(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// POST /api/tasks/:id/recurring
+export async function setTaskRecurrence(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { recurringConfig, triggerImmediate = true } = req.body;
+
+    const current = await prisma.task.findUnique({ where: { id }, select: { status: true } });
+    let finalConfig = recurringConfig as any;
+    if (finalConfig && current) {
+      const statusUpper = (current.status || '').toUpperCase();
+      if (['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)) {
+        finalConfig.frequency = statusUpper;
+      }
+    }
+
+    const task = await prisma.task.update({
+      where: { id },
+      data: {
+        recurringConfig: finalConfig,
+      },
+      include: taskInclude,
+    });
+
+    await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
+    io.emit('task:updated', task);
+
+    let duplicatedTask = null;
+    if (triggerImmediate && recurringConfig && recurringConfig.time) {
+      duplicatedTask = await duplicateRecurringTask(id);
+    }
+
+    return res.json({ task, duplicatedTask });
+  } catch (err: any) {
+    console.error('setTaskRecurrence error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/tasks/:id/duplicate-pending
+export async function duplicateTaskToPending(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const duplicatedTask = await duplicateRecurringTask(id);
+    return res.json({ task: duplicatedTask });
+  } catch (err: any) {
+    console.error('duplicateTaskToPending error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 

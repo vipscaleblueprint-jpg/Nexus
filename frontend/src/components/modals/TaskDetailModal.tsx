@@ -1,6 +1,8 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2 } from 'lucide-react';
+import { X, User, Flag, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Clock } from 'lucide-react';
+import { DayPicker } from 'react-day-picker';
+import 'react-day-picker/dist/style.css';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { useRouter } from 'next/navigation';
@@ -34,7 +36,10 @@ import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EditCommentForm } from './EditCommentForm';
 import { CommentReplyInput } from './CommentReplyInput';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { BlurUpImage } from '../ui/BlurUpImage';
 import { extractImagesFromComments } from '@/lib/commentImages';
+import { RecurrencePicker, formatTimeDisplay } from './RecurrencePicker';
+import { RecurringConfig } from '@/lib/types';
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
@@ -156,10 +161,8 @@ export function prefetchTaskActivities(taskId: string): void {
 
   // Fire-and-forget — result stored in cache so modal opens with data ready
   Promise.all([
-    fetch(`/api/tasks/${taskId}/activities`, { credentials: 'include' })
-      .then(r => r.json()).catch(() => null),
-    fetch(`/api/tasks/${taskId}/comments`, { credentials: 'include' })
-      .then(r => r.json()).catch(() => null),
+    tasksApi.getActivities(taskId).catch(() => null),
+    tasksApi.getComments(taskId).catch(() => null),
   ]).then(([actRes, commentRes]) => {
     if (actRes?.activities && commentRes?.comments) {
       activityCache.set(taskId, {
@@ -292,144 +295,8 @@ export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[]
   });
 }
 
-const modalPreloadedMediaUrls = new Set<string>();
-
 function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
-  const [shouldLoad, setShouldLoad] = useState(() => (src ? modalPreloadedMediaUrls.has(src) : false));
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
-
-  useEffect(() => {
-    if (src && modalPreloadedMediaUrls.has(src)) {
-      setShouldLoad(true);
-    }
-  }, [src]);
-
-  useEffect(() => {
-    if (shouldLoad && imgRef.current) {
-      if (imgRef.current.complete) {
-        if (imgRef.current.naturalWidth > 0) {
-          setLoaded(true);
-        } else {
-          setFailed(true);
-        }
-      }
-    }
-  }, [shouldLoad]);
-
-  const cleanFileName = useMemo(() => {
-    if (alt && alt !== 'attachment' && alt !== 'image') return alt;
-    try {
-      const urlObj = new URL(src, 'http://localhost');
-      const pathname = urlObj.pathname;
-      const last = pathname.split('/').filter(Boolean).pop();
-      if (last && /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(last)) {
-        return decodeURIComponent(last);
-      }
-    } catch {
-      // ignore
-    }
-    return alt || 'Image';
-  }, [src, alt]);
-
-  const handleStartLoad = () => {
-    if (src) modalPreloadedMediaUrls.add(src);
-    setFailed(false);
-    setLoaded(false);
-    setShouldLoad(true);
-  };
-
-  // An image that won't load (e.g. pasted from an app that needs its own login) shows as a link to it
-  if (failed) {
-    return (
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleStartLoad();
-        }}
-        className="my-1.5 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-zinc-700/60 bg-secondary text-xs text-zinc-300 hover:border-zinc-500 cursor-pointer select-none"
-        title="Failed to load image. Click to retry."
-      >
-        <ImageIcon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-        <span className="truncate max-w-[200px]">{cleanFileName}</span>
-        <span className="text-zinc-500 text-[11px]">· unavailable (click to retry)</span>
-      </span>
-    );
-  }
-
-  if (!shouldLoad) {
-    return (
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleStartLoad();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            e.stopPropagation();
-            handleStartLoad();
-          }
-        }}
-        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-secondary border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative select-none"
-        title={cleanFileName ? `${cleanFileName} · Click to load image` : "Click to load image"}
-      >
-        <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
-        <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
-          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
-        </span>
-      </span>
-    );
-  }
-
-  return (
-    <span
-      role="button"
-      tabIndex={0}
-      className="mt-2 mb-2 inline-block relative group/image cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (loaded) {
-          onPreview(src);
-        }
-      }}
-    >
-      {!loaded && (
-        <span className="inline-flex items-center justify-center w-[200px] h-[140px] bg-secondary/60 border border-zinc-800/80 rounded-lg animate-pulse">
-          <span className="flex flex-col items-center gap-2 text-zinc-500">
-            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
-            <span className="text-[11px] font-medium text-zinc-400">Loading image...</span>
-          </span>
-        </span>
-      )}
-      <img
-        ref={imgRef}
-        src={src}
-        alt={alt}
-        onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
-        className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-transform duration-150 ${
-          loaded ? 'block group-hover/image:brightness-95' : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
-        }`}
-      />
-      {loaded && (
-        <span className="absolute inset-0 bg-secondary/30 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
-          <span className="text-xs font-medium text-white bg-black/60 px-2.5 py-1 rounded-md flex items-center gap-1.5">
-            <Maximize2 className="w-3.5 h-3.5" />
-            Click to preview
-          </span>
-        </span>
-      )}
-    </span>
-  );
+  return <BlurUpImage src={src} alt={alt} onPreview={onPreview} />;
 }
 
 function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: string) => void }) {
@@ -809,6 +676,31 @@ export function TaskDetailModalContent({
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
   const activityScrollRef = useRef<HTMLDivElement>(null);
 
+  const INITIAL_ACTIVITY_COUNT = 20;
+  const ACTIVITY_BATCH_SIZE = 20;
+  const [visibleActivityCount, setVisibleActivityCount] = useState(INITIAL_ACTIVITY_COUNT);
+  const [isLoadingOlderActivities, setIsLoadingOlderActivities] = useState(false);
+  const [prevTaskModalId, setPrevTaskModalId] = useState(task?.id);
+  if (task?.id !== prevTaskModalId) {
+    setPrevTaskModalId(task?.id);
+    setVisibleActivityCount(INITIAL_ACTIVITY_COUNT);
+    setIsLoadingOlderActivities(false);
+  }
+
+  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment'), [activities]);
+  const combined = useMemo(() => [
+    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
+    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
+  ].sort((a, b) => a.sortDate - b.sortDate), [otherActivities, richComments]);
+
+  const hasOlderActivities = combined.length > visibleActivityCount;
+  const olderActivitiesCount = Math.max(0, combined.length - visibleActivityCount);
+
+  const paginatedCombined = useMemo(() => {
+    if (combined.length <= visibleActivityCount) return combined;
+    return combined.slice(combined.length - visibleActivityCount);
+  }, [combined, visibleActivityCount]);
+
   const scrollToLatestComment = useCallback(() => {
     const scroll = () => {
       if (activityScrollRef.current) {
@@ -821,15 +713,52 @@ export function TaskDetailModalContent({
     setTimeout(scroll, 150);
   }, []);
 
+  const hasScrolledInitiallyRef = useRef(false);
   useEffect(() => {
-    scrollToLatestComment();
+    hasScrolledInitiallyRef.current = false;
+  }, [task?.id]);
+
+  useEffect(() => {
+    if (!hasScrolledInitiallyRef.current && (activities.length > 0 || richComments.length > 0)) {
+      hasScrolledInitiallyRef.current = true;
+      scrollToLatestComment();
+    }
   }, [activities, richComments, scrollToLatestComment]);
 
   useEffect(() => {
-    if (!activeSubtask) {
+    if (!activeSubtask && !hasScrolledInitiallyRef.current) {
       scrollToLatestComment();
     }
   }, [activeSubtask, scrollToLatestComment]);
+
+  const loadOlderActivities = useCallback(() => {
+    if (!hasOlderActivities || isLoadingOlderActivities) return;
+    const container = activityScrollRef.current;
+    if (!container) return;
+
+    setIsLoadingOlderActivities(true);
+    const prevScrollHeight = container.scrollHeight;
+    const prevScrollTop = container.scrollTop;
+
+    setTimeout(() => {
+      setVisibleActivityCount(prev => Math.min(combined.length, prev + ACTIVITY_BATCH_SIZE));
+      setIsLoadingOlderActivities(false);
+
+      requestAnimationFrame(() => {
+        if (activityScrollRef.current) {
+          const newScrollHeight = activityScrollRef.current.scrollHeight;
+          activityScrollRef.current.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+        }
+      });
+    }, 120);
+  }, [hasOlderActivities, isLoadingOlderActivities, combined.length]);
+
+  const handleActivityScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop } = e.currentTarget;
+    if (scrollTop < 60 && hasOlderActivities && !isLoadingOlderActivities) {
+      loadOlderActivities();
+    }
+  }, [hasOlderActivities, isLoadingOlderActivities, loadOlderActivities]);
 
 
   const markdownComponents = React.useMemo(() => ({
@@ -1542,7 +1471,20 @@ export function TaskDetailModalContent({
 
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
+  const [isDateOpen, setIsDateOpen] = useState(false);
+  const [isRecurrenceOpen, setIsRecurrenceOpen] = useState(false);
   const [internalListStatuses, setinternalListStatuses] = useState<any[]>(listStatuses || []);
+
+  const isInRecurringGroup = useMemo(() => {
+    if (!task) return false;
+    const statusUpper = (task.status || '').toUpperCase().trim();
+    if (['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)) return true;
+    const statusObj = (internalListStatuses || []).find((ls: any) => {
+      const name = typeof ls === 'string' ? ls : (ls.name || ls.status || ls.title || '');
+      return name.toUpperCase().trim() === statusUpper;
+    });
+    return (statusObj?.groupName || '').toUpperCase().trim() === 'RECURRING';
+  }, [task?.status, internalListStatuses]);
 
   const orderedListStatuses = React.useMemo(() => {
     const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -1913,6 +1855,62 @@ export function TaskDetailModalContent({
     }
   };
 
+  const handleDueDateChange = async (date: Date | undefined) => {
+    if (!task) return;
+    const dateStr = date ? date.toISOString() : null;
+    const updated = { ...task, dueDate: dateStr };
+    if (onUpdateTask) onUpdateTask(updated);
+    useAppStore.getState().updateTask(updated);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
+    setIsDateOpen(false);
+
+    try {
+      const parentId = (task as any).parentTaskId || (task as any).taskId;
+      if (parentId) {
+        await tasksApi.updateSubtask(parentId, task.id, { dueDate: dateStr });
+      } else {
+        await tasksApi.updateTask(task.id, {
+          dueDate: dateStr,
+          currentListId: task.listId,
+          userId: currentUser?.id,
+        });
+      }
+      toast.success(date ? 'Due date updated' : 'Due date cleared');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update due date');
+    }
+  };
+
+  const handleSaveRecurrence = async (config: RecurringConfig | null, triggerImmediate: boolean) => {
+    if (!task) return;
+    try {
+      const res = await tasksApi.setRecurring(task.id, config, triggerImmediate);
+      const updated = { ...task, recurringConfig: config };
+      if (onUpdateTask) onUpdateTask(updated);
+      useAppStore.getState().updateTask(updated);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
+      if (res.duplicatedTask) {
+        toast.success(`Duplicate task created in PENDING: ${res.duplicatedTask.title}`);
+      } else {
+        toast.success(config ? 'Recurring schedule saved' : 'Recurrence cleared');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save recurring schedule');
+    }
+  };
+
+  const handleDuplicateNow = async () => {
+    if (!task) return;
+    try {
+      const res = await tasksApi.duplicateToPending(task.id);
+      if (res.task) {
+        toast.success(`Duplicate task created in PENDING: ${res.task.title}`);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to duplicate task');
+    }
+  };
+
   const handleAddComment = async () => {
     const trimmed = isBlankCommentHtml(comment) ? '' : trimCommentHtml(comment);
     if (!trimmed && stagedFiles.length === 0) return;
@@ -1961,6 +1959,8 @@ export function TaskDetailModalContent({
         reactions: [],
         replies: [],
       }]);
+      setVisibleActivityCount(prev => prev + 1);
+      scrollToLatestComment();
 
       setComment('');
       setTimeout(() => {
@@ -2774,6 +2774,130 @@ export function TaskDetailModalContent({
                   </Popover.Root>
                 </div>
 
+                {/* Dates / Due Date & Recurrence Row */}
+                <div className="flex items-center gap-3 min-h-[32px]">
+                  <div className="flex items-center gap-2 w-28 shrink-0">
+                    <Calendar className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                    <span className="text-[12px] text-zinc-500">Dates</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Left: Due Date */}
+                    <Popover.Root open={isDateOpen && canEditTask} onOpenChange={setIsDateOpen}>
+                      <Popover.Trigger asChild>
+                        <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit text-zinc-300">
+                          <Calendar className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                          <span>
+                            {task.dueDate
+                              ? new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                              : 'Set Due Date'}
+                          </span>
+                        </div>
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content className="z-[100000] p-2.5 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none w-[230px]" side="bottom" align="start" sideOffset={4}>
+                          <div className="kanban-date-picker">
+                            <style>{`
+                              .kanban-date-picker .rdp-root {
+                                --rdp-accent-color: #6366f1;
+                                --rdp-accent-background-color: rgba(99, 102, 241, 0.2);
+                                --rdp-day-height: 26px; --rdp-day-width: 26px;
+                                --rdp-day_button-height: 24px; --rdp-day_button-width: 24px;
+                                --rdp-day_button-border-radius: 4px;
+                                --rdp-selected-border: none;
+                                --rdp-nav-height: 24px;
+                                --rdp-nav_button-height: 20px; --rdp-nav_button-width: 20px;
+                                --rdp-weekday-padding: 2px 0;
+                                margin: 0; font-size: 11px;
+                              }
+                              .kanban-date-picker .rdp-months, .kanban-date-picker .rdp-month { max-width: 100%; }
+                              .kanban-date-picker .rdp-month_grid { margin: 0 auto; border-collapse: separate; border-spacing: 1px; }
+                              .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: #f4f4f5; padding-left: 4px; }
+                              .kanban-date-picker .rdp-caption_label { font-size: 12px; font-weight: 600; }
+                              .kanban-date-picker .rdp-weekday { color: #a1a1aa; font-weight: 600; font-size: 10px; }
+                              .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; }
+                              .kanban-date-picker .rdp-day_button { transition: background-color 0.15s; }
+                              .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: rgba(255, 255, 255, 0.1); }
+                              .kanban-date-picker .rdp-today:not(.rdp-outside) { color: #818cf8; font-weight: 700; }
+                              .kanban-date-picker .rdp-selected .rdp-day_button { background-color: var(--rdp-accent-color); color: white; font-weight: 700; }
+                              .kanban-date-picker .rdp-button_previous, .kanban-date-picker .rdp-button_next { border-radius: 4px; }
+                              .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: rgba(255, 255, 255, 0.1); }
+                              .kanban-date-picker .rdp-chevron { fill: #d4d4d8; width: 12px; height: 12px; }
+                            `}</style>
+                            <div className="flex justify-between items-center mb-2 px-1">
+                              <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
+                              {task.dueDate && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleDueDateChange(undefined); }}
+                                  className="text-[10px] text-red-400/80 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition-colors"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                            <DayPicker
+                              mode="single"
+                              selected={task.dueDate ? new Date(task.dueDate) : undefined}
+                              onSelect={handleDueDateChange}
+                            />
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+
+                    {/* Right: Recurrence - ONLY if in recurring group! */}
+                    {isInRecurringGroup && (
+                      <Popover.Root open={isRecurrenceOpen && canEditTask} onOpenChange={setIsRecurrenceOpen}>
+                        <Popover.Trigger asChild>
+                          <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
+                            {task.recurringConfig ? (
+                              <>
+                                <Repeat className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                                <span className="font-semibold text-purple-300">
+                                  {(() => {
+                                    const statusUpper = (task.status || '').toUpperCase().trim();
+                                    const effectiveFreq = ['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)
+                                      ? statusUpper
+                                      : (task.recurringConfig.frequency || 'DAILY');
+                                    return effectiveFreq === 'DAILY'
+                                      ? `Daily at ${formatTimeDisplay(task.recurringConfig.time)}`
+                                      : effectiveFreq === 'WEEKLY'
+                                      ? `Weekly Mon-Fri at ${formatTimeDisplay(task.recurringConfig.time)}`
+                                      : `Monthly on ${task.recurringConfig.dayOfMonth || 1} at ${formatTimeDisplay(task.recurringConfig.time)}`;
+                                  })()}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <Repeat className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                                <span className="text-zinc-500 hover:text-zinc-300">
+                                  {['DAILY', 'WEEKLY', 'MONTHLY'].includes((task.status || '').toUpperCase())
+                                    ? `Set ${(task.status || '').toUpperCase()} Time`
+                                    : 'Set Recurrence'}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </Popover.Trigger>
+                        <Popover.Portal>
+                          <Popover.Content className="z-[100000] p-0 border-none bg-transparent outline-none" side="bottom" align="start" sideOffset={4}>
+                            <RecurrencePicker
+                              task={task}
+                              defaultFrequency={
+                                ['DAILY', 'WEEKLY', 'MONTHLY'].includes((task.status || '').toUpperCase())
+                                  ? ((task.status || '').toUpperCase() as any)
+                                  : 'DAILY'
+                              }
+                              onSave={handleSaveRecurrence}
+                              onDuplicateNow={handleDuplicateNow}
+                              onClose={() => setIsRecurrenceOpen(false)}
+                            />
+                          </Popover.Content>
+                        </Popover.Portal>
+                      </Popover.Root>
+                    )}
+                  </div>
+                </div>
+
               </div>
 
 
@@ -2981,19 +3105,42 @@ export function TaskDetailModalContent({
               </div>
             </div>
 
-            <div ref={activityScrollRef} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <div ref={activityScrollRef} onScroll={handleActivityScroll} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="space-y-5">
 
-                {/* Initial Creation item */}
-                <div className="flex gap-4 text-sm text-zinc-400 items-start">
-                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                  <div className="flex-1 leading-relaxed">
-                    <span className="text-zinc-200 font-medium">{task.creator?.name || 'System'}</span> created this task
+                {/* Loading older activities indicator / trigger */}
+                {hasOlderActivities && (
+                  <div className="py-2.5 flex justify-center items-center">
+                    {isLoadingOlderActivities ? (
+                      <div className="flex items-center gap-2 text-xs text-zinc-500 py-1">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                        <span>Loading earlier updates...</span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={loadOlderActivities}
+                        className="text-[11px] font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800 transition-all flex items-center gap-1.5 py-1 px-3 rounded-full cursor-pointer"
+                      >
+                        <Clock className="w-3 h-3 text-zinc-500" />
+                        <span>Load earlier updates ({olderActivitiesCount} remaining)</span>
+                      </button>
+                    )}
                   </div>
-                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                    {new Date(task.createdAt || Date.now()).toLocaleDateString()}
-                  </span>
-                </div>
+                )}
+
+                {/* Initial Creation item */}
+                {!hasOlderActivities && (
+                  <div className="flex gap-4 text-sm text-zinc-400 items-start">
+                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                    <div className="flex-1 leading-relaxed">
+                      <span className="text-zinc-200 font-medium">{task.creator?.name || 'System'}</span> created this task
+                    </div>
+                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                      {new Date(task.createdAt || Date.now()).toLocaleDateString()}
+                    </span>
+                  </div>
+                )}
 
                 {/* Sort activities and comments oldest to newest */}
                 {loadError && (
@@ -3003,12 +3150,6 @@ export function TaskDetailModalContent({
                   </div>
                 )}
                 {loadingActivities ? <CommentSkeleton /> : (() => {
-                  const otherActivities = activities.filter(a => a.type !== 'comment');
-                  const combined = [
-                    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
-                    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
-                  ].sort((a, b) => a.sortDate - b.sortDate);
-
                   const renderComment = (comment: any, isReply = false) => {
                     const cTimeStr = new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
@@ -3148,13 +3289,13 @@ export function TaskDetailModalContent({
                   return (
                     <>
                       {/* Combined Timeline */}
-                      {combined.length > 0 && (() => {
+                      {paginatedCombined.length > 0 && (() => {
                         const timelineItems: any[] = [];
                         let currentGroupKey: string | null = null;
                         let currentBlock: any[] = [];
                         const blocks: any[][] = [];
                         
-                        combined.forEach(item => {
+                        paginatedCombined.forEach(item => {
                           const key = item.isActivityType ? 'activity' : 'comment';
                           if (currentGroupKey === null) {
                               currentGroupKey = key;
@@ -3758,6 +3899,31 @@ export function SubtaskDetailView({
   const [activities, setActivities] = useState<any[]>([]);
   const activityScrollRef = useRef<HTMLDivElement>(null);
 
+  const INITIAL_ACTIVITY_COUNT = 20;
+  const ACTIVITY_BATCH_SIZE = 20;
+  const [visibleActivityCount, setVisibleActivityCount] = useState(INITIAL_ACTIVITY_COUNT);
+  const [isLoadingOlderActivities, setIsLoadingOlderActivities] = useState(false);
+  const [prevSubtaskModalId, setPrevSubtaskModalId] = useState(subtask?.id);
+  if (subtask?.id !== prevSubtaskModalId) {
+    setPrevSubtaskModalId(subtask?.id);
+    setVisibleActivityCount(INITIAL_ACTIVITY_COUNT);
+    setIsLoadingOlderActivities(false);
+  }
+
+  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment'), [activities]);
+  const combined = useMemo(() => [
+    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
+    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
+  ].sort((a, b) => a.sortDate - b.sortDate), [otherActivities, richComments]);
+
+  const hasOlderActivities = combined.length > visibleActivityCount;
+  const olderActivitiesCount = Math.max(0, combined.length - visibleActivityCount);
+
+  const paginatedCombined = useMemo(() => {
+    if (combined.length <= visibleActivityCount) return combined;
+    return combined.slice(combined.length - visibleActivityCount);
+  }, [combined, visibleActivityCount]);
+
   const scrollToLatestComment = useCallback(() => {
     const scroll = () => {
       if (activityScrollRef.current) {
@@ -3770,9 +3936,46 @@ export function SubtaskDetailView({
     setTimeout(scroll, 150);
   }, []);
 
+  const hasScrolledInitiallyRef = useRef(false);
   useEffect(() => {
-    scrollToLatestComment();
+    hasScrolledInitiallyRef.current = false;
+  }, [subtask?.id]);
+
+  useEffect(() => {
+    if (!hasScrolledInitiallyRef.current && (activities.length > 0 || richComments.length > 0)) {
+      hasScrolledInitiallyRef.current = true;
+      scrollToLatestComment();
+    }
   }, [activities, richComments, scrollToLatestComment]);
+
+  const loadOlderActivities = useCallback(() => {
+    if (!hasOlderActivities || isLoadingOlderActivities) return;
+    const container = activityScrollRef.current;
+    if (!container) return;
+
+    setIsLoadingOlderActivities(true);
+    const prevScrollHeight = container.scrollHeight;
+    const prevScrollTop = container.scrollTop;
+
+    setTimeout(() => {
+      setVisibleActivityCount(prev => Math.min(combined.length, prev + ACTIVITY_BATCH_SIZE));
+      setIsLoadingOlderActivities(false);
+
+      requestAnimationFrame(() => {
+        if (activityScrollRef.current) {
+          const newScrollHeight = activityScrollRef.current.scrollHeight;
+          activityScrollRef.current.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+        }
+      });
+    }, 120);
+  }, [hasOlderActivities, isLoadingOlderActivities, combined.length]);
+
+  const handleActivityScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop } = e.currentTarget;
+    if (scrollTop < 60 && hasOlderActivities && !isLoadingOlderActivities) {
+      loadOlderActivities();
+    }
+  }, [hasOlderActivities, isLoadingOlderActivities, loadOlderActivities]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
@@ -4526,6 +4729,8 @@ export function SubtaskDetailView({
         replies: []
       };
       setRichComments((prev: any[]) => [...prev, optimisticComment]);
+      setVisibleActivityCount(prev => prev + 1);
+      scrollToLatestComment();
 
       setComment('');
       setTimeout(() => {
@@ -5563,19 +5768,42 @@ export function SubtaskDetailView({
             </div>
           </div>
 
-          <div ref={activityScrollRef} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+          <div ref={activityScrollRef} onScroll={handleActivityScroll} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
             <div className="space-y-5">
 
-              {/* Initial Creation item */}
-              <div className="flex gap-4 text-sm text-zinc-400 items-start">
-                <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                <div className="flex-1 leading-relaxed">
-                  <span className="text-zinc-200 font-medium">{subtask.creator?.name || 'System'}</span> created this subtask
+              {/* Loading older activities indicator / trigger */}
+              {hasOlderActivities && (
+                <div className="py-2.5 flex justify-center items-center">
+                  {isLoadingOlderActivities ? (
+                    <div className="flex items-center gap-2 text-xs text-zinc-500 py-1">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                      <span>Loading earlier updates...</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={loadOlderActivities}
+                      className="text-[11px] font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800 transition-all flex items-center gap-1.5 py-1 px-3 rounded-full cursor-pointer"
+                    >
+                      <Clock className="w-3 h-3 text-zinc-500" />
+                      <span>Load earlier updates ({olderActivitiesCount} remaining)</span>
+                    </button>
+                  )}
                 </div>
-                <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                  {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}
-                </span>
-              </div>
+              )}
+
+              {/* Initial Creation item */}
+              {!hasOlderActivities && (
+                <div className="flex gap-4 text-sm text-zinc-400 items-start">
+                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                  <div className="flex-1 leading-relaxed">
+                    <span className="text-zinc-200 font-medium">{subtask.creator?.name || 'System'}</span> created this subtask
+                  </div>
+                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                    {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}
+                  </span>
+                </div>
+              )}
 
               {/* Sort activities and comments oldest to newest */}
               {loadError && (
@@ -5585,12 +5813,6 @@ export function SubtaskDetailView({
                 </div>
               )}
               {loadingActivities ? <CommentSkeleton /> : (() => {
-                const otherActivities = activities.filter(a => a.type !== 'comment');
-                const combined = [
-                  ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
-                  ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
-                ].sort((a, b) => a.sortDate - b.sortDate);
-
                 const renderComment = (c: any, isReply = false) => {
                   const timeStr = new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                   const dateStr = new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
@@ -5737,13 +5959,13 @@ export function SubtaskDetailView({
                 return (
                   <>
                     {/* Combined Timeline */}
-                    {combined.length > 0 && (() => {
+                    {paginatedCombined.length > 0 && (() => {
                       const timelineItems: any[] = [];
                       let currentGroupKey: string | null = null;
                       let currentBlock: any[] = [];
                       const blocks: any[][] = [];
                       
-                      combined.forEach(item => {
+                      paginatedCombined.forEach(item => {
                         const key = item.isActivityType ? 'activity' : 'comment';
                         if (currentGroupKey === null) {
                             currentGroupKey = key;
@@ -5922,6 +6144,7 @@ export function SubtaskDetailView({
                 </>
               );
             })()}
+
             </div>
           </div>
 

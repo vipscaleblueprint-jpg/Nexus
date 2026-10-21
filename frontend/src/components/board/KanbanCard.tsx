@@ -5,8 +5,9 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { Check, CheckSquare, Calendar, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
+import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, getAssigneeAvatarColor, prefetchTaskActivities } from '@/components/modals/TaskDetailModal';
+import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -104,7 +105,7 @@ const CardContent = memo(({
   }, [initialTask]);
 
   const [isDescOpen, setIsDescOpen] = useState(false);
-  const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'teamRole' | 'date' | 'priority' | null>(null);
+  const [openDropdown, setOpenDropdown] = useState<'status' | 'assignee' | 'teamRole' | 'date' | 'recurrence' | 'priority' | null>(null);
 
   const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
     isOpen: boolean;
@@ -300,6 +301,47 @@ const CardContent = memo(({
     }
   };
 
+  const isInRecurringGroup = useMemo(() => {
+    if (isSubtask) return false;
+    const statusUpper = ((task as any).status || '').toUpperCase().trim();
+    if (['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)) return true;
+    const statusObj = listStatuses?.find((ls: any) => {
+      const name = typeof ls === 'string' ? ls : (ls.name || ls.status || ls.title || '');
+      return name.toUpperCase().trim() === statusUpper;
+    });
+    return (statusObj?.groupName || '').toUpperCase().trim() === 'RECURRING';
+  }, [isSubtask, (task as any).status, listStatuses]);
+
+  const handleSaveRecurrence = async (config: any, triggerImmediate: boolean) => {
+    if (!currentUser || isSubtask) return;
+    setTask(prev => ({ ...prev, recurringConfig: config } as any));
+    closeDropdown();
+
+    try {
+      const res = await tasksApi.setRecurring(task.id, config, triggerImmediate);
+      if (res.duplicatedTask) {
+        toast.success(`Duplicate task created in PENDING: ${res.duplicatedTask.title}`);
+      } else {
+        toast.success(config ? 'Recurring schedule saved' : 'Recurrence cleared');
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update recurring schedule');
+      setTask(initialTask);
+    }
+  };
+
+  const handleDuplicateNow = async () => {
+    if (!currentUser || isSubtask) return;
+    try {
+      const res = await tasksApi.duplicateToPending(task.id);
+      if (res.task) {
+        toast.success(`Duplicate task created in PENDING: ${res.task.title}`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to duplicate task');
+    }
+  };
+
   const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(
     () => (initialTask as any)?.assigneeRoleRestrictions || []
   );
@@ -431,6 +473,7 @@ const CardContent = memo(({
   const assigneeTriggerRef = useRef<HTMLDivElement>(null);
   const teamRoleTriggerRef = useRef<HTMLDivElement>(null);
   const dateTriggerRef = useRef<HTMLDivElement>(null);
+  const recurrenceTriggerRef = useRef<HTMLDivElement>(null);
   const priorityTriggerRef = useRef<HTMLDivElement>(null);
   const descTriggerRef = useRef<HTMLDivElement>(null);
 
@@ -905,67 +948,107 @@ const CardContent = memo(({
           </div>
         </div>
 
-        {/* Due Date */}
-        <div className="relative w-full">
-          <div
-            ref={dateTriggerRef}
-            className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}
-            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
-          >
-            <Calendar className="w-3.5 h-3.5" />
-            <span>
-              {('dueDate' in task && task.dueDate) ? new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '-'}
-            </span>
-          </div>
-          {openDropdown === 'date' && (
-            <PortalDropdown triggerRef={dateTriggerRef} onClose={closeDropdown}>
-              <div className="kanban-date-picker bg-background border border-zinc-800 rounded-xl shadow-xl z-50 p-2.5 w-[210px]">
-                {/* react-day-picker v10 class names (v8 names like .rdp-button/.rdp-head_cell no longer exist) */}
-                <style>{`
-                  .kanban-date-picker .rdp-root {
-                    --rdp-accent-color: #6366f1;
-                    --rdp-accent-background-color: rgba(99, 102, 241, 0.2);
-                    --rdp-day-height: 26px; --rdp-day-width: 26px;
-                    --rdp-day_button-height: 24px; --rdp-day_button-width: 24px;
-                    --rdp-day_button-border-radius: 4px;
-                    --rdp-selected-border: none;
-                    --rdp-nav-height: 24px;
-                    --rdp-nav_button-height: 20px; --rdp-nav_button-width: 20px;
-                    --rdp-weekday-padding: 2px 0;
-                    margin: 0; font-size: 11px;
-                  }
-                  .kanban-date-picker .rdp-months, .kanban-date-picker .rdp-month { max-width: 100%; }
-                  .kanban-date-picker .rdp-month_grid { margin: 0 auto; border-collapse: separate; border-spacing: 1px; }
-                  .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: #f4f4f5; padding-left: 4px; }
-                  .kanban-date-picker .rdp-caption_label { font-size: 12px; font-weight: 600; }
-                  .kanban-date-picker .rdp-weekday { color: #a1a1aa; font-weight: 600; font-size: 10px; }
-                  .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; }
-                  .kanban-date-picker .rdp-day_button { transition: background-color 0.15s; }
-                  .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: rgba(255, 255, 255, 0.1); }
-                  .kanban-date-picker .rdp-today:not(.rdp-outside) { color: #818cf8; font-weight: 700; }
-                  .kanban-date-picker .rdp-selected .rdp-day_button { background-color: var(--rdp-accent-color); color: white; font-weight: 700; }
-                  .kanban-date-picker .rdp-button_previous, .kanban-date-picker .rdp-button_next { border-radius: 4px; }
-                  .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: rgba(255, 255, 255, 0.1); }
-                  .kanban-date-picker .rdp-chevron { fill: #d4d4d8; width: 12px; height: 12px; }
-                `}</style>
-                <div className="flex justify-between items-center mb-2 px-2">
-                  <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
-                  {('dueDate' in task && task.dueDate) && (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDueDateChange(undefined); }}
-                      className="text-[10px] text-red-400/80 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition-colors"
-                    >
-                      Clear
-                    </button>
-                  )}
+        {/* Due Date & Recurrence Row */}
+        <div className="flex items-center gap-1.5 w-full">
+          {/* Due Date (Left side) */}
+          <div className="relative">
+            <div
+              ref={dateTriggerRef}
+              className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-400`}
+              onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'date' ? null : 'date'); }}
+              title="Set Due Date"
+            >
+              <Calendar className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                {('dueDate' in task && task.dueDate) ? new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '-'}
+              </span>
+            </div>
+            {openDropdown === 'date' && (
+              <PortalDropdown triggerRef={dateTriggerRef} onClose={closeDropdown}>
+                <div className="kanban-date-picker bg-background border border-zinc-800 rounded-xl shadow-xl z-50 p-2.5 w-[210px]">
+                  {/* react-day-picker v10 class names (v8 names like .rdp-button/.rdp-head_cell no longer exist) */}
+                  <style>{`
+                    .kanban-date-picker .rdp-root {
+                      --rdp-accent-color: #6366f1;
+                      --rdp-accent-background-color: rgba(99, 102, 241, 0.2);
+                      --rdp-day-height: 26px; --rdp-day-width: 26px;
+                      --rdp-day_button-height: 24px; --rdp-day_button-width: 24px;
+                      --rdp-day_button-border-radius: 4px;
+                      --rdp-selected-border: none;
+                      --rdp-nav-height: 24px;
+                      --rdp-nav_button-height: 20px; --rdp-nav_button-width: 20px;
+                      --rdp-weekday-padding: 2px 0;
+                      margin: 0; font-size: 11px;
+                    }
+                    .kanban-date-picker .rdp-months, .kanban-date-picker .rdp-month { max-width: 100%; }
+                    .kanban-date-picker .rdp-month_grid { margin: 0 auto; border-collapse: separate; border-spacing: 1px; }
+                    .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: #f4f4f5; padding-left: 4px; }
+                    .kanban-date-picker .rdp-caption_label { font-size: 12px; font-weight: 600; }
+                    .kanban-date-picker .rdp-weekday { color: #a1a1aa; font-weight: 600; font-size: 10px; }
+                    .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; }
+                    .kanban-date-picker .rdp-day_button { transition: background-color 0.15s; }
+                    .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: rgba(255, 255, 255, 0.1); }
+                    .kanban-date-picker .rdp-today:not(.rdp-outside) { color: #818cf8; font-weight: 700; }
+                    .kanban-date-picker .rdp-selected .rdp-day_button { background-color: var(--rdp-accent-color); color: white; font-weight: 700; }
+                    .kanban-date-picker .rdp-button_previous, .kanban-date-picker .rdp-button_next { border-radius: 4px; }
+                    .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: rgba(255, 255, 255, 0.1); }
+                    .kanban-date-picker .rdp-chevron { fill: #d4d4d8; width: 12px; height: 12px; }
+                  `}</style>
+                  <div className="flex justify-between items-center mb-2 px-2">
+                    <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
+                    {('dueDate' in task && task.dueDate) && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleDueDateChange(undefined); }}
+                        className="text-[10px] text-red-400/80 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition-colors"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <DayPicker
+                    mode="single"
+                    selected={('dueDate' in task && task.dueDate) ? new Date(task.dueDate) : undefined}
+                    onSelect={handleDueDateChange}
+                  />
                 </div>
-                <DayPicker
-                  mode="single"
-                  selected={('dueDate' in task && task.dueDate) ? new Date(task.dueDate) : undefined}
-                  onSelect={handleDueDateChange}
-                />
+              </PortalDropdown>
+            )}
+          </div>
+
+          {/* Recurrence (Right side) - ONLY if in recurring group! */}
+          {isInRecurringGroup && (
+            <div className="relative">
+              <div
+                ref={recurrenceTriggerRef}
+                className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-400`}
+                onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'recurrence' ? null : 'recurrence'); }}
+                title="Set Recurrence"
+              >
+                <Repeat className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                <span className={(task as any).recurringConfig?.time ? 'text-purple-300 font-medium' : ''}>
+                  {(task as any).recurringConfig?.time
+                    ? formatTimeDisplay((task as any).recurringConfig.time)
+                    : (task as any).status && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())
+                    ? `Set ${(task as any).status} Time`
+                    : 'Set Time'}
+                </span>
               </div>
-            </PortalDropdown>
+              {openDropdown === 'recurrence' && (
+                <PortalDropdown triggerRef={recurrenceTriggerRef} onClose={closeDropdown}>
+                  <RecurrencePicker
+                    task={task as Task}
+                    defaultFrequency={
+                      ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())
+                        ? ((task as any).status.toUpperCase() as any)
+                        : 'DAILY'
+                    }
+                    onSave={handleSaveRecurrence}
+                    onDuplicateNow={handleDuplicateNow}
+                    onClose={closeDropdown}
+                  />
+                </PortalDropdown>
+              )}
+            </div>
           )}
         </div>
 

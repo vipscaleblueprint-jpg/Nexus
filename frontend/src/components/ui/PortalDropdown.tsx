@@ -35,7 +35,8 @@ export function PortalDropdown({ triggerRef, children, onClose }: { triggerRef: 
       }
 
       const rect = trigger.getBoundingClientRect();
-      const { offsetHeight: height, offsetWidth: width } = portal;
+      const height = portal.offsetHeight || portal.scrollHeight || 300;
+      const width = portal.offsetWidth || portal.scrollWidth || 320;
 
       // Open below; flip above when it doesn't fit below but does above; otherwise keep it on screen.
       let top = rect.bottom + GAP;
@@ -51,8 +52,15 @@ export function PortalDropdown({ triggerRef, children, onClose }: { triggerRef: 
 
     // Initial position
     updatePosition();
-    // We need a tiny delay to ensure portal is rendered
-    requestAnimationFrame(updatePosition);
+    const frameId = requestAnimationFrame(updatePosition);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && portalRef.current) {
+      ro = new ResizeObserver(() => {
+        updatePosition();
+      });
+      ro.observe(portalRef.current);
+    }
 
     const close = (e: MouseEvent) => {
       const isInsidePortal = (e.target as Element).closest('.portal-dropdown-container');
@@ -66,6 +74,8 @@ export function PortalDropdown({ triggerRef, children, onClose }: { triggerRef: 
     document.addEventListener('mousedown', close);
     
     return () => {
+      cancelAnimationFrame(frameId);
+      if (ro) ro.disconnect();
       window.removeEventListener('scroll', updatePosition, true);
       window.removeEventListener('resize', updatePosition);
       document.removeEventListener('mousedown', close);
@@ -77,7 +87,7 @@ export function PortalDropdown({ triggerRef, children, onClose }: { triggerRef: 
   return createPortal(
     <div
       ref={portalRef}
-      className="portal-dropdown-container fixed bg-zinc-800 border border-zinc-700 rounded-lg shadow-2xl z-[9999] p-1"
+      className="portal-dropdown-container fixed bg-zinc-800 border border-zinc-700 rounded-lg shadow-2xl z-[9999] p-1 overflow-y-auto max-h-[calc(100vh-24px)] custom-scrollbar"
       style={{ top: '-9999px', left: '-9999px' }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}

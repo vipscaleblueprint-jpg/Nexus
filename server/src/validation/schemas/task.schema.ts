@@ -28,6 +28,7 @@ export const createTaskSchema = z.object({
   startDate: nullableIsoDate,
   assigneeRoleRestrictions: z.array(z.string()).optional(),
   teamAssignAccessRole: z.string().nullable().optional(),
+  recurringConfig: z.any().optional(),
   // Place the new task directly after this one on the board (used by Duplicate)
   afterTaskId: uuid.optional(),
 });
@@ -48,6 +49,7 @@ export const updateTaskSchema = z
     userId: uuid.optional(),
     assigneeRoleRestrictions: z.array(z.string()).optional(),
     teamAssignAccessRole: z.string().nullable().optional(),
+    recurringConfig: z.any().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

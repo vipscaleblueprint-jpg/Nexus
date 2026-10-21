@@ -257,6 +257,7 @@ model Task {
   position                 Float?
   /// Erased from today's daily rollover page: left off (with its subtasks) until mentioned there again
   rolloverExcluded         Boolean            @default(false)
+  recurringConfig          Json?
   attachments              Attachment[]
   checklists               Checklist[]
   subtasks                 Subtask[]

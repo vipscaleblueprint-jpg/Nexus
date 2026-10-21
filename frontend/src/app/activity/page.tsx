@@ -681,28 +681,28 @@ export default function ActivityPage() {
         <h1 className="text-2xl font-semibold">Activity</h1>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-zinc-800/50 p-1 rounded-md border border-zinc-800 mr-2 hidden sm:flex">
+          <div className="flex items-center gap-1 bg-card p-1 rounded-md border border-border mr-2 hidden sm:flex">
             <button 
               onClick={() => { setTimeFilter('all'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'all' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'all' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               All time
             </button>
             <button 
               onClick={() => { setTimeFilter('today'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'today' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'today' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Today
             </button>
             <button 
               onClick={() => { setTimeFilter('last7'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last7' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last7' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Last 7 days
             </button>
             <button 
               onClick={() => { setTimeFilter('last30'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last30' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last30' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Last 30 days
             </button>
@@ -712,14 +712,14 @@ export default function ActivityPage() {
             <>
               <button
                 onClick={handleMarkAllAsRead}
-                className="px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-md shadow-sm transition-colors flex items-center gap-1.5"
+                className="px-3 py-1.5 text-xs font-medium text-zinc-200 bg-card hover:bg-accent border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <Check className="size-3.5" />
                 Mark all as read
               </button>
               <button
                 onClick={handleClearAll}
-                className="px-3 py-1.5 text-xs font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5 transition-colors"
+                className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-md shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Check className="size-3.5" />
                 Clear all
@@ -730,24 +730,24 @@ export default function ActivityPage() {
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen(prev => !prev)}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-md transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-card hover:bg-accent text-zinc-200 border border-border rounded-md transition-colors cursor-pointer"
             >
               {viewMode === 'for_me' ? 'For Me' : 'Show All'}
               <ChevronDown className={`size-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {dropdownOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-48 bg-secondary border border-zinc-700/60 rounded-lg shadow-xl z-50 overflow-hidden">
+              <div className="absolute right-0 top-full mt-1.5 w-48 bg-popover border border-border rounded-lg shadow-xl z-50 overflow-hidden">
                 {VIEW_OPTIONS.map(option => {
                   const isActive = viewMode === option.value;
                   return (
                     <button
                       key={option.value}
                       onClick={() => { setViewMode(option.value); setPage(1); setDropdownOpen(false); }}
-                      className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-zinc-800 ${isActive ? 'bg-indigo-500/10' : ''}`}
+                      className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent cursor-pointer ${isActive ? 'bg-indigo-500/10' : ''}`}
                     >
                       <div className="flex-1">
-                        <p className={`text-xs font-medium ${isActive ? 'text-indigo-300' : 'text-zinc-200'}`}>{option.label}</p>
+                        <p className={`text-xs font-medium ${isActive ? 'text-indigo-400 font-semibold' : 'text-zinc-200'}`}>{option.label}</p>
                         <p className="text-[10px] text-zinc-500 mt-0.5">{option.description}</p>
                       </div>
                       {isActive && <Check className="size-3.5 text-indigo-400 mt-0.5 shrink-0" />}
@@ -760,8 +760,8 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      {/* Category Tabs Matching Photo 2 */}
-      <div className="px-8 border-b border-zinc-800/80 mb-6 flex items-center gap-8 overflow-x-auto custom-scrollbar">
+      {/* Category Tabs */}
+      <div className="px-8 border-b border-border mb-6 flex items-center gap-8 overflow-x-auto custom-scrollbar">
         {CATEGORIES.map((cat) => {
           const isActive = category === cat.value;
           return (
@@ -828,7 +828,7 @@ export default function ActivityPage() {
                       >
                         {/* Timeline Connector Line */}
                         {i !== items.length - 1 && (
-                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-zinc-800" />
+                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-border" />
                         )}
 
                         {/* Avatar with Micro Icon Badge */}
@@ -860,8 +860,8 @@ export default function ActivityPage() {
                           </div>
                         </div>
 
-                        {/* Card Content Matching Photo 2 */}
-                        <div className={`flex-1 min-w-0 bg-[#18181c] border border-zinc-800/80 rounded-2xl p-5 shadow-sm transition-all hover:border-zinc-700/80 hover:bg-[#1b1b20] ${item.isUnread ? 'border-zinc-800 ring-1 ring-indigo-500/10' : ''}`}>
+                        {/* Card Content */}
+                        <div className={`flex-1 min-w-0 bg-card border border-border rounded-2xl p-5 shadow-xs transition-all hover:border-border hover:bg-accent/40 ${item.isUnread ? 'border-border ring-1 ring-indigo-500/20' : ''}`}>
                           {/* Header: Actor + Verb + Task Title + Unread Dot */}
                           <div className="flex items-center justify-between gap-3 mb-2">
                             <div className="flex items-center gap-1.5 flex-wrap text-sm leading-tight">
@@ -873,7 +873,7 @@ export default function ActivityPage() {
                                     e.stopPropagation();
                                     if (item.targetTaskId) handleOpenTask(rawItem);
                                   }}
-                                  className="font-medium text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer"
+                                  className="font-medium text-indigo-300 hover:underline cursor-pointer"
                                 >
                                   {item.targetTitle}
                                 </span>
@@ -887,10 +887,10 @@ export default function ActivityPage() {
 
                           {/* Quote Body with clean vertical left border */}
                           {item.content && (
-                            <div className="my-2.5 pl-3.5 border-l-2 border-zinc-700/60 text-sm text-zinc-300">
+                            <div className="my-2.5 pl-3.5 border-l-2 border-indigo-500/40 text-sm text-zinc-300">
                               <CommentContent
                                 content={item.content}
-                                className="text-sm text-zinc-300 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-blue-400 prose-a:underline [&_a]:text-blue-400 [&_a]:underline"
+                                className="text-sm text-zinc-300 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-indigo-300 prose-a:underline [&_a]:text-indigo-300 [&_a]:underline"
                                 onPreviewImage={handlePreviewImage}
                               />
                             </div>
@@ -910,7 +910,7 @@ export default function ActivityPage() {
                                   e.stopPropagation();
                                   handleClear(item.id);
                                 }}
-                                className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 rounded-md transition-all flex items-center gap-1"
+                                className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-indigo-400 hover:bg-accent rounded-md transition-all flex items-center gap-1 cursor-pointer"
                                 title="Clear notification"
                               >
                                 <Check className="size-3" />
@@ -931,13 +931,13 @@ export default function ActivityPage() {
 
       {/* Persistent Bottom Pagination Bar */}
       {total > 0 && (
-        <div className="px-8 py-3.5 border-t border-zinc-800/80 bg-background/95 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+        <div className="px-8 py-3.5 border-t border-border bg-background/95 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3 text-xs text-zinc-400">
             <span>
               Showing <span className="font-semibold text-zinc-200">{Math.min((page - 1) * limit + 1, total)}</span>–<span className="font-semibold text-zinc-200">{Math.min(page * limit, total)}</span> of <span className="font-semibold text-zinc-200">{total}</span> activities
             </span>
 
-            <div className="flex items-center gap-1.5 ml-2 border-l border-zinc-800 pl-3">
+            <div className="flex items-center gap-1.5 ml-2 border-l border-border pl-3">
               <span className="text-[11px] text-zinc-500">Per page:</span>
               {[25, 50, 100].map((size) => (
                 <button
@@ -947,9 +947,9 @@ export default function ActivityPage() {
                     setPage(1);
                     if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
                   }}
-                  className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
+                  className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors cursor-pointer ${
                     limit === size
-                      ? 'bg-zinc-800 text-indigo-400 font-semibold border border-zinc-700'
+                      ? 'bg-accent text-indigo-400 font-semibold border border-border'
                       : 'text-zinc-500 hover:text-zinc-300'
                   }`}
                 >
@@ -967,7 +967,7 @@ export default function ActivityPage() {
                   setPage(p => Math.max(1, p - 1));
                   if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
                 }}
-                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-800 hover:text-zinc-200 transition-colors cursor-pointer border border-zinc-800/80"
+                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-accent hover:text-zinc-200 transition-colors cursor-pointer border border-border"
               >
                 <ChevronLeft className="size-3.5" />
                 <span>Prev</span>
@@ -991,8 +991,8 @@ export default function ActivityPage() {
                       }}
                       className={`w-8 h-8 flex items-center justify-center rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                         page === pageNum
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 border border-transparent'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-zinc-400 hover:bg-accent hover:text-zinc-200 border border-transparent'
                       }`}
                     >
                       {pageNum}
@@ -1007,7 +1007,7 @@ export default function ActivityPage() {
                   setPage(p => Math.min(totalPages, p + 1));
                   if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
                 }}
-                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-800 hover:text-zinc-200 transition-colors cursor-pointer border border-zinc-800/80"
+                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-accent hover:text-zinc-200 transition-colors cursor-pointer border border-border"
               >
                 <span>Next</span>
                 <ChevronRight className="size-3.5" />

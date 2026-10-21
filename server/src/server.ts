@@ -34,6 +34,7 @@ import { dailyRolloverQueue } from './queues/dailyRollover.queue';
 import { JOURNAL_CATCH_UP_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
+import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 
 const app = express();
 const server = http.createServer(app);
@@ -61,6 +62,14 @@ const server = http.createServer(app);
     repeat: { every: 10 * 60 * 1000 },
     jobId: 'tools-sync-reconcile',
   });
+
+  // Automated recurring tasks check: checks and duplicates tasks into PENDING at their set schedule (every 60s)
+  setTimeout(() => {
+    checkAndRunRecurringTasks().catch(err => logger.error('Initial recurring tasks check failed:', err));
+  }, 5000);
+  setInterval(() => {
+    checkAndRunRecurringTasks().catch(err => logger.error('Recurring tasks check failed:', err));
+  }, 60 * 1000);
 })();
 
 // Hocuspocus WebSocket Server for Collaborative Editing

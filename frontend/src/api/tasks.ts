@@ -176,5 +176,19 @@ export const tasksApi = {
       method: 'DELETE',
     });
   },
+
+  async setRecurring(id: string, recurringConfig: any, triggerImmediate: boolean = true): Promise<{ task: Task; duplicatedTask?: Task }> {
+    return apiClient<{ task: Task; duplicatedTask?: Task }>(`/api/tasks/${id}/recurring`, {
+      method: 'POST',
+      body: JSON.stringify({ recurringConfig, triggerImmediate }),
+    });
+  },
+
+  async duplicateToPending(id: string): Promise<{ task: Task }> {
+    return apiClient<{ task: Task }>(`/api/tasks/${id}/duplicate-pending`, {
+      method: 'POST',
+    });
+  },
 };
+
 

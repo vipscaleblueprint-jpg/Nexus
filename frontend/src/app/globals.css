@@ -292,6 +292,35 @@ input:disabled,
   background-color: #666666;
 }
 
+/* Prominent, accessible Kanban horizontal scrollbar */
+.kanban-board-scroll {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 85, 247, 0.6) rgba(24, 24, 27, 0.8);
+}
+
+.kanban-board-scroll::-webkit-scrollbar {
+  height: 10px !important;
+  display: block !important;
+}
+
+.kanban-board-scroll::-webkit-scrollbar-track {
+  background: rgba(24, 24, 27, 0.7) !important;
+  border-radius: 9999px;
+  margin: 0 16px 4px 16px;
+}
+
+.kanban-board-scroll::-webkit-scrollbar-thumb {
+  background: rgba(168, 85, 247, 0.6) !important;
+  border-radius: 9999px;
+  border: 2px solid rgba(24, 24, 27, 0.7);
+}
+
+.kanban-board-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.9) !important;
+}
+
 /* Notion-style Rich Text Editor overrides */
 /* Ensure text alignment works by expanding inline-block to full width */
 .ProseMirror:has([style*="text-align: center"]),

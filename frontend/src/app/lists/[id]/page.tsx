@@ -99,14 +99,17 @@ export default function BoardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Instantly hydrate list from localStorage cache after mount to avoid hydration mismatch
+  // Instantly hydrate or switch list from localStorage cache whenever list ID changes
   useEffect(() => {
     if (!currentUser) return;
     const cachedList = getListCache(id);
-    if (cachedList && loading) {
+    if (cachedList) {
       setList(cachedList);
       setCustomGroups(cachedList.customGroups || []);
       setLoading(false);
+    } else {
+      setList(null);
+      setLoading(true);
     }
   }, [id, currentUser]);
   const [activeTab, setActiveTab] = useState<'list' | 'board'>('board');
@@ -187,10 +190,15 @@ export default function BoardPage() {
 
         if (!cancelled && listRes.list) {
           setListCache(id, listRes.list);
-          setList((prev: any) => ({
-            ...listRes.list,
-            tasks: mergeFetchedTasks(prev?.tasks, listRes.list.tasks, requestedAt, localTaskEditsRef.current),
-          }));
+          setList((prev: any) => {
+            const isSameList = prev?.id === id;
+            return {
+              ...listRes.list,
+              tasks: isSameList
+                ? mergeFetchedTasks(prev?.tasks, listRes.list.tasks, requestedAt, localTaskEditsRef.current)
+                : listRes.list.tasks,
+            };
+          });
           if (listRes.list?.customGroups) {
             setCustomGroups(listRes.list.customGroups);
           }

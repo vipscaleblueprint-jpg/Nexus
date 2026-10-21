@@ -5,7 +5,7 @@ import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
-import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck, Shield, Lock, UserPlus } from 'lucide-react';
+import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck, Shield, Lock, UserPlus, Clock, Loader2 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
@@ -602,6 +602,56 @@ function SubtaskRow({
 
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const INITIAL_SUBTASK_COMMENTS = 10;
+  const SUBTASK_COMMENTS_BATCH = 10;
+  const [visibleCommentCount, setVisibleCommentCount] = useState(INITIAL_SUBTASK_COMMENTS);
+  const [isLoadingOlderComments, setIsLoadingOlderComments] = useState(false);
+  const subtaskCommentsScrollRef = useRef<HTMLDivElement>(null);
+  const [prevSubtaskId, setPrevSubtaskId] = useState(subtask.id);
+  if (subtask.id !== prevSubtaskId) {
+    setPrevSubtaskId(subtask.id);
+    setVisibleCommentCount(INITIAL_SUBTASK_COMMENTS);
+    setIsLoadingOlderComments(false);
+  }
+
+  const allComments = subtask.comments || [];
+  const totalComments = allComments.length;
+  const hasOlderComments = totalComments > visibleCommentCount;
+  const olderCommentsCount = Math.max(0, totalComments - visibleCommentCount);
+
+  const paginatedComments = useMemo(() => {
+    if (totalComments <= visibleCommentCount) return allComments;
+    return allComments.slice(totalComments - visibleCommentCount);
+  }, [allComments, visibleCommentCount]);
+
+  const loadOlderComments = useCallback(() => {
+    if (!hasOlderComments || isLoadingOlderComments) return;
+    const container = subtaskCommentsScrollRef.current;
+    if (!container) return;
+
+    setIsLoadingOlderComments(true);
+    const prevScrollHeight = container.scrollHeight;
+    const prevScrollTop = container.scrollTop;
+
+    setTimeout(() => {
+      setVisibleCommentCount(prev => Math.min(totalComments, prev + SUBTASK_COMMENTS_BATCH));
+      setIsLoadingOlderComments(false);
+
+      requestAnimationFrame(() => {
+        if (subtaskCommentsScrollRef.current) {
+          const newScrollHeight = subtaskCommentsScrollRef.current.scrollHeight;
+          subtaskCommentsScrollRef.current.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+        }
+      });
+    }, 120);
+  }, [hasOlderComments, isLoadingOlderComments, totalComments]);
+
+  const handleCommentsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop } = e.currentTarget;
+    if (scrollTop < 30 && hasOlderComments && !isLoadingOlderComments) {
+      loadOlderComments();
+    }
+  }, [hasOlderComments, isLoadingOlderComments, loadOlderComments]);
 
   // Latest comments, for the async handler below (its `subtask` is the one from when it was called)
   const commentsRef = useRef(subtask.comments);
@@ -611,6 +661,7 @@ function SubtaskRow({
     if (e) e.preventDefault();
     const text = commentText.trim();
     if (!text || !currentUser?.id || !taskId) return;
+    setVisibleCommentCount(prev => prev + 1);
     // Comments are stored locally only (onAddCommentLocally): onUpdate would also PATCH them to the subtask
     const setComments = (next: any[]) => onAddCommentLocally?.(subtask.id, next);
 
@@ -1604,9 +1655,32 @@ function SubtaskRow({
 
             {activeTab === 'comments' && (
               <div className="flex-1 flex flex-col relative h-full">
-                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-3 min-h-[120px]">
-                  {subtask.comments && subtask.comments.length > 0 ? (
-                    subtask.comments.map((comment: any) => {
+                <div
+                  ref={subtaskCommentsScrollRef}
+                  onScroll={handleCommentsScroll}
+                  className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-2 pr-1 space-y-3 min-h-[120px]"
+                >
+                  {hasOlderComments && (
+                    <div className="py-1 flex justify-center items-center">
+                      {isLoadingOlderComments ? (
+                        <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+                          <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />
+                          <span>Loading earlier comments...</span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={loadOlderComments}
+                          className="text-[10px] font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800 py-0.5 px-2.5 rounded-full cursor-pointer flex items-center gap-1"
+                        >
+                          <Clock className="w-2.5 h-2.5 text-zinc-500" />
+                          <span>Load earlier comments ({olderCommentsCount} remaining)</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {paginatedComments && paginatedComments.length > 0 ? (
+                    paginatedComments.map((comment: any) => {
                       const dt = comment.createdAt ? new Date(comment.createdAt) : new Date();
                       const dateStr = isNaN(dt.getTime()) ? '' : dt.toLocaleDateString();
                       

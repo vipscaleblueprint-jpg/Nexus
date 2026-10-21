@@ -33,4 +33,4 @@ async function main() {
     }, null, 2));
   }
 }
-main().finally(() => prisma.());
+main().finally(() => prisma.$disconnect());

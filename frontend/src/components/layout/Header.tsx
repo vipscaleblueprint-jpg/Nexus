@@ -25,22 +25,22 @@ export function Header() {
   const isSidebarCollapsed = useAppStore(state => state.isSidebarCollapsed);
   const toggleSidebar = useAppStore(state => state.toggleSidebar);
 
+  const resetStore = useAppStore(state => state.resetStore);
+
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   const title = PAGE_TITLES[pathname] ?? "Nexus";
 
   const handleLogout = async () => {
     try {
-      // Only call the server when there is a session to end; otherwise it
-      // answers 401 and the console fills with noise.
       if (currentUser) {
         await authApi.logout();
       }
     } catch (e) {
       console.warn("Logout server call failed:", e);
     } finally {
-      setCurrentUser(null);
-      router.push("/login");
+      resetStore();
+      window.location.replace("/login");
     }
   };
 

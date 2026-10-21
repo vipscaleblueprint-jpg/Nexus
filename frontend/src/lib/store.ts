@@ -10,6 +10,30 @@ const ROLES_CACHE_KEY = 'nexus_roles_cache';
 const USERS_CACHE_KEY = 'nexus_users_cache';
 const TEAMS_CACHE_KEY = 'nexus_teams_cache';
 
+export function clearAllCaches() {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(SPACES_CACHE_KEY);
+    localStorage.removeItem(TASKS_CACHE_KEY);
+    localStorage.removeItem(ROLES_CACHE_KEY);
+    localStorage.removeItem(USERS_CACHE_KEY);
+    localStorage.removeItem(TEAMS_CACHE_KEY);
+    localStorage.removeItem('token');
+    localStorage.removeItem('nexus_token');
+    localStorage.removeItem('nexus_spaces_cache');
+    localStorage.removeItem('nexus_tasks_cache');
+
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('nexus_list_cache_') || key.startsWith('nexus_daily_rollover_') || key.startsWith('nexus_tree_'))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {}
+}
+
 function getCachedSpaces(): { spaces: Space[], allLists: any[], allDocs: any[] } {
   if (typeof window === 'undefined') return { spaces: [], allLists: [], allDocs: [] };
   try {
@@ -121,9 +145,12 @@ let loadUsersPromise: Promise<void> | null = null;
 let loadTeamsPromise: Promise<void> | null = null;
 
 interface AppState {
-  // Session User
+  // Session User & Auth Status
   currentUser: User | null;
+  authStatus: 'idle' | 'loading' | 'authenticated' | 'unauthenticated';
   setCurrentUser: (user: User | null) => void;
+  setAuthStatus: (status: 'idle' | 'loading' | 'authenticated' | 'unauthenticated') => void;
+  resetStore: () => void;
   
   // Spaces
   spaces: Space[];
@@ -178,7 +205,35 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   currentUser: null,
-  setCurrentUser: (user) => set({ currentUser: user }),
+  authStatus: 'idle',
+  setCurrentUser: (user) => set({ currentUser: user, authStatus: user ? 'authenticated' : 'unauthenticated' }),
+  setAuthStatus: (authStatus) => set({ authStatus }),
+  resetStore: () => {
+    clearAllCaches();
+    set({
+      currentUser: null,
+      authStatus: 'unauthenticated',
+      spaces: [],
+      allLists: [],
+      allDocs: [],
+      loadingSpaces: false,
+      hasLoadedSpaces: false,
+      tasks: [],
+      loadingTasks: false,
+      hasLoadedTasks: false,
+      tasksIndex: {},
+      workspaceRoles: [],
+      workspaceRolesIndex: {},
+      hasLoadedRoles: false,
+      workspaceUsers: [],
+      workspaceUsersIndex: {},
+      hasLoadedUsers: false,
+      workspaceTeams: [],
+      workspaceTeamsIndex: {},
+      hasLoadedTeams: false,
+      unreadNotifications: 0,
+    });
+  },
   
   // Always start with [] to avoid SSR/client hydration mismatch.
   // Call hydrateFromCache() in a client-side useEffect to get instant data.

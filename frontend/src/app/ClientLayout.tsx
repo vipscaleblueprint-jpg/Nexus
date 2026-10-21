@@ -5,6 +5,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { useAppStore } from '@/lib/store';
 import { useEffect, useRef, Suspense } from 'react';
+import { Loader2 } from 'lucide-react';
 
 import { authApi } from '@/api';
 import { notificationsApi } from '@/api/notifications';
@@ -23,6 +24,8 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     hydrateTasksFromCache,
     currentUser,
     setCurrentUser,
+    setAuthStatus,
+    resetStore,
     setUnreadNotifications,
   } = useAppStore();
 
@@ -40,48 +43,68 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     markNavigation(pathname);
   }, [pathname]);
 
+  // Auth Gate & Session Verification
   useEffect(() => {
-    // Instantly populate from localStorage cache (no flash)
-    hydrateFromCache();
-    hydrateTasksFromCache();
-    // Not on the login page: the API needs a session, and a failed load there still marks spaces as loaded, so
-    // after signing in (router.push keeps the store) the sidebar would never fetch them.
-    // Only refetch spaces when the cached data is stale (older than 5 min) — prevents a fresh
-    // API call on every single client-side navigation.
-    if (pathname !== '/login' && !loadingSpaces) {
+    if (pathname === '/login') {
+      return;
+    }
+
+    if (!currentUser) {
+      setAuthStatus('loading');
+      authApi
+        .getMe()
+        .then(({ user }) => {
+          setCurrentUser(user);
+          setAuthStatus('authenticated');
+          // Only hydrate sensitive cached spaces and tasks once authenticated
+          hydrateFromCache();
+          hydrateTasksFromCache();
+
+          // Fetch fresh spaces
+          lastSpacesFetchRef.current = Date.now();
+          loadSpaces();
+
+          notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+            setUnreadNotifications(res.unreadCount ?? res.notifications.filter((n) => !n.isRead).length);
+          });
+        })
+        .catch(() => {
+          // Token expired, revoked, or invalid — clear all caches and redirect to login
+          resetStore();
+          if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+            window.location.replace('/login');
+          }
+        });
+      return;
+    }
+
+    // When already authenticated, only refetch spaces when stale
+    if (!loadingSpaces) {
       const isStale = Date.now() - lastSpacesFetchRef.current > SPACES_STALE_MS;
       if (isStale) {
         lastSpacesFetchRef.current = Date.now();
         loadSpaces();
       }
     }
-    if (!currentUser && pathname !== '/login') {
-      authApi
-        .getMe()
-        .then(({ user }) => {
-          setCurrentUser(user);
-          notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
-            setUnreadNotifications(res.unreadCount ?? res.notifications.filter(n => !n.isRead).length);
-          });
-        })
-        .catch(() => {
-          // Token expired or invalid — redirect to login
-          if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-            window.location.href = '/login';
-          }
-        });
-    }
-  }, [pathname]);
+  }, [pathname, currentUser]);
 
-  // Global Socket Connection for Real-time Notifications
+  // Global Socket Connection for Real-time Notifications & Force Logout
   useEffect(() => {
     if (!currentUser?.id) return;
-    
+
     const s = io(API_BASE_URL, { withCredentials: true });
     s.on('connect', () => {
       s.emit('join_user', currentUser.id);
     });
     if (isPerfEnabled()) s.onAny((event) => recordSocketEvent(event));
+
+    // Instant cross-app logout event dispatched by backend when tools/viptools logs out
+    s.on('force_logout', () => {
+      resetStore();
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.replace('/login');
+      }
+    });
 
     s.on('notification_received', () => {
       setUnreadNotifications(useAppStore.getState().unreadNotifications + 1);
@@ -97,8 +120,6 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     });
 
     s.on('task:created', (task) => {
-      // Into the shared store (and its localStorage copy) too: updateTask ignores tasks the store doesn't hold,
-      // so without this a new task's mentions (e.g. on the journal) miss its live updates until a full reload.
       useAppStore.getState().addTask(task);
       window.dispatchEvent(new CustomEvent('task:created', { detail: { task } }));
     });
@@ -116,10 +137,22 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     return () => {
       s.disconnect();
     };
-  }, [currentUser?.id, setUnreadNotifications]);
+  }, [currentUser?.id, setUnreadNotifications, resetStore]);
 
   if (pathname === '/login') {
     return <>{children}</>;
+  }
+
+  // Security Auth Gate: Never render layout, sidebar, or protected children until session is verified
+  if (!currentUser) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground font-sans select-none">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
+          <span className="text-sm font-medium text-zinc-400 tracking-wide">Please wait...</span>
+        </div>
+      </div>
+    );
   }
 
   return (

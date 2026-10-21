@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import { spacesApi, authApi } from '@/api';
+import { spacesApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -101,13 +101,14 @@ export default function BoardPage() {
 
   // Instantly hydrate list from localStorage cache after mount to avoid hydration mismatch
   useEffect(() => {
+    if (!currentUser) return;
     const cachedList = getListCache(id);
     if (cachedList && loading) {
       setList(cachedList);
       setCustomGroups(cachedList.customGroups || []);
       setLoading(false);
     }
-  }, [id]);
+  }, [id, currentUser]);
   const [activeTab, setActiveTab] = useState<'list' | 'board'>('board');
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [taskModalStatus, setTaskModalStatus] = useState<string>('TODO');
@@ -180,17 +181,9 @@ export default function BoardPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Start both requests in parallel if auth is missing
-      const userPromise = !currentUser ? authApi.getMe().catch(() => null) : Promise.resolve(null);
       const requestedAt = Date.now();
-      const listPromise = spacesApi.getList(id);
-
       try {
-        const [userResult, listRes] = await Promise.all([userPromise, listPromise]);
-        
-        if (userResult?.user && !cancelled) {
-          setCurrentUser(userResult.user);
-        }
+        const listRes = await spacesApi.getList(id);
 
         if (!cancelled && listRes.list) {
           setListCache(id, listRes.list);

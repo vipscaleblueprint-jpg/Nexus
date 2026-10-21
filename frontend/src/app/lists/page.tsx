@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { WorkspaceDashboard } from '@/components/dashboard/WorkspaceDashboard';
 import { CreateSpaceModal } from '@/components/modals/CreateSpaceModal';
 import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
@@ -9,13 +9,10 @@ import { CreateDocModal } from '@/components/modals/CreateDocModal';
 import { CreatePageModal } from '@/components/modals/CreatePageModal';
 import { EntityType } from '@/components/modals/CreateEntityModal';
 import { useAppStore } from '@/lib/store';
-import { authApi } from '@/api';
 import { Space, Folder, Doc } from '@/lib/types';
 
-
-
 export default function ListsPage() {
-  const { currentUser, setCurrentUser, spaces, allDocs, loadSpaces, loadingSpaces } = useAppStore();
+  const { spaces, allDocs, loadSpaces, loadingSpaces } = useAppStore();
 
   // Individual Modals State
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
@@ -27,21 +24,6 @@ export default function ListsPage() {
   const [targetSpaceId, setTargetSpaceId] = useState<string | undefined>();
   const [targetFolderId, setTargetFolderId] = useState<string | undefined>();
   const [targetDocId, setTargetDocId] = useState<string | undefined>();
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!currentUser) {
-        try {
-          const { user } = await authApi.getMe();
-          if (!cancelled && user) setCurrentUser(user);
-        } catch (e) {
-          // Auth is handled by the global ClientLayout
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentUser, setCurrentUser]);
 
   const handleOpenCreate = (type: EntityType, spaceId?: string, folderId?: string, docId?: string) => {
     setTargetSpaceId(spaceId);

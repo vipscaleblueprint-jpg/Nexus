@@ -16,7 +16,7 @@ import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
-import { spacesApi, usersApi } from '@/api';
+import { spacesApi, usersApi, authApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { SIDEBAR_SESSION_KEY } from '@/lib/sidebarSession';
 
@@ -659,6 +659,21 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     edge: 'bottom',
   });
   const [isLightMode, setIsLightMode] = useState(false);
+  const resetStore = useAppStore((s) => s.resetStore);
+
+  const handleLogout = async () => {
+    try {
+      const user = useAppStore.getState().currentUser;
+      if (user) {
+        await authApi.logout();
+      }
+    } catch (e) {
+      console.warn('Logout failed:', e);
+    } finally {
+      resetStore();
+      window.location.replace('/login');
+    }
+  };
 
   useEffect(() => {
     const storedTheme = localStorage.getItem('nexus-theme');
@@ -1326,7 +1341,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               )}
               {!collapsed && <span>Toggle Theme</span>}
             </button>
-            <button title={collapsed ? 'Sign Out' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:hover:bg-accent hover:text-accent-foreground/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
+            <button onClick={handleLogout} title={collapsed ? 'Sign Out' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:hover:bg-accent hover:text-accent-foreground/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
               <LogOut className="size-4 shrink-0 text-red-500" />
               {!collapsed && <span>Sign Out</span>}
             </button>

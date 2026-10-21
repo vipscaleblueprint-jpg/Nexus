@@ -4,7 +4,7 @@ import { Priority } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import bcrypt from 'bcryptjs';
 import { io } from '../server';
-import { invalidateCache } from '../services/redisService';
+import { invalidateCache, removeRefreshToken, revokeUserSessions } from '../services/redisService';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { updatePageBlocks } from '../services/pageContentService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
@@ -878,6 +878,40 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, subtask });
   } catch (error: any) {
     console.error('Failed to handle galaxy subtask:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+export const handleUserLogout = async (req: Request, res: Response) => {
+  if (!requireApiKey(req, res)) return;
+
+  const { email, userId } = req.body || {};
+  if (!email && !userId) {
+    return res.status(400).json({ error: 'Missing email or userId' });
+  }
+
+  try {
+    const user = email
+      ? await prisma.user.findFirst({
+          where: { email: { equals: String(email).trim(), mode: 'insensitive' } },
+        })
+      : await prisma.user.findUnique({
+          where: { id: String(userId).trim() },
+        });
+
+    if (!user) {
+      return res.status(200).json({ message: 'User not present in Nexus, no action required' });
+    }
+
+    await removeRefreshToken(user.id);
+    await revokeUserSessions(user.id);
+
+    // Force real-time logout on any open socket clients for this user
+    io.to(`user:${user.id}`).emit('force_logout');
+
+    return res.status(200).json({ success: true, message: `Logged out and revoked sessions for user ${user.email}` });
+  } catch (error: any) {
+    console.error('Failed to handle user logout webhook:', error);
     return res.status(500).json({ error: error.message });
   }
 };

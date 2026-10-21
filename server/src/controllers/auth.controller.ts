@@ -70,9 +70,17 @@ function setAuthCookies(
   });
 }
 
-function clearAuthCookies(res: Response) {
-  res.clearCookie('accessToken', { httpOnly: true, sameSite: 'lax' });
-  res.clearCookie('refreshToken', { httpOnly: true, sameSite: 'lax' });
+export function clearAuthCookies(res: Response) {
+  res.clearCookie('accessToken', {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: IS_PROD ? 'none' : 'lax',
+  });
+  res.clearCookie('refreshToken', {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: IS_PROD ? 'none' : 'lax',
+  });
 }
 
 function generateTokens(user: {

@@ -1,8 +1,11 @@
 import { Router } from 'express';
-import { handleGalaxyTask, handleGalaxyStatus, handleGalaxySubtask, syncClients, syncUsers, assistantChanged } from '../controllers/webhook.controller';
+import { handleGalaxyTask, handleGalaxyStatus, handleGalaxySubtask, syncClients, syncUsers, assistantChanged, handleUserLogout } from '../controllers/webhook.controller';
 import { handleSheetUpdate, handleSheetComment, resolveNexusLinks } from '../controllers/sheets.controller';
 
 const router = Router();
+
+// User session revocation / logout webhook from tools
+router.post('/user-logout', handleUserLogout);
 
 // Galaxy Webhooks
 router.post('/sync-clients', syncClients);

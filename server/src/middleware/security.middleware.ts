@@ -99,10 +99,15 @@ export const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or same-origin)
     if (!origin || origin === corsOrigin || process.env.NODE_ENV === 'development') {
-      callback(null, true);
-    } else {
-      callback(new Error(`CORS origin ${origin} not allowed`));
+      return callback(null, true);
     }
+    try {
+      const hostname = new URL(origin).hostname;
+      if (hostname === 'vipscaleph.com' || hostname.endsWith('.vipscaleph.com')) {
+        return callback(null, true);
+      }
+    } catch {}
+    callback(new Error(`CORS origin ${origin} not allowed`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

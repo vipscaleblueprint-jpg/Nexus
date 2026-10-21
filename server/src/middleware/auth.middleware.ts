@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { isTokenBlacklisted } from '../services/redisService';
+import { isTokenBlacklisted, getUserRevokedAt } from '../services/redisService';
+import { clearAuthCookies } from '../controllers/auth.controller';
 import { requireEnv } from '../config/env';
 import type {
   AuthRequest,
@@ -32,7 +33,12 @@ export async function verifyAccessToken(token: string | undefined): Promise<Auth
   if (!token) return null;
   if (await isTokenBlacklisted(token)) return null;
   try {
-    return jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload;
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload & { iat?: number };
+    const revokedAt = await getUserRevokedAt(decoded.id);
+    if (revokedAt && decoded.iat && decoded.iat < revokedAt) {
+      return null;
+    }
+    return decoded;
   } catch {
     return null;
   }
@@ -61,13 +67,17 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload;
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload & { iat?: number };
+    const revokedAt = await getUserRevokedAt(decoded.id);
+    if (revokedAt && decoded.iat && decoded.iat < revokedAt) {
+      clearAuthCookies(res);
+      return res.status(401).json({ error: 'Session has been invalidated. Please log in again.' });
+    }
     req.user = decoded;
     req.token = token;
     next();
   } catch (error) {
-    res.clearCookie('accessToken', { httpOnly: true, sameSite: 'lax' });
-    res.clearCookie('refreshToken', { httpOnly: true, sameSite: 'lax' });
+    clearAuthCookies(res);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }

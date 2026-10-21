@@ -1,4 +1,5 @@
 import { isPerfEnabled, recordApi } from '@/lib/perfMonitor';
+import { clearAllCaches } from '@/lib/store';
 
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 
@@ -51,9 +52,10 @@ export async function apiClient<T = any>(
   }
 
   const data = await res.json().catch(() => {
-    // Token expired or invalid — redirect to login
+    // Token expired or invalid — clear caches and redirect to login
+    clearAllCaches();
     if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.href = '/login';
+      window.location.replace('/login');
     }
     return {};
   });
@@ -63,7 +65,8 @@ export async function apiClient<T = any>(
 
   if (!res.ok) {
     if (res.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.href = '/login';
+      clearAllCaches();
+      window.location.replace('/login');
       // Return a pending promise so no error gets thrown while navigating
       return new Promise(() => {}) as Promise<T>;
     }

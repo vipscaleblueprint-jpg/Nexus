@@ -73,6 +73,29 @@ export async function isTokenBlacklisted(token: string): Promise<boolean> {
   }
 }
 
+// Session revocation timestamp per user (invalidates all JWTs minted before this timestamp)
+const inMemoryRevokedSessions = new Map<string, number>();
+
+export async function revokeUserSessions(userId: string, ttlSeconds: number = 7 * 24 * 3600) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  inMemoryRevokedSessions.set(userId, timestamp);
+  try {
+    await redis.set(`revoked_at:${userId}`, String(timestamp), 'EX', ttlSeconds);
+  } catch (err) {
+    log.error({ err }, `revokeUserSessions failed: ${errMsg(err)}`);
+  }
+}
+
+export async function getUserRevokedAt(userId: string): Promise<number | null> {
+  try {
+    const val = await redis.get(`revoked_at:${userId}`);
+    if (val) return parseInt(val, 10);
+  } catch (err) {
+    // Fall back to in-memory check
+  }
+  return inMemoryRevokedSessions.get(userId) ?? null;
+}
+
 // In-Memory Fallback Store
 const inMemoryOTPStore = new Map<string, { otp: string; expiresAt: number }>();
 const inMemoryOTPAttempts = new Map<string, { count: number; expiresAt: number }>();

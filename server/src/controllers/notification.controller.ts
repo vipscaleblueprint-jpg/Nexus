@@ -9,22 +9,60 @@ export async function getNotifications(req: Request, res: Response) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { tab } = req.query; // 'primary' or 'cleared'
+    const { tab, page, limit, filter } = req.query; // 'primary' or 'cleared'
     const isCleared = tab === 'cleared';
 
-    const notifications = await prisma.taskNotification.findMany({
-      where: {
-        userId: authReq.user.id,
-        isCleared,
-      },
-      include: {
-        actor: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
-        task: { select: { id: true, title: true, status: true, listId: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const pageNum = page ? Math.max(1, parseInt(page as string, 10)) : 1;
+    const take = limit ? Math.min(100, Math.max(1, parseInt(limit as string, 10))) : undefined;
+    const skip = take ? (pageNum - 1) * take : undefined;
 
-    return res.json({ notifications });
+    const whereClause: any = {
+      userId: authReq.user.id,
+      isCleared,
+    };
+
+    if (filter === 'unread') {
+      whereClause.isRead = false;
+    } else if (filter === 'mentions') {
+      whereClause.OR = [
+        { type: 'MENTION' },
+        { title: { contains: 'mentioned', mode: 'insensitive' } },
+        { content: { contains: '@' } },
+      ];
+    }
+
+    const [notifications, total, unreadCount] = await Promise.all([
+      prisma.taskNotification.findMany({
+        where: whereClause,
+        include: {
+          actor: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+          task: { select: { id: true, title: true, status: true, listId: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        ...(take !== undefined ? { take, skip } : {}),
+      }),
+      prisma.taskNotification.count({
+        where: whereClause,
+      }),
+      prisma.taskNotification.count({
+        where: {
+          userId: authReq.user.id,
+          isCleared: false,
+          isRead: false,
+        },
+      }),
+    ]);
+
+    const hasMore = take !== undefined ? (skip || 0) + notifications.length < total : false;
+
+    return res.json({
+      notifications,
+      total,
+      unreadCount,
+      hasMore,
+      page: pageNum,
+      limit: take,
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

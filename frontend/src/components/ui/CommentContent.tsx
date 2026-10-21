@@ -116,30 +116,22 @@ function PreloadableMarkdownImage(props: any) {
             handleStartLoad();
           }
         }}
-        className="my-2 inline-flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-zinc-700/70 bg-zinc-900/80 hover:bg-zinc-800/90 hover:border-indigo-500/60 cursor-pointer transition-all duration-150 group shadow-sm select-none max-w-full"
-        title="Click to preload image"
+        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900/80 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group/load relative select-none"
+        title={cleanFileName ? `${cleanFileName} · Click to load image` : "Click to load image"}
       >
-        <span className="p-2 rounded-md bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500/20 group-hover:scale-105 transition-all shrink-0">
-          <ImageIcon className="w-4 h-4" />
-        </span>
-        <span className="flex flex-col min-w-0 pr-1 text-left">
-          <span className="font-medium text-xs text-zinc-200 group-hover:text-white transition-colors truncate max-w-[240px] sm:max-w-xs">
-            {cleanFileName}
-          </span>
-          <span className="text-[11px] text-zinc-400 group-hover:text-indigo-300 flex items-center gap-1.5 transition-colors">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-            Click to preload image
-          </span>
+        <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
+        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/load:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
         </span>
       </span>
     );
   }
 
   return (
-    <span
+    <div
       role="button"
       tabIndex={0}
-      className="my-2 inline-block relative group cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
+      className="my-2 inline-block relative group/image cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -167,18 +159,18 @@ function PreloadableMarkdownImage(props: any) {
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
         className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-transform duration-150 ${
-          loaded ? 'block group-hover:brightness-95' : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
+          loaded ? 'block group-hover/image:brightness-95' : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
         }`}
       />
       {loaded && (
-        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
+        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
           <span className="text-xs font-medium text-white bg-black/70 border border-white/10 px-2.5 py-1 rounded-md shadow-md flex items-center gap-1.5">
             <Maximize2 className="w-3.5 h-3.5" />
             Click to preview
           </span>
         </span>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -214,28 +206,20 @@ function PreloadableMarkdownVideo({ src }: { src: string }) {
             handleStartLoad();
           }
         }}
-        className="my-2 inline-flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-zinc-700/70 bg-zinc-900/80 hover:bg-zinc-800/90 hover:border-indigo-500/60 cursor-pointer transition-all duration-150 group shadow-sm select-none max-w-full"
+        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-zinc-900/80 border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group/video-load relative select-none"
         title="Click to load video"
       >
-        <span className="p-2 rounded-md bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500/20 group-hover:scale-105 transition-all shrink-0">
-          <Film className="w-4 h-4" />
-        </span>
-        <span className="flex flex-col min-w-0 pr-1 text-left">
-          <span className="font-medium text-xs text-zinc-200 group-hover:text-white transition-colors truncate max-w-[240px] sm:max-w-xs">
-            Video attachment
-          </span>
-          <span className="text-[11px] text-zinc-400 group-hover:text-indigo-300 flex items-center gap-1.5 transition-colors">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-            Click to load video
-          </span>
+        <Film className="w-10 h-10 text-zinc-500 opacity-50" />
+        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/video-load:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load video</span>
         </span>
       </span>
     );
   }
 
   return (
-    <span
-      className="my-2 inline-block relative group cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
+    <div
+      className="my-2 inline-block relative group/video cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -252,7 +236,7 @@ function PreloadableMarkdownVideo({ src }: { src: string }) {
         className="max-w-full md:max-w-md max-h-[300px] rounded-lg border border-zinc-800/70 bg-black/60 shadow-sm"
         onClick={(e) => e.stopPropagation()}
       />
-    </span>
+    </div>
   );
 }
 

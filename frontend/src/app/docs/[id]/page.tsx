@@ -803,6 +803,33 @@ export default function DocPage({ docId }: { docId?: string }) {
     window.history.replaceState(null, '', url.toString());
   }, [activePageId]);
 
+  const mainScrollRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el || !activePageId) return;
+
+    // Restore scroll position for this page if previously saved
+    const savedY = sessionStorage.getItem(`nexus_doc_scroll_${activePageId}`);
+    if (savedY) {
+      const targetY = parseInt(savedY, 10);
+      if (!isNaN(targetY)) {
+        requestAnimationFrame(() => {
+          if (mainScrollRef.current) mainScrollRef.current.scrollTop = targetY;
+        });
+      }
+    }
+
+    const handleScroll = () => {
+      if (mainScrollRef.current) {
+        sessionStorage.setItem(`nexus_doc_scroll_${activePageId}`, String(mainScrollRef.current.scrollTop));
+      }
+    };
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+    };
+  }, [activePageId]);
+
   const [pageTitle, setPageTitle] = useState('');
   const pageTitleRef = useRef(pageTitle);
   useEffect(() => { pageTitleRef.current = pageTitle; }, [pageTitle]);
@@ -1008,20 +1035,16 @@ export default function DocPage({ docId }: { docId?: string }) {
   // subtask opens its PARENT task with `?subtask=<id>` — the modal reads that on mount and shows the
   // subtask's own detail view (with the correct activity/comments).
   const openTaskDetail = useCallback(async (taskId: string, taskObj?: Task & { taskId?: string }) => {
-    if (isJournalDocRef.current) {
-      // The task page resolves task and subtask ids itself; ?from= brings "back" to this journal day (?page=)
-      const fromPath = window.location.pathname + window.location.search;
-      router.push(`/tasks/${taskId}?from=${encodeURIComponent(fromPath)}`);
-      return;
-    }
-    const setSubtaskParam = (subtaskId: string | null) => {
+    const setTaskParams = (id: string | null, subtaskId: string | null) => {
       const url = new URL(window.location.href);
+      if (id) url.searchParams.set('task', id);
+      else url.searchParams.delete('task');
       if (subtaskId) url.searchParams.set('subtask', subtaskId);
       else url.searchParams.delete('subtask');
       window.history.replaceState(null, '', url.toString());
     };
     const open = (task: Task, subtaskId: string | null) => {
-      setSubtaskParam(subtaskId);
+      setTaskParams(task.id, subtaskId);
       setSelectedTaskForModal(task);
       setIsTaskModalOpen(true);
     };
@@ -1078,6 +1101,16 @@ export default function DocPage({ docId }: { docId?: string }) {
       window.removeEventListener('open-task-detail', handleOpenTaskDetail);
     };
   }, [openTaskDetail]);
+
+  // Open task modal on initial load if ?task= param is present
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const taskId = url.searchParams.get('task');
+    if (taskId && !selectedTaskForModal && !isTaskModalOpen) {
+      openTaskDetail(taskId);
+    }
+  }, [openTaskDetail, selectedTaskForModal, isTaskModalOpen]);
 
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   // The task list is only needed while the link picker is open
@@ -2816,7 +2849,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   if (error) return <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>;
 
   return (
-    <div className="flex h-full w-full bg-background text-foreground overflow-hidden font-sans">
+    <div className="relative flex h-full w-full bg-background text-foreground overflow-hidden font-sans">
       {/* Collapsed pages panel: a slim rail to bring it back */}
       {isPagesPanelCollapsed && (
         <aside className={`w-12 shrink-0 bg-card border-r border-zinc-800/60 py-3 flex flex-col items-center gap-2 h-full select-none ${activePage && pageStyles.focusPage ? 'hidden' : ''}`}>
@@ -2906,7 +2939,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar bg-background">
+      <main ref={mainScrollRef as any} className="flex-1 overflow-y-auto custom-scrollbar bg-background">
         <style>{`
           .is-selected-block .tiptap p,
           .is-selected-block .tiptap h1,
@@ -3496,9 +3529,18 @@ export default function DocPage({ docId }: { docId?: string }) {
       {/* ── Task Detail Modal Trigger ── */}
       <TaskDetailModal
         isOpen={isTaskModalOpen}
-        onClose={() => setIsTaskModalOpen(false)}
+        onClose={() => {
+          setIsTaskModalOpen(false);
+          setSelectedTaskForModal(null);
+          if (typeof window !== 'undefined') {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('task');
+            url.searchParams.delete('subtask');
+            window.history.replaceState(null, '', url.toString());
+          }
+        }}
         task={selectedTaskForModal || null}
-        mode="modal"
+        mode={doc?.isDailyRollover ? "full" : "modal"}
         onUpdateTask={(updatedTask: any) => {
           setSelectedTaskForModal(updatedTask);
           updateTask(updatedTask);

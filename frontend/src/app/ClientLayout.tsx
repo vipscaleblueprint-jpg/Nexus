@@ -60,9 +60,8 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         .getMe()
         .then(({ user }) => {
           setCurrentUser(user);
-          notificationsApi.getNotifications().then((res) => {
-            const unread = res.notifications.filter(n => !n.isRead).length;
-            setUnreadNotifications(unread);
+          notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+            setUnreadNotifications(res.unreadCount ?? res.notifications.filter(n => !n.isRead).length);
           });
         })
         .catch(() => {

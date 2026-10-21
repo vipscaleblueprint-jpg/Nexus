@@ -25,9 +25,38 @@ export interface TaskNotification {
   } | null;
 }
 
+export interface GetNotificationsParams {
+  tab?: 'primary' | 'cleared';
+  page?: number;
+  limit?: number;
+  filter?: 'all' | 'unread' | 'mentions';
+}
+
+export interface GetNotificationsResponse {
+  notifications: TaskNotification[];
+  total: number;
+  unreadCount: number;
+  hasMore: boolean;
+  page?: number;
+  limit?: number;
+}
+
 export const notificationsApi = {
-  getNotifications: async (tab: 'primary' | 'cleared' = 'primary'): Promise<{ notifications: TaskNotification[] }> => {
-    return apiClient(`/api/notifications?tab=${tab}`);
+  getNotifications: async (
+    paramsOrTab: 'primary' | 'cleared' | GetNotificationsParams = 'primary'
+  ): Promise<GetNotificationsResponse> => {
+    let query = '';
+    if (typeof paramsOrTab === 'string') {
+      query = `tab=${paramsOrTab}`;
+    } else {
+      const q = new URLSearchParams();
+      if (paramsOrTab.tab) q.append('tab', paramsOrTab.tab);
+      if (paramsOrTab.page) q.append('page', paramsOrTab.page.toString());
+      if (paramsOrTab.limit) q.append('limit', paramsOrTab.limit.toString());
+      if (paramsOrTab.filter && paramsOrTab.filter !== 'all') q.append('filter', paramsOrTab.filter);
+      query = q.toString();
+    }
+    return apiClient(`/api/notifications${query ? `?${query}` : ''}`);
   },
   markAsRead: async (id: string): Promise<{ notification: TaskNotification }> => {
     return apiClient(`/api/notifications/${id}/read`, { method: 'PATCH' });

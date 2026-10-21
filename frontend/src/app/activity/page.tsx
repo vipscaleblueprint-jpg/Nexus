@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { notificationsApi, TaskNotification } from '@/api/notifications';
 import { useRouter } from 'next/navigation';
-import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, Users, MessageSquare, Activity, Globe } from 'lucide-react';
+import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, ChevronLeft, ChevronRight, Users, MessageSquare, Activity, Globe } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
@@ -95,6 +95,203 @@ const formatActivityMessage = (log: any) => {
   return `${message} on ${targetName}`;
 };
 
+const getAvatarBg = (name: string) => {
+  const palette = [
+    'bg-[#0d9488]', // teal
+    'bg-[#4f46e5]', // indigo
+    'bg-[#2563eb]', // blue
+    'bg-[#7c3aed]', // violet
+    'bg-[#059669]', // emerald
+    'bg-[#e11d48]', // rose
+    'bg-[#d97706]', // amber
+    'bg-[#0891b2]', // cyan
+  ];
+  let hash = 0;
+  for (let i = 0; i < (name || '').length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return palette[Math.abs(hash) % palette.length];
+};
+
+const getInitials = (name: string) => {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+};
+
+const parseLogAction = (log: any) => {
+  const { action, entity, entityTitle, details } = log;
+  const isSubtask = details?.subtaskTitle || entity?.toLowerCase() === 'subtask';
+  const targetTitle = details?.subtaskTitle || entityTitle || '';
+  const prefix = isSubtask ? 'on subtask' : 'on task';
+  let verb = 'performed an action on task';
+
+  switch (action?.toUpperCase()) {
+    case 'STATUS_CHANGE':
+      verb = `changed status ${details?.oldStatus ? `from ${details.oldStatus} ` : ''}to ${details?.newStatus || ''} ${prefix}`;
+      break;
+    case 'AUDIT_ITEM_CHECKED': {
+      const lower = (details?.itemName || '').toLowerCase();
+      if (lower.includes('funnel')) verb = `has checked funnel auditing ${prefix}`;
+      else if (lower.includes('design')) verb = `has checked design auditing ${prefix}`;
+      else if (lower.includes('ui') && lower.includes('ux')) verb = `has checked UI/UX auditing ${prefix}`;
+      else if (lower.includes('instructions')) verb = `has checked instructions auditing ${prefix}`;
+      else verb = `has checked ${details?.itemName || 'auditing'} ${prefix}`;
+      break;
+    }
+    case 'CHECKLIST_ITEM_CHECKED':
+      verb = `has checked ${details?.itemName || 'checklist'} ${prefix}`;
+      break;
+    case 'PRIORITY_CHANGE':
+      verb = `changed priority ${details?.oldPriority ? `from ${details.oldPriority} ` : ''}to ${details?.newPriority} ${prefix}`;
+      break;
+    case 'TITLE_CHANGE':
+      verb = `renamed ${isSubtask ? 'subtask' : 'task'} "${details?.oldTitle || ''}" to`;
+      break;
+    case 'ASSIGNMENT':
+      if (Array.isArray(details?.added) || Array.isArray(details?.removed)) {
+        const added: string[] = details.added || [];
+        const removed: string[] = details.removed || [];
+        if (removed.length > 1 && added.length === 0 && details.assigneeName === 'Unassigned') {
+          verb = `removed all assignees from ${isSubtask ? 'subtask' : 'task'}`;
+          break;
+        }
+        const parts: string[] = [];
+        if (added.length > 0) parts.push(`assigned ${added.join(', ')}`);
+        if (removed.length > 0) parts.push(`${parts.length ? 'and removed' : 'removed'} ${removed.join(', ')}`);
+        if (parts.length > 0) {
+          verb = `${parts.join(' ')} ${prefix}`;
+          break;
+        }
+      }
+      if (details?.assigneeName === 'Unassigned') {
+        verb = `removed all assignees from ${isSubtask ? 'subtask' : 'task'}`;
+      } else {
+        verb = `updated assignment to ${details?.assigneeName || 'someone'} ${prefix}`;
+      }
+      break;
+    case 'TASK_CREATED':
+      verb = 'created this task';
+      break;
+    case 'SUBTASK_CREATED':
+      verb = 'created a subtask on';
+      break;
+    case 'ASSIGNEE_ADDED':
+      verb = `added an assignee ${prefix}`;
+      break;
+    case 'ASSIGNEE_REMOVED':
+      verb = `removed an assignee ${prefix}`;
+      break;
+    case 'COMMENT_ADDED':
+    case 'COMMENT':
+      verb = `added a comment on task`;
+      break;
+    case 'REPLY':
+      verb = `replied to a comment on task`;
+      break;
+    default:
+      verb = action ? `${action.replace(/_/g, ' ').toLowerCase()} ${prefix}` : `updated ${prefix}`;
+  }
+
+  return { verb, targetTitle, isSubtask };
+};
+
+const parseNotifAction = (n: TaskNotification) => {
+  const type = n.type?.toUpperCase();
+  const actorName = n.actor?.name || 'Someone';
+  let verb = 'updated';
+  let targetTitle = n.task?.title || '';
+
+  if (type === 'COMMENT' || type === 'REPLY') {
+    verb = 'added a comment on task';
+  } else if (type === 'MENTION') {
+    verb = 'mentioned you in a comment on task';
+  } else if (type === 'STATUS_CHANGE') {
+    const match = n.title?.match(/status to (.+)$/i);
+    verb = match ? `changed status to ${match[1]} on task` : 'changed status on task';
+  } else if (type === 'ASSIGNMENT') {
+    verb = 'assigned you to task';
+  } else if (type === 'AUDIT_ITEM_CHECKED') {
+    verb = 'checked audit item on task';
+  } else if (type === 'CHECKLIST_ITEM_CHECKED') {
+    verb = 'checked checklist item on task';
+  } else {
+    const cleaned = n.title?.replace(actorName, '').trim();
+    if (cleaned) verb = cleaned;
+  }
+
+  return { actorName, verb, targetTitle };
+};
+
+const parseItemDisplay = (item: any, isAuditLog: boolean) => {
+  if (isAuditLog || item.isAudit) {
+    const actorName = item.user?.name || item.actor?.name || 'Someone';
+    const actorAvatar = item.user?.avatarUrl || item.actor?.avatarUrl || null;
+    const { verb, targetTitle } = parseLogAction(item);
+    const targetTaskId = item.entityId || item.taskId || item.task?.id;
+    const content = item.details?.text || item.content || '';
+    const isUnread = !item.isRead && !item.isAudit;
+    const action = (item.action || item.type)?.toUpperCase();
+    const isComment = action === 'COMMENT' || action === 'REPLY' || action === 'COMMENT_ADDED';
+    const isStatus = action === 'STATUS_CHANGE' || action === 'TITLE_CHANGE';
+    const isChecklist = action === 'CHECKLIST_ITEM_CHECKED';
+    const isAudit = action === 'AUDIT_ITEM_CHECKED';
+    const isAssignment = action === 'ASSIGNMENT';
+
+    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
+    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAudit ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
+
+    return {
+      id: item.id,
+      actorName,
+      actorAvatar,
+      verb,
+      targetTitle,
+      targetTaskId,
+      content,
+      isUnread,
+      createdAt: item.createdAt,
+      IconToUse,
+      iconBg,
+      rawItem: item,
+    };
+  } else {
+    const { actorName, verb, targetTitle } = parseNotifAction(item);
+    const actorAvatar = item.actor?.imageUrl || item.actor?.avatarUrl || null;
+    const targetTaskId = item.task?.id || item.taskId || item.entityId;
+    const content = item.content || item.details?.text || '';
+    const isUnread = !item.isRead;
+    const type = item.type?.toUpperCase();
+
+    const isComment = type === 'COMMENT' || type === 'REPLY' || type === 'MENTION';
+    const isStatus = type === 'STATUS_CHANGE';
+    const isChecklist = type === 'CHECKLIST_ITEM_CHECKED';
+    const isAudit = type === 'AUDIT_ITEM_CHECKED';
+    const isAssignment = type === 'ASSIGNMENT';
+
+    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
+    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAudit ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
+
+    return {
+      id: item.id,
+      actorName,
+      actorAvatar,
+      verb,
+      targetTitle,
+      targetTaskId,
+      content,
+      isUnread,
+      createdAt: item.createdAt,
+      IconToUse,
+      iconBg,
+      rawItem: item,
+    };
+  }
+};
+
 interface ActivityFeedCache {
   notifications: TaskNotification[];
   auditLogs: any[];
@@ -128,6 +325,10 @@ export default function ActivityPage() {
 
   const [category, setCategory] = useState<Category>('all');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const initialCacheValid = !!feedCache && (Date.now() - feedCache.timestamp < FEED_CACHE_TTL_MS);
   const [notifications, setNotifications] = useState<TaskNotification[]>(() => initialCacheValid ? feedCache!.notifications : []);
@@ -156,27 +357,53 @@ export default function ActivityPage() {
     try {
       const userId = currentUserIdRef.current;
       const { activityApi } = await import('@/api/activity');
-      const [notifRes, auditRes, myAuditRes] = await Promise.all([
-        notificationsApi.getNotifications('primary'),
-        activityApi.getAuditLogs(),
-        // The user's own actions are fetched separately so they aren't crowded out of the global window
-        userId ? activityApi.getAuditLogs(userId) : Promise.resolve({ logs: [] }),
-      ]);
-      const newNotifs = notifRes.notifications || [];
-      const newLogs = auditRes.logs || [];
-      const newMyLogs = myAuditRes.logs || [];
 
-      setNotifications(newNotifs);
-      setAuditLogs(newLogs);
-      setMyAuditLogs(newMyLogs);
+      if (viewMode === 'show_all') {
+        const auditRes = await activityApi.getAuditLogs({
+          page,
+          limit,
+          category,
+          timeFilter,
+        });
+        const newLogs = auditRes.logs || [];
+        setAuditLogs(newLogs);
+        setTotal(auditRes.total ?? newLogs.length);
+        setTotalPages(auditRes.totalPages ?? 1);
 
-      feedCache = {
-        notifications: newNotifs,
-        auditLogs: newLogs,
-        myAuditLogs: newMyLogs,
-        timestamp: Date.now(),
-        scrollY: feedScrollRef.current ? feedScrollRef.current.scrollTop : (feedCache?.scrollY || 0),
-      };
+        if (feedCache) {
+          feedCache.auditLogs = newLogs;
+          feedCache.timestamp = Date.now();
+        }
+      } else {
+        const [notifRes, myAuditRes] = await Promise.all([
+          notificationsApi.getNotifications({
+            page,
+            limit,
+            tab: 'primary',
+            filter: category === 'comments' ? 'mentions' : 'all',
+          }),
+          activityApi.getAuditLogs({
+            userId,
+            page,
+            limit,
+            category,
+            timeFilter,
+          }),
+        ]);
+        const newNotifs = notifRes.notifications || [];
+        const newMyLogs = myAuditRes.logs || [];
+        setNotifications(newNotifs);
+        setMyAuditLogs(newMyLogs);
+        const combinedTotal = (notifRes.total || newNotifs.length) + (myAuditRes.total || newMyLogs.length);
+        setTotal(combinedTotal);
+        setTotalPages(Math.max(1, Math.ceil(combinedTotal / limit)));
+
+        if (feedCache) {
+          feedCache.notifications = newNotifs;
+          feedCache.myAuditLogs = newMyLogs;
+          feedCache.timestamp = Date.now();
+        }
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -214,12 +441,25 @@ export default function ActivityPage() {
 
     const taskObj = (typeof n === 'object' && n.task?.id === taskId) ? n.task : (tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId));
     if (taskObj) {
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        url.searchParams.set('task', taskId);
+        window.history.replaceState(null, '', url.pathname + url.search);
+      }
       setSelectedTask(taskObj);
       return;
     }
     try {
       const res = await tasksApi.getTask(taskId);
       if (res?.task) {
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href);
+          url.searchParams.set('task', res.task.id);
+          if (res.subtask) {
+            url.searchParams.set('subtask', res.subtask.id);
+          }
+          window.history.replaceState(null, '', url.pathname + url.search);
+        }
         setSelectedTask(res.task);
         return;
       }
@@ -229,10 +469,27 @@ export default function ActivityPage() {
     router.push(`/tasks/${taskId}?from=/activity`);
   };
 
-  // Refetch once the current user is known so the "For Me" feed can load their own logs
+  // Sync selectedTask to URL searchParams
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (selectedTask) {
+        if (url.searchParams.get('task') !== selectedTask.id) {
+          url.searchParams.set('task', selectedTask.id);
+          window.history.replaceState(null, '', url.pathname + url.search);
+        }
+      } else if (url.searchParams.has('task')) {
+        url.searchParams.delete('task');
+        url.searchParams.delete('subtask');
+        window.history.replaceState(null, '', url.pathname + (url.search || ''));
+      }
+    }
+  }, [selectedTask]);
+
+  // Refetch when page, limit, filters, view mode or user changes
   useEffect(() => {
     fetchData();
-  }, [currentUser?.id]);
+  }, [page, limit, category, timeFilter, viewMode, currentUser?.id]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -339,9 +596,9 @@ export default function ActivityPage() {
   const matchesCategoryNotif = (n: any, cat: Category) => {
     if (cat === 'all') return true;
     const type = n.type?.toUpperCase();
-    if (cat === 'status') return type === 'STATUS_CHANGE';
-    if (cat === 'checklists') return type === 'CHECKLIST_ITEM_CHECKED';
-    if (cat === 'audits') return type === 'AUDIT_ITEM_CHECKED';
+    if (cat === 'status') return type === 'STATUS_CHANGE' || type === 'TITLE_CHANGE';
+    if (cat === 'checklists') return type === 'CHECKLIST_ITEM_CHECKED' || type?.includes('CHECKLIST');
+    if (cat === 'audits') return type === 'AUDIT_ITEM_CHECKED' || type?.includes('AUDIT');
     if (cat === 'assigned') return type === 'ASSIGNMENT';
     if (cat === 'comments') return type === 'MENTION' || type === 'COMMENT';
     return false;
@@ -350,9 +607,9 @@ export default function ActivityPage() {
   const matchesCategoryLog = (log: any, cat: Category) => {
     if (cat === 'all') return true;
     const action = log.action?.toUpperCase();
-    if (cat === 'status') return action === 'STATUS_CHANGE';
-    if (cat === 'checklists') return action === 'CHECKLIST_ITEM_CHECKED';
-    if (cat === 'audits') return action === 'AUDIT_ITEM_CHECKED';
+    if (cat === 'status') return action === 'STATUS_CHANGE' || action === 'TITLE_CHANGE';
+    if (cat === 'checklists') return action === 'CHECKLIST_ITEM_CHECKED' || action?.includes('CHECKLIST');
+    if (cat === 'audits') return action === 'AUDIT_ITEM_CHECKED' || action?.includes('AUDIT');
     if (cat === 'assigned') return action === 'ASSIGNMENT';
     if (cat === 'comments') return action === 'COMMENT' || action === 'REPLY' || action === 'COMMENT_ADDED';
     return false;
@@ -386,25 +643,14 @@ export default function ActivityPage() {
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const activeItems = isGlobalLogView 
-    ? filteredLogs 
+    ? auditLogs 
     : mergedForMe;
 
-  let filteredByTime = activeItems;
-  if (isGlobalLogView || !isGlobalLogView) { // Time filters apply to both now for consistency
-    if (timeFilter === 'today') {
-      filteredByTime = activeItems.filter(item => isToday(new Date(item.createdAt)));
-    } else if (timeFilter === 'last7') {
-      filteredByTime = activeItems.filter(item => differenceInDays(new Date(), new Date(item.createdAt)) <= 7);
-    } else if (timeFilter === 'last30') {
-      filteredByTime = activeItems.filter(item => differenceInDays(new Date(), new Date(item.createdAt)) <= 30);
-    }
-  }
-
-  const grouped = groupByDate(filteredByTime);
+  const grouped = groupByDate(activeItems);
 
   const allFeedImages = useMemo(() => {
     const urls: string[] = [];
-    filteredByTime.forEach((item: any) => {
+    activeItems.forEach((item: any) => {
       const text = item.details?.text || item.content;
       if (text) {
         const imgs = extractImagesFromContent(text);
@@ -414,7 +660,7 @@ export default function ActivityPage() {
       }
     });
     return urls;
-  }, [filteredByTime]);
+  }, [activeItems]);
 
   const handlePreviewImage = useCallback((src: string, commentImages?: string[]) => {
     setLightboxImage(src);
@@ -437,25 +683,25 @@ export default function ActivityPage() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 bg-zinc-800/50 p-1 rounded-md border border-zinc-800 mr-2 hidden sm:flex">
             <button 
-              onClick={() => setTimeFilter('all')} 
+              onClick={() => { setTimeFilter('all'); setPage(1); }} 
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'all' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               All time
             </button>
             <button 
-              onClick={() => setTimeFilter('today')} 
+              onClick={() => { setTimeFilter('today'); setPage(1); }} 
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'today' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Today
             </button>
             <button 
-              onClick={() => setTimeFilter('last7')} 
+              onClick={() => { setTimeFilter('last7'); setPage(1); }} 
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last7' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Last 7 days
             </button>
             <button 
-              onClick={() => setTimeFilter('last30')} 
+              onClick={() => { setTimeFilter('last30'); setPage(1); }} 
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last30' ? 'bg-[#5f5ce6] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Last 30 days
@@ -497,7 +743,7 @@ export default function ActivityPage() {
                   return (
                     <button
                       key={option.value}
-                      onClick={() => { setViewMode(option.value); setDropdownOpen(false); }}
+                      onClick={() => { setViewMode(option.value); setPage(1); setDropdownOpen(false); }}
                       className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-zinc-800 ${isActive ? 'bg-indigo-500/10' : ''}`}
                     >
                       <div className="flex-1">
@@ -514,40 +760,23 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      <div className="px-8 border-b border-zinc-800 mb-6 flex items-center gap-8">
-        {CATEGORIES.map((cat, idx) => {
+      {/* Category Tabs Matching Photo 2 */}
+      <div className="px-8 border-b border-zinc-800/80 mb-6 flex items-center gap-8 overflow-x-auto custom-scrollbar">
+        {CATEGORIES.map((cat) => {
           const isActive = category === cat.value;
-          
-          let subtext = '';
-          if (viewMode === 'for_me') {
-             const unreadCount = notifications.filter(n => !n.isRead && matchesCategoryNotif(n, cat.value)).length;
-             subtext = unreadCount > 0 ? `${unreadCount} unread` : '';
-          } else {
-             const itemsCount = auditLogs.filter(l => matchesCategoryLog(l, cat.value)).length;
-             subtext = itemsCount > 0 ? `${itemsCount} updates` : '';
-          }
-
           return (
-            <div key={cat.value} className="flex items-center">
-              <button
-                onClick={() => setCategory(cat.value)}
-                className={`flex items-start gap-3 pb-3 px-1 transition-colors ${
-                  isActive ? 'border-b-2 border-indigo-500 text-indigo-400' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <div className="text-left">
-                  <div className={`font-semibold text-sm ${isActive ? 'text-indigo-400' : 'text-zinc-300'}`}>{cat.label}</div>
-                  {(subtext && isActive) && (
-                    <div className="text-xs text-indigo-400/70">
-                      {subtext}
-                    </div>
-                  )}
-                </div>
-              </button>
-              {idx < CATEGORIES.length - 1 && (
-                <div className="w-[1px] h-10 bg-zinc-800 ml-8" />
+            <button
+              key={cat.value}
+              onClick={() => { setCategory(cat.value); setPage(1); }}
+              className={`pb-3 px-1 text-sm font-semibold transition-colors relative whitespace-nowrap shrink-0 ${
+                isActive ? 'text-indigo-400' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <span>{cat.label}</span>
+              {isActive && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-500 rounded-full" />
               )}
-            </div>
+            </button>
           );
         })}
       </div>
@@ -563,143 +792,53 @@ export default function ActivityPage() {
       >
         {loading ? (
           <div className="flex items-center justify-center h-40">
-            <div className="w-6 h-6 border-2 border-[#5f5ce6] border-t-transparent rounded-full animate-spin"></div>
+            <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
         ) : activeItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-zinc-500">
             <MailOpen className="size-10 mb-3 opacity-20" />
             <p>{isGlobalLogView ? 'No activity logs found' : "You are all caught up!"}</p>
           </div>
-        ) : isGlobalLogView ? (
-          <div className="space-y-8 pb-10">
-            {Object.entries(grouped).map(([groupName, items]) => (
-              <div key={groupName} className="relative">
-                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur py-2 mb-4">
-                  <h3 className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">{groupName}</h3>
-                </div>
-                <div className="space-y-4">
-                  {items.map((log: any, i: number) => {
-                    const isAssignment = log.action === 'ASSIGNMENT';
-                    const isStatus = log.action === 'STATUS_CHANGE' || log.action === 'TITLE_CHANGE';
-                    const isComment = log.action === 'COMMENT_ADDED' || log.action === 'COMMENT' || log.action === 'REPLY';
-                    const isAudit = log.action === 'AUDIT_ITEM_CHECKED';
-                    const isChecklist = log.action === 'CHECKLIST_ITEM_CHECKED';
-                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
-                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : isAudit ? 'text-purple-400' : isChecklist ? 'text-violet-400' : 'text-zinc-400';
-                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : isAudit ? 'bg-purple-500/10' : isChecklist ? 'bg-violet-500/10' : 'bg-zinc-500/10';
-
-                    return (
-                      <div
-                        key={log.id}
-                        onClick={() => {
-                          if (log.entity?.toLowerCase() === 'task' || log.entity?.toLowerCase() === 'subtask') {
-                            handleOpenTask(log.entityId);
-                          }
-                        }}
-                        className="group flex gap-4 cursor-pointer relative"
-                      >
-                        {/* Timeline line */}
-                        {i !== items.length - 1 && (
-                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-zinc-800/50" />
-                        )}
-
-                        <div className="shrink-0 relative">
-                          <div className="relative z-10">
-                            {log.user?.avatarUrl ? (
-                              <img 
-                                src={log.user.avatarUrl} 
-                                alt="" 
-                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm" 
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                  if (e.currentTarget.nextElementSibling) {
-                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display = 'flex';
-                                  }
-                                }}
-                              />
-                            ) : null}
-                            <div 
-                              className="size-10 rounded-full bg-[#5f5ce6]/10 text-[#5f5ce6] flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm"
-                              style={{ display: log.user?.avatarUrl ? 'none' : 'flex' }}
-                            >
-                              {log.user?.name?.substring(0, 2).toUpperCase() || '?'}
-                            </div>
-                            
-                            <div className={`absolute -bottom-1 -right-1 size-4 rounded-full ${iconBg} ${iconColor} flex items-center justify-center ring-2 ring-background`}>
-                              <IconToUse className="size-2.5" />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex-1 min-w-0 bg-white/[0.02] border border-white/5 rounded-xl p-4 transition-all group-hover:bg-white/[0.04] group-hover:border-white/10 group-hover:-translate-y-0.5 group-hover:shadow-lg">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <span className="font-semibold text-sm text-zinc-100">{log.user?.name || 'Someone'}</span>
-                            <span className="text-sm text-zinc-400">{formatActivityMessage(log)}</span>
-                          </div>
-                          
-                          {(log.action === 'COMMENT' || log.action === 'REPLY' || log.action === 'COMMENT_ADDED') && log.details?.text && (
-                            <CommentContent
-                              content={log.details.text}
-                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0"
-                              onPreviewImage={handlePreviewImage}
-                            />
-                          )}
-                          
-                          <div className="flex items-center gap-3 mt-3">
-                            <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1.5">
-                              <Clock className="size-3.5" />
-                              {format(new Date(log.createdAt), 'MMM d, h:mm a')}
-                            </span>
-                            {(log.entity?.toLowerCase() === 'task' || log.entity?.toLowerCase() === 'subtask') && (
-                              <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-medium text-zinc-300">
-                                {log.entity}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
         ) : (
           <div className="space-y-8 pb-10">
             {Object.entries(grouped).map(([groupName, items]) => (
               <div key={groupName} className="relative">
-                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur py-2 mb-4">
-                  <h3 className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">{groupName}</h3>
+                {/* Date Group Heading (e.g. TODAY) */}
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-4">
+                  <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest px-1">
+                    {groupName}
+                  </h3>
                 </div>
+
                 <div className="space-y-4">
-                  {(items as TaskNotification[]).map((n, i) => {
-                    const isAssignment = n.type === 'ASSIGNMENT';
-                    const isStatus = n.type === 'STATUS_CHANGE';
-                    const isComment = n.type === 'COMMENT' || n.type === 'MENTION';
-                    const isAudit = n.type === 'AUDIT_ITEM_CHECKED';
-                    const isChecklist = n.type === 'CHECKLIST_ITEM_CHECKED';
-                    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
-                    const iconColor = isAssignment ? 'text-blue-400' : isStatus ? 'text-emerald-400' : isComment ? 'text-amber-400' : isAudit ? 'text-purple-400' : isChecklist ? 'text-violet-400' : 'text-zinc-400';
-                    const iconBg = isAssignment ? 'bg-blue-500/10' : isStatus ? 'bg-emerald-500/10' : isComment ? 'bg-amber-500/10' : isAudit ? 'bg-purple-500/10' : isChecklist ? 'bg-violet-500/10' : 'bg-zinc-500/10';
+                  {items.map((rawItem: any, i: number) => {
+                    const item = parseItemDisplay(rawItem, isGlobalLogView);
+                    const initials = getInitials(item.actorName);
+                    const avatarBg = getAvatarBg(item.actorName);
 
                     return (
                       <div
-                        key={n.id}
-                        onClick={() => handleOpenTask(n)}
-                        className={`group flex gap-4 cursor-pointer relative ${!n.isRead ? 'opacity-100' : 'opacity-80 hover:opacity-100'}`}
+                        key={item.id}
+                        onClick={() => {
+                          if (item.targetTaskId) {
+                            handleOpenTask(rawItem);
+                          }
+                        }}
+                        className="group/card flex gap-4 cursor-pointer relative"
                       >
-                        {/* Timeline line */}
+                        {/* Timeline Connector Line */}
                         {i !== items.length - 1 && (
-                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-zinc-800/50" />
+                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-zinc-800" />
                         )}
 
+                        {/* Avatar with Micro Icon Badge */}
                         <div className="shrink-0 relative">
                           <div className="relative z-10">
-                            {n.actor?.imageUrl || n.actor?.avatarUrl ? (
-                              <img 
-                                src={n.actor.imageUrl || n.actor.avatarUrl || ''} 
-                                alt="" 
-                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm" 
+                            {item.actorAvatar ? (
+                              <img
+                                src={item.actorAvatar}
+                                alt=""
+                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm"
                                 onError={(e) => {
                                   e.currentTarget.style.display = 'none';
                                   if (e.currentTarget.nextElementSibling) {
@@ -708,58 +847,76 @@ export default function ActivityPage() {
                                 }}
                               />
                             ) : null}
-                            <div 
-                              className="size-10 rounded-full bg-[#5f5ce6]/10 text-[#5f5ce6] flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm"
-                              style={{ display: (n.actor?.imageUrl || n.actor?.avatarUrl) ? 'none' : 'flex' }}
+                            <div
+                              className={`size-10 rounded-full ${avatarBg} text-white flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm`}
+                              style={{ display: item.actorAvatar ? 'none' : 'flex' }}
                             >
-                              {n.actor?.name?.substring(0, 2).toUpperCase() || '?'}
-                            </div>
-                            
-                            <div className={`absolute -bottom-1 -right-1 size-4 rounded-full ${iconBg} ${iconColor} flex items-center justify-center ring-2 ring-background`}>
-                              <IconToUse className="size-2.5" />
+                              {initials}
                             </div>
 
-                            {/* Unread indicator */}
-                            {!n.isRead && (
-                              <div className="absolute -top-1 -left-1 size-3 rounded-full bg-[#5f5ce6] ring-2 ring-background" />
-                            )}
+                            <div className={`absolute -bottom-1 -right-1 size-4 rounded-full ${item.iconBg} text-white flex items-center justify-center ring-2 ring-background`}>
+                              <item.IconToUse className="size-2.5" />
+                            </div>
                           </div>
                         </div>
 
-                        <div className={`flex-1 min-w-0 bg-white/[0.02] border border-white/5 rounded-xl p-4 transition-all group-hover:bg-white/[0.04] group-hover:border-white/10 group-hover:-translate-y-0.5 group-hover:shadow-lg ${!n.isRead ? 'bg-[#5f5ce6]/[0.04] border-[#5f5ce6]/30' : ''}`}>
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <span className="font-semibold text-sm text-zinc-100">{n.actor?.name || 'Someone'}</span>
-                            <span className="text-sm text-zinc-400">{n.title.replace(n.actor?.name || 'Someone', '').trim()}</span>
-                          </div>
-                          
-                          {n.content && (
-                            <CommentContent
-                              content={n.content}
-                              className="mt-2 text-sm text-zinc-300 bg-black/20 p-3 rounded-md border border-white/5 prose prose-sm prose-invert max-w-full prose-p:my-0"
-                              onPreviewImage={handlePreviewImage}
-                            />
-                          )}
-
-                          <div className="flex items-center justify-between gap-4 mt-3">
-                            <div className="flex items-center gap-3">
-                              <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1.5">
-                                <Clock className="size-3.5" />
-                                {format(new Date(n.createdAt), 'MMM d, h:mm a')}
-                              </span>
-                              {n.task && (
-                                <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-medium text-zinc-300">
-                                  {n.task.title}
+                        {/* Card Content Matching Photo 2 */}
+                        <div className={`flex-1 min-w-0 bg-[#18181c] border border-zinc-800/80 rounded-2xl p-5 shadow-sm transition-all hover:border-zinc-700/80 hover:bg-[#1b1b20] ${item.isUnread ? 'border-zinc-800 ring-1 ring-indigo-500/10' : ''}`}>
+                          {/* Header: Actor + Verb + Task Title + Unread Dot */}
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <div className="flex items-center gap-1.5 flex-wrap text-sm leading-tight">
+                              <span className="font-semibold text-zinc-100">{item.actorName}</span>
+                              <span className="text-zinc-400">{item.verb}</span>
+                              {item.targetTitle && (
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (item.targetTaskId) handleOpenTask(rawItem);
+                                  }}
+                                  className="font-medium text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer"
+                                >
+                                  {item.targetTitle}
                                 </span>
                               )}
                             </div>
 
-                            <button
-                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleClear(n.id); }}
-                              className="opacity-0 group-hover:opacity-100 px-3 py-1.5 text-[10px] font-medium text-white bg-[#5f5ce6] hover:bg-[#4b48d6] rounded-md shadow-sm flex items-center gap-1.5 transition-all"
-                            >
-                              <Check className="size-3" />
-                              Clear
-                            </button>
+                            {item.isUnread && (
+                              <div className="w-2 h-2 rounded-full bg-indigo-500 shadow-sm shrink-0" />
+                            )}
+                          </div>
+
+                          {/* Quote Body with clean vertical left border */}
+                          {item.content && (
+                            <div className="my-2.5 pl-3.5 border-l-2 border-zinc-700/60 text-sm text-zinc-300">
+                              <CommentContent
+                                content={item.content}
+                                className="text-sm text-zinc-300 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-blue-400 prose-a:underline [&_a]:text-blue-400 [&_a]:underline"
+                                onPreviewImage={handlePreviewImage}
+                              />
+                            </div>
+                          )}
+
+                          {/* Footer: Timestamp & optional hover clear */}
+                          <div className="flex items-center justify-between gap-4 mt-3">
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                              <Clock className="size-3.5 text-zinc-500" />
+                              <span>{format(new Date(item.createdAt), 'MMM d, h:mm a')}</span>
+                            </div>
+
+                            {item.isUnread && (
+                              <button
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleClear(item.id);
+                                }}
+                                className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 rounded-md transition-all flex items-center gap-1"
+                                title="Clear notification"
+                              >
+                                <Check className="size-3" />
+                                <span>Clear</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -772,6 +929,94 @@ export default function ActivityPage() {
         )}
       </div>
 
+      {/* Persistent Bottom Pagination Bar */}
+      {total > 0 && (
+        <div className="px-8 py-3.5 border-t border-zinc-800/80 bg-background/95 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+          <div className="flex items-center gap-3 text-xs text-zinc-400">
+            <span>
+              Showing <span className="font-semibold text-zinc-200">{Math.min((page - 1) * limit + 1, total)}</span>–<span className="font-semibold text-zinc-200">{Math.min(page * limit, total)}</span> of <span className="font-semibold text-zinc-200">{total}</span> activities
+            </span>
+
+            <div className="flex items-center gap-1.5 ml-2 border-l border-zinc-800 pl-3">
+              <span className="text-[11px] text-zinc-500">Per page:</span>
+              {[25, 50, 100].map((size) => (
+                <button
+                  key={size}
+                  onClick={() => {
+                    setLimit(size);
+                    setPage(1);
+                    if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                  }}
+                  className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
+                    limit === size
+                      ? 'bg-zinc-800 text-indigo-400 font-semibold border border-zinc-700'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {size}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1.5">
+              <button
+                disabled={page <= 1 || loading}
+                onClick={() => {
+                  setPage(p => Math.max(1, p - 1));
+                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                }}
+                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-800 hover:text-zinc-200 transition-colors cursor-pointer border border-zinc-800/80"
+              >
+                <ChevronLeft className="size-3.5" />
+                <span>Prev</span>
+              </button>
+
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum = i + 1;
+                  if (totalPages > 5) {
+                    if (page > 3) pageNum = page - 2 + i;
+                    if (page > totalPages - 2) pageNum = totalPages - 4 + i;
+                  }
+                  if (pageNum < 1 || pageNum > totalPages) return null;
+                  return (
+                    <button
+                      key={pageNum}
+                      disabled={loading}
+                      onClick={() => {
+                        setPage(pageNum);
+                        if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                      }}
+                      className={`w-8 h-8 flex items-center justify-center rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        page === pageNum
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 border border-transparent'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                disabled={page >= totalPages || loading}
+                onClick={() => {
+                  setPage(p => Math.min(totalPages, p + 1));
+                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                }}
+                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-800 hover:text-zinc-200 transition-colors cursor-pointer border border-zinc-800/80"
+              >
+                <span>Next</span>
+                <ChevronRight className="size-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
 
       <TaskDetailModal
         isOpen={!!selectedTask}
@@ -780,6 +1025,7 @@ export default function ActivityPage() {
           if (typeof window !== 'undefined') {
             const u = new URL(window.location.href);
             u.searchParams.delete('task');
+            u.searchParams.delete('subtask');
             window.history.replaceState({}, '', u.pathname + (u.search || ''));
           }
           if (feedCache?.scrollY && feedScrollRef.current) {

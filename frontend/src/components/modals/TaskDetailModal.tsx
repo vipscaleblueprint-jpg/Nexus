@@ -33,7 +33,6 @@ import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeH
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EditCommentForm } from './EditCommentForm';
 import { CommentReplyInput } from './CommentReplyInput';
-import { UncheckedAuditsModal } from './UncheckedAuditsModal';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { extractImagesFromComments } from '@/lib/commentImages';
 
@@ -379,20 +378,12 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
             handleStartLoad();
           }
         }}
-        className="my-2 inline-flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-zinc-700/70 bg-secondary/80 hover:bg-secondary hover:border-indigo-500/60 cursor-pointer transition-all duration-150 group shadow-sm select-none max-w-full"
-        title="Click to preload image"
+        className="mt-2 mb-2 inline-flex items-center justify-center w-[200px] h-[150px] bg-secondary border border-zinc-700/50 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors group relative select-none"
+        title={cleanFileName ? `${cleanFileName} · Click to load image` : "Click to load image"}
       >
-        <span className="p-2 rounded-md bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500/20 group-hover:scale-105 transition-all shrink-0">
-          <ImageIcon className="w-4 h-4" />
-        </span>
-        <span className="flex flex-col min-w-0 pr-1 text-left">
-          <span className="font-medium text-xs text-zinc-200 group-hover:text-white transition-colors truncate max-w-[240px] sm:max-w-xs">
-            {cleanFileName}
-          </span>
-          <span className="text-[11px] text-zinc-400 group-hover:text-indigo-300 flex items-center gap-1.5 transition-colors">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-            Click to preload image
-          </span>
+        <ImageIcon className="w-10 h-10 text-zinc-500 opacity-50" />
+        <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load image</span>
         </span>
       </span>
     );
@@ -402,7 +393,7 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
     <span
       role="button"
       tabIndex={0}
-      className="mt-2 mb-2 inline-block relative group cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
+      className="mt-2 mb-2 inline-block relative group/image cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -426,11 +417,11 @@ function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string;
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
         className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-transform duration-150 ${
-          loaded ? 'block group-hover:brightness-95' : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
+          loaded ? 'block group-hover/image:brightness-95' : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
         }`}
       />
       {loaded && (
-        <span className="absolute inset-0 bg-secondary/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
+        <span className="absolute inset-0 bg-secondary/30 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
           <span className="text-xs font-medium text-white bg-black/60 px-2.5 py-1 rounded-md flex items-center gap-1.5">
             <Maximize2 className="w-3.5 h-3.5" />
             Click to preview
@@ -1662,11 +1653,7 @@ export function TaskDetailModalContent({
           openSubtasks: transitionCheck.openSubtasks,
         }
       }));
-      // Missing audits: the Audit section's floating card says which ones (and any open subtasks), so no toast.
-      // It only appears for unchecked audits, so open subtasks alone still get a toast.
-      if (transitionCheck.uncheckedAudits.length === 0 && transitionCheck.openSubtasks.length > 0) {
-        toast.error(`All subtasks must be closed before moving to ${newStatus}`);
-      }
+      toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
       return;
     }
 
@@ -2196,9 +2183,10 @@ export function TaskDetailModalContent({
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
-                const baseUrl = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-                const path = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
-                const link = baseUrl ? `${baseUrl}${path}` : window.location.href;
+                const origin = (typeof window !== 'undefined' ? window.location.origin : '') || process.env.NEXT_PUBLIC_APP_URL || '';
+                const baseUrl = origin.replace(/\/+$/, '');
+                const targetId = activeSubtask ? activeSubtask.id : task.id;
+                const link = `${baseUrl}/tasks/${targetId}`;
                 navigator.clipboard.writeText(link);
                 toast.success('Link copied to clipboard');
               }}
@@ -3167,7 +3155,7 @@ export function TaskDetailModalContent({
                         const blocks: any[][] = [];
                         
                         combined.forEach(item => {
-                          const key = item.isActivityType ? `activity_${item.type}_${item.author || ''}` : 'comment';
+                          const key = item.isActivityType ? 'activity' : 'comment';
                           if (currentGroupKey === null) {
                               currentGroupKey = key;
                               currentBlock.push(item);
@@ -3943,10 +3931,7 @@ export function SubtaskDetailView({
           openSubtasks: transitionCheck.openSubtasks,
         }
       }));
-      // Missing audits: the Audit section's floating card says which ones, so no toast
-      if (transitionCheck.uncheckedAudits.length === 0 && transitionCheck.openSubtasks.length > 0) {
-        toast.error(`All subtasks must be closed before moving to ${newStatus}`);
-      }
+      toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
       return;
     }
 
@@ -4820,7 +4805,10 @@ export function SubtaskDetailView({
           {/* Action buttons could go here */}
           <button
             onClick={() => {
-              navigator.clipboard.writeText(window.location.href);
+              const origin = (typeof window !== 'undefined' ? window.location.origin : '') || process.env.NEXT_PUBLIC_APP_URL || '';
+              const baseUrl = origin.replace(/\/+$/, '');
+              const link = `${baseUrl}/tasks/${subtask.id}`;
+              navigator.clipboard.writeText(link);
               toast.success('Link copied to clipboard');
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-2"
@@ -5756,7 +5744,7 @@ export function SubtaskDetailView({
                       const blocks: any[][] = [];
                       
                       combined.forEach(item => {
-                        const key = item.isActivityType ? `activity_${item.type}_${item.author || ''}` : 'comment';
+                        const key = item.isActivityType ? 'activity' : 'comment';
                         if (currentGroupKey === null) {
                             currentGroupKey = key;
                             currentBlock.push(item);

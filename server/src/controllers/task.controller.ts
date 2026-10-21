@@ -1317,14 +1317,11 @@ export async function createTaskComment(req: Request, res: Response) {
 
     const payload = { taskId, comment, activity, subtaskId };
 
-    // Append new comment to the Redis List (lpush = newest at index 0).
-    // This keeps the cache warm without a DB round-trip — the next GET
-    // will see it immediately without waiting for invalidation + re-fetch.
+    // Drop the cached comment list so the next GET rebuilds it from the DB. Pushing onto it
+    // instead started a one-comment list whenever the key had expired or been cleared, which
+    // hid every earlier comment (and its images) until the key expired.
     const redisCommentKey = `comments:list:${taskId}${subtaskId ? `:sub:${subtaskId}` : ''}`;
-    redis.lrem(redisCommentKey, 0, '__EMPTY__')
-      .then(() => redis.lpush(redisCommentKey, JSON.stringify(comment)))
-      .then(() => redis.expire(redisCommentKey, 3600))
-      .catch(() => {});
+    redis.del(redisCommentKey).catch(() => {});
     // Also invalidate the activity cache since a new comment writes an AuditLog
     invalidateCache(`task:activities:${taskId}`).catch(() => {});
 

@@ -625,8 +625,8 @@ export const handleGalaxyStatus = async (req: Request, res: Response) => {
     });
 
     if (task.status !== updatedTask.status) {
-      getOrCreateVipScaleUser().then((creator: any) => {
-        prisma.auditLog.create({
+      getOrCreateVipScaleUser().then(async (creator: any) => {
+        const log = await prisma.auditLog.create({
           data: {
             action: 'STATUS_CHANGE',
             entity: 'TASK',
@@ -634,12 +634,22 @@ export const handleGalaxyStatus = async (req: Request, res: Response) => {
             userId: creator.id,
             details: { oldStatus: task.status, newStatus: updatedTask.status }
           }
-        }).catch(console.error);
+        });
+        const activity = {
+          id: log.id,
+          type: 'status_change',
+          author: creator.name || 'VIP Scale',
+          oldStatus: task.status,
+          newStatus: updatedTask.status,
+          date: log.createdAt,
+          user: creator,
+        };
+        io.emit('task_activity', { listId: task.listId, taskId: task.id, activity });
       }).catch(console.error);
     }
 
-    // We can emit to update clients
-    // io.emit('task_updated', updatedTask);
+    io.emit('task:updated', updatedTask);
+    invalidateCache(`task:${task.id}`, 'tasks:all', 'dashboard:all').catch(() => {});
 
     return res.status(200).json({ success: true, task: updatedTask });
   } catch (error: any) {

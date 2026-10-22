@@ -546,11 +546,36 @@ export function TaskDetailModalContent({
     return () => window.removeEventListener('open-task-detail', handleOpenDetailInContent);
   }, [task?.subtasks]);
 
+  const [localStatus, setLocalStatus] = useState<string>(task?.status || 'Pending');
+  const lastStatusUpdateTimestampRef = useRef<number>(0);
+  const localStatusRef = useRef<string>(localStatus);
+  useEffect(() => {
+    localStatusRef.current = localStatus;
+  }, [localStatus]);
+
+  useEffect(() => {
+    if (Date.now() - lastStatusUpdateTimestampRef.current > 1500 && task?.status) {
+      setLocalStatus(task.status);
+    }
+  }, [task?.status]);
+
   useEffect(() => {
     const handleWindowTaskUpdated = (e: any) => {
       const incoming = e.detail?.task;
       if (!incoming) return;
       if (task && incoming.id === task.id) {
+        if (Date.now() - lastStatusUpdateTimestampRef.current > 1500 && incoming.status !== undefined) {
+          setLocalStatus(incoming.status);
+          if (taskRef.current) {
+            taskRef.current.status = incoming.status;
+          }
+        }
+        if (incoming.subtasks !== undefined && taskRef.current) {
+          taskRef.current.subtasks = incoming.subtasks;
+          if (onUpdateTaskRef.current) {
+            onUpdateTaskRef.current({ ...taskRef.current, subtasks: incoming.subtasks });
+          }
+        }
         if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
           if (incoming.assignees !== undefined) {
             setLocalAssignees(incoming.assignees);
@@ -567,6 +592,32 @@ export function TaskDetailModalContent({
     };
     window.addEventListener('task:updated', handleWindowTaskUpdated);
     return () => window.removeEventListener('task:updated', handleWindowTaskUpdated);
+  }, [task?.id]);
+
+  useEffect(() => {
+    const handleWindowTaskActivity = (e: any) => {
+      const data = e.detail;
+      if (!data || !task || data.taskId !== task.id) return;
+      if (data.activity?.type === 'status_change' && data.activity?.newStatus && !data.activity?.subtaskTitle) {
+        if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
+          setLocalStatus(data.activity.newStatus);
+          if (taskRef.current) {
+            taskRef.current.status = data.activity.newStatus;
+          }
+        }
+        if (onUpdateTaskRef.current && taskRef.current && taskRef.current.status !== data.activity.newStatus) {
+          onUpdateTaskRef.current({ ...taskRef.current, status: data.activity.newStatus });
+        }
+      }
+      if (data.activity) {
+        setActivities((prev) => {
+          if (prev.some((a) => a.id === data.activity.id)) return prev;
+          return [...prev, data.activity];
+        });
+      }
+    };
+    window.addEventListener('task_activity', handleWindowTaskActivity);
+    return () => window.removeEventListener('task_activity', handleWindowTaskActivity);
   }, [task?.id]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null); // Name of user currently editing
@@ -976,6 +1027,24 @@ export function TaskDetailModalContent({
           ? actRes.activities.filter((a: any) => a.subtaskTitle === task.title)
           : actRes.activities;
 
+        if (!isSubtask && Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
+          const statusLogs = fetchedActivities
+            .filter((a: any) => a.type === 'status_change' && a.newStatus && !a.subtaskTitle)
+            .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          if (statusLogs.length > 0) {
+            const latestStatus = statusLogs[0].newStatus;
+            if (latestStatus && latestStatus !== localStatusRef.current) {
+              setLocalStatus(latestStatus);
+              if (taskRef.current) {
+                taskRef.current.status = latestStatus;
+              }
+              if (onUpdateTaskRef.current && taskRef.current) {
+                onUpdateTaskRef.current({ ...taskRef.current, status: latestStatus });
+              }
+            }
+          }
+        }
+
         setActivities((prev) => {
           const optimistic = prev.filter(
             (a) => typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))
@@ -1338,6 +1407,12 @@ export function TaskDetailModalContent({
         });
 
         if (data.activity.type === 'status_change' && data.activity.newStatus) {
+          if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
+            setLocalStatus(data.activity.newStatus);
+            if (taskRef.current) {
+              taskRef.current.status = data.activity.newStatus;
+            }
+          }
           if (currentTask.status !== data.activity.newStatus && onUpdateTaskRef.current) {
             onUpdateTaskRef.current({ ...currentTask, status: data.activity.newStatus });
           }
@@ -1480,14 +1555,14 @@ export function TaskDetailModalContent({
 
   const isInRecurringGroup = useMemo(() => {
     if (!task) return false;
-    const statusUpper = (task.status || '').toUpperCase().trim();
+    const statusUpper = (localStatus || '').toUpperCase().trim();
     if (['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)) return true;
     const statusObj = (internalListStatuses || []).find((ls: any) => {
       const name = typeof ls === 'string' ? ls : (ls.name || ls.status || ls.title || '');
       return name.toUpperCase().trim() === statusUpper;
     });
     return (statusObj?.groupName || '').toUpperCase().trim() === 'RECURRING';
-  }, [task?.status, internalListStatuses]);
+  }, [localStatus, internalListStatuses, task]);
 
   const orderedListStatuses = React.useMemo(() => {
     const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -1617,7 +1692,10 @@ export function TaskDetailModalContent({
       }
     }
 
-    const oldStatus = task.status;
+    const oldStatus = localStatus;
+    lastStatusUpdateTimestampRef.current = Date.now();
+    setLocalStatus(newStatus);
+    if (taskRef.current) taskRef.current.status = newStatus;
     
     // Optimistically append activity to local feed immediately
     const optimisticId = `optimistic-status-${Date.now()}`;
@@ -1656,6 +1734,8 @@ export function TaskDetailModalContent({
     } catch (err: any) {
       // Rollback optimistic activity and status on error
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
+      setLocalStatus(oldStatus);
+      if (taskRef.current) taskRef.current.status = oldStatus;
       if (onUpdateTask) onUpdateTask({ ...task, status: oldStatus });
       else task.status = oldStatus;
       toast.error(err.message || 'Failed to move task');
@@ -1666,7 +1746,7 @@ export function TaskDetailModalContent({
     const statuses = (internalListStatuses && internalListStatuses.length > 0)
       ? internalListStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
       : ALL_STATUSES;
-    const currentIndex = statuses.indexOf(task.status || 'Pending');
+    const currentIndex = statuses.indexOf(localStatus || 'Pending');
     const nextIndex = (currentIndex + 1) % statuses.length;
     const newStatus = statuses[nextIndex];
     handleStatusChangeAction(newStatus);
@@ -2261,7 +2341,7 @@ export function TaskDetailModalContent({
                 ) : (
                   <h1
                     onClick={() => { if (canEditTask) setIsEditingTitle(true); }}
-                    className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors break-words leading-snug group w-fit max-w-full pr-10 ${(task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE') ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
+                    className={`text-2xl font-bold cursor-pointer hover:bg-zinc-800/50 rounded px-2 py-1 -ml-2 transition-colors break-words leading-snug group w-fit max-w-full pr-10 ${(localStatus === 'Closed' || localStatus === 'CLOSED' || localStatus === 'DONE') ? 'text-zinc-500 line-through' : 'text-zinc-100'}`}
                   >
                     <span>{localTitle}</span>
                     <Pencil className="w-4 h-4 ml-2.5 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity inline-block align-middle shrink-0" />
@@ -2276,8 +2356,8 @@ export function TaskDetailModalContent({
                 <div className="flex items-center gap-3 min-h-[32px]">
                   <div className="flex items-center gap-2 w-28 shrink-0">
                     {(() => {
-                      const isClosed = task.status === 'Closed' || task.status === 'CLOSED' || task.status === 'DONE';
-                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((task.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
+                      const isClosed = localStatus === 'Closed' || localStatus === 'CLOSED' || localStatus === 'DONE';
+                      return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((localStatus || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
                     })()}
                     <span className="text-[12px] text-zinc-500">Status</span>
                   </div>
@@ -2287,10 +2367,10 @@ export function TaskDetailModalContent({
                         ? orderedListStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
                         : ALL_STATUSES;
 
-                      const statusName = task.status || 'No Status';
+                      const statusName = localStatus || 'No Status';
                       const statusObj = internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
                       const hasCustomColor = !!statusObj?.color;
-                      const defaultClasses = STATUS_COLORS[(task.status || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
+                      const defaultClasses = STATUS_COLORS[(localStatus || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
 
                       return (
                         <div
@@ -2316,7 +2396,7 @@ export function TaskDetailModalContent({
                                         handleStatusChangeAction(s);
                                         setIsStatusOpen(false);
                                       }}
-                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${task.status === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
                                     >
                                       {(() => {
                                         const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
@@ -2336,7 +2416,7 @@ export function TaskDetailModalContent({
 
                                       })()}
                                       {s}
-                                      {s === task.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                      {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
                                     </div>
                                   ))}
                                 </div>
@@ -2368,7 +2448,7 @@ export function TaskDetailModalContent({
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-1">
                       {(() => {
-                        const isTaskClosed = (task as any).completed || (task.status || '').toLowerCase() === 'closed' || (task.status || '').toLowerCase() === 'done';
+                        const isTaskClosed = (task as any).completed || (localStatus || '').toLowerCase() === 'closed' || (localStatus || '').toLowerCase() === 'done';
                         return (
                           <button
                             onClick={() => handleStatusChangeAction(isTaskClosed ? 'Pending' : 'Closed')}
@@ -2857,7 +2937,7 @@ export function TaskDetailModalContent({
                                 <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
                                 <span className="font-semibold text-purple-700 dark:text-purple-300">
                                   {(() => {
-                                    const statusUpper = (task.status || '').toUpperCase().trim();
+                                    const statusUpper = (localStatus || '').toUpperCase().trim();
                                     const effectiveFreq = ['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)
                                       ? statusUpper
                                       : (task.recurringConfig.frequency || 'DAILY');
@@ -2873,8 +2953,8 @@ export function TaskDetailModalContent({
                               <>
                                 <Repeat className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                                 <span className="text-zinc-500 hover:text-zinc-300">
-                                  {['DAILY', 'WEEKLY', 'MONTHLY'].includes((task.status || '').toUpperCase())
-                                    ? `Set ${(task.status || '').toUpperCase()} Time`
+                                  {['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
+                                    ? `Set ${(localStatus || '').toUpperCase()} Time`
                                     : 'Set Recurrence'}
                                 </span>
                               </>
@@ -2886,8 +2966,8 @@ export function TaskDetailModalContent({
                             <RecurrencePicker
                               task={task}
                               defaultFrequency={
-                                ['DAILY', 'WEEKLY', 'MONTHLY'].includes((task.status || '').toUpperCase())
-                                  ? ((task.status || '').toUpperCase() as any)
+                                ['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
+                                  ? ((localStatus || '').toUpperCase() as any)
                                   : 'DAILY'
                               }
                               onSave={handleSaveRecurrence}
@@ -4551,6 +4631,37 @@ export function SubtaskDetailView({
     window.addEventListener('task:updated', handleWindowTaskUpdated);
     return () => window.removeEventListener('task:updated', handleWindowTaskUpdated);
   }, [subtask.id, isEditingTitle, isLocalEditing, setActiveSubtask, parentTask.id]);
+
+  useEffect(() => {
+    const handleWindowSubtaskActivity = (e: any) => {
+      const data = e.detail;
+      const currentSubtask = subtaskRef.current;
+      const currentParentTask = parentTaskRef.current;
+      if (!data || !currentSubtask || !currentParentTask) return;
+      const isForThisSubtask =
+        data.taskId === currentParentTask?.id &&
+        (data.activity?.subtaskId === currentSubtask?.id ||
+          (data.activity?.subtaskTitle && currentSubtask?.title &&
+            data.activity.subtaskTitle.toLowerCase() === currentSubtask.title.toLowerCase()));
+
+      if (isForThisSubtask && data.activity?.type === 'status_change' && data.activity?.newStatus) {
+        if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
+          setLocalStatus(data.activity.newStatus);
+          setLocalCompleted(data.activity.newStatus.toLowerCase() === 'closed' || data.activity.newStatus.toLowerCase() === 'done' || data.activity.newStatus.toLowerCase() === 'completed');
+        }
+        if (currentSubtask.status !== data.activity.newStatus) {
+          const updatedSubtask = {
+            ...currentSubtask,
+            status: data.activity.newStatus,
+            completed: data.activity.newStatus.toLowerCase() === 'closed' || data.activity.newStatus.toLowerCase() === 'done' || data.activity.newStatus.toLowerCase() === 'completed'
+          };
+          syncSubtaskToParent(updatedSubtask);
+        }
+      }
+    };
+    window.addEventListener('task_activity', handleWindowSubtaskActivity);
+    return () => window.removeEventListener('task_activity', handleWindowSubtaskActivity);
+  }, [subtask?.id]);
 
   const applyAssigneesLocally = (updatedAssignees: any[]) => {
     lastAssigneeUpdateTimestampRef.current = Date.now();
@@ -6498,6 +6609,38 @@ export function TaskDetailModal(props: Props) {
     window.addEventListener('task:updated', handleTaskUpdated);
     return () => window.removeEventListener('task:updated', handleTaskUpdated);
   }, [fullTask?.id]);
+
+  useEffect(() => {
+    const handleWrapperTaskActivity = (e: any) => {
+      const data = e.detail;
+      if (!data || !fullTask || data.taskId !== fullTask.id) return;
+      if (data.activity?.type === 'status_change' && data.activity?.newStatus && !data.activity?.subtaskTitle) {
+        setFullTask(prev => prev ? { ...prev, status: data.activity.newStatus } : prev);
+      }
+    };
+    window.addEventListener('task_activity', handleWrapperTaskActivity);
+    return () => window.removeEventListener('task_activity', handleWrapperTaskActivity);
+  }, [fullTask?.id]);
+
+  useEffect(() => {
+    if (!props.socket || !fullTask?.id) return;
+    const handleSocketTaskUpdated = (incoming: any) => {
+      if (incoming && incoming.id === fullTask.id) {
+        setFullTask(prev => prev ? { ...prev, ...incoming } : prev);
+      }
+    };
+    const handleSocketActivity = (data: any) => {
+      if (data?.taskId === fullTask.id && data.activity?.type === 'status_change' && data.activity?.newStatus && !data.activity?.subtaskTitle) {
+        setFullTask(prev => prev ? { ...prev, status: data.activity.newStatus } : prev);
+      }
+    };
+    props.socket.on('task:updated', handleSocketTaskUpdated);
+    props.socket.on('task_activity', handleSocketActivity);
+    return () => {
+      props.socket.off('task:updated', handleSocketTaskUpdated);
+      props.socket.off('task_activity', handleSocketActivity);
+    };
+  }, [props.socket, fullTask?.id]);
 
   useEffect(() => {
     if (!props.isOpen) return;

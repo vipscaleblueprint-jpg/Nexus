@@ -135,12 +135,12 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('notifications_all_cleared'));
     });
 
-    s.on('task_activity', () => {
-      window.dispatchEvent(new CustomEvent('task_activity'));
+    s.on('task_activity', (data: any) => {
+      window.dispatchEvent(new CustomEvent('task_activity', { detail: data }));
     });
 
-    s.on('task:comment_added', () => {
-      window.dispatchEvent(new CustomEvent('task:comment_added'));
+    s.on('task:comment_added', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:comment_added', { detail: payload }));
     });
 
     s.on('task:created', (task) => {

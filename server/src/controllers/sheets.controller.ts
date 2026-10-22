@@ -123,7 +123,54 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
   if (target.subtaskId) {
     // Subtask statuses are stored upper-case.
     const status = wanted.toUpperCase();
-    await prisma.subtask.update({ where: { id: target.subtaskId }, data: { status, completed: status === 'CLOSED' } });
+    const beforeSub = await prisma.subtask.findUnique({
+      where: { id: target.subtaskId },
+      select: { status: true, title: true },
+    });
+    const updatedSub = await prisma.subtask.update({
+      where: { id: target.subtaskId },
+      data: { status, completed: status === 'CLOSED' },
+    });
+    if (beforeSub?.status !== updatedSub.status) {
+      const actor = await getOrCreateVipScaleUser();
+      const log = await prisma.auditLog.create({
+        data: {
+          action: 'STATUS_CHANGE',
+          entity: 'TASK',
+          entityId: target.taskId,
+          userId: actor.id,
+          details: { oldStatus: beforeSub?.status, newStatus: updatedSub.status, subtaskTitle: updatedSub.title, source: 'sheet' },
+        },
+      });
+      const activity = {
+        id: log.id,
+        type: 'status_change',
+        author: actor.name || 'VIP Scale',
+        oldStatus: beforeSub?.status,
+        newStatus: updatedSub.status,
+        subtaskTitle: updatedSub.title,
+        date: log.createdAt,
+        user: actor,
+      };
+      io.emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
+    }
+    const fullParent = await prisma.task.findUnique({
+      where: { id: target.taskId },
+      select: {
+        id: true, listId: true, updatedAt: true,
+        subtasks: {
+          include: {
+            User: { select: { id: true, name: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, avatarUrl: true } },
+          },
+        },
+      },
+    });
+    if (fullParent) {
+      io.emit('task:updated', fullParent);
+      io.to(`list:${target.listId}`).emit('task:updated', fullParent);
+    }
+    io.emit('subtask_updated', { taskId: target.taskId, subtask: updatedSub });
   } else {
     const listStatus = await prisma.listStatus.findFirst({
       where: { listId: target.listId, name: { equals: wanted, mode: 'insensitive' } },
@@ -137,7 +184,7 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
     });
     if (before?.status !== updated.status) {
       const actor = await getOrCreateVipScaleUser();
-      await prisma.auditLog.create({
+      const log = await prisma.auditLog.create({
         data: {
           action: 'STATUS_CHANGE',
           entity: 'TASK',
@@ -146,7 +193,18 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
           details: { oldStatus: before?.status, newStatus: updated.status, source: 'sheet' },
         },
       });
+      const activity = {
+        id: log.id,
+        type: 'status_change',
+        author: actor.name || 'VIP Scale',
+        oldStatus: before?.status,
+        newStatus: updated.status,
+        date: log.createdAt,
+        user: actor,
+      };
+      io.emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
     }
+    io.emit('task:updated', updated);
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
@@ -180,6 +238,7 @@ async function addAssignee(target: LinkedTarget, assignee: unknown, res: Respons
         assignees: { select: { id: true, name: true, avatarUrl: true } },
       },
     });
+    io.emit('task:updated', updated);
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
@@ -214,6 +273,7 @@ async function removeAssignee(target: LinkedTarget, assignee: unknown, res: Resp
         assignees: { select: { id: true, name: true, avatarUrl: true } },
       },
     });
+    io.emit('task:updated', updated);
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
@@ -357,10 +417,13 @@ export const handleSheetComment = async (req: Request, res: Response) => {
         include: commentInclude,
       });
       if (moved) {
+        io.emit('task:comment_deleted', { taskId: existing.taskId, commentId: existing.id });
         io.to(`list:${existing.task.listId}`).emit('task:comment_deleted', { taskId: existing.taskId, commentId: existing.id });
+        io.emit('task:comment_added', { taskId: target!.taskId, subtaskId: target!.subtaskId, comment });
         io.to(`list:${target!.listId}`).emit('task:comment_added', { taskId: target!.taskId, subtaskId: target!.subtaskId, comment });
         await invalidateCache(`task:${existing.taskId}`, `task:${target!.taskId}`);
       } else {
+        io.emit('task:comment_updated', { taskId: existing.taskId, comment });
         io.to(`list:${existing.task.listId}`).emit('task:comment_updated', { taskId: existing.taskId, comment });
         await invalidateCache(`task:${existing.taskId}`);
       }
@@ -389,6 +452,7 @@ export const handleSheetComment = async (req: Request, res: Response) => {
       },
       include: commentInclude,
     });
+    io.emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment });
     io.to(`list:${target.listId}`).emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment });
     await invalidateCache(`task:${target.taskId}`);
     return res.status(200).json({

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Paperclip, X, FileText, Check, Loader2, SmilePlus } from 'lucide-react';
-import { CommentEditor, CommentEditorRef } from '../ui/CommentEditor';
+import { CommentEditor, CommentEditorRef, ComposerToolButton } from '../ui/CommentEditor';
 import { EmojiPicker } from '../ui/EmojiPicker';
 import { uploadApi } from '@/api/upload';
 import { toast } from '@/lib/toast';
@@ -541,30 +541,24 @@ export function EditCommentForm({
               className="hidden"
               onChange={handleFileInputChange}
             />
-            <button
-              type="button"
+            <ComposerToolButton
               onClick={() => fileInputRef.current?.click()}
               disabled={isSaving}
-              className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5 text-xs cursor-pointer"
               title="Attach files or images"
             >
-              <Paperclip className="w-3.5 h-3.5" />
-              <span className="text-[11px] text-zinc-400 font-medium">Attach</span>
-            </button>
+              <Paperclip className="w-4 h-4" />
+            </ComposerToolButton>
             <div className="relative">
-              <button
-                type="button"
+              <ComposerToolButton
                 onClick={(e) => {
                   const btn = e.currentTarget;
                   setEmojiAnchor(prev => prev ? null : btn);
                 }}
                 disabled={isSaving}
-                className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5 text-xs cursor-pointer"
                 title="Add emoji"
               >
-                <SmilePlus className="w-3.5 h-3.5" />
-                <span className="text-[11px] text-zinc-400 font-medium">Emoji</span>
-              </button>
+                <SmilePlus className="w-4 h-4" />
+              </ComposerToolButton>
               {emojiAnchor && (
                 <EmojiPicker
                   anchorEl={emojiAnchor}

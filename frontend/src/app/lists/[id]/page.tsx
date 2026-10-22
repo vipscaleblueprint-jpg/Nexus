@@ -594,25 +594,12 @@ export default function BoardPage() {
             }
           }}
           onUpdateTask={async (updatedTask) => {
-            if (selectedTask && updatedTask.status !== selectedTask.status) {
-              const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
-              if (!check.allowed) {
-                toast.error(check.reason || 'You do not have permission to move tasks from this status');
-                return;
-              }
-              const transitionCheck = canTransitionTaskStatus(selectedTask, updatedTask.status);
-              if (!transitionCheck.allowed) {
-                toast.error(transitionCheck.reason || 'Cannot move task to this status.');
-                return;
-              }
-            }
-
             // Sync board and modal state
             localTaskEditsRef.current.set(updatedTask.id, Date.now());
             setSelectedTask(updatedTask);
             setList((prev: any) => ({
               ...prev,
-              tasks: prev.tasks.map((t: any) => t.id === updatedTask.id ? updatedTask : t)
+              tasks: prev?.tasks ? prev.tasks.map((t: any) => t.id === updatedTask.id ? { ...t, ...updatedTask } : t) : []
             }));
           }}
         />

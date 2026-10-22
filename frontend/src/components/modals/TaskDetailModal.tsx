@@ -35,6 +35,7 @@ import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeH
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EditCommentForm } from './EditCommentForm';
 import { CommentReplyInput } from './CommentReplyInput';
+import { EmojiPicker } from '../ui/EmojiPicker';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { BlurUpImage } from '../ui/BlurUpImage';
 import { extractImagesFromComments } from '@/lib/commentImages';
@@ -674,6 +675,8 @@ export function TaskDetailModalContent({
   const [replyText, setReplyText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
+  const [emojiPickerAnchor, setEmojiPickerAnchor] = useState<HTMLElement | null>(null);
+  const [commentEmojiAnchor, setCommentEmojiAnchor] = useState<HTMLElement | null>(null);
   const activityScrollRef = useRef<HTMLDivElement>(null);
 
   const INITIAL_ACTIVITY_COUNT = 20;
@@ -3215,44 +3218,75 @@ export function TaskDetailModalContent({
                         )}
                         {/* Reaction pills */}
                         {Object.keys(cGroups).length > 0 && (
-                          <div className="flex flex-wrap gap-1 pl-11">
+                          <div className="flex flex-wrap items-center gap-1 pl-11">
                             {Object.entries(cGroups).map(([emoji, data]) => (
                               <button
                                 key={emoji}
                                 title={data.users.join(', ')}
                                 onClick={() => handleToggleReaction(comment.id, emoji)}
-                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-500/15 border-indigo-500/60 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/25' : 'bg-muted/70 border-border text-muted-foreground hover:border-border hover:bg-accent hover:text-foreground'}`}
                               >
                                 {emoji} <span className="font-medium">{data.count}</span>
                               </button>
                             ))}
+                            <button
+                              onClick={(e) => {
+                                const btn = e.currentTarget;
+                                if (showEmojiPickerFor === comment.id) {
+                                  setShowEmojiPickerFor(null);
+                                  setEmojiPickerAnchor(null);
+                                } else {
+                                  setShowEmojiPickerFor(comment.id);
+                                  setEmojiPickerAnchor(btn);
+                                }
+                              }}
+                              className="flex items-center justify-center w-5 h-5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-accent text-xs transition-colors cursor-pointer"
+                              title="Add reaction"
+                            >
+                              +
+                            </button>
                           </div>
                         )}
                         {/* Action row */}
                         <div className="flex items-center gap-1 mt-1 pl-11 relative">
                           <button
                             onClick={() => handleToggleReaction(comment.id, '👍')}
-                            className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                            className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
                             title="Like"
                           >
                             <ThumbsUp className="w-3.5 h-3.5" />
                           </button>
                           <div className="relative">
                             <button
-                              onClick={() => setShowEmojiPickerFor(showEmojiPickerFor === comment.id ? null : comment.id)}
-                              className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
+                              onClick={(e) => {
+                                const btn = e.currentTarget;
+                                if (showEmojiPickerFor === comment.id) {
+                                  setShowEmojiPickerFor(null);
+                                  setEmojiPickerAnchor(null);
+                                } else {
+                                  setShowEmojiPickerFor(comment.id);
+                                  setEmojiPickerAnchor(btn);
+                                }
+                              }}
+                              className="flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
                               title="React"
                             >
                               <SmilePlus className="w-3.5 h-3.5" />
                             </button>
-                            {showEmojiPickerFor === comment.id && (
-                              <div className="absolute bottom-8 left-0 bg-card border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
-                                {QUICK_EMOJIS.map(e => (
-                                  <button key={e} onClick={() => handleToggleReaction(comment.id, e)} className="text-lg hover:scale-125 cursor-pointer transition-transform p-0.5">
-                                    {e}
-                                  </button>
-                                ))}
-                              </div>
+                            {showEmojiPickerFor === comment.id && emojiPickerAnchor && (
+                              <EmojiPicker
+                                anchorEl={emojiPickerAnchor}
+                                onSelect={(emoji) => {
+                                  handleToggleReaction(comment.id, emoji);
+                                  setShowEmojiPickerFor(null);
+                                  setEmojiPickerAnchor(null);
+                                }}
+                                onClose={() => {
+                                  setShowEmojiPickerFor(null);
+                                  setEmojiPickerAnchor(null);
+                                }}
+                                placement="auto"
+                              />
                             )}
                           </div>
                           {!isReply && (
@@ -3681,9 +3715,21 @@ export function TaskDetailModalContent({
                         disabled={isSubmittingComment}
                         placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
                         footer={
-                          <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
-                            <Paperclip className="w-4 h-4" />
-                          </ComposerToolButton>
+                          <div className="flex items-center gap-1">
+                            <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
+                              <Paperclip className="w-4 h-4" />
+                            </ComposerToolButton>
+                            <ComposerToolButton
+                              onClick={(e) => {
+                                const btn = e.currentTarget;
+                                setCommentEmojiAnchor(prev => prev ? null : btn);
+                              }}
+                              disabled={isSubmittingComment}
+                              title="Add emoji"
+                            >
+                              <SmilePlus className="w-4 h-4" />
+                            </ComposerToolButton>
+                          </div>
                         }
                         footerEnd={
                           <ComposerSendButton
@@ -3695,6 +3741,17 @@ export function TaskDetailModalContent({
                           </ComposerSendButton>
                         }
                       />
+                      {commentEmojiAnchor && (
+                        <EmojiPicker
+                          anchorEl={commentEmojiAnchor}
+                          onSelect={(emoji) => {
+                            commentEditorRef.current?.insertEmoji(emoji);
+                            setCommentEmojiAnchor(null);
+                          }}
+                          onClose={() => setCommentEmojiAnchor(null)}
+                          placement="top"
+                        />
+                      )}
                     </>
                   );
                 })()}
@@ -3851,6 +3908,8 @@ export function SubtaskDetailView({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
+  const [emojiPickerAnchor, setEmojiPickerAnchor] = useState<HTMLElement | null>(null);
+  const [commentEmojiAnchor, setCommentEmojiAnchor] = useState<HTMLElement | null>(null);
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
 
@@ -5882,17 +5941,33 @@ export function SubtaskDetailView({
 
                       {/* Reaction pills */}
                       {Object.keys(cGroups).length > 0 && (
-                        <div className="flex flex-wrap gap-1 pl-11">
+                        <div className="flex flex-wrap items-center gap-1 pl-11">
                           {Object.entries(cGroups).map(([emoji, data]) => (
                             <button
                               key={emoji}
                               title={data.users.join(', ')}
                               onClick={() => handleToggleReaction(c.id, emoji)}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-600/20 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/30' : 'bg-zinc-800/60 border-zinc-700/50 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700/50'}`}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border transition-colors cursor-pointer ${data.hasMe ? 'bg-indigo-500/15 border-indigo-500/60 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/25' : 'bg-muted/70 border-border text-muted-foreground hover:border-border hover:bg-accent hover:text-foreground'}`}
                             >
                               {emoji} <span className="font-medium">{data.count}</span>
                             </button>
                           ))}
+                          <button
+                            onClick={(e) => {
+                              const btn = e.currentTarget;
+                              if (showEmojiPickerFor === c.id) {
+                                setShowEmojiPickerFor(null);
+                                setEmojiPickerAnchor(null);
+                              } else {
+                                setShowEmojiPickerFor(c.id);
+                                setEmojiPickerAnchor(btn);
+                              }
+                            }}
+                            className="flex items-center justify-center w-5 h-5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-accent text-xs transition-colors cursor-pointer"
+                            title="Add reaction"
+                          >
+                            +
+                          </button>
                         </div>
                       )}
 
@@ -5900,27 +5975,42 @@ export function SubtaskDetailView({
                       <div className="flex items-center gap-1 mt-1 pl-11 relative">
                         <button
                           onClick={() => handleToggleReaction(c.id, '👍')}
-                          className={`flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                          className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
                           title="Like"
                         >
                           <ThumbsUp className="w-3.5 h-3.5" />
                         </button>
                         <div className="relative">
                           <button
-                            onClick={() => setShowEmojiPickerFor(showEmojiPickerFor === c.id ? null : c.id)}
-                            className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors"
+                            onClick={(e) => {
+                              const btn = e.currentTarget;
+                              if (showEmojiPickerFor === c.id) {
+                                setShowEmojiPickerFor(null);
+                                setEmojiPickerAnchor(null);
+                              } else {
+                                setShowEmojiPickerFor(c.id);
+                                setEmojiPickerAnchor(btn);
+                              }
+                            }}
+                            className="flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
                             title="React"
                           >
                             <SmilePlus className="w-3.5 h-3.5" />
                           </button>
-                          {showEmojiPickerFor === c.id && (
-                            <div className="absolute bottom-8 left-0 bg-card border border-zinc-700 rounded-lg shadow-xl p-2 flex gap-1 z-50">
-                              {QUICK_EMOJIS.map(e => (
-                                <button key={e} onClick={() => handleToggleReaction(c.id, e)} className="text-lg hover:scale-125 cursor-pointer transition-transform p-0.5">
-                                  {e}
-                                </button>
-                              ))}
-                            </div>
+                          {showEmojiPickerFor === c.id && emojiPickerAnchor && (
+                            <EmojiPicker
+                              anchorEl={emojiPickerAnchor}
+                              onSelect={(emoji) => {
+                                handleToggleReaction(c.id, emoji);
+                                setShowEmojiPickerFor(null);
+                                setEmojiPickerAnchor(null);
+                              }}
+                              onClose={() => {
+                                setShowEmojiPickerFor(null);
+                                setEmojiPickerAnchor(null);
+                              }}
+                              placement="auto"
+                            />
                           )}
                         </div>
                         {!isReply && (
@@ -6276,9 +6366,21 @@ export function SubtaskDetailView({
                       disabled={isSubmittingComment}
                       placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
                       footer={
-                        <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
-                          <Paperclip className="w-4 h-4" />
-                        </ComposerToolButton>
+                        <div className="flex items-center gap-1">
+                          <ComposerToolButton onClick={() => commentFileInputRef.current?.click()} disabled={isUploading} title="Attach file or image">
+                            <Paperclip className="w-4 h-4" />
+                          </ComposerToolButton>
+                          <ComposerToolButton
+                            onClick={(e) => {
+                              const btn = e.currentTarget;
+                              setCommentEmojiAnchor(prev => prev ? null : btn);
+                            }}
+                            disabled={isSubmittingComment}
+                            title="Add emoji"
+                          >
+                            <SmilePlus className="w-4 h-4" />
+                          </ComposerToolButton>
+                        </div>
                       }
                       footerEnd={
                         <ComposerSendButton
@@ -6290,6 +6392,17 @@ export function SubtaskDetailView({
                         </ComposerSendButton>
                       }
                     />
+                    {commentEmojiAnchor && (
+                      <EmojiPicker
+                        anchorEl={commentEmojiAnchor}
+                        onSelect={(emoji) => {
+                          commentEditorRef.current?.insertEmoji(emoji);
+                          setCommentEmojiAnchor(null);
+                        }}
+                        onClose={() => setCommentEmojiAnchor(null)}
+                        placement="top"
+                      />
+                    )}
                   </>
                 );
               })()}

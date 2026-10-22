@@ -47,13 +47,15 @@ interface CommentEditorProps {
 }
 
 /** An icon button for the comment toolbar. */
-export const ComposerToolButton = ({ className = '', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+export const ComposerToolButton = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>(({ className = '', ...props }, ref) => (
   <button
+    ref={ref}
     type="button"
     {...props}
     className={`flex h-7 w-7 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-700/50 hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-40 cursor-pointer ${className}`}
   />
-);
+));
+ComposerToolButton.displayName = 'ComposerToolButton';
 
 /** The comment toolbar's send button; quiet while there's nothing to send. */
 export const ComposerSendButton = ({ className = '', children = 'Send', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
@@ -71,6 +73,7 @@ export const ComposerSendButton = ({ className = '', children = 'Send', ...props
 export interface CommentEditorRef {
   insertMention: (name: string, matchLength: number, userId: string) => void;
   insertImages: (files: File[]) => void;
+  insertEmoji: (emoji: string) => void;
 }
 
 // The line-move shortcut as the user's keyboard labels it (Option on a Mac)
@@ -494,6 +497,10 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         ]).run();
     },
     insertImages: (files: File[]) => insertImages(files),
+    insertEmoji: (emoji: string) => {
+      if (!editor || editor.isDestroyed) return;
+      editor.chain().focus().insertContent(emoji).run();
+    },
   }));
 
   React.useEffect(() => {

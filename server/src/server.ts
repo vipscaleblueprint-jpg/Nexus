@@ -27,6 +27,7 @@ import webhookRoutes from './routes/webhook.routes';
 import teamRouter from './routes/team.routes';
 import clickupRoutes from './routes/clickup.routes';
 import activityRoutes from './routes/activity.routes';
+import { emojiRouter } from './routes/emoji.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -129,7 +130,7 @@ app.use(cookieParser());
 // Every API section needs a logged-in user except these, which authenticate themselves: the login flows, and the
 // integrations that use an API key (/external) or the shared VIPScale key (/webhooks).
 // Before body parsing, so anonymous requests never get a large body parsed.
-app.use('/api', requireLoginExcept(['health', 'auth', 'external', 'webhooks']));
+app.use('/api', requireLoginExcept(['health', 'auth', 'external', 'webhooks', 'emojis']));
 // Login, signup and password-reset bodies are tiny: anonymous callers don't get the 50 MB limit
 app.use('/api/auth', express.json({ limit: '100kb' }), express.urlencoded({ limit: '100kb', extended: true }));
 app.use(express.json({ limit: '50mb' }));
@@ -149,6 +150,7 @@ app.get('/api/health', (req, res) => {
       '/api/tasks',
       '/api/chat',
       '/api/external',
+      '/api/emojis',
     ],
   });
 });
@@ -169,6 +171,7 @@ app.use('/api/webhooks', webhookRoutes);
 app.use('/api/teams', teamRouter);
 app.use('/api/clickup', clickupRoutes);
 app.use('/api/activity', activityRoutes);
+app.use('/api/emojis', emojiRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

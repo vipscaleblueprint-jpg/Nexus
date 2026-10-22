@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Paperclip, X, FileText, Check, Loader2 } from 'lucide-react';
+import { Paperclip, X, FileText, Check, Loader2, SmilePlus } from 'lucide-react';
 import { CommentEditor, CommentEditorRef } from '../ui/CommentEditor';
+import { EmojiPicker } from '../ui/EmojiPicker';
 import { uploadApi } from '@/api/upload';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
@@ -132,6 +133,7 @@ export function EditCommentForm({
   const commentEditorRef = useRef<CommentEditorRef>(null);
   const editorWrapperRef = useRef<HTMLDivElement>(null);
   const mentionMenuRef = useRef<HTMLDivElement>(null);
+  const [emojiAnchor, setEmojiAnchor] = useState<HTMLElement | null>(null);
 
   // Filtered users for mention search
   const filteredUsers = useMemo(() => {
@@ -549,6 +551,32 @@ export function EditCommentForm({
               <Paperclip className="w-3.5 h-3.5" />
               <span className="text-[11px] text-zinc-400 font-medium">Attach</span>
             </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  const btn = e.currentTarget;
+                  setEmojiAnchor(prev => prev ? null : btn);
+                }}
+                disabled={isSaving}
+                className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5 text-xs cursor-pointer"
+                title="Add emoji"
+              >
+                <SmilePlus className="w-3.5 h-3.5" />
+                <span className="text-[11px] text-zinc-400 font-medium">Emoji</span>
+              </button>
+              {emojiAnchor && (
+                <EmojiPicker
+                  anchorEl={emojiAnchor}
+                  onSelect={(emoji) => {
+                    commentEditorRef.current?.insertEmoji(emoji);
+                    setEmojiAnchor(null);
+                  }}
+                  onClose={() => setEmojiAnchor(null)}
+                  placement="top"
+                />
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0 ml-auto">

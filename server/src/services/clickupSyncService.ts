@@ -26,6 +26,13 @@ import {
   clickupCommentToHtml,
   escapeHtml,
 } from './clickupService';
+import {
+  parseMirrorAuthor,
+  isMirrorBotUser,
+  stripMirrorPrefixText,
+  stripMirrorPrefixHtml,
+  buildNameResolver,
+} from '../utils/clickupMirrorAuthor';
 
 export interface ClickUpSyncSummary {
   startedAt: string;
@@ -95,6 +102,8 @@ interface SyncContext {
   includeClosed: boolean;
   /** lower-case email → Nexus user id */
   userIndex: Map<string, string>;
+  /** "[Name]" mirror prefix → Nexus user id */
+  resolveName: (name: string) => string | null;
   /** Author for comments/tasks whose ClickUp user has no Nexus account. */
   fallbackUserId: string;
   /** listId → (lower-case status name → stored status name) */
@@ -248,12 +257,13 @@ export async function runClickUpSync(options: ClickUpSyncOptions = {}): Promise<
   });
   summary.lists = lists.length;
 
-  const users = await prisma.user.findMany({ select: { id: true, email: true } });
+  const users = await prisma.user.findMany({ select: { id: true, email: true, name: true } });
   const ctx: SyncContext = {
     summary,
     emit: options.emit ?? (() => {}),
     includeClosed: options.includeClosed ?? true,
     userIndex: new Map(users.map((u) => [u.email.toLowerCase(), u.id])),
+    resolveName: buildNameResolver(users),
     fallbackUserId: (await getOrCreateClickUpUser()).id,
     statusCache: new Map(),
     statusCreates: new Map(),
@@ -798,12 +808,13 @@ async function syncComments(cuTaskId: string, target: Target, ctx: SyncContext) 
 }
 
 // Comments written in Nexus are mirrored to ClickUp as "[Author] …" (older mirrors: "**[Author]** …")
-const MIRROR_PREFIX_RE = /^(?:\*\*)?\[([^\]\n]{1,80})\](?:\*\*)?(?:\s|$)/;
-
 function isNexusMirrorOf(clickUpText: string, authorName: string | null | undefined): boolean {
-  const name = clickUpText.match(MIRROR_PREFIX_RE)?.[1]?.trim().toLowerCase();
+  const name = parseMirrorAuthor(clickUpText)?.toLowerCase();
   return !!name && name === (authorName || 'Nexus').trim().toLowerCase();
 }
+
+/** How close a Nexus comment must be to its ClickUp mirror to count as the same comment. */
+const MIRROR_MATCH_WINDOW_MS = 15 * 60_000;
 
 /**
  * Creates or updates comments from ClickUp. When content differs (e.g. improved emoji parsing,
@@ -812,14 +823,23 @@ function isNexusMirrorOf(clickUpText: string, authorName: string | null | undefi
  * row linked to it by externalId is left as it is.
  */
 async function upsertComment(c: any, target: Target, parentCommentId: string | null, ctx: SyncContext) {
-  const userId = userIdFor(c.user, ctx);
-  const text = String(c.comment_text ?? '').trim();
+  const rawText = String(c.comment_text ?? '').trim();
+  const emailUserId = userIdFor(c.user, ctx);
+
+  // A Nexus comment mirrored through the shared VIP Scale account: credit the real author
+  // and drop the "[Name]" / "**[Name]**" prefix.
+  const mirrorName = !emailUserId || isMirrorBotUser(c.user) ? parseMirrorAuthor(rawText) : null;
+  const mirrorUserId = mirrorName ? ctx.resolveName(mirrorName) : null;
+  const userId = mirrorName ? mirrorUserId : emailUserId;
+  const text = mirrorName ? stripMirrorPrefixText(rawText, mirrorName) : rawText;
+
   // No Nexus account means the person has left — label them so it reads clearly.
-  const deactivated = `${c.user?.username || 'ClickUp user'} (Deactivated):`;
+  const deactivated = `${mirrorName || c.user?.username || 'ClickUp user'} (Deactivated):`;
   const plainContent = userId ? text : `${deactivated} ${text}`;
-  const richHtml = Array.isArray(c.comment) && c.comment.length
+  let richHtml = Array.isArray(c.comment) && c.comment.length
     ? clickupCommentToHtml(c.comment, (cuUser) => userIdFor(cuUser, ctx))
     : '';
+  if (richHtml && mirrorName) richHtml = stripMirrorPrefixHtml(richHtml, mirrorName);
   const content = richHtml ? (userId ? richHtml : `<p>${escapeHtml(deactivated)}</p>${richHtml}`) : plainContent;
 
   const files = (c.comment ?? [])
@@ -828,12 +848,17 @@ async function upsertComment(c: any, target: Target, parentCommentId: string | n
 
   const existing = await prisma.taskComment.findUnique({
     where: { externalId: String(c.id) },
-    select: { id: true, content: true, user: { select: { name: true } } },
+    select: { id: true, content: true, userId: true, user: { select: { name: true } } },
   });
   if (existing) {
-    if (isNexusMirrorOf(text, existing.user?.name)) return existing.id;
-    if (existing.content !== content) {
-      await prisma.taskComment.update({ where: { id: existing.id }, data: { content } });
+    // Written in Nexus: keep the Nexus copy (the ClickUp mirror is lossy).
+    if (isNexusMirrorOf(rawText, existing.user?.name)) return existing.id;
+    const reassign = !!mirrorUserId && existing.userId !== mirrorUserId;
+    if (existing.content !== content || reassign) {
+      await prisma.taskComment.update({
+        where: { id: existing.id },
+        data: { content, ...(reassign ? { userId: mirrorUserId! } : {}) },
+      });
       ctx.summary.comments++;
       if (target.taskId) {
         await redis.del(`comments:list:${target.taskId}`).catch(() => {});
@@ -846,6 +871,30 @@ async function upsertComment(c: any, target: Target, parentCommentId: string | n
       await syncAttachments(files, { taskCommentId: existing.id }, ctx);
     }
     return existing.id;
+  }
+
+  // The Nexus original of a mirror whose ClickUp id was never saved: link it, don't duplicate it.
+  const postedAt = toDate(c.date);
+  if (mirrorUserId && postedAt) {
+    const original = await prisma.taskComment.findFirst({
+      where: {
+        taskId: target.taskId,
+        subtaskId: target.subtaskId,
+        userId: mirrorUserId,
+        externalId: null,
+        parentCommentId,
+        createdAt: {
+          gte: new Date(postedAt.getTime() - MIRROR_MATCH_WINDOW_MS),
+          lte: new Date(postedAt.getTime() + MIRROR_MATCH_WINDOW_MS),
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (original) {
+      await prisma.taskComment.update({ where: { id: original.id }, data: { externalId: String(c.id) } });
+      return original.id;
+    }
   }
 
   const created = await prisma.taskComment.create({
@@ -874,7 +923,7 @@ export async function syncTaskComments(
   target: Target,
   emit?: SyncEmit
 ): Promise<{ count: number; comments: any[] }> {
-  const users = await prisma.user.findMany({ select: { id: true, email: true } });
+  const users = await prisma.user.findMany({ select: { id: true, email: true, name: true } });
   const summary: ClickUpSyncSummary = {
     startedAt: new Date().toISOString(),
     lists: 0,
@@ -897,6 +946,7 @@ export async function syncTaskComments(
     emit: emit ?? (() => {}),
     includeClosed: true,
     userIndex: new Map(users.map((u) => [u.email.toLowerCase(), u.id])),
+    resolveName: buildNameResolver(users),
     fallbackUserId: (await getOrCreateClickUpUser()).id,
     statusCache: new Map(),
     statusCreates: new Map(),

@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Send } from 'lucide-react';
+import { Send, SmilePlus } from 'lucide-react';
 import { User as UserModel } from '@/lib/types';
+import { EmojiPicker } from '../ui/EmojiPicker';
 
 interface CommentReplyInputProps {
   commentId?: string;
@@ -33,6 +34,7 @@ export function CommentReplyInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const mentionMenuRef = useRef<HTMLDivElement>(null);
+  const [emojiAnchor, setEmojiAnchor] = useState<HTMLElement | null>(null);
 
   // Filtered users for mention search
   const filteredUsers = useMemo(() => {
@@ -106,6 +108,22 @@ export function CommentReplyInput({
         inputRef.current?.setSelectionRange(newCursor, newCursor);
       }, 0);
     }
+  };
+
+  const insertEmoji = (emoji: string) => {
+    if (!inputRef.current) return;
+    const cursor = inputRef.current.selectionStart ?? text.length;
+    const end = inputRef.current.selectionEnd ?? cursor;
+    const textBefore = text.substring(0, cursor);
+    const textAfter = text.substring(end);
+    const newText = textBefore + emoji + textAfter;
+    setText(newText);
+    setEmojiAnchor(null);
+    const newCursor = cursor + emoji.length;
+    setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(newCursor, newCursor);
+    }, 0);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -210,6 +228,18 @@ export function CommentReplyInput({
       />
       <button
         type="button"
+        onClick={(e) => {
+          const btn = e.currentTarget;
+          setEmojiAnchor(prev => prev ? null : btn);
+        }}
+        disabled={isSubmitting}
+        className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center justify-center cursor-pointer disabled:opacity-50"
+        title="Add emoji"
+      >
+        <SmilePlus className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
         onClick={handleSubmit}
         disabled={!text.trim() || isSubmitting}
         className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600 cursor-pointer"
@@ -217,6 +247,15 @@ export function CommentReplyInput({
       >
         <Send className="w-3.5 h-3.5" />
       </button>
+
+      {emojiAnchor && (
+        <EmojiPicker
+          anchorEl={emojiAnchor}
+          onSelect={insertEmoji}
+          onClose={() => setEmojiAnchor(null)}
+          placement="top"
+        />
+      )}
 
       {/* Portaled Mention Dropdown matching the ClickUp/Nexus design system */}
       {showMentionMenu && menuPosition && typeof document !== 'undefined' && createPortal(

@@ -501,12 +501,11 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
   const isSubtask = mentionType === 'subtask';
-  const [titleHead, titleTail] = splitTitleForWrap(label || '');
   const titleClass = `cursor-pointer border-b pb-[1px] transition-all duration-300 align-middle ${isTitleHovered ? 'border-zinc-500' : 'border-transparent'} ${
     isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'
   }`;
   const titleProps = {
-    title: 'Open Task Detail',
+    title: label ? `${label} (Open Task Detail)` : 'Open Task Detail',
     onMouseEnter: () => setIsTitleHovered(true),
     onMouseLeave: () => setIsTitleHovered(false),
     onClick: (e: React.MouseEvent) => {
@@ -556,17 +555,16 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           ))}
         </span>
 
-        {titleHead && (
-          <span className={titleClass} {...titleProps}>
-            {titleHead}
-          </span>
-        )}
-
-        {/* Title tail + controls wrap as one unit */}
-        <span className="whitespace-nowrap">
-        <span className={`${titleClass} mr-1.5`} {...titleProps}>
-          {titleTail}
+        {/* Task Title */}
+        <span
+          className={`${titleClass} mr-1.5 truncate max-w-[220px] sm:max-w-[340px] md:max-w-[440px] shrink min-w-[50px] inline-block align-middle`}
+          {...titleProps}
+        >
+          {label || ''}
         </span>
+
+        {/* Title controls wrapped together */}
+        <span className="whitespace-nowrap inline-flex items-center align-middle shrink-0">
 
         <span
           ref={descTriggerRef}

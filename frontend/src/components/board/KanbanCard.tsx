@@ -1024,8 +1024,8 @@ const CardContent = memo(({
                 onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'recurrence' ? null : 'recurrence'); }}
                 title="Set Recurrence"
               >
-                <Repeat className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                <span className={(task as any).recurringConfig?.time ? 'text-purple-300 font-medium' : ''}>
+                <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                <span className={(task as any).recurringConfig?.time ? 'text-purple-700 dark:text-purple-300 font-medium' : ''}>
                   {(task as any).recurringConfig?.time
                     ? formatTimeDisplay((task as any).recurringConfig.time)
                     : (task as any).status && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())

@@ -2848,11 +2848,11 @@ export function TaskDetailModalContent({
                     {isInRecurringGroup && (
                       <Popover.Root open={isRecurrenceOpen && canEditTask} onOpenChange={setIsRecurrenceOpen}>
                         <Popover.Trigger asChild>
-                          <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
+                          <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800/50 dark:hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
                             {task.recurringConfig ? (
                               <>
-                                <Repeat className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                                <span className="font-semibold text-purple-300">
+                                <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                                <span className="font-semibold text-purple-700 dark:text-purple-300">
                                   {(() => {
                                     const statusUpper = (task.status || '').toUpperCase().trim();
                                     const effectiveFreq = ['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)
@@ -3160,7 +3160,7 @@ export function TaskDetailModalContent({
                       if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
                     });
                     return (
-                      <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-muted' : ''}`}>
+                      <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full min-w-0 max-w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'mt-2 bg-muted' : ''}`}>
                         <div className="flex items-center gap-3 w-full">
                           {comment.user?.avatarUrl ? (
                             <img src={comment.user.avatarUrl} alt={comment.user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
@@ -3278,7 +3278,7 @@ export function TaskDetailModalContent({
                         )}
                         {/* Replies */}
                         {!isReply && comment.replies?.length > 0 && (
-                          <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800">
+                          <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800 min-w-0 max-w-full">
                             {comment.replies.map((r: any) => renderComment(r, true))}
                           </div>
                         )}
@@ -5826,7 +5826,7 @@ export function SubtaskDetailView({
                   });
 
                   return (
-                    <div key={c.id} className={`flex flex-col gap-2 text-sm w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'ml-6 mt-2 bg-muted' : 'mt-2'}`}>
+                    <div key={c.id} className={`flex flex-col gap-2 text-sm w-full min-w-0 max-w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'mt-2 bg-muted' : 'mt-2'}`}>
                       <div className="flex items-center gap-3 w-full">
                         {c.user?.avatarUrl ? (
                           <img src={c.user.avatarUrl} alt={c.user?.name} className="w-8 h-8 rounded-full shrink-0 object-cover" />
@@ -5948,7 +5948,7 @@ export function SubtaskDetailView({
 
                       {/* Replies */}
                       {!isReply && c.replies?.length > 0 && (
-                        <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800">
+                        <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800 min-w-0 max-w-full">
                           {c.replies.map((r: any) => renderComment(r, true))}
                         </div>
                       )}

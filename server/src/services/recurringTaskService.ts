@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
@@ -123,6 +124,16 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
         },
       },
       assignees: true,
+      subtasks: {
+        include: {
+          checklists: {
+            include: {
+              items: true,
+            },
+          },
+          assignees: true,
+        },
+      },
     },
   });
 
@@ -189,92 +200,137 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
     });
 
     if (cl.items && cl.items.length > 0) {
-      // Order items consistently so copied checklist maintains exact order
       const sortedItems = [...cl.items].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-      for (const item of sortedItems) {
-        await prisma.checklistItem.create({
-          data: {
-            checklistId: createdChecklist.id,
-            text: item.text,
-            completed: item.completed, // EXACT checkmark preserved!
-            checkedById: item.checkedById,
-            assigneeId: item.assigneeId,
-          },
-        });
-      }
+      await prisma.checklistItem.createMany({
+        data: sortedItems.map((item) => ({
+          checklistId: createdChecklist.id,
+          text: item.text,
+          completed: item.completed,
+          checkedById: item.checkedById,
+          assigneeId: item.assigneeId,
+        })),
+      });
     }
   }
 
-  // 3. Clone ALL comments (preserving user, content, attachments, and threaded replies)
+  // 3. Clone ALL comments (batch inserted with createMany for max performance)
   if (sourceTask.comments && sourceTask.comments.length > 0) {
-    const topLevelComments = sourceTask.comments.filter(c => !c.parentCommentId);
-    const replyComments = sourceTask.comments.filter(c => !!c.parentCommentId);
+    const topLevelComments = sourceTask.comments.filter((c) => !c.parentCommentId);
+    const replyComments = sourceTask.comments.filter((c) => !!c.parentCommentId);
     const commentIdMap = new Map<string, string>();
+    const attachmentsToCreate: any[] = [];
 
-    // Copy top level comments first
-    for (const c of topLevelComments) {
-      const createdComment = await prisma.taskComment.create({
-        data: {
-          taskId: newTask.id,
-          userId: c.userId,
-          content: c.content,
-          createdAt: c.createdAt,
-        },
-      });
-      commentIdMap.set(c.id, createdComment.id);
+    const commentData = topLevelComments.map((c) => {
+      const newCommentId = randomUUID();
+      commentIdMap.set(c.id, newCommentId);
 
       if (c.attachments && c.attachments.length > 0) {
         for (const att of c.attachments) {
-          await prisma.attachment.create({
-            data: {
-              fileName: att.fileName,
-              fileUrl: att.fileUrl,
-              fileKey: att.fileKey,
-              fileSize: att.fileSize,
-              mimeType: att.mimeType,
-              uploadedById: att.uploadedById,
-              taskCommentId: createdComment.id,
-            },
+          attachmentsToCreate.push({
+            fileName: att.fileName,
+            fileUrl: att.fileUrl,
+            fileKey: att.fileKey,
+            fileSize: att.fileSize,
+            mimeType: att.mimeType,
+            uploadedById: att.uploadedById,
+            taskCommentId: newCommentId,
           });
         }
       }
+
+      return {
+        id: newCommentId,
+        taskId: newTask.id,
+        userId: c.userId,
+        content: c.content,
+        createdAt: c.createdAt,
+      };
+    });
+
+    if (commentData.length > 0) {
+      await prisma.taskComment.createMany({ data: commentData });
     }
 
-    // Copy replies and map parentCommentId
-    for (const r of replyComments) {
-      const mappedParentId = r.parentCommentId ? commentIdMap.get(r.parentCommentId) || null : null;
-      const createdReply = await prisma.taskComment.create({
-        data: {
-          taskId: newTask.id,
-          userId: r.userId,
-          content: r.content,
-          createdAt: r.createdAt,
-          parentCommentId: mappedParentId,
-        },
-      });
-      commentIdMap.set(r.id, createdReply.id);
+    if (attachmentsToCreate.length > 0) {
+      await prisma.attachment.createMany({ data: attachmentsToCreate });
+    }
+
+    if (replyComments.length > 0) {
+      const replyData = replyComments.map((r) => ({
+        id: randomUUID(),
+        taskId: newTask.id,
+        userId: r.userId,
+        content: r.content,
+        createdAt: r.createdAt,
+        parentCommentId: r.parentCommentId ? commentIdMap.get(r.parentCommentId) || null : null,
+      }));
+      await prisma.taskComment.createMany({ data: replyData });
     }
   }
 
-  // 4. Update the source recurring task's lastRunAt
-  const updatedConfig: RecurringConfig = {
-    ...(config || {
-      frequency: (sourceTask.status.toUpperCase() as any) || 'DAILY',
-      time: timeStr,
-    }),
-    lastRunAt: new Date().toISOString(),
-  };
+  // 4. Clone ALL subtasks and their checklists
+  if (sourceTask.subtasks && sourceTask.subtasks.length > 0) {
+    for (const sub of sourceTask.subtasks) {
+      const createdSubtask = await prisma.subtask.create({
+        data: {
+          taskId: newTask.id,
+          title: sub.title,
+          description: sub.description,
+          status: 'PENDING',
+          completed: false,
+          priority: sub.priority,
+          assigneeId: sub.assigneeId,
+          assignees: sub.assignees && sub.assignees.length > 0 ? {
+            connect: sub.assignees.map(a => ({ id: a.id })),
+          } : undefined,
+          teamId: sub.teamId,
+          assigneeRoleRestrictions: sub.assigneeRoleRestrictions,
+          teamAssignAccessRole: sub.teamAssignAccessRole,
+          dueDate: targetDueDate,
+        },
+      });
 
-  await prisma.task.update({
-    where: { id: sourceTaskId },
-    data: {
-      recurringConfig: updatedConfig as any,
-    },
-  });
+      if (sub.checklists && sub.checklists.length > 0) {
+        for (const cl of sub.checklists) {
+          const createdChecklist = await prisma.checklist.create({
+            data: {
+              name: cl.name,
+              taskId: newTask.id,
+              subtaskId: createdSubtask.id,
+            },
+          });
 
-  // 5. Invalidate caches and broadcast via WebSocket
-  await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
+          if (cl.items && cl.items.length > 0) {
+            const sortedItems = [...cl.items].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+            await prisma.checklistItem.createMany({
+              data: sortedItems.map((item) => ({
+                checklistId: createdChecklist.id,
+                text: item.text,
+                completed: item.completed,
+                checkedById: item.checkedById,
+                assigneeId: item.assigneeId,
+              })),
+            });
+          }
+        }
+      }
+    }
+  }
 
+  // 5. Update the source recurring task's lastRunAt only if it had a recurringConfig
+  if (config) {
+    await prisma.task.update({
+      where: { id: sourceTaskId },
+      data: {
+        recurringConfig: {
+          ...config,
+          lastRunAt: new Date().toISOString(),
+        } as any,
+      },
+    });
+  }
+
+  // 6. Broadcast via WebSocket immediately
   const fullNewTask = await prisma.task.findUnique({
     where: { id: newTask.id },
     include: taskInclude,
@@ -283,6 +339,9 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
   if (fullNewTask) {
     io.emit('task:created', fullNewTask);
   }
+
+  // Invalidate caches in background (non-blocking)
+  invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all').catch(() => {});
 
   return fullNewTask;
 }
@@ -293,20 +352,25 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
  */
 export async function checkAndRunRecurringTasks() {
   try {
-    const recurringTasks = await prisma.task.findMany({
-      where: {
-        OR: [
-          { recurringConfig: { not: Prisma.DbNull } },
-          { status: { in: ['DAILY', 'Daily', 'WEEKLY', 'Weekly', 'MONTHLY', 'Monthly'] } },
-        ],
-      },
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        recurringConfig: true,
-      },
-    });
+    const recurringTasks = (
+      await prisma.task.findMany({
+        where: {
+          recurringConfig: { not: Prisma.DbNull },
+        },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          recurringConfig: true,
+        },
+      })
+    ).filter(
+      (t) =>
+        t.recurringConfig !== null &&
+        t.recurringConfig !== undefined &&
+        typeof t.recurringConfig === 'object' &&
+        !!(t.recurringConfig as any).time
+    );
 
     const now = new Date();
 
@@ -394,5 +458,196 @@ export async function checkAndRunRecurringTasks() {
     }
   } catch (error) {
     console.error('[RecurringTasks] Error checking recurring tasks:', error);
+  }
+}
+
+export interface RecurringRolloverOptions {
+  dateOverride?: string | Date;
+  force?: boolean;
+}
+
+export interface RecurringRolloverResult {
+  success: boolean;
+  date: string;
+  totalChecked: number;
+  createdCount: number;
+  skippedCount: number;
+  created: Array<{
+    sourceTaskId: string;
+    newTaskId?: string;
+    title?: string;
+    frequency: string;
+  }>;
+  skipped: Array<{
+    taskId: string;
+    title: string;
+    reason: string;
+  }>;
+}
+
+/**
+ * Daily Rollover function for recurring tasks:
+ * Queries all recurring tasks from Prisma (status: Daily / Weekly or recurringConfig set).
+ * Evaluates whether they are due today (Daily: every day; Weekly: Mon-Fri or configured daysOfWeek).
+ * Duplicates each due recurring task into the list's canonical PENDING status column.
+ * Handles deduplication so running multiple times on the same date is safe (unless force: true).
+ */
+export async function runRecurringDailyRollover(
+  options?: RecurringRolloverOptions
+): Promise<RecurringRolloverResult> {
+  const targetDate = options?.dateOverride ? new Date(options.dateOverride) : new Date();
+  const created: RecurringRolloverResult['created'] = [];
+  const skipped: RecurringRolloverResult['skipped'] = [];
+
+  try {
+    // 1. Pull all active recurring tasks from Prisma (strictly those with a recurringConfig configured)
+    const candidateTasks = (
+      await prisma.task.findMany({
+        where: {
+          AND: [
+            { status: { notIn: ['Closed', 'CLOSED', 'KYC', 'Pin Board', 'PIN BOARD'] } },
+            { recurringConfig: { not: Prisma.DbNull } },
+          ],
+        },
+        include: {
+          list: {
+            include: {
+              statuses: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      })
+    ).filter(
+      (t) =>
+        t.recurringConfig !== null &&
+        t.recurringConfig !== undefined &&
+        typeof t.recurringConfig === 'object' &&
+        !!(t.recurringConfig as any).frequency
+    );
+
+    // 2. Batch load existing pending tasks for today across all lists (avoids N+1 DB round-trips)
+    const todayDateStr = formatRecurrenceDateTime(targetDate, 'Asia/Singapore').dateStr;
+    const existingTodayPending = await prisma.task.findMany({
+      where: {
+        status: { in: ['PENDING', 'Pending'] },
+        title: { contains: todayDateStr },
+      },
+      select: { id: true, listId: true, title: true },
+    });
+    const existingPendingSet = new Set(
+      existingTodayPending.map(p => `${p.listId}:::${cleanTitleFromTimestamp(p.title).toLowerCase()}`)
+    );
+
+    for (const task of candidateTasks) {
+      const config = (task.recurringConfig as RecurringConfig | null) || null;
+      if (!config || !config.frequency) {
+        continue;
+      }
+      const frequency = config.frequency;
+      const timezone = config.timezone || 'Asia/Singapore';
+
+      // Get target date parts in target timezone
+      const { dateStr } = formatRecurrenceDateTime(targetDate, timezone, config.time);
+
+      const dtf = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        weekday: 'short',
+        day: 'numeric',
+      });
+      const parts = dtf.formatToParts(targetDate);
+      const partMap: Record<string, string> = {};
+      for (const p of parts) partMap[p.type] = p.value;
+
+      const weekdayStr = (partMap.weekday || '').toLowerCase(); // 'mon', 'tue', ...
+      const weekdayMap: Record<string, number> = {
+        mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0,
+      };
+      const currentDayNum = weekdayMap[weekdayStr] ?? 1;
+      const currentDayOfMonth = parseInt(partMap.day || '1', 10);
+
+      // Check schedule eligibility
+      let isDue = false;
+      if (frequency === 'DAILY') {
+        isDue = true;
+      } else if (frequency === 'WEEKLY') {
+        const targetDays = config?.daysOfWeek && config.daysOfWeek.length > 0
+          ? config.daysOfWeek
+          : [1, 2, 3, 4, 5]; // Default Monday to Friday
+        isDue = targetDays.includes(currentDayNum);
+      } else if (frequency === 'MONTHLY') {
+        const targetDayOfMonth = config?.dayOfMonth || 1;
+        isDue = currentDayOfMonth === targetDayOfMonth;
+      }
+
+      if (!isDue) {
+        skipped.push({
+          taskId: task.id,
+          title: task.title,
+          reason: `Not due today (${frequency}, day: ${weekdayStr})`,
+        });
+        continue;
+      }
+
+      // Idempotency: Prevent duplicate pending task on the same date unless force is enabled
+      if (!options?.force) {
+        if (config?.lastRunAt) {
+          const lastRunDateStr = formatRecurrenceDateTime(new Date(config.lastRunAt), timezone).dateStr;
+          if (lastRunDateStr === dateStr) {
+            skipped.push({
+              taskId: task.id,
+              title: task.title,
+              reason: `Already ran today (${dateStr})`,
+            });
+            continue;
+          }
+        }
+
+        const baseTitle = cleanTitleFromTimestamp(task.title);
+        const lookupKey = `${task.listId}:::${baseTitle.toLowerCase()}`;
+        if (existingPendingSet.has(lookupKey)) {
+          skipped.push({
+            taskId: task.id,
+            title: task.title,
+            reason: `Pending task already exists for ${dateStr}`,
+          });
+          continue;
+        }
+      }
+
+      // Execute duplication into PENDING
+      try {
+        const duplicated = await duplicateRecurringTask(task.id, targetDate);
+        created.push({
+          sourceTaskId: task.id,
+          newTaskId: duplicated?.id,
+          title: duplicated?.title,
+          frequency,
+        });
+        const baseTitle = cleanTitleFromTimestamp(task.title);
+        existingPendingSet.add(`${task.listId}:::${baseTitle.toLowerCase()}`);
+        console.log(`[RecurringRollover] Duplicated "${task.title}" (${task.id}) -> "${duplicated?.title}" into PENDING.`);
+      } catch (dupErr: any) {
+        console.error(`[RecurringRollover] Error duplicating "${task.title}":`, dupErr);
+        skipped.push({
+          taskId: task.id,
+          title: task.title,
+          reason: `Error during duplication: ${dupErr?.message || dupErr}`,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      date: formatRecurrenceDateTime(targetDate, 'Asia/Singapore').dateStr,
+      totalChecked: candidateTasks.length,
+      createdCount: created.length,
+      skippedCount: skipped.length,
+      created,
+      skipped,
+    };
+  } catch (err: any) {
+    console.error('[RecurringRollover] Critical failure running recurring rollover:', err);
+    throw err;
   }
 }

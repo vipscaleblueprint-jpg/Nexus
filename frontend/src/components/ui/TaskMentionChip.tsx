@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { AlignLeft, CheckCircle2, Flag, Shield, Users2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { loadTask } from '@/lib/taskBatchLoader';
-import { getStatusColor, splitTitleForWrap } from '@/components/editor/nodes/TaskMentionNode';
+import { getStatusColor } from '@/components/editor/nodes/TaskMentionNode';
 import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
 import { getPriorityConfig } from '@/lib/priority';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
@@ -102,7 +102,6 @@ export function TaskMentionChip({
     : 'bg-[var(--task-chip)] hover:bg-[var(--task-chip)]/80';
   const chipRing = isSubtask ? 'border-[var(--task-chip-sub)]' : 'border-[var(--task-chip)]';
 
-  const [titleHead, titleTail] = splitTitleForWrap(resolvedTitle);
   const titleClass = `cursor-pointer border-b pb-[1px] transition-all duration-300 align-middle ${
     isTitleHovered ? 'border-zinc-500' : 'border-transparent'
   } ${isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'}`;
@@ -122,16 +121,16 @@ export function TaskMentionChip({
   };
 
   const titleProps = {
-    title: 'Open Task Detail',
+    title: resolvedTitle ? `${resolvedTitle} (Click to open)` : 'Open Task Detail',
     onMouseEnter: () => setIsTitleHovered(true),
     onMouseLeave: () => setIsTitleHovered(false),
     onClick: openTask,
   };
 
   return (
-    <span className={`inline-block align-middle my-0.5 mx-0.5 select-none ${className}`}>
+    <span className={`inline-block align-middle my-0.5 mx-0.5 select-none max-w-full ${className}`}>
       <span
-        className={`relative inline-flex items-center align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 box-decoration-clone leading-relaxed ${chipBg} ${
+        className={`relative inline-flex items-center align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 max-w-full leading-relaxed ${chipBg} ${
           isClosed ? 'opacity-75' : ''
         }`}
       >
@@ -154,18 +153,16 @@ export function TaskMentionChip({
           )}
         </span>
 
-        {/* Title Head */}
-        {titleHead && (
-          <span className={titleClass} {...titleProps}>
-            {titleHead}
-          </span>
-        )}
+        {/* Task Title */}
+        <span
+          className={`${titleClass} mr-1.5 truncate max-w-[220px] sm:max-w-[340px] md:max-w-[440px] shrink min-w-[50px]`}
+          {...titleProps}
+        >
+          {resolvedTitle}
+        </span>
 
-        {/* Title Tail + Controls wrapped together */}
-        <span className="whitespace-nowrap inline-flex items-center">
-          <span className={`${titleClass} mr-1.5`} {...titleProps}>
-            {titleTail}
-          </span>
+        {/* Controls */}
+        <span className="whitespace-nowrap inline-flex items-center shrink-0">
 
           {/* Deliverables AlignLeft icon */}
           <span

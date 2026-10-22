@@ -115,6 +115,12 @@
   --color-indigo-100: #3730a3;
   --color-indigo-200: #4338ca;
   --color-indigo-300: #4f46e5;
+
+  /* Pale purple text (used for recurring badges/schedules on dark) → readable on light */
+  --color-purple-100: #581c87;
+  --color-purple-200: #6b21a8;
+  --color-purple-300: #7e22ce;
+  --color-purple-400: #9333ea;
 }
 
 /* Fix Tailwind Typography hardcoded #fff in dark:prose-invert */
@@ -138,7 +144,9 @@
   .bg-violet-500, .bg-violet-600, .bg-purple-500, .bg-purple-600,
   .bg-rose-500, .bg-rose-600, .bg-red-500, .bg-red-600,
   .bg-pink-500, .bg-pink-600, .bg-amber-500, .bg-orange-500, .bg-teal-500,
-  [class*="bg-[#"]:not([class*="]/"])
+  [class*="bg-[#"]:not([class*="]/"]),
+  [class*="from-purple-"], [class*="from-indigo-"], [class*="from-blue-"], [class*="from-violet-"],
+  [class*="bg-gradient-"]
 ) {
   --color-white: #FFFFFF;
 }
@@ -284,12 +292,14 @@ input:disabled,
 
 /* Light mode: --border is near-white, so give thumbs real contrast
    (also overrides the faint tinted thumbs on Kanban columns / board) */
+:root.theme-light ::-webkit-scrollbar-thumb,
 .theme-light ::-webkit-scrollbar-thumb {
-  background-color: #999999;
+  background-color: #999999 !important;
   border-radius: 6px;
 }
+:root.theme-light ::-webkit-scrollbar-thumb:hover,
 .theme-light ::-webkit-scrollbar-thumb:hover {
-  background-color: #666666;
+  background-color: #666666 !important;
 }
 
 /* Prominent, accessible Kanban horizontal scrollbar */
@@ -319,6 +329,28 @@ input:disabled,
 
 .kanban-board-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(168, 85, 247, 0.9) !important;
+}
+
+/* Light mode overrides for Kanban horizontal scrollbar */
+:root.theme-light .kanban-board-scroll,
+.theme-light .kanban-board-scroll {
+  scrollbar-color: #999999 rgba(0, 0, 0, 0.08);
+}
+
+:root.theme-light .kanban-board-scroll::-webkit-scrollbar-track,
+.theme-light .kanban-board-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.08) !important;
+}
+
+:root.theme-light .kanban-board-scroll::-webkit-scrollbar-thumb,
+.theme-light .kanban-board-scroll::-webkit-scrollbar-thumb {
+  background: #999999 !important;
+  border: 2px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+:root.theme-light .kanban-board-scroll::-webkit-scrollbar-thumb:hover,
+.theme-light .kanban-board-scroll::-webkit-scrollbar-thumb:hover {
+  background: #666666 !important;
 }
 
 /* Notion-style Rich Text Editor overrides */

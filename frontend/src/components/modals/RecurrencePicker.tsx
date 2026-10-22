@@ -155,17 +155,17 @@ export function RecurrencePicker({
   };
 
   return (
-    <div className="w-[320px] p-3.5 bg-background border border-zinc-800 rounded-xl shadow-2xl text-zinc-200 select-none flex flex-col gap-3 font-sans">
+    <div className="w-[320px] p-3.5 bg-card border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl text-foreground select-none flex flex-col gap-3 font-sans">
       {/* Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
+      <div className="flex items-center justify-between pb-2 border-b border-zinc-200 dark:border-zinc-800/80">
         <div className="flex items-center gap-2">
-          <Repeat className="w-4 h-4 text-purple-400" />
-          <span className="text-xs font-bold uppercase tracking-wider text-zinc-100">
+          <Repeat className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+          <span className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
             Set Recurring Schedule
           </span>
         </div>
         {existingConfig && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-medium">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 font-medium">
             Active
           </span>
         )}
@@ -189,22 +189,22 @@ export function RecurrencePicker({
 
       {/* Frequency: Based on Task Status */}
       {isStatusDefined ? (
-        <div className="flex items-center justify-between px-3 py-1.5 bg-purple-950/40 border border-purple-500/30 rounded-lg">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-500/30 rounded-lg">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-600 dark:bg-purple-500"></span>
             </span>
-            <span className="text-xs font-bold text-zinc-100">
+            <span className="text-xs font-bold text-purple-950 dark:text-zinc-100">
               {statusUpper === 'DAILY' ? 'Daily Schedule' : statusUpper === 'WEEKLY' ? 'Weekly Schedule' : 'Monthly Schedule'}
             </span>
           </div>
-          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-purple-600/30 text-purple-200 border border-purple-500/40">
+          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-600/30 text-purple-700 dark:text-purple-200 border border-purple-300 dark:border-purple-500/40">
             {statusUpper}
           </span>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800/60">
+        <div className="grid grid-cols-3 gap-1 bg-zinc-100 dark:bg-zinc-900/80 p-1 rounded-lg border border-zinc-200 dark:border-zinc-800/60">
           {(['DAILY', 'WEEKLY', 'MONTHLY'] as const).map((f) => (
             <button
               key={f}
@@ -212,8 +212,8 @@ export function RecurrencePicker({
               onClick={() => setCustomFrequency(f)}
               className={`py-1.5 text-[11px] font-semibold rounded-md transition-all ${
                 frequency === f
-                  ? 'bg-purple-600 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                  ? 'bg-purple-600 text-[#ffffff] shadow-sm'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50'
               }`}
             >
               {f === 'DAILY' ? 'Daily' : f === 'WEEKLY' ? 'Weekly' : 'Monthly'}
@@ -223,16 +223,16 @@ export function RecurrencePicker({
       )}
 
       {frequency === 'WEEKLY' && (
-        <div className="flex flex-col gap-2 p-2 rounded-lg bg-zinc-900/40 border border-zinc-800/50">
+        <div className="flex flex-col gap-2 p-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800/50">
           <div className="flex items-center justify-between">
-            <label className="text-[11px] font-medium text-zinc-200 flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+            <label className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
               Days: Mon to Fri
             </label>
             <button
               type="button"
               onClick={handleSelectWorkdays}
-              className="text-[10px] font-semibold text-purple-400 hover:text-purple-300 hover:underline transition-colors"
+              className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 hover:underline transition-colors"
             >
               Select Mon-Fri
             </button>
@@ -247,8 +247,8 @@ export function RecurrencePicker({
                   onClick={() => handleToggleDay(d.value)}
                   className={`w-7 h-7 text-[11px] font-bold rounded-md transition-all flex items-center justify-center ${
                     isSelected
-                      ? 'bg-purple-600 text-white shadow-sm ring-1 ring-purple-400/50'
-                      : 'bg-zinc-800/60 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                      ? 'bg-purple-600 text-[#ffffff] shadow-sm ring-1 ring-purple-400/50'
+                      : 'bg-zinc-100 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-200'
                   }`}
                   title={d.label}
                 >
@@ -261,13 +261,13 @@ export function RecurrencePicker({
       )}
 
       {frequency === 'MONTHLY' && (
-        <div className="flex flex-col gap-2 p-2 rounded-lg bg-zinc-900/40 border border-zinc-800/50">
-          <label className="text-[11px] font-medium text-zinc-200 flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+        <div className="flex flex-col gap-2 p-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800/50">
+          <label className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
             Every Month Date
           </label>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-400">Day:</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Day:</span>
             <input
               type="number"
               min={1}
@@ -277,29 +277,29 @@ export function RecurrencePicker({
                 const val = parseInt(e.target.value, 10);
                 if (!isNaN(val)) setDayOfMonth(Math.max(1, Math.min(31, val)));
               }}
-              className="w-16 bg-zinc-900 border border-zinc-700/80 rounded-md px-2 py-1 text-center text-xs text-zinc-100 font-bold focus:outline-none focus:border-purple-500 shadow-inner"
+              className="w-16 bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700/80 rounded-md px-2 py-1 text-center text-xs text-zinc-900 dark:text-zinc-100 font-bold focus:outline-none focus:border-purple-500 shadow-inner"
             />
-            <span className="text-[11px] text-zinc-400">of every month</span>
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">of every month</span>
           </div>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setDayOfMonth(1)}
-              className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium"
+              className="text-[10px] px-2 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium"
             >
               1st
             </button>
             <button
               type="button"
               onClick={() => setDayOfMonth(15)}
-              className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium"
+              className="text-[10px] px-2 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium"
             >
               15th
             </button>
             <button
               type="button"
               onClick={() => setDayOfMonth(new Date().getDate())}
-              className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium"
+              className="text-[10px] px-2 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium"
             >
               Today ({new Date().getDate()})
             </button>
@@ -310,8 +310,8 @@ export function RecurrencePicker({
       {/* Time Picker & Quick Presets */}
       <div className="flex flex-col gap-1.5 pt-1">
         <div className="flex items-center justify-between">
-          <label className="text-[11px] font-medium text-zinc-200 flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+          <label className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
             Set Time ({formattedTime || 'e.g. 9pm or 9:30pm'})
           </label>
           <input
@@ -319,7 +319,7 @@ export function RecurrencePicker({
             value={time}
             onChange={(e) => setTime(e.target.value)}
             style={{ colorScheme: 'dark' }}
-            className="recurrence-time-input bg-zinc-900 border border-zinc-700/80 rounded px-2.5 py-1 text-xs text-zinc-100 font-semibold focus:outline-none focus:border-purple-500 shadow-inner [color-scheme:dark]"
+            className="recurrence-time-input bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700/80 rounded px-2.5 py-1 text-xs text-zinc-900 dark:text-zinc-100 font-semibold focus:outline-none focus:border-purple-500 shadow-inner [color-scheme:dark]"
           />
         </div>
 
@@ -334,8 +334,8 @@ export function RecurrencePicker({
                 onClick={() => setTime(p.value)}
                 className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
                   isMatch
-                    ? 'bg-purple-600 text-white font-bold ring-1 ring-purple-400'
-                    : 'bg-zinc-800/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                    ? 'bg-purple-600 text-[#ffffff] font-bold ring-1 ring-purple-400'
+                    : 'bg-zinc-100 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-200'
                 }`}
               >
                 {p.display}
@@ -346,27 +346,27 @@ export function RecurrencePicker({
       </div>
 
       {/* Live Title Preview in PENDING */}
-      <div className="p-2.5 rounded-lg bg-zinc-900/90 border border-purple-500/20 flex flex-col gap-1">
+      <div className="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900/90 border border-purple-200 dark:border-purple-500/20 flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1">
-            <Sparkles className="w-3 h-3" /> Creates in Pending:
+          <span className="text-[10px] font-bold text-purple-700 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" /> Creates in Pending:
           </span>
         </div>
-        <p className="text-[11px] text-zinc-100 font-medium break-words leading-tight">
+        <p className="text-[11px] text-zinc-900 dark:text-zinc-100 font-medium break-words leading-tight">
           {previewTitle}
         </p>
       </div>
 
       {/* Actions */}
-      <div className="flex flex-col gap-2 pt-1 border-t border-zinc-800/80">
+      <div className="flex flex-col gap-2 pt-1 border-t border-zinc-200 dark:border-zinc-800/80">
         <button
           type="button"
           disabled={isSaving}
           onClick={() => handleSave(true)}
-          className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold rounded-lg shadow-md transition-all cursor-pointer active:scale-[0.98] disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-[#ffffff] text-xs font-bold rounded-lg shadow-md transition-all cursor-pointer active:scale-[0.98] disabled:opacity-50"
         >
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>{isSaving ? 'Saving...' : 'Save & Duplicate to PENDING'}</span>
+          <Sparkles className="w-3.5 h-3.5 text-[#ffffff]" />
+          <span className="text-[#ffffff]">{isSaving ? 'Saving...' : 'Save & Duplicate to PENDING'}</span>
         </button>
 
         <div className="flex items-center gap-1.5">
@@ -374,7 +374,7 @@ export function RecurrencePicker({
             type="button"
             disabled={isSaving}
             onClick={() => handleSave(false)}
-            className="flex-1 py-1.5 px-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium rounded-lg transition-colors cursor-pointer text-center"
+            className="flex-1 py-1.5 px-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-[11px] font-medium rounded-lg transition-colors cursor-pointer text-center"
           >
             Save Schedule Only
           </button>
@@ -397,9 +397,9 @@ export function RecurrencePicker({
             type="button"
             disabled={isDuplicating}
             onClick={handleManualDuplicate}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-purple-300 text-[11px] font-medium rounded-lg transition-colors cursor-pointer"
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-zinc-50 hover:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-purple-700 dark:text-purple-300 text-[11px] font-medium rounded-lg transition-colors cursor-pointer"
           >
-            <Copy className="w-3.5 h-3.5" />
+            <Copy className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
             <span>{isDuplicating ? 'Duplicating...' : 'Duplicate to Pending Now'}</span>
           </button>
         )}

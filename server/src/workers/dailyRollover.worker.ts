@@ -14,6 +14,7 @@ import {
   taskMentionIds,
   NEW_TASK_BADGE,
 } from '../utils/pageBlocks';
+import { runRecurringDailyRollover } from '../services/recurringTaskService';
 
 // KYC, Closed, and Pin Board items never roll over (status is free text, so match any casing)
 const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
@@ -421,6 +422,13 @@ export const dailyRolloverWorker = new Worker(
     if (job.name === JOURNAL_CATCH_UP_JOB) return appendMissingTasksToJournal();
     logger.info('Running DailyRollover job (Dynamic Generation)...');
     await runDailyRollover(job.data);
+    logger.info('Running Daily Recurring Tasks Rollover...');
+    try {
+      const recurringRes = await runRecurringDailyRollover(job.data);
+      logger.info(`Finished Recurring Tasks Rollover: created ${recurringRes.createdCount}, skipped ${recurringRes.skippedCount}`);
+    } catch (recErr) {
+      logger.error(`Recurring Tasks Rollover failed: ${errMsg(recErr)}`);
+    }
     logger.info('Finished DailyRollover job.');
   },
   { connection: redis }

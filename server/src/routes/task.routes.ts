@@ -28,6 +28,7 @@ import {
   deleteTaskAttachment,
   setTaskRecurrence,
   duplicateTaskToPending,
+  triggerRecurringRollover,
 } from '../controllers/task.controller';
 import { idParams, idAndSubtaskIdParams, idAndChecklistIdParams, idChecklistIdItemIdParams, idAndCommentIdParams, validate } from '../validation';
 import {
@@ -48,6 +49,7 @@ taskRouter.post('/', validate({ body: createTaskSchema }), createTask);
 taskRouter.post('/batch', validate({ body: batchGetTasksSchema }), batchGetTasks);
 
 // Specific paths before '/:id' so they are not swallowed by the param route.
+taskRouter.post('/recurring/rollover', optionalAuthenticateToken, triggerRecurringRollover);
 taskRouter.patch('/:id/move', optionalAuthenticateToken, validate({ params: idParams, body: moveTaskSchema }), moveTask);
 taskRouter.post(
   '/:id/attachments/r2-url',

@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import {
   Bell,
   Check,
-  CheckCheck,
   Clock,
   MessageSquare,
   AtSign,
@@ -107,8 +106,44 @@ export function NotificationBell() {
         });
       }
     };
+
+    const handleRead = (e: any) => {
+      const id = e.detail?.id;
+      if (id) {
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+      }
+    };
+
+    const handleAllRead = () => {
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    };
+
+    const handleCleared = (e: any) => {
+      const id = e.detail?.id;
+      if (id) {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+      }
+    };
+
+    const handleAllCleared = () => {
+      setNotifications([]);
+      setUnreadCount(0);
+    };
+
     window.addEventListener("notification_received", handleActivity);
-    return () => window.removeEventListener("notification_received", handleActivity);
+    window.addEventListener("notification_read", handleRead);
+    window.addEventListener("notifications_all_read", handleAllRead);
+    window.addEventListener("notification_cleared", handleCleared);
+    window.addEventListener("notifications_all_cleared", handleAllCleared);
+
+    return () => {
+      window.removeEventListener("notification_received", handleActivity);
+      window.removeEventListener("notification_read", handleRead);
+      window.removeEventListener("notifications_all_read", handleAllRead);
+      window.removeEventListener("notification_cleared", handleCleared);
+      window.removeEventListener("notifications_all_cleared", handleAllCleared);
+    };
   }, [isOpen, activeTab, loadNotifications, setUnreadCount]);
 
   const loadMore = () => {
@@ -132,25 +167,14 @@ export function NotificationBell() {
     loadNotifications(1, newTab);
   };
 
-  const handleMarkAsRead = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleMarkAsRead = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     try {
       await notificationsApi.markAsRead(id);
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
       setUnreadCount(Math.max(0, unreadCount - 1));
     } catch (error) {
       console.error("Failed to mark as read", error);
-    }
-  };
-
-  const handleMarkAllAsRead = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      await notificationsApi.markAllAsRead();
-      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-      setUnreadCount(0);
-    } catch (error) {
-      console.error("Failed to mark all as read", error);
     }
   };
 
@@ -273,17 +297,6 @@ export function NotificationBell() {
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                {unreadCount > 0 && (
-                  <button
-                    onClick={handleMarkAllAsRead}
-                    className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1 cursor-pointer"
-                  >
-                    <CheckCheck className="w-3.5 h-3.5" />
-                    <span>Mark all read</span>
-                  </button>
-                )}
-              </div>
             </div>
 
             {/* Segmented Filter Tabs */}
@@ -378,6 +391,9 @@ export function NotificationBell() {
                         key={n.id}
                         onClick={() => {
                           setIsOpen(false);
+                          if (!n.isRead) {
+                            handleMarkAsRead(n.id);
+                          }
                           if (n.task?.id) {
                             router.push(`/tasks/${n.task.id}`);
                           } else {

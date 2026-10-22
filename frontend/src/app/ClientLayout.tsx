@@ -95,6 +95,11 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     const s = io(API_BASE_URL, { withCredentials: true });
     s.on('connect', () => {
       s.emit('join_user', currentUser.id);
+      notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+        if (typeof res.unreadCount === 'number') {
+          setUnreadNotifications(res.unreadCount);
+        }
+      }).catch(() => {});
     });
     if (isPerfEnabled()) s.onAny((event) => recordSocketEvent(event));
 
@@ -109,6 +114,25 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     s.on('notification_received', () => {
       setUnreadNotifications(useAppStore.getState().unreadNotifications + 1);
       window.dispatchEvent(new CustomEvent('notification_received'));
+    });
+
+    s.on('notification_read', (data: { id: string }) => {
+      useAppStore.getState().decrementUnreadNotifications();
+      window.dispatchEvent(new CustomEvent('notification_read', { detail: data }));
+    });
+
+    s.on('notifications_all_read', () => {
+      setUnreadNotifications(0);
+      window.dispatchEvent(new CustomEvent('notifications_all_read'));
+    });
+
+    s.on('notification_cleared', (data: { id: string }) => {
+      window.dispatchEvent(new CustomEvent('notification_cleared', { detail: data }));
+    });
+
+    s.on('notifications_all_cleared', () => {
+      setUnreadNotifications(0);
+      window.dispatchEvent(new CustomEvent('notifications_all_cleared'));
     });
 
     s.on('task_activity', () => {

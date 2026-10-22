@@ -31,7 +31,7 @@ export async function triggerDailyRollover(req: Request, res: Response) {
   try {
     const { dateOverride, force } = req.body || {};
     const result = await runDailyRollover({ dateOverride, force });
-    await invalidateCache('spaces:all', 'dashboard:all');
+    await invalidateCache('spaces:all', 'dashboard:all', 'tasks:all');
     return res.json({ success: true, result });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

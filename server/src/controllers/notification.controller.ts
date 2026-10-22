@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { io } from '../server';
 
 // GET /api/notifications
 export async function getNotifications(req: Request, res: Response) {
@@ -72,10 +73,34 @@ export async function getNotifications(req: Request, res: Response) {
 export async function clearNotification(req: Request, res: Response) {
   try {
     const { id } = req.params;
+    const authReq = req as any;
+    if (!authReq.user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const existing = await prisma.taskNotification.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      return res.json({ notification: null });
+    }
+
+    if (existing.userId !== authReq.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    if (existing.isCleared) {
+      return res.json({ notification: existing });
+    }
+
     const notification = await prisma.taskNotification.update({
       where: { id },
       data: { isCleared: true },
     });
+
+    io.to(`user:${authReq.user.id}`).emit('notification_cleared', { id });
+
     return res.json({ notification });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -86,10 +111,34 @@ export async function clearNotification(req: Request, res: Response) {
 export async function markAsRead(req: Request, res: Response) {
   try {
     const { id } = req.params;
+    const authReq = req as any;
+    if (!authReq.user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const existing = await prisma.taskNotification.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      return res.json({ notification: null });
+    }
+
+    if (existing.userId !== authReq.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    if (existing.isRead) {
+      return res.json({ notification: existing });
+    }
+
     const notification = await prisma.taskNotification.update({
       where: { id },
       data: { isRead: true },
     });
+
+    io.to(`user:${authReq.user.id}`).emit('notification_read', { id });
+
     return res.json({ notification });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -100,9 +149,15 @@ export async function markAsRead(req: Request, res: Response) {
 export async function deleteCleared(req: Request, res: Response) {
   try {
     const authReq = req as any;
+    if (!authReq.user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     await prisma.taskNotification.deleteMany({
       where: { userId: authReq.user.id, isCleared: true },
     });
+
+    io.to(`user:${authReq.user.id}`).emit('notifications_deleted_cleared');
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -125,6 +180,9 @@ export async function markAllAsRead(req: Request, res: Response) {
       },
       data: { isRead: true },
     });
+
+    io.to(`user:${authReq.user.id}`).emit('notifications_all_read');
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -146,6 +204,9 @@ export async function clearAll(req: Request, res: Response) {
       },
       data: { isCleared: true, isRead: true },
     });
+
+    io.to(`user:${authReq.user.id}`).emit('notifications_all_cleared');
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

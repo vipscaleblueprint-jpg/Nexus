@@ -10,7 +10,7 @@ import React, { memo, useMemo } from 'react';
 import { AlignLeft, CheckCircle2, Flag, Shield, Users2 } from 'lucide-react';
 import { BLOCK_EDITOR_CONTENT_CLASS } from '@/components/ui/BlockEditor';
 import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
-import { getStatusColor, splitTitleForWrap } from '@/components/editor/nodes/TaskMentionNode';
+import { getStatusColor } from '@/components/editor/nodes/TaskMentionNode';
 import { getPriorityConfig } from '@/lib/priority';
 import { parseNexusTaskLink } from '@/lib/links';
 
@@ -70,7 +70,6 @@ function MentionChipPreview({ el }: { el: Element }) {
   const isClosed = ['CLOSED', 'DONE'].includes((statusName || '').toUpperCase());
   const chipBg = isSubtask ? 'bg-[var(--task-chip-sub)]' : 'bg-[var(--task-chip)]';
   const chipRing = isSubtask ? 'border-[var(--task-chip-sub)]' : 'border-[var(--task-chip)]';
-  const [titleHead, titleTail] = splitTitleForWrap(label);
   const titleClass = `border-b border-transparent pb-[1px] align-middle ${isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'}`;
 
   return (
@@ -88,10 +87,14 @@ function MentionChipPreview({ el }: { el: Element }) {
             <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: statusColor }} />
           )}
         </span>
-        {titleHead && <span className={titleClass}>{titleHead}</span>}
-        {/* Title tail + controls wrap as one unit, as in TaskMentionNode */}
-        <span className="whitespace-nowrap">
-        <span className={`${titleClass} mr-1.5`}>{titleTail}</span>
+        <span
+          className={`${titleClass} mr-1.5 truncate max-w-[220px] sm:max-w-[340px] md:max-w-[440px] shrink min-w-[50px] inline-block align-middle`}
+          title={label}
+        >
+          {label}
+        </span>
+        {/* Controls */}
+        <span className="whitespace-nowrap inline-flex items-center align-middle shrink-0">
         <span className="inline-flex items-center justify-center p-0.5 text-zinc-500 rounded mr-1.5 align-middle">
           <AlignLeft className="w-3.5 h-3.5" />
         </span>

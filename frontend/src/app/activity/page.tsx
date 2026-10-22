@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
 import { useAppStore } from '@/lib/store';
 import { notificationsApi, TaskNotification } from '@/api/notifications';
-import { useRouter } from 'next/navigation';
-import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, ChevronLeft, ChevronRight, Users, MessageSquare, Activity, Globe } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, ChevronLeft, ChevronRight, Users, MessageSquare, Activity, Globe, Loader2 } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
 import { tasksApi } from '@/api/tasks';
+import { toast } from '@/lib/toast';
 import { CommentContent } from '@/components/ui/CommentContent';
 import { extractImagesFromContent } from '@/lib/commentImages';
 
@@ -227,22 +228,23 @@ const parseNotifAction = (n: TaskNotification) => {
 };
 
 const parseItemDisplay = (item: any, isAuditLog: boolean) => {
-  if (isAuditLog || item.isAudit) {
+  const isAudit = isAuditLog || !!item.isAudit || !!item.action || !!item.entity || !!item.entityType || String(item.id || '').startsWith('audit_');
+  if (isAudit) {
     const actorName = item.user?.name || item.actor?.name || 'Someone';
     const actorAvatar = item.user?.avatarUrl || item.actor?.avatarUrl || null;
     const { verb, targetTitle } = parseLogAction(item);
     const targetTaskId = item.entityId || item.taskId || item.task?.id;
     const content = item.details?.text || item.content || '';
-    const isUnread = !item.isRead && !item.isAudit;
+    const isUnread = false;
     const action = (item.action || item.type)?.toUpperCase();
     const isComment = action === 'COMMENT' || action === 'REPLY' || action === 'COMMENT_ADDED';
     const isStatus = action === 'STATUS_CHANGE' || action === 'TITLE_CHANGE';
     const isChecklist = action === 'CHECKLIST_ITEM_CHECKED';
-    const isAudit = action === 'AUDIT_ITEM_CHECKED';
+    const isAuditAction = action === 'AUDIT_ITEM_CHECKED';
     const isAssignment = action === 'ASSIGNMENT';
 
-    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
-    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAudit ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
+    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAuditAction ? ShieldCheck : isChecklist ? CheckSquare : Globe;
+    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAuditAction ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
 
     return {
       id: item.id,
@@ -257,23 +259,24 @@ const parseItemDisplay = (item: any, isAuditLog: boolean) => {
       IconToUse,
       iconBg,
       rawItem: item,
+      isAudit: true,
     };
   } else {
     const { actorName, verb, targetTitle } = parseNotifAction(item);
     const actorAvatar = item.actor?.imageUrl || item.actor?.avatarUrl || null;
     const targetTaskId = item.task?.id || item.taskId || item.entityId;
     const content = item.content || item.details?.text || '';
-    const isUnread = !item.isRead;
+    const isUnread = item.isRead === false;
     const type = item.type?.toUpperCase();
 
     const isComment = type === 'COMMENT' || type === 'REPLY' || type === 'MENTION';
     const isStatus = type === 'STATUS_CHANGE';
     const isChecklist = type === 'CHECKLIST_ITEM_CHECKED';
-    const isAudit = type === 'AUDIT_ITEM_CHECKED';
+    const isAuditAction = type === 'AUDIT_ITEM_CHECKED';
     const isAssignment = type === 'ASSIGNMENT';
 
-    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAudit ? ShieldCheck : isChecklist ? CheckSquare : Globe;
-    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAudit ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
+    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAuditAction ? ShieldCheck : isChecklist ? CheckSquare : Globe;
+    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAuditAction ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
 
     return {
       id: item.id,
@@ -288,6 +291,7 @@ const parseItemDisplay = (item: any, isAuditLog: boolean) => {
       IconToUse,
       iconBg,
       rawItem: item,
+      isAudit: false,
     };
   }
 };
@@ -303,9 +307,12 @@ interface ActivityFeedCache {
 let feedCache: ActivityFeedCache | null = null;
 const FEED_CACHE_TTL_MS = 60_000;
 
-export default function ActivityPage() {
+function ActivityFeedContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { decrementUnreadNotifications, workspaceRoles, currentUser, tasksIndex, tasks } = useAppStore();
+  const hadSelectedTask = useRef(false);
+  const lastUrlTaskId = useRef<string | null>(null);
   const isPrivileged = currentUser?.systemRole === 'ADMIN' || currentUser?.roles?.some((r: string) => /project\s*manager|^pm$|\bsenior\b/i.test(r?.trim()));
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     const user = useAppStore.getState().currentUser;
@@ -390,7 +397,9 @@ export default function ActivityPage() {
             timeFilter,
           }),
         ]);
-        const newNotifs = notifRes.notifications || [];
+        const newNotifs = (notifRes.notifications || []).map((n: TaskNotification) =>
+          !silent ? { ...n, isRead: true } : n
+        );
         const newMyLogs = myAuditRes.logs || [];
         setNotifications(newNotifs);
         setMyAuditLogs(newMyLogs);
@@ -416,13 +425,19 @@ export default function ActivityPage() {
     //   - TaskNotification: n.task.id
     //   - Audit-merged item: n.entityId or n.taskId (set by backend)
     //   - Plain string (URL param)
-    const taskId = typeof n === 'string'
+    const rawTaskId = typeof n === 'string'
       ? n
       : (n.task?.id || (n as any).taskId || (n as any).entityId);
-    if (typeof n !== 'string' && !n.isRead && n.id && !(n as any).isAudit) {
+    const taskId = rawTaskId ? String(rawTaskId).split('/')[0].trim() : null;
+
+    const isAuditItem = isGlobalLogView || (n as any)?.isAudit || !!(n as any)?.action || !!(n as any)?.entity || !!(n as any)?.entityType || String((n as any)?.id || '').startsWith('audit_');
+
+    if (typeof n !== 'string' && !isAuditItem && n.id && n.isRead === false) {
       handleMarkAsRead(n.id);
     }
     if (!taskId) return;
+
+    lastUrlTaskId.current = taskId;
 
     // Preserve scroll position before opening task
     if (feedScrollRef.current) {
@@ -446,6 +461,7 @@ export default function ActivityPage() {
         url.searchParams.set('task', taskId);
         window.history.replaceState(null, '', url.pathname + url.search);
       }
+      hadSelectedTask.current = true;
       setSelectedTask(taskObj);
       return;
     }
@@ -460,25 +476,50 @@ export default function ActivityPage() {
           }
           window.history.replaceState(null, '', url.pathname + url.search);
         }
+        hadSelectedTask.current = true;
         setSelectedTask(res.task);
         return;
       }
     } catch (err) {
       console.warn('Failed to load task for modal:', err);
+      toast.error('Task not found');
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('task');
+        url.searchParams.delete('subtask');
+        window.history.replaceState(null, '', url.pathname + (url.search || ''));
+      }
+      lastUrlTaskId.current = null;
     }
-    router.push(`/tasks/${taskId}?from=/activity`);
   };
+
+  // Open task if ?task= param is present in URL (deep linking or initial load)
+  useEffect(() => {
+    const taskIdParam = searchParams.get('task');
+    const actualTaskId = taskIdParam ? taskIdParam.split('/')[0].trim() : null;
+
+    if (actualTaskId) {
+      if (actualTaskId !== lastUrlTaskId.current && actualTaskId !== selectedTask?.id) {
+        lastUrlTaskId.current = actualTaskId;
+        handleOpenTask(actualTaskId);
+      }
+    } else if (hadSelectedTask.current && selectedTask) {
+      lastUrlTaskId.current = null;
+      setSelectedTask(null);
+    }
+  }, [searchParams]);
 
   // Sync selectedTask to URL searchParams
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       if (selectedTask) {
+        hadSelectedTask.current = true;
         if (url.searchParams.get('task') !== selectedTask.id) {
           url.searchParams.set('task', selectedTask.id);
           window.history.replaceState(null, '', url.pathname + url.search);
         }
-      } else if (url.searchParams.has('task')) {
+      } else if (hadSelectedTask.current && url.searchParams.has('task')) {
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
         window.history.replaceState(null, '', url.pathname + (url.search || ''));
@@ -491,10 +532,22 @@ export default function ActivityPage() {
     fetchData();
   }, [page, limit, category, timeFilter, viewMode, currentUser?.id]);
 
+  // Automatically mark all notifications as read upon opening the Activity page
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const taskId = url.searchParams.get('task');
-    if (taskId) handleOpenTask(taskId);
+    if (currentUser?.id) {
+      notificationsApi.markAllAsRead().then(() => {
+        useAppStore.getState().setUnreadNotifications(0);
+        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+        if (feedCache) {
+          feedCache.notifications = feedCache.notifications.map(n => ({ ...n, isRead: true }));
+        }
+      }).catch(err => {
+        console.error('Failed to mark all as read on activity mount:', err);
+      });
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
     // Live updates: status/name changes, comments and notifications arrive as socket events.
     // Debounced so a burst (e.g. room + global emits, or a doubled integration request) refetches once.
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -503,21 +556,66 @@ export default function ActivityPage() {
       refreshTimer = setTimeout(() => fetchData(true), 400);
     };
     const onClear = () => {
+      lastUrlTaskId.current = null;
       setSelectedTask(null);
       const u = new URL(window.location.href);
       u.searchParams.delete('task');
       window.history.pushState({}, '', u.toString());
     };
+
+    const onRead = (e: any) => {
+      const id = e.detail?.id;
+      if (id) {
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+        if (feedCache) {
+          feedCache.notifications = feedCache.notifications.map(n => n.id === id ? { ...n, isRead: true } : n);
+        }
+      }
+    };
+
+    const onAllRead = () => {
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      if (feedCache) {
+        feedCache.notifications = feedCache.notifications.map(n => ({ ...n, isRead: true }));
+      }
+      useAppStore.getState().setUnreadNotifications(0);
+    };
+
+    const onCleared = (e: any) => {
+      const id = e.detail?.id;
+      if (id) {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+        if (feedCache) {
+          feedCache.notifications = feedCache.notifications.filter(n => n.id !== id);
+        }
+      }
+    };
+
+    const onAllCleared = () => {
+      setNotifications([]);
+      if (feedCache) feedCache.notifications = [];
+      useAppStore.getState().setUnreadNotifications(0);
+    };
+
     window.addEventListener('notification_received', onNew);
     window.addEventListener('task_activity', onNew);
     window.addEventListener('task:comment_added', onNew);
     window.addEventListener('clear_activity_task', onClear);
+    window.addEventListener('notification_read', onRead);
+    window.addEventListener('notifications_all_read', onAllRead);
+    window.addEventListener('notification_cleared', onCleared);
+    window.addEventListener('notifications_all_cleared', onAllCleared);
+
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
       window.removeEventListener('notification_received', onNew);
       window.removeEventListener('task_activity', onNew);
       window.removeEventListener('task:comment_added', onNew);
       window.removeEventListener('clear_activity_task', onClear);
+      window.removeEventListener('notification_read', onRead);
+      window.removeEventListener('notifications_all_read', onAllRead);
+      window.removeEventListener('notification_cleared', onCleared);
+      window.removeEventListener('notifications_all_cleared', onAllCleared);
     };
   }, []);
 
@@ -532,6 +630,7 @@ export default function ActivityPage() {
   }, []);
 
   const handleClear = async (id: string) => {
+    if (!id || id.startsWith('audit_')) return;
     try {
       await notificationsApi.clearNotification(id);
       setNotifications(prev => {
@@ -544,6 +643,7 @@ export default function ActivityPage() {
   };
 
   const handleMarkAsRead = async (id: string) => {
+    if (!id || id.startsWith('audit_')) return;
     try {
       await notificationsApi.markAsRead(id);
       setNotifications(prev => {
@@ -821,7 +921,7 @@ export default function ActivityPage() {
                         key={item.id}
                         onClick={() => {
                           if (item.targetTaskId) {
-                            handleOpenTask(rawItem);
+                            handleOpenTask(item.isAudit ? { ...rawItem, isAudit: true } : rawItem);
                           }
                         }}
                         className="group/card flex gap-4 cursor-pointer relative"
@@ -871,7 +971,7 @@ export default function ActivityPage() {
                                 <span
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (item.targetTaskId) handleOpenTask(rawItem);
+                                    if (item.targetTaskId) handleOpenTask(item.isAudit ? { ...rawItem, isAudit: true } : rawItem);
                                   }}
                                   className="font-medium text-indigo-300 hover:underline cursor-pointer"
                                 >
@@ -1022,6 +1122,7 @@ export default function ActivityPage() {
         isOpen={!!selectedTask}
         onClose={() => {
           setSelectedTask(null);
+          lastUrlTaskId.current = null;
           if (typeof window !== 'undefined') {
             const u = new URL(window.location.href);
             u.searchParams.delete('task');
@@ -1051,5 +1152,17 @@ export default function ActivityPage() {
         onNavigate={(newSrc) => setLightboxImage(newSrc)}
       />
     </div>
+  );
+}
+
+export default function ActivityPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-full w-full items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 text-zinc-500 animate-spin" />
+      </div>
+    }>
+      <ActivityFeedContent />
+    </Suspense>
   );
 }

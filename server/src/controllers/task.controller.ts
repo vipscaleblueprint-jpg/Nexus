@@ -43,7 +43,7 @@ import {
   isAuditItem,
   formatChecklistNotificationTitle,
 } from '../utils/roleNotification';
-import { duplicateRecurringTask } from '../services/recurringTaskService';
+import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -3016,6 +3016,18 @@ export async function duplicateTaskToPending(req: Request, res: Response) {
     return res.json({ task: duplicatedTask });
   } catch (err: any) {
     console.error('duplicateTaskToPending error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/tasks/recurring/rollover
+export async function triggerRecurringRollover(req: Request, res: Response) {
+  try {
+    const { dateOverride, force } = req.body || {};
+    const result = await runRecurringDailyRollover({ dateOverride, force });
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('triggerRecurringRollover error:', err);
     return res.status(500).json({ error: err.message });
   }
 }

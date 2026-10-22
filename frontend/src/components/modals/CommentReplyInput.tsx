@@ -197,7 +197,7 @@ export function CommentReplyInput({
   };
 
   return (
-    <div ref={wrapperRef} className="pl-11 flex gap-2 mt-1 relative w-full">
+    <div ref={wrapperRef} className="pl-11 flex gap-2 mt-1 relative w-full min-w-0 max-w-full">
       <input
         ref={inputRef}
         autoFocus
@@ -206,7 +206,7 @@ export function CommentReplyInput({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         disabled={isSubmitting}
-        className="flex-1 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
+        className="flex-1 min-w-0 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
       />
       <button
         type="button"

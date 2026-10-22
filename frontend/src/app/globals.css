@@ -112,9 +112,10 @@
   --task-chip-sub: #F6F6F6;
 
   /* Pale indigo text (used for selected/active states on dark) → readable on light */
-  --color-indigo-100: #3730a3;
-  --color-indigo-200: #4338ca;
-  --color-indigo-300: #4f46e5;
+  --color-indigo-100: #312e81;
+  --color-indigo-200: #3730a3;
+  --color-indigo-300: #4338ca;
+  --color-indigo-400: #4f46e5;
 
   /* Pale purple text (used for recurring badges/schedules on dark) → readable on light */
   --color-purple-100: #581c87;

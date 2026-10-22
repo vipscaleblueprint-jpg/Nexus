@@ -58,6 +58,8 @@ import { getCachedPage, setCachedPage, forgetCachedPage, type CachedPage } from 
 import { BlockHtmlPreview } from '@/components/editor/BlockHtmlPreview';
 
 const NO_TASKS: Task[] = [];
+const ALT_KEY = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform) ? '⌥' : 'Alt';
+const KBD_CLASS = 'inline-flex h-4 items-center rounded border border-zinc-700 bg-zinc-800 px-1 font-mono text-[10px] text-zinc-300';
 import {
   PageStylesPanel,
   usePageStyles,
@@ -476,7 +478,7 @@ function LazyBlockEditor({ forceMount, onEditorUnmount, ...editorProps }: React.
   return (
     <div ref={wrapperRef}>
       {mounted ? (
-        <BlockEditor {...editorProps} loadingFallback={preview} />
+        <BlockEditor {...editorProps} enableGutter={false} loadingFallback={preview} />
       ) : (
         // A click before the queued mount ran mounts this block right away
         <div style={{ minHeight: releasedHeight }} onPointerDown={() => setNearView(true)}>
@@ -519,6 +521,9 @@ const DocBlockRow = memo(({
   handleToggleCollapse,
   groupState = 'none',
 }: any) => {
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const isBlockEmpty = !block.content || block.content.trim() === '' || block.content === '<p></p>' || block.content === '<p><br></p>' || block.content.replace(/<[^>]*>/g, '').trim() === '';
+
   return (
     <div
       data-block-id={block.id}
@@ -538,70 +543,97 @@ const DocBlockRow = memo(({
       ${draggedBlockIndex === index ? 'bg-blue-500/10 opacity-50' : ''}`}
       style={{ marginLeft: `${(block.depth || 0) * 1.5}rem` }}
     >
-      {/* Left Gutter: +, :: */}
-      <div className={`absolute left-0 top-1.5 transition-opacity flex items-center gap-0.5 z-50 select-none -translate-x-full pr-1 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+      {/* Left Gutter: single adaptive button (+ if blank, :: if content) */}
+      <div className={`absolute left-0 top-1.5 transition-opacity flex items-center z-50 select-none -translate-x-full pr-1 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
         {(!isSelected || isFirstSelected) && (
-          <button
-            className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-pointer"
-            onClick={() => handleAddBlock('text', block.id)}
-            title="Add block below"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-        )}
-        {(!isSelected || isFirstSelected) && (
-          <Popover.Root>
-            <Popover.Trigger asChild>
-              <div
-                draggable={true}
-                onDragStart={(e) => {
-                  handleDragStart(e, index);
-                }}
-                onDragEnd={(e) => {
-                  handleDragEnd();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const newSel = e.shiftKey ? new Set(selectedBlockIds) : new Set<string>();
-                  newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
-                  setSelectedBlockIds(newSel);
-                }}
-                className="flex items-center justify-center w-6 h-6 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing"
-                title="Drag to move · Click to open menu"
-              >
-                <GripVertical className="w-4 h-4 pointer-events-none" />
-              </div>
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Content
-                align="start"
-                side="bottom"
-                className="w-48 p-1 bg-zinc-800 border border-zinc-700/80 rounded-lg shadow-xl z-[9999]"
-              >
-                <div className="px-2 py-1 text-xs text-zinc-400 font-medium">Options</div>
-                <div className="flex flex-col">
-                  <div className="flex flex-col gap-1">
-                    <Popover.Close asChild>
-                      <button 
-                        onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'collapsible'); }}
-                        className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
-                        <ChevronDown className="w-3.5 h-3.5" />
-                        Turn into Collapsible
-                      </button>
-                    </Popover.Close>
-                    <Popover.Close asChild>
-                      <button 
-                        onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'subtask'); }}
-                        className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
-                        <CheckSquare className="w-3.5 h-3.5" />
-                        Turn into Subtask L
-                      </button>
-                    </Popover.Close>
+          isBlockEmpty ? (
+            <button
+              type="button"
+              className="flex items-center justify-center w-5 h-6 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-pointer"
+              onClick={() => handleAddBlock('text', block.id)}
+              title="Click to add block"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <div className="relative group/grip flex items-center">
+              <Popover.Root open={popoverOpen} onOpenChange={setPopoverOpen}>
+                <Popover.Trigger asChild>
+                  <div
+                    draggable={true}
+                    onDragStart={(e) => {
+                      handleDragStart(e, index);
+                    }}
+                    onDragEnd={() => {
+                      handleDragEnd();
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const newSel = e.shiftKey ? new Set(selectedBlockIds) : new Set<string>();
+                      newSel.has(block.id) ? newSel.delete(block.id) : newSel.add(block.id);
+                      setSelectedBlockIds(newSel);
+                    }}
+                    className="flex items-center justify-center w-5 h-6 rounded text-zinc-500 hover:bg-zinc-700/70 hover:text-zinc-200 transition-colors duration-150 cursor-grab active:cursor-grabbing"
+                    aria-label={`Drag to move this line, or press ${ALT_KEY}+↑ / ${ALT_KEY}+↓`}
+                  >
+                    <GripVertical className="w-4 h-4 pointer-events-none" />
+                  </div>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    align="start"
+                    side="bottom"
+                    className="w-48 p-1 bg-zinc-800 border border-zinc-700/80 rounded-lg shadow-xl z-[9999]"
+                  >
+                    <div className="px-2 py-1 text-xs text-zinc-400 font-medium">Options</div>
+                    <div className="flex flex-col">
+                      <div className="flex flex-col gap-1">
+                        <Popover.Close asChild>
+                          <button 
+                            onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'collapsible'); }}
+                            className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
+                            <ChevronDown className="w-3.5 h-3.5" />
+                            Turn into Collapsible
+                          </button>
+                        </Popover.Close>
+                        <Popover.Close asChild>
+                          <button 
+                            onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'subtask'); }}
+                            className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
+                            <CheckSquare className="w-3.5 h-3.5" />
+                            Turn into Subtask L
+                          </button>
+                        </Popover.Close>
+                        <div className="my-1 border-t border-zinc-700/60" />
+                        <Popover.Close asChild>
+                          <button 
+                            onClick={(e) => { handleDeleteBlock && handleDeleteBlock(block.id); }}
+                            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer text-left">
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete Block
+                          </button>
+                        </Popover.Close>
+                      </div>
+                    </div>
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+
+              {/* Tooltip matching Image 2 */}
+              {!popoverOpen && (
+                <div
+                  role="tooltip"
+                  className="pointer-events-none invisible absolute left-full top-1/2 ml-1.5 -translate-y-1/2 whitespace-nowrap rounded-lg border border-zinc-700 bg-popover px-2.5 py-1.5 text-[11px] leading-5 text-zinc-300 opacity-0 shadow-xl transition-opacity delay-0 group-hover/grip:visible group-hover/grip:opacity-100 group-hover/grip:delay-300 z-[99999]"
+                >
+                  <div><span className="font-medium text-zinc-100">Drag</span> to move this line</div>
+                  <div className="flex items-center gap-1">
+                    <kbd className={KBD_CLASS}>{ALT_KEY}</kbd>+<kbd className={KBD_CLASS}>↑</kbd>/<kbd className={KBD_CLASS}>↓</kbd>
+                    <span className="ml-0.5">move it up or down</span>
                   </div>
                 </div>
-              </Popover.Content>
-            </Popover.Portal>
-          </Popover.Root>
+              )}
+            </div>
+          )
         )}
       </div>
 
@@ -1596,6 +1628,24 @@ export default function DocPage({ docId }: { docId?: string }) {
     // Clear block selection when user starts typing normally inside an editor
     if (selectedBlockIdsRef.current.size > 0 && !e.shiftKey && e.key !== 'Escape') {
       setSelectedBlockIds(new Set());
+    }
+
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      const currentBlocks = [...blocksRef.current];
+      const targetIndex = e.key === 'ArrowUp' ? index - 1 : index + 1;
+      if (targetIndex >= 0 && targetIndex < currentBlocks.length) {
+        const temp = currentBlocks[index];
+        currentBlocks[index] = currentBlocks[targetIndex];
+        currentBlocks[targetIndex] = temp;
+        setBlocks(currentBlocks);
+        handleSavePage(currentBlocks);
+        setTimeout(() => {
+          const ed = editorRegistryRef.current[blockId];
+          if (ed) ed.commands.focus();
+        }, 10);
+      }
+      return;
     }
 
     if (e.key === 'Tab') {

@@ -1547,7 +1547,27 @@ export function TaskDetailModalContent({
     }
   }, [socket, task, currentUser]);
 
+  const [isRoleOpen, setIsRoleOpen] = useState(false);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
+  const roleToAssigneeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (roleToAssigneeTimeoutRef.current) {
+        clearTimeout(roleToAssigneeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsRoleOpen(false);
+      setIsAssigneeOpen(false);
+      if (roleToAssigneeTimeoutRef.current) {
+        clearTimeout(roleToAssigneeTimeoutRef.current);
+      }
+    }
+  }, [isOpen]);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [isDateOpen, setIsDateOpen] = useState(false);
   const [isRecurrenceOpen, setIsRecurrenceOpen] = useState(false);
@@ -1895,6 +1915,116 @@ export function TaskDetailModalContent({
     setIsAssigneeOpen(false);
 
     persistAssignees(updatedTask, [], null, [], previousAssignees);
+  };
+
+  const handleSelectAllRoleAssignees = () => {
+    if (!task) return;
+    const allSelected = assignableUsers.length > 0 && assignableUsers.every((u: any) => isUserAssigned(u.id));
+
+    let updatedAssignees: UserModel[];
+    if (allSelected) {
+      // Deselect all assignable users from the current assignees
+      updatedAssignees = (latestAssigneesRef.current || []).filter((u: any) => !assignableUsers.some((au: any) => au.id === u.id));
+    } else {
+      // Select all assignable users, combining with any already assigned
+      const map = new Map<string, UserModel>();
+      (latestAssigneesRef.current || []).forEach((u: any) => map.set(u.id, u));
+      assignableUsers.forEach((u: any) => map.set(u.id, u));
+      updatedAssignees = Array.from(map.values());
+    }
+
+    const updatedIds = updatedAssignees.map((u: any) => u.id);
+    const primaryAssignee = updatedAssignees.length > 0 ? updatedAssignees[0] : null;
+
+    const updatedTask: Task = {
+      ...task,
+      assignees: updatedAssignees,
+      assigneeIds: updatedIds,
+      assignee: primaryAssignee,
+      assigneeId: primaryAssignee?.id || null,
+    };
+
+    const previousAssignees = assigneeBaselineRef.current || latestAssigneesRef.current;
+    assigneeBaselineRef.current = null;
+
+    lastAssigneeUpdateTimestampRef.current = Date.now();
+    latestAssigneesRef.current = updatedAssignees;
+    setLocalAssignees(updatedAssignees);
+    task.assignees = updatedAssignees;
+    task.assigneeIds = updatedIds;
+    task.assignee = primaryAssignee;
+    task.assigneeId = primaryAssignee?.id || null;
+
+    if (onUpdateTask) {
+      onUpdateTask(updatedTask);
+    }
+    useAppStore.getState().updateTask(updatedTask);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+
+    persistAssignees(updatedTask, updatedIds, primaryAssignee, updatedAssignees, previousAssignees);
+  };
+
+  const handleApplyRoleRestrictions = (next: string[], transitionToAssignee = true) => {
+    if (!task) return;
+    const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
+
+    // Stop pre-filling assignees: retain only existing assignees that are still valid under new roles
+    const currentAssigneesList = latestAssigneesRef.current || [];
+    const validAssignees = next.length > 0
+      ? currentAssigneesList.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
+      : currentAssigneesList;
+    const validIds = validAssignees.map((u: any) => u.id);
+    const primaryAssignee = validAssignees.length > 0 ? validAssignees[0] : null;
+
+    latestRoleRestrictionsRef.current = next;
+    setLocalRoleRestrictions(next);
+    lastRoleUpdateTimestampRef.current = Date.now();
+
+    latestAssigneesRef.current = validAssignees;
+    setLocalAssignees(validAssignees);
+    lastAssigneeUpdateTimestampRef.current = Date.now();
+
+    task.assigneeRoleRestrictions = next;
+    task.assignees = validAssignees;
+    task.assigneeIds = validIds;
+    task.assignee = primaryAssignee;
+    task.assigneeId = primaryAssignee?.id || null;
+
+    const updatedTask = {
+      ...task,
+      assigneeRoleRestrictions: next,
+      assignees: validAssignees,
+      assigneeIds: validIds,
+      assignee: primaryAssignee,
+      assigneeId: primaryAssignee?.id || null,
+    };
+
+    if (onUpdateTask) onUpdateTask(updatedTask);
+    useAppStore.getState().updateTask(updatedTask);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+
+    const parentId = (task as any).parentTaskId || (task as any).taskId;
+    if (parentId) {
+      tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any).catch(console.error);
+    } else {
+      tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any).catch(console.error);
+    }
+
+    if (transitionToAssignee) {
+      // 1. Close the Team Role dropdown (uncollapsed animation)
+      setIsRoleOpen(false);
+
+      if (roleToAssigneeTimeoutRef.current) {
+        clearTimeout(roleToAssigneeTimeoutRef.current);
+      }
+
+      // 2. Wait for Team Role dropdown to completely uncollapse/close before opening the Assign Assignee dropdown
+      if (next.length > 0) {
+        roleToAssigneeTimeoutRef.current = setTimeout(() => {
+          setIsAssigneeOpen(true);
+        }, 220);
+      }
+    }
   };
 
   const handlePriorityChange = async (p: Priority) => {
@@ -2476,7 +2606,7 @@ export function TaskDetailModalContent({
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     {/* Add role button (Assign Team) — moved to left of Assign */}
-                    <Popover.Root>
+                    <Popover.Root open={isRoleOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsRoleOpen(open)}>
                       <Popover.Trigger asChild>
                         {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
                           <motion.div layout onClick={blockIfCannotAssign} title={!canAssignTask ? assignDeniedMessage : undefined} className={`flex items-center transition-all duration-300 ${!canAssignTask ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}`}>
@@ -2510,7 +2640,7 @@ export function TaskDetailModalContent({
                         )}
                       </Popover.Trigger>
                       <Popover.Portal>
-                        <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                        <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 duration-150 w-52 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                           <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                             <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                             {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -2535,41 +2665,7 @@ export function TaskDetailModalContent({
                                           next = [...next, ...toAdd];
                                         }
                                         next = normalizeRoles(next, workspaceTeams);
-                                        const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
-                                        const matchingIds = matchingUsers.map((u: any) => u.id);
-
-                                        latestRoleRestrictionsRef.current = next;
-                                        setLocalRoleRestrictions(next);
-                                        lastRoleUpdateTimestampRef.current = Date.now();
-
-                                        latestAssigneesRef.current = matchingUsers;
-                                        setLocalAssignees(matchingUsers);
-                                        lastAssigneeUpdateTimestampRef.current = Date.now();
-
-                                        task.assigneeRoleRestrictions = next;
-                                        task.assignees = matchingUsers;
-                                        task.assigneeIds = matchingIds;
-                                        task.assignee = matchingUsers.length > 0 ? matchingUsers[0] : null;
-                                        task.assigneeId = matchingUsers.length > 0 ? matchingUsers[0].id : null;
-
-                                        const updatedTask = {
-                                          ...task,
-                                          assigneeRoleRestrictions: next,
-                                          assignees: matchingUsers,
-                                          assigneeIds: matchingIds,
-                                          assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
-                                          assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
-                                        };
-                                        if (onUpdateTask) onUpdateTask(updatedTask);
-                                        useAppStore.getState().updateTask(updatedTask);
-                                        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-
-                                        const parentId = (task as any).parentTaskId || (task as any).taskId;
-                                        if (parentId) {
-                                          tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
-                                        } else {
-                                          tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
-                                        }
+                                        handleApplyRoleRestrictions(next, true);
                                       }}
                                       className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
                                     >
@@ -2599,42 +2695,7 @@ export function TaskDetailModalContent({
                                               selected ? withoutRole(current, role.name) : [...current, role.name],
                                               workspaceTeams
                                             );
-
-                                            const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
-                                            const matchingIds = matchingUsers.map((u: any) => u.id);
-
-                                            latestRoleRestrictionsRef.current = next;
-                                            setLocalRoleRestrictions(next);
-                                            lastRoleUpdateTimestampRef.current = Date.now();
-
-                                            latestAssigneesRef.current = matchingUsers;
-                                            setLocalAssignees(matchingUsers);
-                                            lastAssigneeUpdateTimestampRef.current = Date.now();
-
-                                            task.assigneeRoleRestrictions = next;
-                                            task.assignees = matchingUsers;
-                                            task.assigneeIds = matchingIds;
-                                            task.assignee = matchingUsers.length > 0 ? matchingUsers[0] : null;
-                                            task.assigneeId = matchingUsers.length > 0 ? matchingUsers[0].id : null;
-
-                                            const updatedTask = {
-                                              ...task,
-                                              assigneeRoleRestrictions: next,
-                                              assignees: matchingUsers,
-                                              assigneeIds: matchingIds,
-                                              assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
-                                              assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
-                                            };
-                                            if (onUpdateTask) onUpdateTask(updatedTask);
-                                            useAppStore.getState().updateTask(updatedTask);
-                                            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-
-                                            const parentId = (task as any).parentTaskId || (task as any).taskId;
-                                            if (parentId) {
-                                              tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
-                                            } else {
-                                              tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
-                                            }
+                                            handleApplyRoleRestrictions(next, true);
                                           }}
                                           className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
                                         >
@@ -2656,7 +2717,18 @@ export function TaskDetailModalContent({
                     <Popover.Root open={isAssigneeOpen && canAssignMember} onOpenChange={(open) => canAssignMember && setIsAssigneeOpen(open)}>
                       <Popover.Trigger asChild>
                         <motion.div layout
-                          onClick={blockIfCannotAssign}
+                          onClick={(e) => {
+                            if (!canAssignTask) {
+                              blockIfCannotAssign(e);
+                              return;
+                            }
+                            if (!hasTeamRole) {
+                              e.preventDefault();
+                              toast.error("Select a team role first to assign members");
+                              setIsRoleOpen(true);
+                              return;
+                            }
+                          }}
                           title={!canAssignTask ? assignDeniedMessage : !hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u) => u.name).join(', ')}
                           className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignMember
                             ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
@@ -2723,7 +2795,7 @@ export function TaskDetailModalContent({
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
-                          className="z-[100000] w-72 p-0 bg-background border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                          className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 duration-150 w-72 p-0 bg-background border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                           align="start"
                           sideOffset={4}
                         >
@@ -2737,13 +2809,42 @@ export function TaskDetailModalContent({
                                 No user found.
                               </Command.Empty>
 
+                              {hasTeamRole && assignableUsers.length > 0 && (
+                                <Command.Item
+                                  value={`select all assignees for team role ${localRoleRestrictions.join(' ')}`}
+                                  onSelect={() => handleSelectAllRoleAssignees()}
+                                  className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none text-indigo-200 font-semibold hover:text-indigo-100 hover:bg-indigo-500/15 data-[selected=true]:bg-indigo-500/15 data-[selected=true]:text-indigo-100 mb-1 border-b border-zinc-800/40 transition-colors"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                      assignableUsers.every((u: any) => isUserAssigned(u.id))
+                                        ? 'bg-indigo-600 border-indigo-500'
+                                        : 'border-zinc-300 dark:border-zinc-600 bg-zinc-100 dark:bg-zinc-800/60'
+                                    }`}>
+                                      {assignableUsers.every((u: any) => isUserAssigned(u.id)) ? (
+                                        <Check className="w-2.5 h-2.5 text-white" />
+                                      ) : assignableUsers.some((u: any) => isUserAssigned(u.id)) ? (
+                                        <div className="w-1.5 h-0.5 bg-indigo-500 rounded-full" />
+                                      ) : null}
+                                    </div>
+                                    <span className="truncate text-inherit">
+                                      {assignableUsers.every((u: any) => isUserAssigned(u.id))
+                                        ? 'Deselect all assignees'
+                                        : localRoleRestrictions.length === 1
+                                          ? `Select all ${localRoleRestrictions[0]} assignees`
+                                          : 'Select all assignees for Team Role'}
+                                    </span>
+                                  </div>
+                                </Command.Item>
+                              )}
+
                               {currentAssignees.length > 0 && (
                                 <Command.Item
                                   value="clear all unassigned none"
                                   onSelect={() => handleClearAllAssignees()}
-                                  className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 mb-1 border-b border-zinc-800/40"
+                                  className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-rose-400 data-[selected=true]:text-rose-400 mb-1 border-b border-zinc-800/40"
                                 >
-                                  <div className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 mr-2 shrink-0">
+                                  <div className="w-5 h-5 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500 mr-2 shrink-0">
                                     ✕
                                   </div>
                                   <span>Clear all assignees</span>
@@ -2761,7 +2862,7 @@ export function TaskDetailModalContent({
                                     key={u.id}
                                     value={`${u.name} ${u.email} ${role}`}
                                     onSelect={() => handleToggleAssignee(u)}
-                                    className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
+                                    className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none data-[selected=true]:bg-zinc-800/60 hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
                                   >
                                     {u.avatarUrl ? (
                                       <img src={u.avatarUrl} alt={u.name} className="w-7 h-7 rounded-full object-cover shrink-0" />
@@ -3035,7 +3136,7 @@ export function TaskDetailModalContent({
                     />
 
                     {(!localDescription || localDescription === '<p></p>' || localDescription === '<p><br></p>') && (
-                      <div className="absolute top-2 left-2 text-sm text-zinc-500 italic pointer-events-none">
+                      <div className={`absolute top-2 ${!editingUser ? 'left-9' : 'left-2'} text-sm text-zinc-500 italic pointer-events-none`}>
                         Add description...
                       </div>
                     )}
@@ -4118,7 +4219,17 @@ export function SubtaskDetailView({
 
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
+  const [isRoleOpen, setIsRoleOpen] = useState(false);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
+  const roleToAssigneeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (roleToAssigneeTimeoutRef.current) {
+        clearTimeout(roleToAssigneeTimeoutRef.current);
+      }
+    };
+  }, []);
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
@@ -4719,6 +4830,79 @@ export function SubtaskDetailView({
     applyAssigneesLocally([]);
     persistAssignees(previous, []);
     setIsAssigneeOpen(false);
+  };
+
+  const handleSelectAllRoleAssignees = () => {
+    if (!subtask) return;
+    const allSelected = subtaskAssignableUsers.length > 0 && subtaskAssignableUsers.every((u: any) => isUserAssigned(u.id));
+
+    let updatedAssignees: any[];
+    if (allSelected) {
+      updatedAssignees = (latestAssigneesRef.current || []).filter((u: any) => !subtaskAssignableUsers.some((au: any) => au.id === u.id));
+    } else {
+      const map = new Map<string, any>();
+      (latestAssigneesRef.current || []).forEach((u: any) => map.set(u.id, u));
+      subtaskAssignableUsers.forEach((u: any) => map.set(u.id, u));
+      updatedAssignees = Array.from(map.values());
+    }
+
+    const previous = assigneeBaselineRef.current || latestAssigneesRef.current;
+    assigneeBaselineRef.current = null;
+    applyAssigneesLocally(updatedAssignees);
+    persistAssignees(previous, updatedAssignees);
+  };
+
+  const handleApplySubtaskRoleRestrictions = (next: string[], transitionToAssignee = true) => {
+    const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers || [], workspaceTeams || []);
+    const currentAssigneesList = latestAssigneesRef.current || [];
+    const validAssignees = next.length > 0
+      ? currentAssigneesList.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
+      : currentAssigneesList;
+    const validIds = validAssignees.map((u: any) => u.id);
+    const primaryAssignee = validAssignees.length > 0 ? validAssignees[0] : null;
+
+    latestRoleRestrictionsRef.current = next;
+    setLocalRoleRestrictions(next);
+    lastRoleUpdateTimestampRef.current = Date.now();
+
+    latestAssigneesRef.current = validAssignees;
+    setLocalAssignees(validAssignees);
+    lastAssigneeUpdateTimestampRef.current = Date.now();
+
+    subtask.assigneeRoleRestrictions = next;
+    subtask.assignees = validAssignees;
+    subtask.assigneeIds = validIds;
+    subtask.assignee = primaryAssignee;
+    subtask.assigneeId = primaryAssignee?.id || null;
+
+    const updatedSubtask = {
+      ...subtaskRef.current,
+      assigneeRoleRestrictions: next,
+      assignees: validAssignees,
+      assigneeIds: validIds,
+      assignee: primaryAssignee,
+      assigneeId: primaryAssignee?.id || null,
+    };
+    syncSubtaskToParent(updatedSubtask);
+
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any)
+      .catch((err: any) => {
+        console.error("Failed to update subtask role restriction", err);
+      });
+
+    if (transitionToAssignee) {
+      setIsRoleOpen(false);
+
+      if (roleToAssigneeTimeoutRef.current) {
+        clearTimeout(roleToAssigneeTimeoutRef.current);
+      }
+
+      if (next.length > 0) {
+        roleToAssigneeTimeoutRef.current = setTimeout(() => {
+          setIsAssigneeOpen(true);
+        }, 220);
+      }
+    }
   };
 
   const handleUpdatePriority = (newPriority: string | null) => {
@@ -5415,7 +5599,7 @@ export function SubtaskDetailView({
                   <span className="text-[12px] text-zinc-500">Assignees</span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Popover.Root>
+                  <Popover.Root open={isRoleOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsRoleOpen(open)}>
                     <Popover.Trigger asChild>
                       {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
                         <div onClick={blockIfCannotAssign} title={!canAssignTask ? assignDeniedMessage : undefined} className={`flex items-center transition-all duration-300 ${!canAssignTask ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}`}>
@@ -5441,7 +5625,7 @@ export function SubtaskDetailView({
                       )}
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-52 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
+                      <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 duration-150 w-52 p-1 bg-background border border-zinc-800 rounded-lg shadow-2xl outline-none" sideOffset={4} align="start">
                         <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
                           <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wide font-medium">Restrict assignees to roles</p>
                           {workspaceTeams.length === 0 && <div className="px-2 py-1.5 text-xs text-zinc-500">No teams found.</div>}
@@ -5466,30 +5650,7 @@ export function SubtaskDetailView({
                                           next = [...next, ...toAdd];
                                         }
                                         next = normalizeRoles(next, workspaceTeams);
-                                        const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers || [], workspaceTeams || []);
-                                        const matchingIds = matchingUsers.map((u: any) => u.id);
-
-                                        latestRoleRestrictionsRef.current = next;
-                                        setLocalRoleRestrictions(next);
-                                        lastRoleUpdateTimestampRef.current = Date.now();
-
-                                        latestAssigneesRef.current = matchingUsers;
-                                        setLocalAssignees(matchingUsers);
-                                        lastAssigneeUpdateTimestampRef.current = Date.now();
-
-                                        subtask.assigneeRoleRestrictions = next;
-                                        subtask.assignees = matchingUsers;
-                                        subtask.assigneeIds = matchingIds;
-                                        const updatedSubtask = {
-                                          ...subtaskRef.current,
-                                          assigneeRoleRestrictions: next,
-                                          assignees: matchingUsers,
-                                          assigneeIds: matchingIds,
-                                          assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
-                                          assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
-                                        };
-                                        syncSubtaskToParent(updatedSubtask);
-                                        tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any).catch(console.error);
+                                        handleApplySubtaskRoleRestrictions(next, true);
                                       }}
                                     className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-accent/30 ${hasRoles ? 'cursor-pointer hover:bg-accent/50 hover:text-foreground transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-muted-foreground'}`}
                                   >
@@ -5519,35 +5680,7 @@ export function SubtaskDetailView({
                                             selected ? withoutRole(current, role.name) : [...current, role.name],
                                             workspaceTeams
                                           );
-
-                                          const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers || [], workspaceTeams || []);
-                                          const matchingIds = matchingUsers.map((u: any) => u.id);
-
-                                          latestRoleRestrictionsRef.current = next;
-                                          setLocalRoleRestrictions(next);
-                                          lastRoleUpdateTimestampRef.current = Date.now();
-
-                                          latestAssigneesRef.current = matchingUsers;
-                                          setLocalAssignees(matchingUsers);
-                                          lastAssigneeUpdateTimestampRef.current = Date.now();
-
-                                          subtask.assigneeRoleRestrictions = next;
-                                          subtask.assignees = matchingUsers;
-                                          subtask.assigneeIds = matchingIds;
-                                          const updatedSubtask = {
-                                            ...subtaskRef.current,
-                                            assigneeRoleRestrictions: next,
-                                            assignees: matchingUsers,
-                                            assigneeIds: matchingIds,
-                                            assignee: matchingUsers.length > 0 ? matchingUsers[0] : null,
-                                            assigneeId: matchingUsers.length > 0 ? matchingUsers[0].id : null,
-                                          };
-                                          syncSubtaskToParent(updatedSubtask);
-
-                                          tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any)
-                                            .catch((err: any) => {
-                                              console.error("Failed to update subtask role restriction", err);
-                                            });
+                                          handleApplySubtaskRoleRestrictions(next, true);
                                         }}
                                         className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors rounded-md"
                                       >
@@ -5570,7 +5703,18 @@ export function SubtaskDetailView({
                   <Popover.Root open={isAssigneeOpen && canAssignMember} onOpenChange={(open) => canAssignMember && setIsAssigneeOpen(open)}>
                     <Popover.Trigger asChild>
                       <motion.div layout
-                        onClick={blockIfCannotAssign}
+                        onClick={(e) => {
+                          if (!canAssignTask) {
+                            blockIfCannotAssign(e);
+                            return;
+                          }
+                          if (!hasTeamRole) {
+                            e.preventDefault();
+                            toast.error("Select a team role first to assign members");
+                            setIsRoleOpen(true);
+                            return;
+                          }
+                        }}
                         title={!canAssignTask ? assignDeniedMessage : !hasTeamRole ? "Select a team role first to assign members" : currentAssignees.map((u: any) => u.name).join(', ')}
                         className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit ${canAssignMember
                           ? 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
@@ -5637,7 +5781,7 @@ export function SubtaskDetailView({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content
-                        className="z-[100000] w-72 p-0 bg-background border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
+                        className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 duration-150 w-72 p-0 bg-background border border-zinc-800 rounded-md shadow-2xl outline-none overflow-hidden"
                         align="start"
                         sideOffset={4}
                       >
@@ -5651,13 +5795,42 @@ export function SubtaskDetailView({
                               No user found.
                             </Command.Empty>
 
+                            {hasTeamRole && subtaskAssignableUsers.length > 0 && (
+                              <Command.Item
+                                value={`select all assignees for team role ${localRoleRestrictions.join(' ')}`}
+                                onSelect={() => handleSelectAllRoleAssignees()}
+                                className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none text-indigo-200 font-semibold hover:text-indigo-100 hover:bg-indigo-500/15 data-[selected=true]:bg-indigo-500/15 data-[selected=true]:text-indigo-100 mb-1 border-b border-zinc-800/40 transition-colors"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                    subtaskAssignableUsers.every((u: any) => isUserAssigned(u.id))
+                                      ? 'bg-indigo-600 border-indigo-500'
+                                      : 'border-zinc-300 dark:border-zinc-600 bg-zinc-100 dark:bg-zinc-800/60'
+                                  }`}>
+                                    {subtaskAssignableUsers.every((u: any) => isUserAssigned(u.id)) ? (
+                                      <Check className="w-2.5 h-2.5 text-white" />
+                                    ) : subtaskAssignableUsers.some((u: any) => isUserAssigned(u.id)) ? (
+                                      <div className="w-1.5 h-0.5 bg-indigo-500 rounded-full" />
+                                    ) : null}
+                                  </div>
+                                  <span className="truncate text-inherit">
+                                    {subtaskAssignableUsers.every((u: any) => isUserAssigned(u.id))
+                                      ? 'Deselect all assignees'
+                                      : localRoleRestrictions.length === 1
+                                        ? `Select all ${localRoleRestrictions[0]} assignees`
+                                        : 'Select all assignees for Team Role'}
+                                  </span>
+                                </div>
+                              </Command.Item>
+                            )}
+
                             {currentAssignees.length > 0 && (
                               <Command.Item
                                 value="clear all unassigned none"
                                 onSelect={() => handleClearAllAssignees()}
-                                className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 mb-1 border-b border-zinc-800/40"
+                                className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-rose-400 data-[selected=true]:text-rose-400 mb-1 border-b border-zinc-800/40"
                               >
-                                <div className="w-5 h-5 rounded-full border border-dashed border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 mr-2 shrink-0">
+                                <div className="w-5 h-5 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500 mr-2 shrink-0">
                                   ✕
                                 </div>
                                 <span>Clear all assignees</span>
@@ -5675,7 +5848,7 @@ export function SubtaskDetailView({
                                   key={u.id}
                                   value={`${u.name} ${u.email} ${role}`}
                                   onSelect={() => handleToggleAssignee(u)}
-                                  className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
+                                  className="relative flex cursor-pointer select-none items-center rounded-md px-2.5 py-2 outline-none data-[selected=true]:bg-zinc-800/60 hover:bg-zinc-800/60 text-zinc-300 gap-2.5"
                                 >
                                   {u.avatarUrl ? (
                                     <img src={u.avatarUrl} alt={u.name} className="w-7 h-7 rounded-full object-cover shrink-0" />

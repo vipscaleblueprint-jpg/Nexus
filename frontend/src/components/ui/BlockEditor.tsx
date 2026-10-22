@@ -24,10 +24,52 @@ import {
   ListTree, ChevronRight, Heading1, Heading2, Heading3
 } from 'lucide-react';
 import React, { useEffect, useRef, memo } from 'react';
+import { Extension, type Editor } from '@tiptap/core';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
+import { BlockGutter } from './BlockGutter';
 
 
 /** Typography of the editable area; static previews of a block use it too so they render identically. */
 export const BLOCK_EDITOR_CONTENT_CLASS = 'prose dark:prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-900 dark:text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap block w-full';
+
+// Moves top-level block `from` into gap `slot` (0 = before the first block, childCount = after the last),
+// keeping the cursor where it was inside a moved line.
+export const moveTopLevelBlock = (editor: Editor, from: number, slot: number) => {
+  const { doc, selection } = editor.state;
+  if (from < 0 || from >= doc.childCount || slot < 0 || slot > doc.childCount || slot === from || slot === from + 1) return false;
+  const posOf = (index: number) => {
+    let pos = 0;
+    for (let i = 0; i < index; i++) pos += doc.child(i).nodeSize;
+    return pos;
+  };
+  const node = doc.child(from);
+  const fromPos = posOf(from);
+  const tr = editor.state.tr.delete(fromPos, fromPos + node.nodeSize);
+  const insertAt = tr.mapping.map(posOf(slot));
+  tr.insert(insertAt, node);
+  const cursorInside = node.isTextblock && selection.$from.depth >= 1 && selection.$from.index(0) === from;
+  tr.setSelection(cursorInside
+    ? TextSelection.create(tr.doc, insertAt + 1 + Math.min(selection.from - fromPos - 1, node.content.size))
+    : NodeSelection.create(tr.doc, insertAt));
+  editor.view.dispatch(tr.scrollIntoView());
+  return true;
+};
+
+const BlockReorder = Extension.create({
+  name: 'blockReorder',
+  addKeyboardShortcuts() {
+    return {
+      'Alt-ArrowUp': ({ editor }) => {
+        const index = editor.state.selection.$from.index(0);
+        return moveTopLevelBlock(editor as Editor, index, index - 1);
+      },
+      'Alt-ArrowDown': ({ editor }) => {
+        const index = editor.state.selection.$from.index(0);
+        return moveTopLevelBlock(editor as Editor, index, index + 2);
+      },
+    };
+  },
+});
 
 interface BlockEditorProps {
   content: string;
@@ -41,10 +83,12 @@ interface BlockEditorProps {
   onEditorReady?: (editor: any) => void;
   /** Shown during the frame(s) before the Tiptap instance exists (it is created after mount). */
   loadingFallback?: React.ReactNode;
+  /** Whether to show the left gutter with + and ⠿ drag handle (default: true). */
+  enableGutter?: boolean;
 }
 
 export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorProps) {
-  const { content, autoFocus, editable = true, onEditorReady, loadingFallback } = props;
+  const { content, autoFocus, editable = true, enableGutter = true, onEditorReady, loadingFallback } = props;
   const propsRef = useRef(props);
   useEffect(() => {
     propsRef.current = props;
@@ -100,6 +144,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       Toggle,
       ToggleSummary,
       ToggleContent,
+      BlockReorder,
     ],
     content: initialContent,
     onUpdate: ({ editor }) => {
@@ -378,7 +423,10 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
   ];
 
   return (
-    <div className="w-full relative" ref={editorContainerRef}>
+    <div className="w-full relative group/block-editor" ref={editorContainerRef}>
+      {editable && enableGutter && editor && (
+        <BlockGutter editor={editor} editorContainerRef={editorContainerRef} />
+      )}
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
           <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999, appendTo: typeof document !== 'undefined' ? document.body : undefined, popperOptions: { strategy: 'absolute', modifiers: [{ name: 'preventOverflow', enabled: false }, { name: 'flip', enabled: false }, { name: 'hide', enabled: true }] } }} className="flex flex-wrap items-center gap-0.5 bg-card p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
@@ -516,7 +564,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       </div>
 
       <div
-        className="flex-1 min-w-0 cursor-text"
+        className={`flex-1 min-w-0 cursor-text transition-all ${editable && enableGutter ? 'pl-7' : 'pl-0'}`}
         onMouseDown={(e) => {
           // Only handle clicks on the bare wrapper. Clicks inside the editor are left to the
           // browser/ProseMirror — calling focus() here restores the old selection one frame later
@@ -537,7 +585,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
     </div>
   );
 }, (prev, next) => {
-  return prev.content === next.content && prev.editable === next.editable;
+  return prev.content === next.content && prev.editable === next.editable && prev.enableGutter === next.enableGutter;
 });
 
 

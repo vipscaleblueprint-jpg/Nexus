@@ -1,121 +1,115 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Editor } from '@tiptap/react';
-import { Plus, GripVertical, ChevronRight } from 'lucide-react';
+import { Editor } from '@tiptap/core';
+import {
+  Plus,
+  GripVertical,
+  ChevronRight,
+  Heading1,
+  Heading2,
+  Heading3,
+  AlignLeft,
+  CheckSquare,
+  List,
+  Trash2,
+} from 'lucide-react';
+import { moveTopLevelBlock } from './BlockEditor';
 
 interface BlockGutterProps {
   editor: Editor;
   editorContainerRef: React.RefObject<HTMLDivElement | null>;
+  disabled?: boolean;
 }
 
-interface GutterState {
-  visible: boolean;
+interface DragHandleState {
   top: number;
-  nodePos: number;
+  pos: number;
+  isEmpty: boolean;
 }
+
+interface MenuState {
+  pos: number;
+  top: number;
+}
+
+const ALT_KEY = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform) ? '⌥' : 'Alt';
+const KBD_CLASS = 'inline-flex h-4 items-center rounded border border-zinc-700 bg-zinc-800 px-1 font-mono text-[10px] text-zinc-300';
 
 /**
- * BlockGutter — renders floating +, drag-handle (⠿), and delete controls
- * beside whichever block the cursor is hovering over inside the editor.
+ * BlockGutter — renders a single adaptive button beside the hovered block:
+ * - Empty line: [+] with "Click to add block" tooltip
+ * - Content block: [⠿] with "Drag to move / Alt+↑/↓" tooltip matching CommentEditor (Image 2)
  */
-export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
-  const [gutter, setGutter] = useState<GutterState>({ visible: false, top: 0, nodePos: -1 });
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
+export function BlockGutter({ editor, editorContainerRef, disabled = false }: BlockGutterProps) {
+  const [dragHandle, setDragHandle] = useState<DragHandleState | null>(null);
+  const [dropLineTop, setDropLineTop] = useState<number | null>(null);
+  const [menuState, setMenuState] = useState<MenuState | null>(null);
+
+  const isDraggingRef = useRef(false);
+  const hideTimerRef = useRef<NodeJS.Timeout | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const dragFromPosRef = useRef<number>(-1);
-  const dropTargetPosRef = useRef<number>(-1);
 
-  // ── Helper: find the nearest block DOM element containing `el` ────────────
-  const findTargetBlock = useCallback((el: Element): Element | null => {
-    const editorEl = editorContainerRef.current?.querySelector('.tiptap');
-    if (!editorEl) return null;
-    
-    // Function to check if an element is a valid block target for the gutter
-    const isValidBlock = (node: Element) => {
-      if (node === editorEl) return false;
-      
-      const tagName = node.tagName.toLowerCase();
-      // Target specific block-level tags where a drag handle makes sense
-      if (['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'].includes(tagName)) {
-        return true;
+  // Close options menu on outside click
+  useEffect(() => {
+    if (!menuState) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuState(null);
       }
-      
-      // Some extensions might use divs with specific data attributes
-      // e.g., image wrappers, callouts
-      if (node.hasAttribute('data-type') && tagName !== 'toggle' && tagName !== 'togglecontent' && tagName !== 'togglesummary') {
-        return true;
-      }
-      
-      return false;
     };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [menuState]);
 
-    let current: Element | null = el;
-    while (current && current !== editorEl) {
-      if (isValidBlock(current)) {
-        return current;
-      }
-      current = current.parentElement;
-    }
-    
-    return null;
-  }, [editorContainerRef]);
-
-  // ── Helper: get ProseMirror node position from a DOM block element ──────────
-  const getNodePos = useCallback((blockEl: Element): number => {
-    try {
-      const pmPos = editor.view.posAtDOM(blockEl, 0);
-      if (pmPos <= 0) return 0;
-      const $pos = editor.state.doc.resolve(pmPos - 1);
-      return $pos.before($pos.depth === 0 ? 1 : $pos.depth);
-    } catch {
-      return -1;
-    }
-  }, [editor]);
-
-  // ── Show gutter at the position of a block element ──────────────────────────
-  const showGutterAt = useCallback((blockEl: Element) => {
-    const container = editorContainerRef.current;
-    if (!container) return;
-    const containerRect = container.getBoundingClientRect();
-    const blockRect = blockEl.getBoundingClientRect();
-    const top = blockRect.top - containerRect.top;
-    const nodePos = getNodePos(blockEl);
-    setGutter({ visible: true, top, nodePos });
-  }, [editorContainerRef, getNodePos]);
-
-  // ── Attach mousemove/mouseleave to the editor container via DOM events ──────
+  // Track hover over the editor container to position the adaptive button
   useEffect(() => {
     const container = editorContainerRef.current;
-    if (!container) return;
+    if (!container || disabled) return;
 
-    const onMouseMove = (e: MouseEvent) => {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-      // Sample a point slightly to the right of the current position to hit text
-      const el = document.elementFromPoint(e.clientX + 30, e.clientY) as Element | null;
-      if (!el) return;
-      const block = findTargetBlock(el);
-      if (!block) {
-        // Try directly at cursor
-        const el2 = document.elementFromPoint(e.clientX, e.clientY) as Element | null;
-        if (!el2) return;
-        const block2 = findTargetBlock(el2);
-        if (!block2) return;
-        showGutterAt(block2);
+    const onMouseMove = (event: MouseEvent) => {
+      if (isDraggingRef.current || !editor || editor.isDestroyed) return;
+
+      // Keep handle visible if mouse is over the gutter button or active menu
+      if ((event.target as Element)?.closest?.('[data-block-gutter]')) {
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
+        }
         return;
       }
-      showGutterAt(block);
+
+      let next: DragHandleState | null = null;
+      if (editor.state.doc.childCount > 0) {
+        const wrapTop = container.getBoundingClientRect().top;
+        editor.state.doc.forEach((node, offset) => {
+          const dom = editor.view.nodeDOM(offset);
+          if (next || !(dom instanceof HTMLElement)) return;
+          const rect = dom.getBoundingClientRect();
+          if (event.clientY >= rect.top - 2 && event.clientY <= rect.bottom + 2) {
+            const firstLineHeight = Math.min(rect.height, 24);
+            const isEmpty = node.isTextblock && (node.content.size === 0 || node.textContent.trim() === '');
+            next = {
+              top: rect.top - wrapTop + (firstLineHeight / 2) - 10,
+              pos: offset,
+              isEmpty,
+            };
+          }
+        });
+      }
+
+      if (next) {
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
+        }
+        setDragHandle(next);
+      }
     };
 
     const onMouseLeave = () => {
-      if (menuOpen) return;
+      if (isDraggingRef.current || menuState) return;
       hideTimerRef.current = setTimeout(() => {
-        setGutter(g => ({ ...g, visible: false }));
-      }, 400);
+        setDragHandle(null);
+      }, 350);
     };
 
     container.addEventListener('mousemove', onMouseMove);
@@ -123,206 +117,304 @@ export function BlockGutter({ editor, editorContainerRef }: BlockGutterProps) {
     return () => {
       container.removeEventListener('mousemove', onMouseMove);
       container.removeEventListener('mouseleave', onMouseLeave);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, [editorContainerRef, findTargetBlock, showGutterAt, menuOpen]);
+  }, [editor, editorContainerRef, disabled, menuState]);
 
-  // ── Close menu on outside click ──────────────────────────────────────────────
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
+  // Action for [+] button on empty block
+  const handleAddBlock = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!editor || !dragHandle || disabled) return;
+
+      const node = editor.state.doc.nodeAt(dragHandle.pos);
+      if (!node) return;
+
+      // Focus the block and toggle the menu so user can choose what block to insert
+      editor.chain().focus().setTextSelection(dragHandle.pos + 1).run();
+      setMenuState(prev =>
+        prev?.pos === dragHandle.pos ? null : { pos: dragHandle.pos, top: dragHandle.top }
+      );
+    },
+    [editor, dragHandle, disabled]
+  );
+
+  // Pointer-driven drag to reorder top-level blocks
+  const handleGripPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!editor || !dragHandle || event.button !== 0 || disabled) return;
+      event.preventDefault();
+      const container = editorContainerRef.current;
+      if (!container) return;
+
+      // If only 1 block exists in document, reordering is not possible -> toggle menu on click
+      if (editor.state.doc.childCount <= 1) {
+        setMenuState(prev =>
+          prev?.pos === dragHandle.pos ? null : { pos: dragHandle.pos, top: dragHandle.top }
+        );
+        return;
       }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [menuOpen]);
 
-  // ── Cleanup timers ───────────────────────────────────────────────────────────
-  useEffect(() => () => {
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-  }, []);
+      const { view } = editor;
+      const from = view.state.doc.resolve(dragHandle.pos).index(0);
+      const draggedDom = view.nodeDOM(dragHandle.pos);
 
-  // ── Actions ──────────────────────────────────────────────────────────────────
-  const cancelHide = () => {
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let hasMoved = false;
+      let slot = from;
+
+      const onMove = (e: PointerEvent) => {
+        if (!hasMoved) {
+          if (Math.hypot(e.clientX - startX, e.clientY - startY) > 4) {
+            hasMoved = true;
+            isDraggingRef.current = true;
+            document.body.style.cursor = 'grabbing';
+            if (draggedDom instanceof HTMLElement) draggedDom.style.opacity = '0.35';
+            setMenuState(null);
+          } else {
+            return;
+          }
+        }
+
+        // Auto-scroll nearest scrollable container
+        const scroller = view.dom as HTMLElement;
+        const scrollParent = scroller.closest('.overflow-y-auto') || scroller;
+        const scrollRect = scrollParent.getBoundingClientRect();
+        if (e.clientY < scrollRect.top + 30) scrollParent.scrollTop -= 10;
+        else if (e.clientY > scrollRect.bottom - 30) scrollParent.scrollTop += 10;
+
+        const rects: DOMRect[] = [];
+        view.state.doc.forEach((_node, offset) => {
+          const dom = view.nodeDOM(offset);
+          rects.push(dom instanceof HTMLElement ? dom.getBoundingClientRect() : new DOMRect());
+        });
+        slot = rects.findIndex(r => e.clientY < r.top + r.height / 2);
+        if (slot === -1) slot = rects.length;
+
+        const wrapTop = container.getBoundingClientRect().top;
+        const lineY =
+          slot < rects.length ? rects[slot].top - 2 : (rects[rects.length - 1]?.bottom || 0) + 1;
+        setDropLineTop(lineY - wrapTop);
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+
+        if (hasMoved) {
+          if (draggedDom instanceof HTMLElement) draggedDom.style.opacity = '';
+          document.body.style.cursor = '';
+          isDraggingRef.current = false;
+          setDropLineTop(null);
+          setDragHandle(null);
+          if (!editor.isDestroyed) {
+            moveTopLevelBlock(editor, from, slot);
+          }
+        } else {
+          // Plain click — toggle options menu
+          setMenuState(prev =>
+            prev?.pos === dragHandle.pos ? null : { pos: dragHandle.pos, top: dragHandle.top }
+          );
+        }
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    },
+    [editor, dragHandle, editorContainerRef, disabled]
+  );
+
+  // Menu action handlers
+  const handleSetHeading = (level: 1 | 2 | 3) => {
+    if (!menuState || !editor) return;
+    editor.chain().focus().setTextSelection(menuState.pos + 1).toggleHeading({ level }).run();
+    setMenuState(null);
   };
 
-  const handleAddBlock = useCallback(() => {
-    if (gutter.nodePos < 0) return;
-    const node = editor.state.doc.nodeAt(gutter.nodePos);
-    if (!node) return;
-    const insertPos = gutter.nodePos + node.nodeSize;
-    editor
-      .chain()
-      .focus()
-      .insertContentAt(insertPos, { type: 'paragraph' })
-      .setTextSelection(insertPos + 1)
-      .run();
-  }, [editor, gutter.nodePos]);
+  const handleSetParagraph = () => {
+    if (!menuState || !editor) return;
+    editor.chain().focus().setTextSelection(menuState.pos + 1).setParagraph().run();
+    setMenuState(null);
+  };
 
-  const handleDeleteBlock = useCallback(() => {
-    if (gutter.nodePos < 0) return;
-    const node = editor.state.doc.nodeAt(gutter.nodePos);
-    if (!node) return;
-    editor
-      .chain()
-      .focus()
-      .deleteRange({ from: gutter.nodePos, to: gutter.nodePos + node.nodeSize })
-      .run();
-    setGutter(g => ({ ...g, visible: false }));
-    setMenuOpen(false);
-  }, [editor, gutter.nodePos]);
+  const handleSetTaskList = () => {
+    if (!menuState || !editor) return;
+    editor.chain().focus().setTextSelection(menuState.pos + 1).toggleTaskList().run();
+    setMenuState(null);
+  };
 
-  const handleConvertToToggle = useCallback(() => {
-    if (gutter.nodePos < 0) return;
-    setMenuOpen(false);
-    // Place cursor in the block first, then convert
-    editor
-      .chain()
-      .focus()
-      .setTextSelection(gutter.nodePos + 1)
-      .run();
+  const handleSetBulletList = () => {
+    if (!menuState || !editor) return;
+    editor.chain().focus().setTextSelection(menuState.pos + 1).toggleBulletList().run();
+    setMenuState(null);
+  };
+
+  const handleSetToggle = () => {
+    if (!menuState || !editor) return;
+    const pos = menuState.pos;
+    setMenuState(null);
+    editor.chain().focus().setTextSelection(pos + 1).run();
     setTimeout(() => {
-      (editor.chain().focus() as any).setToggle().run();
-    }, 20);
-  }, [editor, gutter.nodePos]);
-
-  // ── Drag-to-reorder ──────────────────────────────────────────────────────────
-  const handleDragStart = useCallback((e: React.DragEvent) => {
-    e.stopPropagation();
-    dragFromPosRef.current = gutter.nodePos;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(gutter.nodePos));
-    setIsDragging(true);
-  }, [gutter.nodePos]);
-
-  const handleDragEnd = useCallback(() => {
-    setIsDragging(false);
-    dragFromPosRef.current = -1;
-    dropTargetPosRef.current = -1;
-  }, []);
-
-  useEffect(() => {
-    const container = editorContainerRef.current;
-    if (!container) return;
-
-    const onDragOver = (e: DragEvent) => {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      const el = document.elementFromPoint(e.clientX + 20, e.clientY) as Element | null;
-      if (!el) return;
-      const block = findTargetBlock(el);
-      if (!block) return;
-      dropTargetPosRef.current = getNodePos(block);
-    };
-
-    const onDrop = (e: DragEvent) => {
-      e.preventDefault();
-      const fromPos = dragFromPosRef.current;
-      const toPos = dropTargetPosRef.current;
-      if (fromPos < 0 || toPos < 0 || fromPos === toPos) return;
-
-      const { state } = editor;
-      const fromNode = state.doc.nodeAt(fromPos);
-      if (!fromNode) return;
-      const fromEnd = fromPos + fromNode.nodeSize;
-
-      // Adjust insertion point if moving forward
-      let adjustedTo = toPos;
-      if (toPos > fromEnd) {
-        adjustedTo = toPos - fromNode.nodeSize;
+      if (!editor.isDestroyed) {
+        (editor.chain().focus() as any).setToggle().run();
       }
+    }, 20);
+  };
 
-      editor
-        .chain()
-        .focus()
-        .command(({ tr }) => {
-          const slice = state.doc.slice(fromPos, fromEnd);
-          tr.delete(fromPos, fromEnd);
-          const clampedPos = Math.min(Math.max(adjustedTo, 0), tr.doc.content.size);
-          tr.insert(clampedPos, slice.content);
-          return true;
-        })
-        .run();
-    };
+  const handleDelete = () => {
+    if (!menuState || !editor) return;
+    const node = editor.state.doc.nodeAt(menuState.pos);
+    if (node) {
+      editor.chain().focus().deleteRange({ from: menuState.pos, to: menuState.pos + node.nodeSize }).run();
+    }
+    setMenuState(null);
+    setDragHandle(null);
+  };
 
-    container.addEventListener('dragover', onDragOver);
-    container.addEventListener('drop', onDrop);
-    return () => {
-      container.removeEventListener('dragover', onDragOver);
-      container.removeEventListener('drop', onDrop);
-    };
-  }, [editor, editorContainerRef, findTargetBlock, getNodePos]);
-
-  if (!gutter.visible) return null;
+  if (disabled) return null;
 
   return (
-    <div
-      ref={gutterRef}
-      className="absolute left-0 flex items-center gap-0.5 z-[50] select-none"
-      style={{
-        top: gutter.top,
-        transform: 'translateX(calc(-100% - 4px))',
-        opacity: gutter.visible ? 1 : 0,
-        transition: 'opacity 150ms ease',
-        pointerEvents: 'auto',
-      }}
-      onMouseEnter={cancelHide}
-      onMouseLeave={() => {
-        if (menuOpen) return;
-        hideTimerRef.current = setTimeout(() => {
-          setGutter(g => ({ ...g, visible: false }));
-        }, 400);
-      }}
-    >
-      {/* + Add block below */}
-      <button
-        className="flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-pointer"
-        onClick={handleAddBlock}
-        title="Add block below"
-        onMouseDown={e => e.preventDefault()}
-      >
-        <Plus className="w-3.5 h-3.5" />
-      </button>
-
-      {/* Drag handle: click = menu, drag = reorder */}
-      <div className="relative">
+    <>
+      {/* Single Adaptive Gutter Button */}
+      {dragHandle && !isDraggingRef.current && (
         <div
-          draggable
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setMenuOpen(v => !v);
-          }}
-          className={`flex items-center justify-center w-5 h-5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors duration-150 cursor-grab active:cursor-grabbing ${isDragging ? 'opacity-30' : ''}`}
-          title="Drag to reorder · Click for options"
+          data-block-gutter
+          style={{ top: dragHandle.top }}
+          className="absolute left-1 z-20 flex items-center select-none"
         >
-          <GripVertical className="w-3.5 h-3.5" />
-        </div>
+          {dragHandle.isEmpty ? (
+            /* Empty Block -> [+] Button */
+            <div className="group/btn relative">
+              <button
+                type="button"
+                onClick={handleAddBlock}
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-500 hover:bg-zinc-700/70 hover:text-zinc-200 transition-colors cursor-pointer"
+                title="Click to add block"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            /* Content Block -> [⠿] Button with Image 2 Tooltip */
+            <div className="group/grip relative">
+              <div
+                onPointerDown={handleGripPointerDown}
+                className="flex h-6 w-5 items-center justify-center rounded text-zinc-500 hover:bg-zinc-700/70 hover:text-zinc-200 transition-colors cursor-grab active:cursor-grabbing"
+                aria-label={`Drag to move this line, or press ${ALT_KEY}+↑ / ${ALT_KEY}+↓`}
+              >
+                <GripVertical className="h-4 w-4" />
+              </div>
 
-        {/* Dropdown: only "Toggle list" for now */}
-        {menuOpen && (
-          <div
-            ref={menuRef}
-            className="absolute left-full ml-1 top-0 bg-card border border-zinc-800 rounded-lg shadow-xl z-[99999] py-1 w-40"
-          >
-            <button
-              className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2"
-              onMouseDown={e => e.preventDefault()}
-              onClick={handleConvertToToggle}
-            >
-              <ChevronRight className="w-3 h-3 text-zinc-400" />
-              Toggle list
-            </button>
+              {/* Tooltip matching Image 2 */}
+              {!menuState && (
+                <div
+                  role="tooltip"
+                  className="pointer-events-none invisible absolute left-full top-1/2 ml-1.5 -translate-y-1/2 whitespace-nowrap rounded-lg border border-zinc-700 bg-popover px-2.5 py-1.5 text-[11px] leading-5 text-zinc-300 opacity-0 shadow-xl transition-opacity delay-0 group-hover/grip:visible group-hover/grip:opacity-100 group-hover/grip:delay-300 z-[99999]"
+                >
+                  <div><span className="font-medium text-zinc-100">Drag</span> to move this line</div>
+                  <div className="flex items-center gap-1">
+                    <kbd className={KBD_CLASS}>{ALT_KEY}</kbd>+<kbd className={KBD_CLASS}>↑</kbd>/<kbd className={KBD_CLASS}>↓</kbd>
+                    <span className="ml-0.5">move it up or down</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Purple Drop Indicator Line */}
+      {dropLineTop !== null && (
+        <div
+          style={{ top: dropLineTop }}
+          className="pointer-events-none absolute left-7 right-2 z-30 h-0.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.8)]"
+        />
+      )}
+
+      {/* Block Options Dropdown Menu */}
+      {menuState && (
+        <div
+          ref={menuRef}
+          data-block-gutter
+          style={{ top: menuState.top + 24 }}
+          className="absolute left-6 z-[99999] w-48 rounded-xl border border-zinc-800 bg-[#0f0f0f] p-1 shadow-2xl animate-in fade-in zoom-in-95 duration-100"
+        >
+          <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+            Turn into
           </div>
-        )}
-      </div>
-    </div>
+          <button
+            type="button"
+            onClick={handleSetParagraph}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <AlignLeft className="h-3.5 w-3.5 text-zinc-400" />
+            Paragraph
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSetHeading(1)}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <Heading1 className="h-3.5 w-3.5 text-zinc-400" />
+            Heading 1
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSetHeading(2)}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <Heading2 className="h-3.5 w-3.5 text-zinc-400" />
+            Heading 2
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSetHeading(3)}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <Heading3 className="h-3.5 w-3.5 text-zinc-400" />
+            Heading 3
+          </button>
+          <button
+            type="button"
+            onClick={handleSetTaskList}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <CheckSquare className="h-3.5 w-3.5 text-zinc-400" />
+            Checklist
+          </button>
+          <button
+            type="button"
+            onClick={handleSetBulletList}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <List className="h-3.5 w-3.5 text-zinc-400" />
+            Bullet List
+          </button>
+          <button
+            type="button"
+            onClick={handleSetToggle}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
+            Toggle List
+          </button>
+
+          <div className="my-1 border-t border-zinc-800/80" />
+
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer text-left"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete Block
+          </button>
+        </div>
+      )}
+    </>
   );
 }

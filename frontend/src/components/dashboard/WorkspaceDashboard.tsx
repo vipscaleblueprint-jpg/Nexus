@@ -753,6 +753,13 @@ function WorkspaceDashboardContent({
     return result;
   }, [myTasks, searchQuery, filterPriority, filterStatus, sortBy]);
 
+  const myTasksBadgeCount = useMemo(() => {
+    if (currentTab === "my" && (searchQuery.trim() || filterPriority !== "all" || filterStatus !== "all")) {
+      return filteredMyTasks.length;
+    }
+    return myTasks.filter((t) => !isClosedTask(t)).length;
+  }, [currentTab, searchQuery, filterPriority, filterStatus, filteredMyTasks.length, myTasks]);
+
   // All Tasks filtering and sorting
   const filteredAllTasks = useMemo(() => {
     let result = showClosed ? [...tasksWithSubtasks] : tasksWithSubtasks.filter((t) => !isClosedTask(t));
@@ -1215,9 +1222,9 @@ function WorkspaceDashboardContent({
               }`}
             >
               <span>My Tasks</span>
-              {myTasks.length > 0 && (
+              {myTasksBadgeCount > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] text-white font-mono font-bold">
-                  {myTasks.length}
+                  {myTasksBadgeCount}
                 </span>
               )}
             </button>

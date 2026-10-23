@@ -1,6 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
-import React, { useState, useMemo, useCallback } from 'react';
-import { X, File } from 'lucide-react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { X, File, ChevronDown, ChevronUp } from 'lucide-react';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { getThumbnailUrl } from '@/lib/thumbnail';
 
@@ -16,10 +16,24 @@ interface Attachment {
 interface AttachmentsGridProps {
   attachments: Attachment[];
   onDelete: (id: string) => void;
+  initialLimit?: number;
 }
 
-export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps) {
+const DEFAULT_INITIAL_LIMIT = 10;
+const BATCH_SIZE = 10;
+
+export function AttachmentsGrid({
+  attachments,
+  onDelete,
+  initialLimit = DEFAULT_INITIAL_LIMIT,
+}: AttachmentsGridProps) {
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
+  const [visibleLimit, setVisibleLimit] = useState(initialLimit);
+
+  // Reset limit whenever the task attachments list changes
+  useEffect(() => {
+    setVisibleLimit(initialLimit);
+  }, [attachments, initialLimit]);
 
   const imageAttachments = useMemo(() => {
     return (attachments || []).filter((att) => {
@@ -37,6 +51,14 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
   const imageAttachmentUrls = useMemo(() => {
     return imageAttachments.map((a) => a.fileUrl);
   }, [imageAttachments]);
+
+  const visibleAttachments = useMemo(() => {
+    return (attachments || []).slice(0, visibleLimit);
+  }, [attachments, visibleLimit]);
+
+  const hasMore = (attachments || []).length > visibleLimit;
+  const remainingCount = Math.max(0, (attachments || []).length - visibleLimit);
+  const isExpanded = visibleLimit > initialLimit;
 
   const handleNavigateImage = useCallback(
     (newUrl: string) => {
@@ -62,7 +84,7 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
     );
   }, [previewAttachment]);
 
-  if (attachments.length === 0) {
+  if (!attachments || attachments.length === 0) {
     return null;
   }
 
@@ -73,16 +95,19 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
   return (
     <div className="mt-4 w-full">
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {attachments.map((att) => {
-          const isImage = att.mimeType.startsWith('image/');
-          
+        {visibleAttachments.map((att) => {
+          const isImage =
+            (att.mimeType || '').startsWith('image/') ||
+            /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(att.fileName || '') ||
+            /\.(jpe?g|png|gif|webp|svg|avif)$/i.test(att.fileUrl || '');
+
           return (
             <div
               key={att.id}
               onClick={() => handleItemClick(att)}
               className="group relative aspect-square bg-zinc-800/50 border border-zinc-700/50 rounded-lg overflow-hidden cursor-pointer hover:border-zinc-500 transition-colors flex flex-col"
             >
-              {/* Thumbnail area */}
+              {/* Thumbnail area - only fetched for visible attachments */}
               <div className="flex-1 w-full bg-secondary flex flex-col items-center justify-center overflow-hidden relative">
                 {isImage ? (
                   <>
@@ -90,10 +115,13 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
                       src={getThumbnailUrl(att.fileUrl, 320, 35)}
                       alt={att.fileName}
                       loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px]">
-                      <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to preview</span>
+                      <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">
+                        Click to preview
+                      </span>
                     </div>
                   </>
                 ) : (
@@ -107,7 +135,7 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
                   {att.fileName}
                 </span>
                 <span className="text-[10px] text-zinc-500 uppercase">
-                  {att.mimeType.split('/')[1] || 'FILE'}
+                  {att.mimeType?.split('/')[1] || 'FILE'}
                 </span>
               </div>
 
@@ -126,6 +154,43 @@ export function AttachmentsGrid({ attachments, onDelete }: AttachmentsGridProps)
           );
         })}
       </div>
+
+      {/* Show more / Show less buttons */}
+      {(hasMore || isExpanded) && (
+        <div className="flex items-center justify-center gap-2.5 mt-4 pt-1">
+          {hasMore && (
+            <button
+              type="button"
+              onClick={() => setVisibleLimit((prev) => prev + BATCH_SIZE)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-zinc-700/60 shadow-xs transition-all cursor-pointer hover:border-zinc-500"
+            >
+              <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Show more ({remainingCount} remaining)</span>
+            </button>
+          )}
+
+          {hasMore && remainingCount > BATCH_SIZE && (
+            <button
+              type="button"
+              onClick={() => setVisibleLimit(attachments.length)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-900/60 hover:bg-zinc-800 text-xs font-medium text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition-all cursor-pointer"
+            >
+              <span>Show all ({attachments.length})</span>
+            </button>
+          )}
+
+          {isExpanded && (
+            <button
+              type="button"
+              onClick={() => setVisibleLimit(initialLimit)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/60 hover:bg-zinc-800 text-xs font-medium text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition-all cursor-pointer"
+            >
+              <ChevronUp className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Show less</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Lightbox Preview */}
       <ImageLightboxModal

@@ -38,6 +38,7 @@ export interface User {
   name: string;
   avatarUrl?: string;
   imageUrl?: string;
+  confettiUrl?: string | null;
   googleId?: string;
   dailySheetUrl?: string;
   starRating: number; // 1 - 3

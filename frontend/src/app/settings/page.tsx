@@ -4,11 +4,21 @@ import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
 import { authApi, usersApi } from '@/api';
 import { API_BASE_URL } from '@/api/client';
-import { Settings, User as UserIcon, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book } from 'lucide-react';
+import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell } from 'lucide-react';
+import { UserNotificationPreferences } from '@/types';
 import { SettingsSkeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/lib/toast';
 import { ApiDocsSection } from '@/components/settings/ApiDocsSection';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
+import { uploadApi } from '@/api/upload';
+import { triggerMentionConfetti } from '@/components/ui/MentionConfetti';
+import {
+  getClientPerfProfile,
+  setPerfTierOverride,
+  getPerfTierOverride,
+  PerfProfile,
+  PerfTier,
+} from '@/lib/perfAdaptive';
 
 interface ApiKey {
   id: string;
@@ -34,15 +44,20 @@ function StarRating({ rating }: { rating: number }) {
 
 export default function SettingsPage() {
   const { currentUser, setCurrentUser } = useAppStore();
+  const isAdmin = currentUser?.systemRole === 'ADMIN' || (currentUser?.roles || []).some(r => r?.trim().toUpperCase() === 'ADMIN');
 
   const [loading, setLoading] = useState(!currentUser);
   
   // Profile State
   const [name, setName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
+  const [confettiUrl, setConfettiUrl] = useState('');
   const [dailySheetUrl, setDailySheetUrl] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isUploadingConfetti, setIsUploadingConfetti] = useState(false);
+  const [perfProfile, setPerfProfile] = useState<PerfProfile | null>(null);
+  const [perfOverride, setPerfOverride] = useState<PerfTier | 'auto'>('auto');
 
   // Password State
   const [currentPassword, setCurrentPassword] = useState('');
@@ -58,9 +73,24 @@ export default function SettingsPage() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [keyToDelete, setKeyToDelete] = useState<ApiKey | null>(null);
 
+  // Notification Preferences State
+  const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>({
+    status: true,
+    checklists: true,
+    audits: true,
+    assigned: true,
+    comments: true,
+    mentions: true,
+    defaultView: 'for_me',
+    confettiEnabled: false,
+    receiveConfetti: false,
+  });
+
   // Scrollspy Refs
   const profileRef = useRef<HTMLDivElement>(null);
+  const confettiRef = useRef<HTMLDivElement>(null);
   const passwordRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<HTMLDivElement>(null);
   const docsRef = useRef<HTMLDivElement>(null);
   const [activeSection, setActiveSection] = useState('profile');
@@ -69,12 +99,18 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!currentUser) {
       authApi.getMe()
-        .then(({ user }) => setCurrentUser(user))
+        .then(({ user }) => {
+          setCurrentUser(user);
+          setPerfProfile(getClientPerfProfile());
+          setPerfOverride(getPerfTierOverride());
+        })
         .catch(() => {})
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
       loadApiKeys(currentUser.id);
+      setPerfProfile(getClientPerfProfile());
+      setPerfOverride(getPerfTierOverride());
     }
   }, []);
 
@@ -83,9 +119,25 @@ export default function SettingsPage() {
     if (currentUser) {
       setName(currentUser.name || '');
       setAvatarUrl(currentUser.avatarUrl || '');
+      setConfettiUrl(currentUser.confettiUrl || '');
       setDailySheetUrl(currentUser.dailySheetUrl || '');
+      if (currentUser.notificationPreferences) {
+        setNotifPrefs({
+          status: currentUser.notificationPreferences.status !== false,
+          checklists: currentUser.notificationPreferences.checklists !== false,
+          audits: currentUser.notificationPreferences.audits !== false,
+          assigned: currentUser.notificationPreferences.assigned !== false,
+          comments: currentUser.notificationPreferences.comments !== false,
+          mentions: currentUser.notificationPreferences.mentions !== false,
+          defaultView: currentUser.notificationPreferences.defaultView || 'for_me',
+          confettiEnabled: currentUser.notificationPreferences.confettiEnabled === true,
+          receiveConfetti: currentUser.notificationPreferences.receiveConfetti === true,
+        });
+      }
       setLoading(false);
       loadApiKeys(currentUser.id);
+      setPerfProfile(getClientPerfProfile());
+      setPerfOverride(getPerfTierOverride());
     }
   }, [currentUser]);
 
@@ -103,7 +155,9 @@ export default function SettingsPage() {
     );
 
     if (profileRef.current) observer.observe(profileRef.current);
+    if (confettiRef.current) observer.observe(confettiRef.current);
     if (passwordRef.current) observer.observe(passwordRef.current);
+    if (notificationsRef.current) observer.observe(notificationsRef.current);
     if (apiRef.current) observer.observe(apiRef.current);
     if (docsRef.current) observer.observe(docsRef.current);
 
@@ -114,6 +168,38 @@ export default function SettingsPage() {
     const el = document.getElementById(id);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  const handleTogglePreference = async (key: keyof Omit<UserNotificationPreferences, 'defaultView'>) => {
+    const updated: UserNotificationPreferences = {
+      ...notifPrefs,
+      [key]: !notifPrefs[key],
+    };
+    setNotifPrefs(updated);
+    try {
+      const res = await authApi.updateProfile({ notificationPreferences: updated });
+      setCurrentUser(res.user);
+      toast.success('Notification preferences updated.');
+    } catch (e: any) {
+      setNotifPrefs(notifPrefs);
+      toast.error(e?.message || 'Failed to update preferences.');
+    }
+  };
+
+  const handleSetDefaultView = async (view: 'for_me' | 'show_all') => {
+    const updated: UserNotificationPreferences = {
+      ...notifPrefs,
+      defaultView: view,
+    };
+    setNotifPrefs(updated);
+    try {
+      const res = await authApi.updateProfile({ notificationPreferences: updated });
+      setCurrentUser(res.user);
+      toast.success(`Default activity view set to ${view === 'for_me' ? 'For Me' : 'Show All'}.`);
+    } catch (e: any) {
+      setNotifPrefs(notifPrefs);
+      toast.error(e?.message || 'Failed to update default view.');
     }
   };
 
@@ -167,6 +253,131 @@ export default function SettingsPage() {
     if (e.target.files && e.target.files[0]) {
       handleFileUpload(e.target.files[0]);
     }
+  };
+
+  // Auto-compress confetti image to featherweight WebP under 256x256 (~25-45 KB)
+  const optimizeConfettiFile = async (file: File): Promise<File> => {
+    // If already a small GIF, leave untouched
+    if (file.type === 'image/gif' && file.size <= 500 * 1024) {
+      return file;
+    }
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDimension = 256;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(file);
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) return resolve(file);
+              const optimized = new File(
+                [blob],
+                file.name.replace(/\.[^.]+$/, '.webp'),
+                { type: 'image/webp', lastModified: Date.now() }
+              );
+              resolve(optimized);
+            },
+            'image/webp',
+            0.85
+          );
+        };
+        img.onerror = () => resolve(file);
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Mention Confetti Methods
+  const handleConfettiUpload = async (rawFile: File) => {
+    setIsUploadingConfetti(true);
+    try {
+      const file = await optimizeConfettiFile(rawFile);
+      if (file.size > 500 * 1024) {
+        toast.error('Confetti image cannot exceed 500 KB for fast loading');
+        setIsUploadingConfetti(false);
+        return;
+      }
+      const res = await uploadApi.uploadConfetti(file);
+      setConfettiUrl(res.url);
+      setCurrentUser(res.user);
+      const kbSize = Math.max(1, Math.round(file.size / 1024));
+      // Auto-agree on custom upload if not yet opted in
+      if (!notifPrefs.confettiEnabled || !notifPrefs.receiveConfetti) {
+        const updatedPrefs: UserNotificationPreferences = {
+          ...notifPrefs,
+          confettiEnabled: true,
+          receiveConfetti: true,
+        };
+        setNotifPrefs(updatedPrefs);
+        await authApi.updateProfile({ notificationPreferences: updatedPrefs });
+      }
+      toast.success(`Mention confetti image updated successfully (${kbSize} KB)`);
+      triggerMentionConfetti(res.user, undefined, true);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to upload confetti image');
+    } finally {
+      setIsUploadingConfetti(false);
+    }
+  };
+
+  const handleConfettiFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      handleConfettiUpload(e.target.files[0]);
+    }
+  };
+
+  const handleDeleteConfetti = async () => {
+    try {
+      const res = await uploadApi.deleteConfetti();
+      setConfettiUrl('');
+      setCurrentUser(res.user);
+      toast.success('Removed custom confetti image (reverted to avatar)');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to remove confetti image');
+    }
+  };
+
+  const handleTestConfetti = () => {
+    if (!notifPrefs.receiveConfetti) {
+      toast.error('Please agree to "Receive Confetti Animations" below to preview animations on your screen.');
+      return;
+    }
+    triggerMentionConfetti({
+      id: currentUser?.id,
+      name: name || currentUser?.name || 'You',
+      avatarUrl,
+      confettiUrl,
+      notificationPreferences: {
+        ...notifPrefs,
+        confettiEnabled: true,
+      },
+    }, undefined, true);
+  };
+
+  const handlePerfOverrideChange = (tier: PerfTier | 'auto') => {
+    setPerfTierOverride(tier);
+    setPerfOverride(tier);
+    setPerfProfile(getClientPerfProfile());
+    toast.success(tier === 'auto' ? 'Hardware adaptation set to Auto' : `Hardware tier overridden to ${tier.toUpperCase()}`);
   };
 
   // Password Methods
@@ -258,6 +469,18 @@ export default function SettingsPage() {
             <UserIcon className={`w-4 h-4 ${activeSection === 'profile' ? 'text-indigo-400' : 'text-zinc-500'}`} />
             Profile
           </button>
+
+          <button
+            onClick={() => scrollToSection('confetti')}
+            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
+              activeSection === 'confetti'
+                ? 'bg-zinc-800/80 text-white font-medium'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+            }`}
+          >
+            <Sparkles className={`w-4 h-4 ${activeSection === 'confetti' ? 'text-indigo-400' : 'text-zinc-500'}`} />
+            Mention Confetti
+          </button>
           
           <button
             onClick={() => scrollToSection('password')}
@@ -269,6 +492,18 @@ export default function SettingsPage() {
           >
             <Lock className={`w-4 h-4 ${activeSection === 'password' ? 'text-indigo-400' : 'text-zinc-500'}`} />
             Password
+          </button>
+          
+          <button
+            onClick={() => scrollToSection('notifications')}
+            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
+              activeSection === 'notifications'
+                ? 'bg-zinc-800/80 text-white font-medium'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+            }`}
+          >
+            <Bell className={`w-4 h-4 ${activeSection === 'notifications' ? 'text-indigo-400' : 'text-zinc-500'}`} />
+            Notifications
           </button>
           
           <button
@@ -416,6 +651,334 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* MENTION CONFETTI & CELEBRATION SECTION */}
+          <section id="confetti" ref={confettiRef} className="scroll-mt-8 space-y-6">
+            <div className="bg-background border border-zinc-800 rounded-xl overflow-hidden">
+              {/* Header: Title + Subtitle + Primary CTA */}
+              <div className="px-6 py-4 border-b border-zinc-800 bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-400" />
+                    Mention Celebration Confetti
+                  </h2>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Trigger a personalized celebration burst when teammates mention you in tasks, comments, and activity.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleTestConfetti}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs transition-all cursor-pointer hover:scale-102 active:scale-98 shrink-0 self-start sm:self-auto"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                  <span>Test Confetti Burst</span>
+                </button>
+              </div>
+
+              {/* User Consent & Permissions Row */}
+              <div className="p-6 border-b border-zinc-800/80 bg-zinc-900/30">
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-200">Celebration Permissions & Consent</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Nexus only displays confetti celebrations when explicitly agreed to by both the mentioned user and the viewer.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                    {/* Agreement 1: Celebrate My Mentions */}
+                    <div className={`p-4 rounded-xl border transition-all ${
+                      notifPrefs.confettiEnabled
+                        ? 'bg-indigo-500/5 border-indigo-500/30'
+                        : 'bg-zinc-900/40 border-zinc-800/80'
+                    }`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-zinc-200">Celebrate My Mentions</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                              notifPrefs.confettiEnabled
+                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25'
+                                : 'bg-zinc-800 text-zinc-400'
+                            }`}>
+                              {notifPrefs.confettiEnabled ? 'Agreed & Active' : 'Not Agreed (Disabled)'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400 leading-relaxed">
+                            I agree to allow a celebration confetti burst to appear on screen when teammates @mention me.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={Boolean(notifPrefs.confettiEnabled)}
+                          onClick={() => handleTogglePreference('confettiEnabled')}
+                          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 mt-0.5 ${
+                            notifPrefs.confettiEnabled ? 'bg-indigo-600' : 'bg-zinc-700'
+                          }`}
+                        >
+                          <div
+                            className={`w-5 h-5 rounded-full bg-white transition-transform absolute top-0.5 left-0.5 ${
+                              notifPrefs.confettiEnabled ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Agreement 2: Receive Confetti Animations */}
+                    <div className={`p-4 rounded-xl border transition-all ${
+                      notifPrefs.receiveConfetti
+                        ? 'bg-indigo-500/5 border-indigo-500/30'
+                        : 'bg-zinc-900/40 border-zinc-800/80'
+                    }`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-zinc-200">Receive Confetti Animations</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                              notifPrefs.receiveConfetti
+                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25'
+                                : 'bg-zinc-800 text-zinc-400'
+                            }`}>
+                              {notifPrefs.receiveConfetti ? 'Agreed & Active' : 'Animations Off'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400 leading-relaxed">
+                            I agree to receive and display celebration confetti animations on my screen when mentions occur.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={Boolean(notifPrefs.receiveConfetti)}
+                          onClick={() => handleTogglePreference('receiveConfetti')}
+                          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 mt-0.5 ${
+                            notifPrefs.receiveConfetti ? 'bg-indigo-600' : 'bg-zinc-700'
+                          }`}
+                        >
+                          <div
+                            className={`w-5 h-5 rounded-full bg-white transition-transform absolute top-0.5 left-0.5 ${
+                              notifPrefs.receiveConfetti ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 1: Visual Asset / Confetti Avatar */}
+              <div className="p-6 border-b border-zinc-800/80 bg-zinc-900/10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                  <div className="flex items-start sm:items-center gap-4">
+                    {/* Avatar Ring Preview */}
+                    <div className="relative group shrink-0">
+                      <div className={`relative w-16 h-16 rounded-full overflow-hidden bg-zinc-800 border-2 flex items-center justify-center transition-all ${
+                        confettiUrl ? 'border-indigo-500 shadow-md shadow-indigo-500/10' : 'border-zinc-700'
+                      }`}>
+                        {confettiUrl || avatarUrl ? (
+                          <img
+                            src={confettiUrl || avatarUrl}
+                            alt="Confetti Preview"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <UserIcon className="w-7 h-7 text-zinc-500" />
+                        )}
+
+                        {isUploadingConfetti && (
+                          <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-10">
+                            <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Mini Sparkle Floating Pin */}
+                      <div
+                        className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] border border-background shadow-xs ${
+                          confettiUrl ? 'bg-indigo-600 text-white' : 'bg-zinc-700 text-zinc-300'
+                        }`}
+                        title={confettiUrl ? 'Custom Confetti Image Active' : 'Defaulting to Account Avatar'}
+                      >
+                        <Sparkles className="w-2.5 h-2.5" />
+                      </div>
+                    </div>
+
+                    {/* Metadata & Description */}
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-zinc-200">Confetti Image</h3>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                          confettiUrl
+                            ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/25'
+                            : 'bg-zinc-800/80 text-zinc-400 border border-zinc-700/50'
+                        }`}>
+                          {confettiUrl ? 'Custom Image Active' : 'Using Profile Avatar'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400">
+                        {confettiUrl
+                          ? 'Custom image uploaded. This asset bursts onto teammate screens whenever you are mentioned.'
+                          : 'No custom confetti image set. Nexus automatically uses your standard profile avatar as a fallback.'}
+                      </p>
+                      <span className="text-[11px] text-zinc-500 block">
+                        PNG, JPG, or WEBP up to 500 KB. High-res images are auto-compressed to ~30 KB for instant burst performance.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 cursor-pointer transition-colors border border-zinc-700/60 shadow-xs">
+                      <UploadCloud className="w-3.5 h-3.5 text-zinc-300" />
+                      <span>{confettiUrl ? 'Change Image' : 'Upload Image'}</span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleConfettiFileChange}
+                        disabled={isUploadingConfetti}
+                      />
+                    </label>
+
+                    {confettiUrl && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteConfetti}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors cursor-pointer border border-transparent hover:border-rose-500/20"
+                        title="Revert to profile avatar"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Reset</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Animation Intensity & Hardware Adaptation (Admin Only) */}
+              {isAdmin && (
+                <div className="p-6 space-y-4 border-t border-zinc-800/80">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-zinc-200">Animation Intensity</h3>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          Hardware Adaptive
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-purple-300 border border-purple-500/25">
+                          Admin Only
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        Tune particle burst density, or let Nexus dynamically throttle to preserve 60 FPS on low-spec devices.
+                      </p>
+                    </div>
+
+                    {/* Segmented Control */}
+                    <div className="flex items-center bg-zinc-800/80 p-1 rounded-lg border border-zinc-700/60 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handlePerfOverrideChange('auto')}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                          perfOverride === 'auto'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                        }`}
+                      >
+                        Auto-Adaptive
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePerfOverrideChange('low')}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                          perfOverride === 'low'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                        }`}
+                      >
+                        Subtle (8)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePerfOverrideChange('medium')}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                          perfOverride === 'medium'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                        }`}
+                      >
+                        Balanced (18)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePerfOverrideChange('high')}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                          perfOverride === 'high'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                        }`}
+                      >
+                        Festive (28)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Hardware Engine Status Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg bg-zinc-900/40 border border-zinc-800/80 text-xs">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="flex items-center gap-1.5 text-zinc-300 font-medium">
+                        <Gauge className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Active Engine:</span>
+                        <span className="capitalize text-zinc-100 font-semibold">
+                          {perfProfile?.tier || 'medium'} ({perfProfile?.particleCount || 18} particles)
+                        </span>
+                      </span>
+
+                      <span className="text-zinc-600 hidden sm:inline">•</span>
+
+                      <span className="flex items-center gap-1.5 text-zinc-400">
+                        <Cpu className="w-3.5 h-3.5 text-zinc-500" />
+                        <span>{perfProfile?.deviceMemory ? `${perfProfile.deviceMemory} GB RAM` : '4+ GB RAM'} ({perfProfile?.hardwareConcurrency || 4} cores)</span>
+                      </span>
+
+                      <span className="text-zinc-600 hidden sm:inline">•</span>
+
+                      <span className="flex items-center gap-1.5 text-zinc-400">
+                        <Wifi className="w-3.5 h-3.5 text-zinc-500" />
+                        <span>~{perfProfile?.estimatedLatencyMs || 50}ms RTT</span>
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-zinc-500 flex items-center gap-1">
+                      {perfOverride === 'auto' ? (
+                        <span className="text-zinc-400">Auto-throttles if frame time exceeds 36ms</span>
+                      ) : (
+                        <span className="text-amber-400 font-medium">Manual intensity override active</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Row 3: Security & Theme Reassurance Footer */}
+              <div className="px-6 py-3.5 bg-zinc-900/40 border-t border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-zinc-500">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>Cloudflare R2 storage with AES-256 encrypted URL reference</span>
+                </div>
+                <div className="flex items-center gap-2 text-zinc-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                  <span>Contrast-balanced for light mode & dark theme legibility</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* PASSWORD SECTION */}
           <section id="password" ref={passwordRef} className="scroll-mt-8 space-y-6">
             <div className="bg-background border border-zinc-800 rounded-xl overflow-hidden">
@@ -479,6 +1042,133 @@ export default function SettingsPage() {
                     {pwSaving ? 'Updating...' : 'Update Password'}
                   </button>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          {/* NOTIFICATION PREFERENCES SECTION */}
+          <section id="notifications" ref={notificationsRef} className="scroll-mt-8 space-y-6">
+            <div className="bg-background border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800 bg-card">
+                <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-zinc-400" />
+                  Notification Preferences
+                </h2>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Customize which notifications and activity updates you receive across Nexus.
+                </p>
+              </div>
+
+              {/* Default Activity Feed View Preference */}
+              <div className="p-6 border-b border-zinc-800/80 bg-zinc-900/30">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-200">Default Activity View</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Choose whether the Activity page opens with your personal feed or all workspace activity.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center bg-zinc-800/80 p-1 rounded-lg border border-zinc-700/60 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleSetDefaultView('for_me')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                        (notifPrefs.defaultView || 'for_me') === 'for_me'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                      }`}
+                    >
+                      <UserIcon className="w-3.5 h-3.5" />
+                      <span>For Me</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetDefaultView('show_all')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                        notifPrefs.defaultView === 'show_all'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Show All</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 divide-y divide-zinc-800/60">
+                {[
+                  {
+                    key: 'status' as const,
+                    title: 'Status Updates',
+                    desc: 'Notifications when status changes on tasks or subtasks assigned to you.',
+                  },
+                  {
+                    key: 'checklists' as const,
+                    title: 'Checklists',
+                    desc: 'Notifications when checklist items are assigned to you or completed on tasks assigned to you.',
+                  },
+                  {
+                    key: 'audits' as const,
+                    title: 'Auditor Checks',
+                    desc: 'Notifications when audit checklists (Instructions, Design, Funnel, UI UX) are checked on tasks assigned to you.',
+                  },
+                  {
+                    key: 'assigned' as const,
+                    title: 'Assignments & Unassignments',
+                    desc: 'Notifications when you are assigned to or unassigned from tasks or subtasks.',
+                  },
+                  {
+                    key: 'comments' as const,
+                    title: 'Comments & Replies',
+                    desc: 'Notifications for new comments and replies on tasks you are assigned to or commented on.',
+                  },
+                  {
+                    key: 'mentions' as const,
+                    title: '@Mentions',
+                    desc: 'High-priority notifications when someone directly @mentions you in comments or tasks.',
+                  },
+                  {
+                    key: 'confettiEnabled' as const,
+                    title: 'Celebrate My Mentions',
+                    desc: 'Allow your personalized celebration confetti burst when teammates mention you.',
+                  },
+                  {
+                    key: 'receiveConfetti' as const,
+                    title: 'Receive Confetti Animations',
+                    desc: 'Display celebration confetti animations on your screen when mentions occur in your workspace.',
+                  },
+                ].map((item, idx) => {
+                  const isEnabled = notifPrefs[item.key] !== false;
+                  return (
+                    <div
+                      key={item.key}
+                      className={`flex items-center justify-between py-4 ${idx === 0 ? 'pt-0' : ''}`}
+                    >
+                      <div className="pr-4">
+                        <h4 className="text-sm font-medium text-zinc-200">{item.title}</h4>
+                        <p className="text-xs text-zinc-500 mt-0.5">{item.desc}</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={isEnabled}
+                        onClick={() => handleTogglePreference(item.key)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          isEnabled ? 'bg-indigo-600' : 'bg-zinc-700'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                            isEnabled ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </section>

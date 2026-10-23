@@ -44,6 +44,7 @@ import {
   formatChecklistNotificationTitle,
 } from '../utils/roleNotification';
 import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
+import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -426,8 +427,10 @@ export async function createTask(req: Request, res: Response) {
     // Notify the assignees a task was created for (the creator excluded) — after the broadcast/response
     (async () => {
       const actingUserId = (req as any).user?.id || creatorId;
-      const assigneeIdsToNotify = (task.assignees ?? []).map((a: any) => a.id).filter((id: string) => id !== actingUserId);
-      if (!actingUserId || assigneeIdsToNotify.length === 0) return;
+      const rawAssigneeIds = (task.assignees ?? []).map((a: any) => a.id).filter((id: string) => id !== actingUserId);
+      if (!actingUserId || rawAssigneeIds.length === 0) return;
+      const assigneeIdsToNotify = await filterUsersByNotificationPreference(rawAssigneeIds, 'assigned');
+      if (assigneeIdsToNotify.length === 0) return;
       const actor = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
       await prisma.taskNotification.createMany({
         data: assigneeIdsToNotify.map((id: string) => ({
@@ -435,7 +438,7 @@ export async function createTask(req: Request, res: Response) {
           actorId: actingUserId,
           taskId: task.id,
           type: 'ASSIGNMENT',
-          title: `${actor?.name || 'Someone'} assigned this task to you`,
+          title: `${actor?.name || 'Someone'} assigned you to task ${task.title}`,
         })),
       });
       assigneeIdsToNotify.forEach((id: string) => {
@@ -883,11 +886,12 @@ export async function updateTask(req: Request, res: Response) {
               },
             });
 
-            const usersToNotify = await getStatusChangeRecipients(
+            const rawUsersToNotify = await getStatusChangeRecipients(
               status,
               { ...currentTask, teamId: teamId || currentTask.teamId },
               actingUserId
             );
+            const usersToNotify = await filterUsersByNotificationPreference(rawUsersToNotify, 'status');
 
             if (usersToNotify.length > 0) {
               await prisma.taskNotification.createMany({
@@ -896,7 +900,7 @@ export async function updateTask(req: Request, res: Response) {
                   actorId: actingUserId,
                   taskId,
                   type: 'STATUS_CHANGE',
-                  title: `${user?.name || 'Someone'} changed the status to ${status}`,
+                  title: `${user?.name || 'Someone'} changed status from ${currentTask.status} to ${status} on task ${currentTask.title}`,
                 })),
               });
               usersToNotify.forEach((id: any) => {
@@ -931,8 +935,14 @@ export async function updateTask(req: Request, res: Response) {
               },
             });
             const newlyAssigned = computedAssigneeIds.filter((id: string) => !currentTask.assignees.some((a: any) => a.id === id));
+            const removedAssigneeIds = currentTask.assignees
+              .filter((a: any) => !computedAssigneeIds.includes(a.id))
+              .map((a: any) => a.id)
+              .filter((id: string) => id !== actingUserId);
+
             if (newlyAssigned.length > 0) {
-              const newAssigneesToNotify = newlyAssigned.filter((id: string) => id !== actingUserId);
+              const rawNewAssignees = newlyAssigned.filter((id: string) => id !== actingUserId);
+              const newAssigneesToNotify = await filterUsersByNotificationPreference(rawNewAssignees, 'assigned');
               if (newAssigneesToNotify.length > 0) {
                 await prisma.taskNotification.createMany({
                   data: newAssigneesToNotify.map((id: string) => ({
@@ -940,10 +950,28 @@ export async function updateTask(req: Request, res: Response) {
                     actorId: actingUserId,
                     taskId,
                     type: 'ASSIGNMENT',
-                    title: `${user?.name || 'Someone'} assigned this task to you`,
+                    title: `${user?.name || 'Someone'} assigned you to task ${currentTask.title}`,
                   })),
                 });
                 newAssigneesToNotify.forEach((id: string) => {
+                  io.to(`user:${id}`).emit('notification_received');
+                });
+              }
+            }
+
+            if (removedAssigneeIds.length > 0) {
+              const unassignedToNotify = await filterUsersByNotificationPreference(removedAssigneeIds, 'assigned');
+              if (unassignedToNotify.length > 0) {
+                await prisma.taskNotification.createMany({
+                  data: unassignedToNotify.map((id: string) => ({
+                    userId: id,
+                    actorId: actingUserId,
+                    taskId,
+                    type: 'UNASSIGNMENT',
+                    title: `${user?.name || 'Someone'} unassigned you from task ${currentTask.title}`,
+                  })),
+                });
+                unassignedToNotify.forEach((id: string) => {
                   io.to(`user:${id}`).emit('notification_received');
                 });
               }
@@ -973,17 +1001,35 @@ export async function updateTask(req: Request, res: Response) {
                 details: { assigneeName: assignedUser?.name || 'Unassigned' },
               },
             });
+            if (currentTask.assigneeId && currentTask.assigneeId !== actingUserId) {
+              const oldToNotify = await filterUsersByNotificationPreference([currentTask.assigneeId], 'assigned');
+              if (oldToNotify.length > 0) {
+                await prisma.taskNotification.create({
+                  data: {
+                    userId: currentTask.assigneeId,
+                    actorId: actingUserId,
+                    taskId,
+                    type: 'UNASSIGNMENT',
+                    title: `${user?.name || 'Someone'} unassigned you from task ${currentTask.title}`,
+                  },
+                });
+                io.to(`user:${currentTask.assigneeId}`).emit('notification_received');
+              }
+            }
             if (assigneeId && assigneeId !== actingUserId) {
-              await prisma.taskNotification.create({
-                data: {
-                  userId: assigneeId,
-                  actorId: actingUserId,
-                  taskId,
-                  type: 'ASSIGNMENT',
-                  title: `${user?.name || 'Someone'} assigned this task to you`,
-                },
-              });
-              io.to(`user:${assigneeId}`).emit('notification_received');
+              const newToNotify = await filterUsersByNotificationPreference([assigneeId], 'assigned');
+              if (newToNotify.length > 0) {
+                await prisma.taskNotification.create({
+                  data: {
+                    userId: assigneeId,
+                    actorId: actingUserId,
+                    taskId,
+                    type: 'ASSIGNMENT',
+                    title: `${user?.name || 'Someone'} assigned you to task ${currentTask.title}`,
+                  },
+                });
+                io.to(`user:${assigneeId}`).emit('notification_received');
+              }
             }
 
             activity = {
@@ -1203,7 +1249,8 @@ export async function moveTask(req: Request, res: Response) {
             io.emit('task_activity', { listId: roomListId, taskId: id, activity });
 
             // Notify role-based recipients + assignees so the change shows in their feed
-            const usersToNotify = await getStatusChangeRecipients(status, currentTask, actingUserId);
+            const rawUsersToNotify = await getStatusChangeRecipients(status, currentTask, actingUserId);
+            const usersToNotify = await filterUsersByNotificationPreference(rawUsersToNotify, 'status');
             if (usersToNotify.length > 0) {
               await prisma.taskNotification.createMany({
                 data: usersToNotify.map((uid: string) => ({
@@ -1211,7 +1258,7 @@ export async function moveTask(req: Request, res: Response) {
                   actorId: actingUserId,
                   taskId: id,
                   type: 'STATUS_CHANGE',
-                  title: `${user?.name || 'Someone'} changed the status to ${status}`,
+                  title: `${user?.name || 'Someone'} changed status from ${oldStatus} to ${status} on task ${currentTask.title}`,
                 })),
               });
               usersToNotify.forEach((uid: string) => {
@@ -1349,21 +1396,28 @@ export async function createTaskComment(req: Request, res: Response) {
       // Notify task assignees about the comment (if they weren't mentioned)
       const taskData = await prisma.task.findUnique({
         where: { id: taskId },
-        select: { assignees: { select: { id: true } } }
+        select: { title: true, assignees: { select: { id: true } } }
       });
       if (taskData) {
-        const assigneesToNotify = taskData.assignees
+        const rawAssigneesToNotify = taskData.assignees
           .map((a: any) => a.id)
           .filter((id: any) => id !== effectiveUserId && !mentionIds.includes(id));
 
+        const assigneesToNotify = await filterUsersByNotificationPreference(rawAssigneesToNotify, 'comments');
+
         if (assigneesToNotify.length > 0) {
+          let itemTitle = taskData.title;
+          if (subtaskId) {
+            const subRec = await prisma.subtask.findUnique({ where: { id: subtaskId }, select: { title: true } });
+            if (subRec?.title) itemTitle = subRec.title;
+          }
           await prisma.taskNotification.createMany({
             data: assigneesToNotify.map((id: any) => ({
               userId: id,
               actorId: effectiveUserId,
               taskId,
               type: 'COMMENT',
-              title: `${user?.name || 'Someone'} commented on a task you're assigned to`,
+              title: `${user?.name || 'Someone'} commented on ${subtaskId ? 'subtask' : 'task'} ${itemTitle}`,
               content: toNotificationPreview(content),
             })),
           });
@@ -2040,9 +2094,11 @@ export async function createSubtask(req: Request, res: Response) {
       const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
       if (actingUserId) {
         // Notify the subtask's assignees (the acting user excluded)
-        const subtaskAssigneeIds: string[] = (((subtask as any).assignees ?? []) as Array<{ id: string }>)
+        const rawSubtaskAssigneeIds: string[] = (((subtask as any).assignees ?? []) as Array<{ id: string }>)
           .map((a) => a.id)
           .filter((id) => id !== actingUserId);
+        const subtaskAssigneeIds = await filterUsersByNotificationPreference(rawSubtaskAssigneeIds, 'assigned');
+        const actorUser = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
         if (subtaskAssigneeIds.length > 0) {
           await prisma.taskNotification.createMany({
             data: subtaskAssigneeIds.map((id) => ({
@@ -2050,7 +2106,7 @@ export async function createSubtask(req: Request, res: Response) {
               actorId: actingUserId,
               taskId,
               type: 'ASSIGNMENT',
-              title: `You were assigned to a subtask: ${subtask.title}`,
+              title: `${actorUser?.name || 'Someone'} assigned you to subtask ${subtask.title}`,
             })),
           });
           subtaskAssigneeIds.forEach((id) => {
@@ -2067,7 +2123,6 @@ export async function createSubtask(req: Request, res: Response) {
             details: { subtaskTitle: title }
           }
         });
-        const actorUser = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
         const act = {
           id: Date.now().toString(),
           type: 'create_subtask',
@@ -2262,12 +2317,14 @@ export async function updateSubtask(req: Request, res: Response) {
         });
 
       }
-      // Notify only users newly added to the subtask (array or single-assignee path); the
-      // notification_received emit refreshes their cowbell and Activity feed live
+      // Notify users newly added to or unassigned from the subtask
       if (assigneesChanging) {
-        const newlyAssignedIds = newSubtaskAssignees
+        const rawNewlyAssignedIds = newSubtaskAssignees
           .map((u) => u.id)
           .filter((id) => id !== actingUserId && !previousAssignees.some((p) => p.id === id));
+        const newlyAssignedIds = await filterUsersByNotificationPreference(rawNewlyAssignedIds, 'assigned');
+        const actor = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
+
         if (newlyAssignedIds.length > 0) {
           await prisma.taskNotification.createMany({
             data: newlyAssignedIds.map((id) => ({
@@ -2275,10 +2332,31 @@ export async function updateSubtask(req: Request, res: Response) {
               actorId: actingUserId,
               taskId,
               type: 'ASSIGNMENT',
-              title: `You were assigned to a subtask: ${subtask.title}`,
+              title: `${actor?.name || 'Someone'} assigned you to subtask ${subtask.title}`,
             })),
           });
           newlyAssignedIds.forEach((id) => {
+            io.to(`user:${id}`).emit('notification_received');
+          });
+        }
+
+        const rawUnassignedIds = previousAssignees
+          .filter((p) => !newSubtaskAssignees.some((u) => u.id === p.id))
+          .map((p) => p.id)
+          .filter((id) => id !== actingUserId);
+        const unassignedIds = await filterUsersByNotificationPreference(rawUnassignedIds, 'assigned');
+
+        if (unassignedIds.length > 0) {
+          await prisma.taskNotification.createMany({
+            data: unassignedIds.map((id) => ({
+              userId: id,
+              actorId: actingUserId,
+              taskId,
+              type: 'UNASSIGNMENT',
+              title: `${actor?.name || 'Someone'} unassigned you from subtask ${subtask.title}`,
+            })),
+          });
+          unassignedIds.forEach((id) => {
             io.to(`user:${id}`).emit('notification_received');
           });
         }
@@ -2307,7 +2385,8 @@ export async function updateSubtask(req: Request, res: Response) {
                 ...parentTask,
                 assignees: [...parentTask.assignees, ...subtaskAssignees],
               };
-              const roleRecipients = await getStatusChangeRecipients(status, combinedTask, actingUserId);
+              const rawRoleRecipients = await getStatusChangeRecipients(status, combinedTask, actingUserId);
+              const roleRecipients = await filterUsersByNotificationPreference(rawRoleRecipients, 'status');
               if (roleRecipients.length > 0) {
                 const actor = await prisma.user.findUnique({ where: { id: actingUserId }, select: { name: true } });
                 await prisma.taskNotification.createMany({
@@ -2316,7 +2395,7 @@ export async function updateSubtask(req: Request, res: Response) {
                     actorId: actingUserId,
                     taskId,
                     type: 'STATUS_CHANGE',
-                    title: `${actor?.name || 'Someone'} changed subtask "${subtask.title}" status to ${status}`,
+                    title: `${actor?.name || 'Someone'} changed status from ${oldSubtaskStatus} to ${status} on subtask ${subtask.title}`,
                   })),
                 });
                 roleRecipients.forEach((uid: string) => {
@@ -2802,7 +2881,37 @@ export async function updateChecklistItem(req: Request, res: Response) {
           }
         }
 
-        // 2. AuditLog & Role Notifications on Item Check (completed === true)
+        // 2. Checklist Item Assignment Notification
+        if (assigneeId !== undefined && assigneeId && itemRef?.checklist) {
+          const checklist = itemRef.checklist;
+          const targetTask = checklist.task || checklist.subtask?.task;
+          const subtask = checklist.subtask;
+          const actor = userId
+            ? await prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true, name: true },
+              })
+            : null;
+          const actorName = actor?.name || 'Someone';
+
+          if (assigneeId !== userId) {
+            const shouldNotify = await filterUsersByNotificationPreference([assigneeId], 'checklists');
+            if (shouldNotify.length > 0) {
+              await prisma.taskNotification.create({
+                data: {
+                  userId: assigneeId,
+                  actorId: userId || '',
+                  taskId: targetTask?.id || subtask?.taskId || '',
+                  type: 'CHECKLIST_ITEM_ASSIGNED',
+                  title: `${actorName} assigned you "${itemRef.text}" in ${checklist.name || 'Checklist'}`,
+                },
+              });
+              io.to(`user:${assigneeId}`).emit('notification_received');
+            }
+          }
+        }
+
+        // 3. AuditLog & Role Notifications on Item Check (completed === true)
         if (completed === true && itemRef?.checklist) {
           const checklist = itemRef.checklist;
           const targetTask = checklist.task || checklist.subtask?.task;
@@ -2820,7 +2929,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
           const notifTitle = formatChecklistNotificationTitle(
             actorName,
             itemRef.text,
-            targetTask?.title || 'task',
+            targetTask?.title || subtask?.title || 'task',
             isAudit
           );
 
@@ -2842,13 +2951,13 @@ export async function updateChecklistItem(req: Request, res: Response) {
             },
           });
 
-          // Recipients: PMs, Auditors, Admins (scoped to team first if present, fallback workspace), + assignees
+          // Recipients: Assignees of task + subtask
           if (targetTask) {
             const combinedAssignees = [
               ...(targetTask.assignees || []),
               ...(subtask?.assignees || []),
             ];
-            const recipients = await getChecklistCheckRecipients(
+            const rawRecipients = await getChecklistCheckRecipients(
               {
                 id: targetTask.id,
                 teamId: targetTask.teamId,
@@ -2856,6 +2965,11 @@ export async function updateChecklistItem(req: Request, res: Response) {
                 assignees: combinedAssignees,
               },
               userId
+            );
+
+            const recipients = await filterUsersByNotificationPreference(
+              rawRecipients,
+              isAudit ? 'audits' : 'checklists'
             );
 
             if (recipients.length > 0) {

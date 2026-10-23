@@ -32,12 +32,25 @@ export interface Invitation {
   updatedAt: string;
 }
 
+export interface UserNotificationPreferences {
+  status?: boolean;
+  checklists?: boolean;
+  audits?: boolean;
+  assigned?: boolean;
+  comments?: boolean;
+  mentions?: boolean;
+  defaultView?: 'for_me' | 'show_all';
+  confettiEnabled?: boolean;
+  receiveConfetti?: boolean;
+}
+
 export interface User {
   id: string;
   email: string;
   name: string;
   avatarUrl?: string;
   imageUrl?: string;
+  confettiUrl?: string | null;
   googleId?: string;
   dailySheetUrl?: string;
   starRating: number; // 1 - 3
@@ -47,6 +60,7 @@ export interface User {
   roles: string[];
   teamId?: string;
   teamName?: string;
+  notificationPreferences?: UserNotificationPreferences;
 }
 
 export interface TeamRole {

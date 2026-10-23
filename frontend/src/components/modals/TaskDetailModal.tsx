@@ -30,6 +30,7 @@ import { AttachmentsGrid } from './AttachmentsGrid';
 import { getFolderColor } from '@/components/layout/Sidebar';
 import { CommentEditor, ComposerSendButton, ComposerToolButton } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
+import { triggerMentionConfetti, preloadMentionConfettiImage } from '../ui/MentionConfetti';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
 import { LinkWithPreview } from '../ui/LinkHoverPreview';
 import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl } from '@/lib/links';
@@ -961,9 +962,10 @@ export function TaskDetailModalContent({
   }), [task?.id]);
 
   // Select only what the modal uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
-  const { currentUser, workspaceUsers, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists } = useAppStore(useShallow((s) => ({
+  const { currentUser, workspaceUsers, workspaceUsersIndex, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists } = useAppStore(useShallow((s) => ({
     currentUser: s.currentUser,
     workspaceUsers: s.workspaceUsers,
+    workspaceUsersIndex: s.workspaceUsersIndex,
     loadUsers: s.loadUsers,
     hydrateUsersFromCache: s.hydrateUsersFromCache,
     workspaceTeams: s.workspaceTeams,
@@ -1207,6 +1209,12 @@ export function TaskDetailModalContent({
     try {
       const res = await tasksApi.addComment(targetId, text, currentUser.id, undefined, mentionIds || [], parentCommentId, subtaskId);
       if (res?.comment) {
+        if (mentionIds && mentionIds.length > 0) {
+          mentionIds.forEach(id => {
+            const fullUser = workspaceUsersIndex[id];
+            if (fullUser) triggerMentionConfetti(fullUser);
+          });
+        }
         setRichComments(withReplies(replies => replies.some(r => r.id === res.comment.id)
           ? replies.filter(r => r.id !== tempId)
           : replies.map(r => r.id === tempId ? { ...r, ...res.comment } : r)));
@@ -2361,6 +2369,7 @@ export function TaskDetailModalContent({
         const el = document.getElementById('main-task-comment');
         if (el) el.style.height = '80px';
       }, 10);
+      const usersToCelebrate = [...mentionedUsers];
       setStagedFiles([]);
       setMentionedUsers([]);
       setIsUploading(false);
@@ -2376,6 +2385,12 @@ export function TaskDetailModalContent({
       );
 
       if (res?.comment) {
+        if (usersToCelebrate.length > 0) {
+          usersToCelebrate.forEach(u => {
+            const fullUser = workspaceUsersIndex[u.id] || u;
+            triggerMentionConfetti(fullUser);
+          });
+        }
         // A reload that landed meanwhile may already hold the saved comment; then just drop the placeholder
         setRichComments(prev => prev.some(c => c.id === res.comment.id)
           ? prev.filter(c => c.id !== tempId)
@@ -4074,6 +4089,7 @@ export function TaskDetailModalContent({
                     if (!mentionedUsers.some(m => m.id === u.id)) {
                       setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
                     }
+                    triggerMentionConfetti(u);
                   };
 
                   return (
@@ -4087,6 +4103,10 @@ export function TaskDetailModalContent({
                           <div className="max-h-52 overflow-y-auto custom-scrollbar">
                             {filteredMentionUsers.map((u, idx) => {
                               const isSelected = idx === mentionSelectedIndex;
+                              const targetUrl = u.confettiUrl || u.avatarUrl;
+                              if (idx < 5 && targetUrl) {
+                                preloadMentionConfettiImage(targetUrl);
+                              }
                               return (
                                 <div
                                   key={u.id}
@@ -7037,6 +7057,7 @@ export function SubtaskDetailView({
                   if (!mentionedUsers.some(m => m.id === u.id)) {
                     setMentionedUsers(prev => [...prev, { id: u.id, name: u.name }]);
                   }
+                  triggerMentionConfetti(u);
                 };
 
                 return (
@@ -7050,6 +7071,10 @@ export function SubtaskDetailView({
                         <div className="max-h-52 overflow-y-auto custom-scrollbar">
                           {filteredMentionUsers.map((u, idx) => {
                             const isSelected = idx === mentionSelectedIndex;
+                            const targetUrl = u.confettiUrl || u.avatarUrl;
+                            if (idx < 5 && targetUrl) {
+                              preloadMentionConfettiImage(targetUrl);
+                            }
                             return (
                               <div
                                 key={u.id}

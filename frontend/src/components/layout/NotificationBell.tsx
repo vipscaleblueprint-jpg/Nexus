@@ -18,6 +18,65 @@ import { format, isToday, isYesterday } from "date-fns";
 import { notificationsApi, TaskNotification } from "@/api/notifications";
 import { useAppStore } from "@/lib/store";
 import { CommentContent } from "@/components/ui/CommentContent";
+import { fetchListStatuses } from "@/lib/listStatusCache";
+
+const STATUS_HEX_MAP: Record<string, string> = {
+  KYC: '#3A8F55',
+  'PIN BOARD': '#1F8A6E',
+  PIN_BOARD: '#1F8A6E',
+  DAILY: '#2F7BD0',
+  WEEKLY: '#2F7BD0',
+  MONTHLY: '#2F7BD0',
+  PENDING: '#D29A2A',
+  'IN PROGRESS': '#D04A7C',
+  IN_PROGRESS: '#D04A7C',
+  REVISION: '#5B6BD6',
+  WAITING: '#D9534F',
+  'IN REVIEW': '#D97B3A',
+  IN_REVIEW: '#D97B3A',
+  REVIEW: '#D97B3A',
+  CHECKING: '#A35DB8',
+  CRM: '#22A3AE',
+  'ON-HOLD': '#8A8F98',
+  ON_HOLD: '#8A8F98',
+  CLOSED: '#2FA37A',
+  TODO: '#475569',
+  DONE: '#2FA37A',
+  COMPLETE: '#2FA37A',
+  COMPLETED: '#2FA37A',
+  CANCELLED: '#f43f5e',
+};
+
+const COLOR_NAMES_MAP: Record<string, string> = {
+  slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+  red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+  green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+  blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+  pink: '#ec4899', rose: '#f43f5e'
+};
+
+function getStatusHexColor(status: string, customColor?: string): string {
+  if (customColor) {
+    if (customColor.startsWith('#')) return customColor;
+    if (COLOR_NAMES_MAP[customColor.toLowerCase()]) return COLOR_NAMES_MAP[customColor.toLowerCase()];
+    return customColor;
+  }
+  if (!status) return '#71717a';
+
+  const clean = status.trim().toUpperCase();
+  if (STATUS_HEX_MAP[clean]) return STATUS_HEX_MAP[clean];
+
+  const noUnderscore = clean.replace(/_/g, ' ');
+  if (STATUS_HEX_MAP[noUnderscore]) return STATUS_HEX_MAP[noUnderscore];
+
+  const withHyphen = clean.replace(/ /g, '-');
+  if (STATUS_HEX_MAP[withHyphen]) return STATUS_HEX_MAP[withHyphen];
+
+  if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(status.trim())) {
+    return status.trim();
+  }
+  return '#71717a';
+}
 
 type TabType = "all" | "unread" | "mentions";
 
@@ -33,10 +92,39 @@ export function NotificationBell() {
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [customStatusColors, setCustomStatusColors] = useState<Record<string, string>>({});
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const loadNotifications = useCallback(async (pageNum = 1, tab = activeTab) => {
+  // Pre-load custom list status colors for tasks in notification list
+  useEffect(() => {
+    const listIds = Array.from(new Set(notifications.map(n => n.task?.listId).filter(Boolean))) as string[];
+    if (listIds.length === 0) return;
+
+    listIds.forEach(listId => {
+      fetchListStatuses(listId).then(statuses => {
+        if (Array.isArray(statuses) && statuses.length > 0) {
+          setCustomStatusColors(prev => {
+            let changed = false;
+            const next = { ...prev };
+            statuses.forEach((s: any) => {
+              const name = (s.name || s.title || s.status || '').toUpperCase();
+              if (name && s.color) {
+                const key = `${listId}:${name}`;
+                if (next[key] !== s.color) {
+                  next[key] = s.color;
+                  changed = true;
+                }
+              }
+            });
+            return changed ? next : prev;
+          });
+        }
+      }).catch(() => {});
+    });
+  }, [notifications]);
+
+  const loadNotifications = useCallback(async (pageNum = 1, tab = activeTab, markAsReadOnLoad = false) => {
     if (pageNum === 1) {
       setIsLoading(true);
     } else {
@@ -51,12 +139,16 @@ export function NotificationBell() {
         filter: tab,
       });
 
+      const processed = markAsReadOnLoad
+        ? (res.notifications || []).map(n => ({ ...n, isRead: true }))
+        : (res.notifications || []);
+
       if (pageNum === 1) {
-        setNotifications(res.notifications);
+        setNotifications(processed);
       } else {
         setNotifications(prev => {
           const existingIds = new Set(prev.map(p => p.id));
-          const fresh = res.notifications.filter(n => !existingIds.has(n.id));
+          const fresh = processed.filter(n => !existingIds.has(n.id));
           return [...prev, ...fresh];
         });
       }
@@ -64,7 +156,9 @@ export function NotificationBell() {
       setHasMore(res.hasMore);
       setPage(pageNum);
 
-      if (typeof res.unreadCount === 'number') {
+      if (markAsReadOnLoad) {
+        setUnreadCount(0);
+      } else if (typeof res.unreadCount === 'number') {
         setUnreadCount(res.unreadCount);
       }
     } catch (error) {
@@ -212,9 +306,9 @@ export function NotificationBell() {
       Icon = RefreshCw;
       badgeBg = "bg-emerald-600";
       actionVerb = "changed status";
-      const match = n.title.match(/status to (.+)$/i);
+      const match = n.title.match(/(?:status|status of subtask .*?) to (.+)$/i) || n.title.match(/status to (.+)$/i);
       if (match) {
-        statusBadge = match[1].trim();
+        statusBadge = match[1].replace(/["']/g, '').trim();
       } else if (n.task?.status) {
         statusBadge = n.task.status;
       }
@@ -248,7 +342,18 @@ export function NotificationBell() {
   const handleToggleOpen = () => {
     const nextOpen = !isOpen;
     if (nextOpen) {
-      loadNotifications(1, activeTab);
+      const hadUnread = unreadCount > 0;
+      if (hadUnread) {
+        setUnreadCount(0);
+        notificationsApi.markAllAsRead()
+          .then(() => {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('notifications_all_read'));
+            }
+          })
+          .catch((err) => console.error("Failed to mark notifications read", err));
+      }
+      loadNotifications(1, activeTab, hadUnread);
     }
     setIsOpen(nextOpen);
   };
@@ -478,7 +583,17 @@ export function NotificationBell() {
                             )}
 
                             {meta.statusBadge && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/25">
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white shadow-xs shrink-0 select-none leading-none"
+                                style={{
+                                  backgroundColor: getStatusHexColor(
+                                    meta.statusBadge,
+                                    n.task?.listId
+                                      ? customStatusColors[`${n.task.listId}:${meta.statusBadge.toUpperCase()}`]
+                                      : undefined
+                                  )
+                                }}
+                              >
                                 {meta.statusBadge}
                               </span>
                             )}

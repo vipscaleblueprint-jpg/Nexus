@@ -38,4 +38,45 @@ export const uploadApi = {
 
     return res.json();
   },
+
+  uploadConfetti: async (file: File): Promise<{ url: string; user: any }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('folder', 'nexus-confetti');
+
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const res = await fetch(`${API_BASE_URL}/api/upload/confetti`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to upload confetti image');
+    }
+
+    return res.json();
+  },
+
+  deleteConfetti: async (): Promise<{ user: any }> => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const res = await fetch(`${API_BASE_URL}/api/upload/confetti`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to delete confetti image');
+    }
+
+    return res.json();
+  },
 };

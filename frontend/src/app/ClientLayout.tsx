@@ -10,6 +10,7 @@ import { Loader2 } from 'lucide-react';
 import { authApi } from '@/api';
 import { notificationsApi } from '@/api/notifications';
 import { ToastContainer } from '@/components/ui/ToastContainer';
+import { MentionConfetti } from '@/components/ui/MentionConfetti';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
@@ -242,6 +243,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <ToastContainer />
+      <MentionConfetti />
     </div>
   );
 }

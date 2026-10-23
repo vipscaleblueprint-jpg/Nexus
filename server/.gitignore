@@ -33,3 +33,8 @@ tmp/
 
 # Real user data (emails, password hashes): local only, never commit
 prisma/backup.json
+
+prisma/backup*.json
+prisma/*.json
+*.backup.json
+

@@ -1,5 +1,5 @@
 import { apiClient, API_BASE_URL } from './client';
-import { User } from '@/lib/types';
+import { User, UserNotificationPreferences } from '@/lib/types';
 
 export interface LoginParams {
   email: string;
@@ -16,6 +16,7 @@ export interface UpdateProfileParams {
   name?: string;
   avatarUrl?: string;
   dailySheetUrl?: string;
+  notificationPreferences?: UserNotificationPreferences;
 }
 
 export const authApi = {

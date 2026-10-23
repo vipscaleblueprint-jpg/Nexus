@@ -166,6 +166,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/invitations', invitationRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/upload', uploadRouter);
+app.use('/upload', uploadRouter);
 app.use('/api/external', externalRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/teams', teamRouter);

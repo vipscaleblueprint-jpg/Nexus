@@ -4,8 +4,25 @@ import { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'rea
 import { useAppStore } from '@/lib/store';
 import { notificationsApi, TaskNotification } from '@/api/notifications';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Check, CheckSquare, ShieldCheck, MailOpen, Clock, ChevronDown, ChevronLeft, ChevronRight, Users, MessageSquare, Activity, Globe, Loader2 } from 'lucide-react';
-import { format, isToday, isYesterday, differenceInDays } from 'date-fns';
+import {
+  Check,
+  CheckSquare,
+  ShieldCheck,
+  MailOpen,
+  Clock,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  User,
+  Users,
+  SlidersHorizontal,
+  MessageSquare,
+  Activity,
+  Globe,
+  UserMinus,
+  UserPlus,
+} from 'lucide-react';
+import { format, isToday, isYesterday } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
 import { tasksApi } from '@/api/tasks';
@@ -17,7 +34,7 @@ type ViewMode = 'for_me' | 'show_all';
 type Category = 'all' | 'status' | 'checklists' | 'audits' | 'assigned' | 'comments';
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = [
-  { value: 'for_me',   label: 'For Me',   description: 'All your notifications' },
+  { value: 'for_me', label: 'For Me', description: 'All your notifications' },
   { value: 'show_all', label: 'Show All', description: 'All workspace activity' },
 ];
 
@@ -30,71 +47,49 @@ const CATEGORIES: { value: Category; label: string; icon: any }[] = [
   { value: 'comments', label: 'Comments', icon: MessageSquare },
 ];
 
-const formatActivityMessage = (log: any) => {
-  const { action, entity, entityTitle, details } = log;
-  const isSubtask = details?.subtaskTitle || entity?.toLowerCase() === 'subtask';
-  const targetTitle = details?.subtaskTitle || entityTitle;
-  const targetName = isSubtask ? `subtask "${targetTitle}"` : `task "${targetTitle}"`;
-  let message = '';
-  switch (action?.toUpperCase()) {
-    case 'STATUS_CHANGE':
-      message = `changed status ${details?.oldStatus ? `from ${details.oldStatus} ` : ''}to ${details?.newStatus}`;
-      break;
-    case 'AUDIT_ITEM_CHECKED': {
-      const lower = (details?.itemName || '').toLowerCase();
-      if (lower.includes('funnel')) {
-        message = 'has checked funnel auditing';
-      } else if (lower.includes('design')) {
-        message = 'has checked design auditing';
-      } else if (lower.includes('ui') && lower.includes('ux')) {
-        message = 'has checked UI/UX auditing';
-      } else if (lower.includes('instructions')) {
-        message = 'has checked instructions auditing';
-      } else {
-        message = `has checked ${details?.itemName || 'auditing'}`;
-      }
-      break;
+/**
+ * Status word color rendering:
+ * - CLOSED: green
+ * - IN PROGRESS: blue
+ * - Other statuses (In Review, In Checking, CRM, etc.): amber
+ */
+function renderStyledStatusText(text: string) {
+  if (!text) return null;
+
+  const statusRegex =
+    /\b(IN PROGRESS|In Progress|CLOSED|Closed|DONE|Done|IN REVIEW|In Review|IN CHECKING|In Checking|CRM|PENDING|Pending|TODO|Todo|OPEN|Open|BLOCKED|Blocked)\b/g;
+
+  const parts: (string | React.ReactNode)[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = statusRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
     }
-    case 'CHECKLIST_ITEM_CHECKED':
-      message = `has checked ${details?.itemName || 'checklist'}`;
-      break;
-    case 'PRIORITY_CHANGE':
-      message = `changed priority ${details?.oldPriority ? `from ${details.oldPriority} ` : ''}to ${details?.newPriority}`;
-      break;
-    case 'TITLE_CHANGE':
-      return `renamed ${isSubtask ? 'subtask' : 'task'} "${details?.oldTitle || ''}" to "${details?.newTitle || targetTitle}"`;
-    case 'ASSIGNMENT':
-      if (Array.isArray(details?.added) || Array.isArray(details?.removed)) {
-        const added: string[] = details.added || [];
-        const removed: string[] = details.removed || [];
-        if (removed.length > 1 && added.length === 0 && details.assigneeName === 'Unassigned') {
-          return `removed all assignees from ${targetName}`;
-        }
-        const parts: string[] = [];
-        if (added.length > 0) parts.push(`assigned ${added.join(', ')}`);
-        if (removed.length > 0) parts.push(`${parts.length ? 'and removed' : 'removed'} ${removed.join(', ')}`);
-        if (parts.length > 0) {
-          message = parts.join(' ');
-          break;
-        }
-      }
-      if (details?.assigneeName === 'Unassigned') {
-        return `removed all assignees from ${targetName}`;
-      }
-      message = `updated assignment to ${details?.assigneeName || 'someone'}`;
-      break;
-    case 'TASK_CREATED': message = 'created this task'; break;
-    case 'SUBTASK_CREATED': message = 'created a subtask'; break;
-    case 'ASSIGNEE_ADDED': message = 'added an assignee'; break;
-    case 'ASSIGNEE_REMOVED': message = 'removed an assignee'; break;
-    case 'COMMENT_ADDED': message = 'added a comment'; break;
-    case 'COMMENT': message = 'added a comment'; break;
-    case 'REPLY': message = 'replied to a comment'; break;
-    default:
-      message = action ? `performed ${action.replace(/_/g, ' ').toLowerCase()}` : 'performed an action';
+    const val = match[0];
+    const upper = val.toUpperCase().replace(/[\s\-_]+/g, '');
+    let colorClass = 'text-amber-400 font-semibold';
+    if (upper === 'CLOSED' || upper === 'DONE') {
+      colorClass = 'text-emerald-400 font-semibold';
+    } else if (upper === 'INPROGRESS') {
+      colorClass = 'text-blue-400 font-semibold';
+    }
+
+    parts.push(
+      <span key={`${match.index}-${val}`} className={colorClass}>
+        {val}
+      </span>
+    );
+    lastIndex = match.index + val.length;
   }
-  return `${message} on ${targetName}`;
-};
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return <>{parts}</>;
+}
 
 const getAvatarBg = (name: string) => {
   const palette = [
@@ -123,178 +118,27 @@ const getInitials = (name: string) => {
   return name.slice(0, 2).toUpperCase();
 };
 
-const parseLogAction = (log: any) => {
-  const { action, entity, entityTitle, details } = log;
-  const isSubtask = details?.subtaskTitle || entity?.toLowerCase() === 'subtask';
-  const targetTitle = details?.subtaskTitle || entityTitle || '';
-  const prefix = isSubtask ? 'on subtask' : 'on task';
-  let verb = 'performed an action on task';
-
-  switch (action?.toUpperCase()) {
-    case 'STATUS_CHANGE':
-      verb = `changed status ${details?.oldStatus ? `from ${details.oldStatus} ` : ''}to ${details?.newStatus || ''} ${prefix}`;
-      break;
-    case 'AUDIT_ITEM_CHECKED': {
-      const lower = (details?.itemName || '').toLowerCase();
-      if (lower.includes('funnel')) verb = `has checked funnel auditing ${prefix}`;
-      else if (lower.includes('design')) verb = `has checked design auditing ${prefix}`;
-      else if (lower.includes('ui') && lower.includes('ux')) verb = `has checked UI/UX auditing ${prefix}`;
-      else if (lower.includes('instructions')) verb = `has checked instructions auditing ${prefix}`;
-      else verb = `has checked ${details?.itemName || 'auditing'} ${prefix}`;
-      break;
-    }
-    case 'CHECKLIST_ITEM_CHECKED':
-      verb = `has checked ${details?.itemName || 'checklist'} ${prefix}`;
-      break;
-    case 'PRIORITY_CHANGE':
-      verb = `changed priority ${details?.oldPriority ? `from ${details.oldPriority} ` : ''}to ${details?.newPriority} ${prefix}`;
-      break;
-    case 'TITLE_CHANGE':
-      verb = `renamed ${isSubtask ? 'subtask' : 'task'} "${details?.oldTitle || ''}" to`;
-      break;
-    case 'ASSIGNMENT':
-      if (Array.isArray(details?.added) || Array.isArray(details?.removed)) {
-        const added: string[] = details.added || [];
-        const removed: string[] = details.removed || [];
-        if (removed.length > 1 && added.length === 0 && details.assigneeName === 'Unassigned') {
-          verb = `removed all assignees from ${isSubtask ? 'subtask' : 'task'}`;
-          break;
-        }
-        const parts: string[] = [];
-        if (added.length > 0) parts.push(`assigned ${added.join(', ')}`);
-        if (removed.length > 0) parts.push(`${parts.length ? 'and removed' : 'removed'} ${removed.join(', ')}`);
-        if (parts.length > 0) {
-          verb = `${parts.join(' ')} ${prefix}`;
-          break;
-        }
-      }
-      if (details?.assigneeName === 'Unassigned') {
-        verb = `removed all assignees from ${isSubtask ? 'subtask' : 'task'}`;
-      } else {
-        verb = `updated assignment to ${details?.assigneeName || 'someone'} ${prefix}`;
-      }
-      break;
-    case 'TASK_CREATED':
-      verb = 'created this task';
-      break;
-    case 'SUBTASK_CREATED':
-      verb = 'created a subtask on';
-      break;
-    case 'ASSIGNEE_ADDED':
-      verb = `added an assignee ${prefix}`;
-      break;
-    case 'ASSIGNEE_REMOVED':
-      verb = `removed an assignee ${prefix}`;
-      break;
-    case 'COMMENT_ADDED':
-    case 'COMMENT':
-      verb = `added a comment on task`;
-      break;
-    case 'REPLY':
-      verb = `replied to a comment on task`;
-      break;
-    default:
-      verb = action ? `${action.replace(/_/g, ' ').toLowerCase()} ${prefix}` : `updated ${prefix}`;
-  }
-
-  return { verb, targetTitle, isSubtask };
-};
-
-const parseNotifAction = (n: TaskNotification) => {
-  const type = n.type?.toUpperCase();
-  const actorName = n.actor?.name || 'Someone';
-  let verb = 'updated';
-  let targetTitle = n.task?.title || '';
-
-  if (type === 'COMMENT' || type === 'REPLY') {
-    verb = 'added a comment on task';
-  } else if (type === 'MENTION') {
-    verb = 'mentioned you in a comment on task';
-  } else if (type === 'STATUS_CHANGE') {
-    const match = n.title?.match(/status to (.+)$/i);
-    verb = match ? `changed status to ${match[1]} on task` : 'changed status on task';
-  } else if (type === 'ASSIGNMENT') {
-    verb = 'assigned you to task';
-  } else if (type === 'AUDIT_ITEM_CHECKED') {
-    verb = 'checked audit item on task';
-  } else if (type === 'CHECKLIST_ITEM_CHECKED') {
-    verb = 'checked checklist item on task';
-  } else {
-    const cleaned = n.title?.replace(actorName, '').trim();
-    if (cleaned) verb = cleaned;
-  }
-
-  return { actorName, verb, targetTitle };
-};
-
-const parseItemDisplay = (item: any, isAuditLog: boolean) => {
-  const isAudit = isAuditLog || !!item.isAudit || !!item.action || !!item.entity || !!item.entityType || String(item.id || '').startsWith('audit_');
-  if (isAudit) {
-    const actorName = item.user?.name || item.actor?.name || 'Someone';
-    const actorAvatar = item.user?.avatarUrl || item.actor?.avatarUrl || null;
-    const { verb, targetTitle } = parseLogAction(item);
-    const targetTaskId = item.entityId || item.taskId || item.task?.id;
-    const content = item.details?.text || item.content || '';
-    const isUnread = false;
-    const action = (item.action || item.type)?.toUpperCase();
-    const isComment = action === 'COMMENT' || action === 'REPLY' || action === 'COMMENT_ADDED';
-    const isStatus = action === 'STATUS_CHANGE' || action === 'TITLE_CHANGE';
-    const isChecklist = action === 'CHECKLIST_ITEM_CHECKED';
-    const isAuditAction = action === 'AUDIT_ITEM_CHECKED';
-    const isAssignment = action === 'ASSIGNMENT';
-
-    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAuditAction ? ShieldCheck : isChecklist ? CheckSquare : Globe;
-    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAuditAction ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
-
-    return {
-      id: item.id,
-      actorName,
-      actorAvatar,
-      verb,
-      targetTitle,
-      targetTaskId,
-      content,
-      isUnread,
-      createdAt: item.createdAt,
-      IconToUse,
-      iconBg,
-      rawItem: item,
-      isAudit: true,
-    };
-  } else {
-    const { actorName, verb, targetTitle } = parseNotifAction(item);
-    const actorAvatar = item.actor?.imageUrl || item.actor?.avatarUrl || null;
-    const targetTaskId = item.task?.id || item.taskId || item.entityId;
-    const content = item.content || item.details?.text || '';
-    const isUnread = item.isRead === false;
-    const type = item.type?.toUpperCase();
-
-    const isComment = type === 'COMMENT' || type === 'REPLY' || type === 'MENTION';
-    const isStatus = type === 'STATUS_CHANGE';
-    const isChecklist = type === 'CHECKLIST_ITEM_CHECKED';
-    const isAuditAction = type === 'AUDIT_ITEM_CHECKED';
-    const isAssignment = type === 'ASSIGNMENT';
-
-    const IconToUse = isAssignment ? Users : isStatus ? Clock : isComment ? MessageSquare : isAuditAction ? ShieldCheck : isChecklist ? CheckSquare : Globe;
-    const iconBg = isAssignment ? 'bg-blue-600' : isStatus ? 'bg-emerald-600' : isComment ? 'bg-amber-600' : isAuditAction ? 'bg-purple-600' : isChecklist ? 'bg-violet-600' : 'bg-zinc-600';
-
-    return {
-      id: item.id,
-      actorName,
-      actorAvatar,
-      verb,
-      targetTitle,
-      targetTaskId,
-      content,
-      isUnread,
-      createdAt: item.createdAt,
-      IconToUse,
-      iconBg,
-      rawItem: item,
-      isAudit: false,
-    };
-  }
-};
+interface FeedItem {
+  id: string;
+  sourceId: string;
+  childIds?: string[];
+  type: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar: string | null;
+  taskId?: string;
+  taskTitle: string;
+  isSubtask: boolean;
+  subtaskTitle?: string;
+  title: string;
+  content?: string;
+  isRead: boolean;
+  createdAt: string;
+  IconToUse: any;
+  iconBg: string;
+  rawItem: any;
+  isAudit: boolean;
+}
 
 interface ActivityFeedCache {
   notifications: TaskNotification[];
@@ -310,37 +154,45 @@ const FEED_CACHE_TTL_MS = 60_000;
 function ActivityFeedContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { decrementUnreadNotifications, workspaceRoles, currentUser, tasksIndex, tasks } = useAppStore();
+  const { decrementUnreadNotifications, currentUser, tasksIndex, tasks } = useAppStore();
   const hadSelectedTask = useRef(false);
   const lastUrlTaskId = useRef<string | null>(null);
-  const isPrivileged = currentUser?.systemRole === 'ADMIN' || currentUser?.roles?.some((r: string) => /project\s*manager|^pm$|\bsenior\b/i.test(r?.trim()));
+
+  const isPrivileged =
+    currentUser?.systemRole === 'ADMIN' ||
+    currentUser?.roles?.some((r: string) => /project\s*manager|^pm$|\bsenior\b/i.test(r?.trim()));
+
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     const user = useAppStore.getState().currentUser;
-    const isPrivilegedUser = user?.systemRole === 'ADMIN' || user?.roles?.some((r: string) => /project\s*manager|^pm$|\bsenior\b/i.test(r?.trim()));
-    return isPrivilegedUser ? 'show_all' : 'for_me';
+    return user?.notificationPreferences?.defaultView || 'for_me';
   });
   const hasInitializedViewMode = useRef(false);
 
   useEffect(() => {
     if (currentUser && !hasInitializedViewMode.current) {
-      if (isPrivileged) {
-        setViewMode('show_all');
+      if (currentUser.notificationPreferences?.defaultView) {
+        setViewMode(currentUser.notificationPreferences.defaultView);
       }
       hasInitializedViewMode.current = true;
     }
-  }, [currentUser, isPrivileged]);
+  }, [currentUser]);
 
   const [category, setCategory] = useState<Category>('all');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(25);
+  const [limit, setLimit] = useState(50);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const initialCacheValid = !!feedCache && (Date.now() - feedCache.timestamp < FEED_CACHE_TTL_MS);
-  const [notifications, setNotifications] = useState<TaskNotification[]>(() => initialCacheValid ? feedCache!.notifications : []);
-  const [auditLogs, setAuditLogs] = useState<any[]>(() => initialCacheValid ? feedCache!.auditLogs : []);
-  const [myAuditLogs, setMyAuditLogs] = useState<any[]>(() => initialCacheValid ? feedCache!.myAuditLogs : []);
+
+  const initialCacheValid = !!feedCache && Date.now() - feedCache.timestamp < FEED_CACHE_TTL_MS;
+  const [notifications, setNotifications] = useState<TaskNotification[]>(() =>
+    initialCacheValid ? feedCache!.notifications : []
+  );
+  const [auditLogs, setAuditLogs] = useState<any[]>(() => (initialCacheValid ? feedCache!.auditLogs : []));
+  const [myAuditLogs, setMyAuditLogs] = useState<any[]>(() =>
+    initialCacheValid ? feedCache!.myAuditLogs : []
+  );
   const [loading, setLoading] = useState<boolean>(() => !initialCacheValid);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -357,7 +209,6 @@ function ActivityFeedContent() {
     }
   }, []);
 
-  // silent = live refresh from a socket event or background update: keep the current list on screen
   const fetchData = async (silent = false) => {
     const hasData = notifications.length > 0 || auditLogs.length > 0 || !!feedCache?.notifications.length;
     if (!silent && !hasData) setLoading(true);
@@ -387,7 +238,7 @@ function ActivityFeedContent() {
             page,
             limit,
             tab: 'primary',
-            filter: category === 'comments' ? 'mentions' : 'all',
+            filter: 'all',
           }),
           activityApi.getAuditLogs({
             userId,
@@ -397,9 +248,7 @@ function ActivityFeedContent() {
             timeFilter,
           }),
         ]);
-        const newNotifs = (notifRes.notifications || []).map((n: TaskNotification) =>
-          !silent ? { ...n, isRead: true } : n
-        );
+        const newNotifs = notifRes.notifications || [];
         const newMyLogs = myAuditRes.logs || [];
         setNotifications(newNotifs);
         setMyAuditLogs(newMyLogs);
@@ -421,25 +270,23 @@ function ActivityFeedContent() {
   };
 
   const handleOpenTask = async (n: any) => {
-    // Resolve the task ID from multiple possible shapes:
-    //   - TaskNotification: n.task.id
-    //   - Audit-merged item: n.entityId or n.taskId (set by backend)
-    //   - Plain string (URL param)
-    const rawTaskId = typeof n === 'string'
-      ? n
-      : (n.task?.id || (n as any).taskId || (n as any).entityId);
+    const rawTaskId = typeof n === 'string' ? n : n.task?.id || n.taskId || n.entityId;
     const taskId = rawTaskId ? String(rawTaskId).split('/')[0].trim() : null;
 
-    const isAuditItem = isGlobalLogView || (n as any)?.isAudit || !!(n as any)?.action || !!(n as any)?.entity || !!(n as any)?.entityType || String((n as any)?.id || '').startsWith('audit_');
+    const isAuditItem =
+      viewMode === 'show_all' ||
+      n?.isAudit ||
+      !!n?.action ||
+      !!n?.entity ||
+      String(n?.id || '').startsWith('audit_');
 
     if (typeof n !== 'string' && !isAuditItem && n.id && n.isRead === false) {
-      handleMarkAsRead(n.id);
+      handleMarkAsRead(n.id, n.childIds);
     }
     if (!taskId) return;
 
     lastUrlTaskId.current = taskId;
 
-    // Preserve scroll position before opening task
     if (feedScrollRef.current) {
       if (feedCache) {
         feedCache.scrollY = feedScrollRef.current.scrollTop;
@@ -454,7 +301,10 @@ function ActivityFeedContent() {
       }
     }
 
-    const taskObj = (typeof n === 'object' && n.task?.id === taskId) ? n.task : (tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId));
+    const taskObj =
+      typeof n === 'object' && n.task?.id === taskId
+        ? n.task
+        : tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
     if (taskObj) {
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href);
@@ -493,7 +343,7 @@ function ActivityFeedContent() {
     }
   };
 
-  // Open task if ?task= param is present in URL (deep linking or initial load)
+  // Open task if ?task= param is present in URL
   useEffect(() => {
     const taskIdParam = searchParams.get('task');
     const actualTaskId = taskIdParam ? taskIdParam.split('/')[0].trim() : null;
@@ -532,24 +382,7 @@ function ActivityFeedContent() {
     fetchData();
   }, [page, limit, category, timeFilter, viewMode, currentUser?.id]);
 
-  // Automatically mark all notifications as read upon opening the Activity page
   useEffect(() => {
-    if (currentUser?.id) {
-      notificationsApi.markAllAsRead().then(() => {
-        useAppStore.getState().setUnreadNotifications(0);
-        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-        if (feedCache) {
-          feedCache.notifications = feedCache.notifications.map(n => ({ ...n, isRead: true }));
-        }
-      }).catch(err => {
-        console.error('Failed to mark all as read on activity mount:', err);
-      });
-    }
-  }, [currentUser?.id]);
-
-  useEffect(() => {
-    // Live updates: status/name changes, comments and notifications arrive as socket events.
-    // Debounced so a burst (e.g. room + global emits, or a doubled integration request) refetches once.
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     const onNew = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
@@ -566,17 +399,19 @@ function ActivityFeedContent() {
     const onRead = (e: any) => {
       const id = e.detail?.id;
       if (id) {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+        setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
         if (feedCache) {
-          feedCache.notifications = feedCache.notifications.map(n => n.id === id ? { ...n, isRead: true } : n);
+          feedCache.notifications = feedCache.notifications.map((n) =>
+            n.id === id ? { ...n, isRead: true } : n
+          );
         }
       }
     };
 
     const onAllRead = () => {
-      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
       if (feedCache) {
-        feedCache.notifications = feedCache.notifications.map(n => ({ ...n, isRead: true }));
+        feedCache.notifications = feedCache.notifications.map((n) => ({ ...n, isRead: true }));
       }
       useAppStore.getState().setUnreadNotifications(0);
     };
@@ -584,9 +419,9 @@ function ActivityFeedContent() {
     const onCleared = (e: any) => {
       const id = e.detail?.id;
       if (id) {
-        setNotifications(prev => prev.filter(n => n.id !== id));
+        setNotifications((prev) => prev.filter((n) => n.id !== id));
         if (feedCache) {
-          feedCache.notifications = feedCache.notifications.filter(n => n.id !== id);
+          feedCache.notifications = feedCache.notifications.filter((n) => n.id !== id);
         }
       }
     };
@@ -629,42 +464,55 @@ function ActivityFeedContent() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleClear = async (id: string) => {
-    if (!id || id.startsWith('audit_')) return;
-    try {
-      await notificationsApi.clearNotification(id);
-      setNotifications(prev => {
-        const next = prev.filter(n => n.id !== id);
-        if (feedCache) feedCache.notifications = next;
-        return next;
-      });
-      decrementUnreadNotifications();
-    } catch (err) { console.error(err); }
+  const handleClear = async (id: string, childIds?: string[]) => {
+    const idsToClear = childIds && childIds.length > 0 ? childIds : [id];
+    for (const targetId of idsToClear) {
+      if (!targetId || targetId.startsWith('audit_')) continue;
+      try {
+        await notificationsApi.clearNotification(targetId);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    setNotifications((prev) => {
+      const next = prev.filter((n) => !idsToClear.includes(n.id));
+      if (feedCache) feedCache.notifications = next;
+      return next;
+    });
+    decrementUnreadNotifications();
   };
 
-  const handleMarkAsRead = async (id: string) => {
-    if (!id || id.startsWith('audit_')) return;
-    try {
-      await notificationsApi.markAsRead(id);
-      setNotifications(prev => {
-        const next = prev.map(n => n.id === id ? { ...n, isRead: true } : n);
-        if (feedCache) feedCache.notifications = next;
-        return next;
-      });
-      decrementUnreadNotifications();
-    } catch (err) { console.error(err); }
+  const handleMarkAsRead = async (id: string, childIds?: string[]) => {
+    const idsToMark = childIds && childIds.length > 0 ? childIds : [id];
+    for (const targetId of idsToMark) {
+      if (!targetId || targetId.startsWith('audit_')) continue;
+      try {
+        await notificationsApi.markAsRead(targetId);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    setNotifications((prev) => {
+      const next = prev.map((n) => (idsToMark.includes(n.id) ? { ...n, isRead: true } : n));
+      if (feedCache) feedCache.notifications = next;
+      return next;
+    });
+    decrementUnreadNotifications();
   };
 
   const handleMarkAllAsRead = async () => {
     try {
       await notificationsApi.markAllAsRead();
-      setNotifications(prev => {
-        const next = prev.map(n => ({ ...n, isRead: true }));
+      setNotifications((prev) => {
+        const next = prev.map((n) => ({ ...n, isRead: true }));
         if (feedCache) feedCache.notifications = next;
         return next;
       });
       useAppStore.getState().setUnreadNotifications(0);
-    } catch (err) { console.error(err); }
+      toast.success('All notifications marked as read.');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleClearAll = async () => {
@@ -673,94 +521,485 @@ function ActivityFeedContent() {
       setNotifications([]);
       if (feedCache) feedCache.notifications = [];
       useAppStore.getState().setUnreadNotifications(0);
-    } catch (err) { console.error(err); }
+      toast.success('All notifications cleared.');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const groupByDate = (items: any[]) => {
-    const groups: { [key: string]: any[] } = {};
-    items.forEach(item => {
-      const d = new Date(item.createdAt);
-      let g = '';
-      if (isToday(d)) g = 'Today';
-      else if (isYesterday(d)) g = 'Yesterday';
-      else if (differenceInDays(new Date(), d) <= 7) g = 'Last 7 days';
-      else g = format(d, 'MMMM');
-      if (!groups[g]) groups[g] = [];
-      groups[g].push(item);
-    });
-    return groups;
+  /**
+   * Helper to check if a task or subtask is assigned to the current user
+   */
+  const isTaskAssignedToMe = useCallback(
+    (taskId: string | undefined, subtaskId?: string | undefined) => {
+      if (!taskId || !currentUser?.id) return false;
+      const currentUserId = currentUser.id;
+      const task = tasksIndex[taskId] || tasks.find((t: any) => t.id === taskId);
+      if (!task) return true; // If task is not cached locally, trust notification recipient
+      if (task.assigneeId === currentUserId) return true;
+      if (task.assignees?.some((a: any) => a.id === currentUserId)) return true;
+      if (subtaskId) {
+        const sub = task.subtasks?.find((s: any) => s.id === subtaskId);
+        if (sub) {
+          if ((sub as any).assigneeId === currentUserId) return true;
+          if ((sub.assignees || []).some((a: any) => a.id === currentUserId)) return true;
+          if (((sub as any).assigneeIds || []).includes(currentUserId)) return true;
+        }
+      } else if (task.subtasks) {
+        if (
+          task.subtasks.some(
+            (s: any) =>
+              (s as any).assigneeId === currentUserId ||
+              (s.assignees || []).some((a: any) => a.id === currentUserId) ||
+              ((s as any).assigneeIds || []).includes(currentUserId)
+          )
+        ) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [currentUser?.id, tasksIndex, tasks]
+  );
+
+  /**
+   * Universal negative constraints filter:
+   * Never show: due date changes, priority changes, comment reactions.
+   */
+  const passesUniversalNegativeConstraints = (item: any): boolean => {
+    const action = (item.action || item.type || '').toUpperCase();
+    if (action === 'DUE_DATE_CHANGE' || action === 'DUE_DATE') return false;
+    if (action === 'PRIORITY_CHANGE') return false;
+    if (action === 'REACTION' || action === 'COMMENT_REACTION') return false;
+    const title = (item.title || '').toLowerCase();
+    if (title.includes('priority') && (title.includes('changed') || title.includes('priority to'))) return false;
+    if (title.includes('due date')) return false;
+    return true;
   };
 
-  const isGlobalLogView = viewMode === 'show_all';
+  /**
+   * Map raw notification or audit log to normalized FeedItem
+   */
+  const normalizeItem = useCallback(
+    (raw: any, isAuditLog: boolean): FeedItem | null => {
+      if (!passesUniversalNegativeConstraints(raw)) return null;
 
-  const matchesCategoryNotif = (n: any, cat: Category) => {
-    if (cat === 'all') return true;
-    const type = n.type?.toUpperCase();
-    if (cat === 'status') return type === 'STATUS_CHANGE' || type === 'TITLE_CHANGE';
-    if (cat === 'checklists') return type === 'CHECKLIST_ITEM_CHECKED' || type?.includes('CHECKLIST');
-    if (cat === 'audits') return type === 'AUDIT_ITEM_CHECKED' || type?.includes('AUDIT');
-    if (cat === 'assigned') return type === 'ASSIGNMENT';
-    if (cat === 'comments') return type === 'MENTION' || type === 'COMMENT';
-    return false;
-  };
+      const isAudit =
+        isAuditLog ||
+        !!raw.isAudit ||
+        !!raw.action ||
+        !!raw.entity ||
+        String(raw.id || '').startsWith('audit_');
 
-  const matchesCategoryLog = (log: any, cat: Category) => {
-    if (cat === 'all') return true;
-    const action = log.action?.toUpperCase();
-    if (cat === 'status') return action === 'STATUS_CHANGE' || action === 'TITLE_CHANGE';
-    if (cat === 'checklists') return action === 'CHECKLIST_ITEM_CHECKED' || action?.includes('CHECKLIST');
-    if (cat === 'audits') return action === 'AUDIT_ITEM_CHECKED' || action?.includes('AUDIT');
-    if (cat === 'assigned') return action === 'ASSIGNMENT';
-    if (cat === 'comments') return action === 'COMMENT' || action === 'REPLY' || action === 'COMMENT_ADDED';
-    return false;
-  };
+      let actorName = 'Someone';
+      let actorAvatar: string | null = null;
+      let actorId = '';
+      let type = '';
+      let title = '';
+      let content = '';
+      let taskId = '';
+      let taskTitle = '';
+      let isSubtask = false;
+      let subtaskTitle = '';
+      let isRead = true;
+      let createdAt = raw.createdAt || new Date().toISOString();
 
-  const filteredNotifications = notifications.filter(n => matchesCategoryNotif(n, category));
-  const filteredLogs = auditLogs.filter(l => matchesCategoryLog(l, category));
+      if (isAudit) {
+        actorName = raw.user?.name || raw.actor?.name || 'Someone';
+        actorAvatar = raw.user?.avatarUrl || raw.actor?.avatarUrl || null;
+        actorId = raw.user?.id || raw.userId || '';
+        type = (raw.action || raw.type || '').toUpperCase();
+        if (type === 'COMMENT_ADDED' || type === 'REPLY') type = 'COMMENT';
+        taskId = raw.taskId || raw.entityId || raw.task?.id || '';
+        isSubtask = !!raw.details?.subtaskTitle || raw.entity?.toLowerCase() === 'subtask';
+        subtaskTitle = raw.details?.subtaskTitle || '';
+        taskTitle = subtaskTitle || raw.entityTitle || raw.task?.title || 'task';
+        content = raw.details?.text || raw.content || '';
+        isRead = true; // Workspace logs default to read
 
-  const filteredMyLogs = myAuditLogs.filter(l => matchesCategoryLog(l, category));
+        // Format Title
+        if (type === 'STATUS_CHANGE') {
+          const oldSt = raw.details?.oldStatus || 'old';
+          const newSt = raw.details?.newStatus || 'new';
+          const prefix = isSubtask ? 'subtask' : 'task';
+          title = `${actorName} changed status from ${oldSt} to ${newSt} on ${prefix} ${taskTitle}`;
+        } else if (type === 'AUDIT_ITEM_CHECKED') {
+          const itemText = raw.details?.itemName || 'auditing';
+          title = `${actorName} has checked ${itemText} on task ${taskTitle}`;
+        } else if (type === 'CHECKLIST_ITEM_CHECKED') {
+          const itemText = raw.details?.itemName || 'checklist item';
+          title = `${actorName} completed ${itemText} in ${taskTitle}`;
+        } else if (type === 'CHECKLIST_ITEM_ASSIGNED') {
+          title = `${actorName} assigned you an item in ${taskTitle}`;
+        } else if (type === 'ASSIGNMENT') {
+          title = `${actorName} assigned you to ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
+        } else if (type === 'UNASSIGNMENT') {
+          title = `${actorName} unassigned you from ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
+        } else if (type === 'COMMENT') {
+          title = `${actorName} commented on ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
+        } else {
+          title = raw.title || `${actorName} updated ${taskTitle}`;
+        }
+      } else {
+        const notif = raw as TaskNotification;
+        actorName = notif.actor?.name || 'Someone';
+        actorAvatar = notif.actor?.imageUrl || notif.actor?.avatarUrl || null;
+        actorId = notif.actorId || notif.actor?.id || '';
+        type = (notif.type || '').toUpperCase();
+        taskId = notif.task?.id || notif.taskId || '';
+        taskTitle = notif.task?.title || 'task';
+        isSubtask = (notif.title || '').includes('subtask');
+        content = notif.content || '';
+        isRead = notif.isRead !== false;
+        title = notif.title || '';
 
-  const mergedForMe = [
-    ...filteredNotifications,
-    ...filteredMyLogs.map(log => {
-      const type = (log.action === 'COMMENT_ADDED' || log.action === 'REPLY') ? 'COMMENT' : log.action;
-      // taskId comes from backend enrichment (log.taskId) or falls back to entityId
-      const resolvedTaskId = log.taskId || log.entityId;
+        // If title needs normalization to user requirements:
+        if (type === 'STATUS_CHANGE' && !title.includes('changed status from')) {
+          const match = title.match(/status to (.+)$/i);
+          const newStatus = match ? match[1].trim() : 'updated';
+          title = `${actorName} changed status to ${newStatus} on ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
+        }
+      }
+
+      // Icon & Badge resolution
+      let IconToUse = Globe;
+      let iconBg = 'bg-zinc-600';
+
+      if (type === 'ASSIGNMENT') {
+        IconToUse = UserPlus;
+        iconBg = 'bg-blue-600';
+      } else if (type === 'UNASSIGNMENT') {
+        IconToUse = UserMinus;
+        iconBg = 'bg-rose-600';
+      } else if (type === 'STATUS_CHANGE') {
+        IconToUse = Clock;
+        iconBg = 'bg-emerald-600';
+      } else if (type === 'COMMENT' || type === 'REPLY' || type === 'MENTION') {
+        IconToUse = MessageSquare;
+        iconBg = 'bg-amber-600';
+      } else if (type === 'AUDIT_ITEM_CHECKED') {
+        IconToUse = ShieldCheck;
+        iconBg = 'bg-purple-600';
+      } else if (type === 'CHECKLIST_ITEM_CHECKED' || type === 'CHECKLIST_ITEM_ASSIGNED') {
+        IconToUse = CheckSquare;
+        iconBg = 'bg-violet-600';
+      }
+
       return {
-        id: 'audit_' + log.id,
-        type: type,
-        actor: log.user,
-        title: `${log.user?.name || 'Someone'} ${formatActivityMessage(log)}`,
-        content: log.details?.text || '',
-        createdAt: log.createdAt,
-        isRead: true,
-        task: { id: resolvedTaskId, title: log.details?.subtaskTitle || log.entityTitle || 'task' },
-        taskId: resolvedTaskId,
-        entityId: log.entityId,
-        isAudit: true
+        id: raw.id,
+        sourceId: raw.id,
+        childIds: [raw.id],
+        type,
+        actorId,
+        actorName,
+        actorAvatar,
+        taskId,
+        taskTitle,
+        isSubtask,
+        subtaskTitle,
+        title,
+        content,
+        isRead,
+        createdAt,
+        IconToUse,
+        iconBg,
+        rawItem: raw,
+        isAudit,
       };
-    })
-  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    },
+    []
+  );
 
-  const activeItems = isGlobalLogView 
-    ? auditLogs 
-    : mergedForMe;
+  /**
+   * Tab filter logic with exact constraints:
+   * - All: Shows all workspace / user events
+   * - Status Updates: Status changes on tasks assigned to you
+   * - Checklists: Checklist item assigned to you or completed on tasks assigned to you
+   * - Auditor: Audit checklist checked on tasks assigned to you
+   * - Assigned to Me: When you were assigned or unassigned
+   * - Comments: Comments on tasks assigned to you or mentions
+   */
+  const matchesTabFilter = useCallback(
+    (item: FeedItem, cat: Category): boolean => {
+      const type = item.type;
+      const isAssigned = isTaskAssignedToMe(item.taskId);
+      const prefs = currentUser?.notificationPreferences;
 
-  const grouped = groupByDate(activeItems);
+      if (viewMode === 'show_all') {
+        if (cat === 'all') return true;
+        if (cat === 'status') return type === 'STATUS_CHANGE';
+        if (cat === 'checklists') return type === 'CHECKLIST_ITEM_CHECKED' || type === 'CHECKLIST_ITEM_ASSIGNED';
+        if (cat === 'audits') return type === 'AUDIT_ITEM_CHECKED';
+        if (cat === 'assigned') return type === 'ASSIGNMENT' || type === 'UNASSIGNMENT';
+        if (cat === 'comments') return type === 'COMMENT' || type === 'REPLY' || type === 'MENTION';
+        return false;
+      }
 
-  const allFeedImages = useMemo(() => {
-    const urls: string[] = [];
-    activeItems.forEach((item: any) => {
-      const text = item.details?.text || item.content;
-      if (text) {
-        const imgs = extractImagesFromContent(text);
-        imgs.forEach((u) => {
-          if (!urls.includes(u)) urls.push(u);
-        });
+      // For Me mode:
+      if (cat === 'all') {
+        if (prefs?.status === false && type === 'STATUS_CHANGE') return false;
+        if (prefs?.checklists === false && (type === 'CHECKLIST_ITEM_CHECKED' || type === 'CHECKLIST_ITEM_ASSIGNED')) return false;
+        if (prefs?.audits === false && type === 'AUDIT_ITEM_CHECKED') return false;
+        if (prefs?.assigned === false && (type === 'ASSIGNMENT' || type === 'UNASSIGNMENT')) return false;
+        if (prefs?.comments === false && (type === 'COMMENT' || type === 'REPLY')) return false;
+        if (prefs?.mentions === false && type === 'MENTION') return false;
+        return true;
+      }
+
+      if (cat === 'status') {
+        if (type !== 'STATUS_CHANGE') return false;
+        // Never shows status changes on tasks assigned to someone else
+        return isAssigned;
+      }
+
+      if (cat === 'checklists') {
+        if (type !== 'CHECKLIST_ITEM_CHECKED' && type !== 'CHECKLIST_ITEM_ASSIGNED') return false;
+        // Never shows checklists on tasks not assigned to you
+        return isAssigned || item.rawItem?.userId === currentUser?.id;
+      }
+
+      if (cat === 'audits') {
+        if (type !== 'AUDIT_ITEM_CHECKED') return false;
+        // Never shows audits on tasks not assigned to you
+        return isAssigned;
+      }
+
+      if (cat === 'assigned') {
+        return type === 'ASSIGNMENT' || type === 'UNASSIGNMENT';
+      }
+
+      if (cat === 'comments') {
+        if (type !== 'COMMENT' && type !== 'REPLY' && type !== 'MENTION') return false;
+        // Comments on tasks assigned to you or where mentioned
+        return isAssigned || item.rawItem?.userId === currentUser?.id;
+      }
+
+      return false;
+    },
+    [currentUser?.id, currentUser?.notificationPreferences, isTaskAssignedToMe, viewMode]
+  );
+
+  /**
+   * Merging Rules:
+   * 1. Checklists: Multiple checklist items completed on same task -> "[Name] completed N checklist items in [Task name]"
+   * 2. Audits: Audits checked within ~10 minutes on same task -> "[Name] has checked [audit types] auditing on task [Task name]" or "[Name] has checked all auditing on task [Task name]"
+   * 3. Repeated events from same actor on same task merged
+   */
+  const mergeFeedItems = useCallback((items: FeedItem[]): FeedItem[] => {
+    if (items.length <= 1) return items;
+
+    const merged: FeedItem[] = [];
+    const usedIds = new Set<string>();
+
+    for (let i = 0; i < items.length; i++) {
+      const current = items[i];
+      if (usedIds.has(current.id)) continue;
+
+      const currentTime = new Date(current.createdAt).getTime();
+
+      // Case 1: Auditor checks within ~10 min (600,000 ms) on the same task by same actor
+      if (current.type === 'AUDIT_ITEM_CHECKED' && current.taskId) {
+        const cluster = [current];
+        for (let j = i + 1; j < items.length; j++) {
+          const candidate = items[j];
+          if (
+            candidate.type === 'AUDIT_ITEM_CHECKED' &&
+            candidate.taskId === current.taskId &&
+            candidate.actorId === current.actorId &&
+            !usedIds.has(candidate.id)
+          ) {
+            const candidateTime = new Date(candidate.createdAt).getTime();
+            if (Math.abs(currentTime - candidateTime) <= 10 * 60 * 1000) {
+              cluster.push(candidate);
+              usedIds.add(candidate.id);
+            }
+          }
+        }
+
+        if (cluster.length > 1) {
+          usedIds.add(current.id);
+
+          // Extract audit types
+          const auditTypes = new Set<string>();
+          cluster.forEach((c) => {
+            const rawText = (c.rawItem?.details?.itemName || c.title || '').toLowerCase();
+            if (rawText.includes('funnel')) auditTypes.add('Funnel');
+            else if (rawText.includes('design')) auditTypes.add('Design');
+            else if (rawText.includes('ui') || rawText.includes('ux')) auditTypes.add('UI UX');
+            else if (rawText.includes('instruction')) auditTypes.add('Instructions');
+            else auditTypes.add('Auditing');
+          });
+
+          const typeArray = Array.from(auditTypes);
+          let mergedTitle = '';
+          if (typeArray.length >= 4) {
+            mergedTitle = `${current.actorName} has checked all auditing on task ${current.taskTitle}`;
+          } else if (typeArray.length > 1) {
+            const last = typeArray.pop();
+            mergedTitle = `${current.actorName} has checked ${typeArray.join(', ')} and ${last} auditing on task ${current.taskTitle}`;
+          } else {
+            mergedTitle = `${current.actorName} has checked ${typeArray[0] || 'auditing'} auditing on task ${current.taskTitle}`;
+          }
+
+          const hasUnread = cluster.some((c) => !c.isRead);
+
+          merged.push({
+            ...current,
+            id: `merged_audit_${cluster.map((c) => c.id).join('_')}`,
+            childIds: cluster.map((c) => c.sourceId),
+            title: mergedTitle,
+            isRead: !hasUnread,
+          });
+          continue;
+        }
+      }
+
+      // Case 2: Checklist completions on same task by same actor within ~30 minutes
+      if (current.type === 'CHECKLIST_ITEM_CHECKED' && current.taskId) {
+        const cluster = [current];
+        for (let j = i + 1; j < items.length; j++) {
+          const candidate = items[j];
+          if (
+            candidate.type === 'CHECKLIST_ITEM_CHECKED' &&
+            candidate.taskId === current.taskId &&
+            candidate.actorId === current.actorId &&
+            !usedIds.has(candidate.id)
+          ) {
+            const candidateTime = new Date(candidate.createdAt).getTime();
+            if (Math.abs(currentTime - candidateTime) <= 30 * 60 * 1000) {
+              cluster.push(candidate);
+              usedIds.add(candidate.id);
+            }
+          }
+        }
+
+        if (cluster.length > 1) {
+          usedIds.add(current.id);
+          const count = cluster.length;
+          const hasUnread = cluster.some((c) => !c.isRead);
+
+          merged.push({
+            ...current,
+            id: `merged_checklist_${cluster.map((c) => c.id).join('_')}`,
+            childIds: cluster.map((c) => c.sourceId),
+            title: `${current.actorName} completed ${count} checklist items in ${current.taskTitle}`,
+            isRead: !hasUnread,
+          });
+          continue;
+        }
+      }
+
+      // Case 3: Repeated identical events from same person on same task within 10 minutes
+      if (current.taskId) {
+        const cluster = [current];
+        for (let j = i + 1; j < items.length; j++) {
+          const candidate = items[j];
+          if (
+            candidate.type === current.type &&
+            candidate.taskId === current.taskId &&
+            candidate.actorId === current.actorId &&
+            !usedIds.has(candidate.id)
+          ) {
+            const candidateTime = new Date(candidate.createdAt).getTime();
+            if (Math.abs(currentTime - candidateTime) <= 10 * 60 * 1000) {
+              cluster.push(candidate);
+              usedIds.add(candidate.id);
+            }
+          }
+        }
+
+        if (cluster.length > 1) {
+          usedIds.add(current.id);
+          const hasUnread = cluster.some((c) => !c.isRead);
+          merged.push({
+            ...current,
+            childIds: cluster.map((c) => c.sourceId),
+            isRead: !hasUnread,
+          });
+          continue;
+        }
+      }
+
+      usedIds.add(current.id);
+      merged.push(current);
+    }
+
+    return merged;
+  }, []);
+
+  // Prepare normalized raw feed items from notifications + audit logs
+  const allNormalizedItems = useMemo(() => {
+    const rawList =
+      viewMode === 'show_all'
+        ? auditLogs.map((l) => normalizeItem(l, true)).filter(Boolean)
+        : [
+            ...notifications.map((n) => normalizeItem(n, false)).filter(Boolean),
+            ...myAuditLogs.map((l) => normalizeItem(l, true)).filter(Boolean),
+          ];
+
+    const sorted = (rawList as FeedItem[]).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return sorted;
+  }, [viewMode, auditLogs, notifications, myAuditLogs, normalizeItem]);
+
+  // Tab unread counts
+  const tabUnreadCounts = useMemo(() => {
+    const counts: Record<Category, number> = {
+      all: 0,
+      status: 0,
+      checklists: 0,
+      audits: 0,
+      assigned: 0,
+      comments: 0,
+    };
+
+    allNormalizedItems.forEach((item) => {
+      if (!item.isRead) {
+        counts.all++;
+        if (matchesTabFilter(item, 'status')) counts.status++;
+        if (matchesTabFilter(item, 'checklists')) counts.checklists++;
+        if (matchesTabFilter(item, 'audits')) counts.audits++;
+        if (matchesTabFilter(item, 'assigned')) counts.assigned++;
+        if (matchesTabFilter(item, 'comments')) counts.comments++;
       }
     });
-    return urls;
-  }, [activeItems]);
+
+    return counts;
+  }, [allNormalizedItems, matchesTabFilter]);
+
+  // Filter items for current category tab and apply merging
+  const currentTabItems = useMemo(() => {
+    const filtered = allNormalizedItems.filter((item) => matchesTabFilter(item, category));
+    return mergeFeedItems(filtered);
+  }, [allNormalizedItems, category, matchesTabFilter, mergeFeedItems]);
+
+  // Partition into Unread ("New") vs Read items
+  const { unreadItems, readItemsGrouped } = useMemo(() => {
+    const unread = currentTabItems.filter((item) => !item.isRead);
+    const read = currentTabItems.filter((item) => item.isRead);
+
+    const grouped: { [key: string]: FeedItem[] } = {};
+    read.forEach((item) => {
+      const d = new Date(item.createdAt);
+      let g = '';
+      if (isToday(d)) {
+        g = 'Today';
+      } else if (isYesterday(d)) {
+        g = 'Yesterday';
+      } else {
+        g = format(d, 'EEEE, MMMM d');
+      }
+      if (!grouped[g]) grouped[g] = [];
+      grouped[g].push(item);
+    });
+
+    return {
+      unreadItems: unread,
+      readItemsGrouped: grouped,
+    };
+  }, [currentTabItems]);
 
   const handlePreviewImage = useCallback((src: string, commentImages?: string[]) => {
     setLightboxImage(src);
@@ -777,38 +1016,103 @@ function ActivityFeedContent() {
 
   return (
     <div className="flex flex-col h-full bg-background text-foreground relative pt-8">
-      <div className="px-8 flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold">Activity</h1>
+      {/* Header Bar */}
+      <div className="px-8 flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+        <div className="flex items-center gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-card p-1 rounded-md border border-border mr-2 hidden sm:flex">
-            <button 
-              onClick={() => { setTimeFilter('all'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'all' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
+          {/* Prominent For Me vs Show All Segmented Toggle */}
+          <div className="flex items-center bg-card p-1 rounded-lg border border-border shadow-xs">
+            <button
+              onClick={() => {
+                setViewMode('for_me');
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                viewMode === 'for_me'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+              }`}
+              title="Personal feed: tasks assigned to you or involving you"
+            >
+              <User className="size-3.5" />
+              <span>For Me</span>
+            </button>
+            <button
+              onClick={() => {
+                setViewMode('show_all');
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                viewMode === 'show_all'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+              }`}
+              title="Workspace-wide feed: all tasks and team activities"
+            >
+              <Users className="size-3.5" />
+              <span>Show All</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-1 bg-card p-1 rounded-md border border-border mr-1 hidden sm:flex">
+            <button
+              onClick={() => {
+                setTimeFilter('all');
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
+                timeFilter === 'all'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
             >
               All time
             </button>
-            <button 
-              onClick={() => { setTimeFilter('today'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'today' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
+            <button
+              onClick={() => {
+                setTimeFilter('today');
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
+                timeFilter === 'today'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
             >
               Today
             </button>
-            <button 
-              onClick={() => { setTimeFilter('last7'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last7' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
+            <button
+              onClick={() => {
+                setTimeFilter('last7');
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
+                timeFilter === 'last7'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
             >
               Last 7 days
             </button>
-            <button 
-              onClick={() => { setTimeFilter('last30'); setPage(1); }} 
-              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors ${timeFilter === 'last30' ? 'bg-indigo-600 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}`}
+            <button
+              onClick={() => {
+                setTimeFilter('last30');
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
+                timeFilter === 'last30'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
             >
               Last 30 days
             </button>
           </div>
 
-          {!isGlobalLogView && (
+          {viewMode === 'for_me' && (
             <>
               <button
                 onClick={handleMarkAllAsRead}
@@ -827,52 +1131,40 @@ function ActivityFeedContent() {
             </>
           )}
 
-          <div className="relative" ref={dropdownRef}>
-            <button
-              onClick={() => setDropdownOpen(prev => !prev)}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-card hover:bg-accent text-zinc-200 border border-border rounded-md transition-colors cursor-pointer"
-            >
-              {viewMode === 'for_me' ? 'For Me' : 'Show All'}
-              <ChevronDown className={`size-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {dropdownOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-48 bg-popover border border-border rounded-lg shadow-xl z-50 overflow-hidden">
-                {VIEW_OPTIONS.map(option => {
-                  const isActive = viewMode === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      onClick={() => { setViewMode(option.value); setPage(1); setDropdownOpen(false); }}
-                      className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent cursor-pointer ${isActive ? 'bg-indigo-500/10' : ''}`}
-                    >
-                      <div className="flex-1">
-                        <p className={`text-xs font-medium ${isActive ? 'text-indigo-400 font-semibold' : 'text-zinc-200'}`}>{option.label}</p>
-                        <p className="text-[10px] text-zinc-500 mt-0.5">{option.description}</p>
-                      </div>
-                      {isActive && <Check className="size-3.5 text-indigo-400 mt-0.5 shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <button
+            onClick={() => router.push('/settings#notifications')}
+            className="px-3 py-1.5 text-xs font-medium text-zinc-300 hover:text-white bg-card hover:bg-accent border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            title="Customize your notification preferences in settings"
+          >
+            <SlidersHorizontal className="size-3.5 text-zinc-400" />
+            <span className="hidden sm:inline">Customize</span>
+          </button>
         </div>
       </div>
 
-      {/* Category Tabs */}
+      {/* Category Tabs with Unread Badges */}
       <div className="px-8 border-b border-border mb-6 flex items-center gap-8 overflow-x-auto custom-scrollbar">
         {CATEGORIES.map((cat) => {
           const isActive = category === cat.value;
+          const unreadCount = tabUnreadCounts[cat.value] || 0;
+
           return (
             <button
               key={cat.value}
-              onClick={() => { setCategory(cat.value); setPage(1); }}
-              className={`pb-3 px-1 text-sm font-semibold transition-colors relative whitespace-nowrap shrink-0 ${
+              onClick={() => {
+                setCategory(cat.value);
+                setPage(1);
+              }}
+              className={`pb-3 px-1 text-sm font-semibold transition-colors relative whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer ${
                 isActive ? 'text-indigo-400' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               <span>{cat.label}</span>
+              {unreadCount > 0 && (
+                <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/40">
+                  {unreadCount}
+                </span>
+              )}
               {isActive && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-500 rounded-full" />
               )}
@@ -881,6 +1173,7 @@ function ActivityFeedContent() {
         })}
       </div>
 
+      {/* Feed Content */}
       <div
         ref={feedScrollRef}
         onScroll={(e) => {
@@ -894,25 +1187,28 @@ function ActivityFeedContent() {
           <div className="flex items-center justify-center h-40">
             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
-        ) : activeItems.length === 0 ? (
+        ) : currentTabItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-zinc-500">
             <MailOpen className="size-10 mb-3 opacity-20" />
-            <p>{isGlobalLogView ? 'No activity logs found' : "You are all caught up!"}</p>
+            <p>{viewMode === 'show_all' ? 'No activity logs found' : 'You are all caught up!'}</p>
           </div>
         ) : (
           <div className="space-y-8 pb-10">
-            {Object.entries(grouped).map(([groupName, items]) => (
-              <div key={groupName} className="relative">
-                {/* Date Group Heading (e.g. TODAY) */}
-                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-4">
-                  <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest px-1">
-                    {groupName}
+            {/* UNREAD / "NEW" SECTION */}
+            {unreadItems.length > 0 && (
+              <div className="relative mb-8">
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-4 flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
+                    New
+                    <span className="text-[11px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                      {unreadItems.length}
+                    </span>
                   </h3>
                 </div>
 
                 <div className="space-y-4">
-                  {items.map((rawItem: any, i: number) => {
-                    const item = parseItemDisplay(rawItem, isGlobalLogView);
+                  {unreadItems.map((item, idx) => {
                     const initials = getInitials(item.actorName);
                     const avatarBg = getAvatarBg(item.actorName);
 
@@ -920,18 +1216,18 @@ function ActivityFeedContent() {
                       <div
                         key={item.id}
                         onClick={() => {
-                          if (item.targetTaskId) {
-                            handleOpenTask(item.isAudit ? { ...rawItem, isAudit: true } : rawItem);
+                          if (item.taskId) {
+                            handleOpenTask(item.rawItem);
                           }
                         }}
                         className="group/card flex gap-4 cursor-pointer relative"
                       >
-                        {/* Timeline Connector Line */}
-                        {i !== items.length - 1 && (
+                        {/* Timeline connector */}
+                        {idx !== unreadItems.length - 1 && (
                           <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-border" />
                         )}
 
-                        {/* Avatar with Micro Icon Badge */}
+                        {/* Avatar */}
                         <div className="shrink-0 relative">
                           <div className="relative z-10">
                             {item.actorAvatar ? (
@@ -942,7 +1238,8 @@ function ActivityFeedContent() {
                                 onError={(e) => {
                                   e.currentTarget.style.display = 'none';
                                   if (e.currentTarget.nextElementSibling) {
-                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display = 'flex';
+                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display =
+                                      'flex';
                                   }
                                 }}
                               />
@@ -954,69 +1251,176 @@ function ActivityFeedContent() {
                               {initials}
                             </div>
 
-                            <div className={`absolute -bottom-1 -right-1 size-4 rounded-full ${item.iconBg} text-white flex items-center justify-center ring-2 ring-background`}>
+                            <div
+                              className={`absolute -bottom-1 -right-1 size-4 rounded-full ${item.iconBg} text-white flex items-center justify-center ring-2 ring-background`}
+                            >
                               <item.IconToUse className="size-2.5" />
                             </div>
                           </div>
                         </div>
 
-                        {/* Card Content */}
-                        <div className={`flex-1 min-w-0 bg-card border border-border rounded-2xl p-5 shadow-xs transition-all hover:border-border hover:bg-accent/40 ${item.isUnread ? 'border-border ring-1 ring-indigo-500/20' : ''}`}>
-                          {/* Header: Actor + Verb + Task Title + Unread Dot */}
+                        {/* Card Content - Unread Styling (Bold text + Blue dot) */}
+                        <div className="flex-1 min-w-0 bg-card border border-blue-500/40 bg-blue-500/[0.03] rounded-2xl p-5 shadow-xs transition-all hover:border-blue-500/60 hover:bg-blue-500/[0.05]">
                           <div className="flex items-center justify-between gap-3 mb-2">
-                            <div className="flex items-center gap-1.5 flex-wrap text-sm leading-tight">
-                              <span className="font-semibold text-zinc-100">{item.actorName}</span>
-                              <span className="text-zinc-400">{item.verb}</span>
-                              {item.targetTitle && (
-                                <span
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (item.targetTaskId) handleOpenTask(item.isAudit ? { ...rawItem, isAudit: true } : rawItem);
-                                  }}
-                                  className="font-medium text-indigo-300 hover:underline cursor-pointer"
-                                >
-                                  {item.targetTitle}
-                                </span>
-                              )}
+                            <div className="flex items-center gap-2 flex-wrap text-sm leading-tight font-semibold text-white">
+                              <span>{item.actorName}</span>
+                              <span className="text-zinc-200">
+                                {renderStyledStatusText(
+                                  item.title.replace(item.actorName, '').trim() || item.title
+                                )}
+                              </span>
                             </div>
 
-                            {item.isUnread && (
-                              <div className="w-2 h-2 rounded-full bg-indigo-500 shadow-sm shrink-0" />
-                            )}
+                            <div
+                              className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shrink-0"
+                              title="Unread"
+                            />
                           </div>
 
-                          {/* Quote Body with clean vertical left border */}
+                          {/* Comment Quote Body */}
                           {item.content && (
-                            <div className="my-2.5 pl-3.5 border-l-2 border-indigo-500/40 text-sm text-zinc-300">
+                            <div className="my-2.5 pl-3.5 border-l-2 border-indigo-500/40 text-sm text-zinc-200">
                               <CommentContent
                                 content={item.content}
-                                className="text-sm text-zinc-300 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-indigo-300 prose-a:underline [&_a]:text-indigo-300 [&_a]:underline"
+                                className="text-sm text-zinc-200 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-indigo-300 prose-a:underline [&_a]:text-indigo-300 [&_a]:underline"
                                 onPreviewImage={handlePreviewImage}
                               />
                             </div>
                           )}
 
-                          {/* Footer: Timestamp & optional hover clear */}
+                          {/* Footer */}
+                          <div className="flex items-center justify-between gap-4 mt-3">
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                              <Clock className="size-3.5 text-zinc-500" />
+                              <span>{format(new Date(item.createdAt), 'MMM d, h:mm a')}</span>
+                            </div>
+
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleClear(item.id, item.childIds);
+                              }}
+                              className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-indigo-400 hover:bg-accent rounded-md transition-all flex items-center gap-1 cursor-pointer"
+                              title="Clear notification"
+                            >
+                              <Check className="size-3" />
+                              <span>Clear</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* READ ITEMS GROUPED BY DAY */}
+            {Object.entries(readItemsGrouped).map(([groupName, items]) => (
+              <div key={groupName} className="relative">
+                {/* Date Group Heading (Today, Yesterday, [Day, Month Day]) */}
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-4">
+                  <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest px-1">
+                    {groupName}
+                  </h3>
+                </div>
+
+                <div className="space-y-4">
+                  {items.map((item, idx) => {
+                    const initials = getInitials(item.actorName);
+                    const avatarBg = getAvatarBg(item.actorName);
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          if (item.taskId) {
+                            handleOpenTask(item.rawItem);
+                          }
+                        }}
+                        className="group/card flex gap-4 cursor-pointer relative"
+                      >
+                        {/* Timeline Connector Line */}
+                        {idx !== items.length - 1 && (
+                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-border" />
+                        )}
+
+                        {/* Avatar */}
+                        <div className="shrink-0 relative">
+                          <div className="relative z-10">
+                            {item.actorAvatar ? (
+                              <img
+                                src={item.actorAvatar}
+                                alt=""
+                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm opacity-85"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  if (e.currentTarget.nextElementSibling) {
+                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display =
+                                      'flex';
+                                  }
+                                }}
+                              />
+                            ) : null}
+                            <div
+                              className={`size-10 rounded-full ${avatarBg} text-white flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm opacity-85`}
+                              style={{ display: item.actorAvatar ? 'none' : 'flex' }}
+                            >
+                              {initials}
+                            </div>
+
+                            <div
+                              className={`absolute -bottom-1 -right-1 size-4 rounded-full ${item.iconBg} text-white flex items-center justify-center ring-2 ring-background`}
+                            >
+                              <item.IconToUse className="size-2.5" />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Card Content - Normal Gray for Read Items */}
+                        <div className="flex-1 min-w-0 bg-card border border-border rounded-2xl p-5 shadow-xs transition-all hover:border-zinc-700 hover:bg-accent/40">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <div className="flex items-center gap-2 flex-wrap text-sm leading-tight font-normal text-zinc-400">
+                              <span className="font-semibold text-zinc-300">{item.actorName}</span>
+                              <span className="text-zinc-400">
+                                {renderStyledStatusText(
+                                  item.title.replace(item.actorName, '').trim() || item.title
+                                )}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Quote Body */}
+                          {item.content && (
+                            <div className="my-2.5 pl-3.5 border-l-2 border-zinc-700 text-sm text-zinc-400">
+                              <CommentContent
+                                content={item.content}
+                                className="text-sm text-zinc-400 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-indigo-400 prose-a:underline [&_a]:text-indigo-400 [&_a]:underline"
+                                onPreviewImage={handlePreviewImage}
+                              />
+                            </div>
+                          )}
+
+                          {/* Footer */}
                           <div className="flex items-center justify-between gap-4 mt-3">
                             <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                               <Clock className="size-3.5 text-zinc-500" />
                               <span>{format(new Date(item.createdAt), 'MMM d, h:mm a')}</span>
                             </div>
 
-                            {item.isUnread && (
-                              <button
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleClear(item.id);
-                                }}
-                                className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-indigo-400 hover:bg-accent rounded-md transition-all flex items-center gap-1 cursor-pointer"
-                                title="Clear notification"
-                              >
-                                <Check className="size-3" />
-                                <span>Clear</span>
-                              </button>
-                            )}
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleClear(item.id, item.childIds);
+                              }}
+                              className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-500 hover:text-indigo-400 hover:bg-accent rounded-md transition-all flex items-center gap-1 cursor-pointer"
+                              title="Clear notification"
+                            >
+                              <Check className="size-3" />
+                              <span>Clear</span>
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1034,7 +1438,15 @@ function ActivityFeedContent() {
         <div className="px-8 py-3.5 border-t border-border bg-background/95 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3 text-xs text-zinc-400">
             <span>
-              Showing <span className="font-semibold text-zinc-200">{Math.min((page - 1) * limit + 1, total)}</span>–<span className="font-semibold text-zinc-200">{Math.min(page * limit, total)}</span> of <span className="font-semibold text-zinc-200">{total}</span> activities
+              Showing{' '}
+              <span className="font-semibold text-zinc-200">
+                {Math.min((page - 1) * limit + 1, total)}
+              </span>
+              –
+              <span className="font-semibold text-zinc-200">
+                {Math.min(page * limit, total)}
+              </span>{' '}
+              of <span className="font-semibold text-zinc-200">{total}</span> activities
             </span>
 
             <div className="flex items-center gap-1.5 ml-2 border-l border-border pl-3">
@@ -1049,8 +1461,8 @@ function ActivityFeedContent() {
                   }}
                   className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors cursor-pointer ${
                     limit === size
-                      ? 'bg-accent text-indigo-400 font-semibold border border-border'
-                      : 'text-zinc-500 hover:text-zinc-300'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-card'
                   }`}
                 >
                   {size}
@@ -1059,97 +1471,63 @@ function ActivityFeedContent() {
             </div>
           </div>
 
-          {totalPages > 1 && (
-            <div className="flex items-center gap-1.5">
-              <button
-                disabled={page <= 1 || loading}
-                onClick={() => {
-                  setPage(p => Math.max(1, p - 1));
-                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-                }}
-                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-accent hover:text-zinc-200 transition-colors cursor-pointer border border-border"
-              >
-                <ChevronLeft className="size-3.5" />
-                <span>Prev</span>
-              </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setPage((p) => Math.max(1, p - 1));
+                if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+              }}
+              disabled={page <= 1}
+              className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-card border border-border rounded-md transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+              title="Previous page"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
 
-              <div className="flex items-center gap-1">
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  let pageNum = i + 1;
-                  if (totalPages > 5) {
-                    if (page > 3) pageNum = page - 2 + i;
-                    if (page > totalPages - 2) pageNum = totalPages - 4 + i;
-                  }
-                  if (pageNum < 1 || pageNum > totalPages) return null;
-                  return (
-                    <button
-                      key={pageNum}
-                      disabled={loading}
-                      onClick={() => {
-                        setPage(pageNum);
-                        if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-                      }}
-                      className={`w-8 h-8 flex items-center justify-center rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                        page === pageNum
-                          ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'text-zinc-400 hover:bg-accent hover:text-zinc-200 border border-transparent'
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
-                  );
-                })}
-              </div>
+            <span className="text-xs text-zinc-400 px-2 font-medium">
+              Page <span className="text-zinc-200 font-semibold">{page}</span> of{' '}
+              <span className="text-zinc-200 font-semibold">{totalPages}</span>
+            </span>
 
-              <button
-                disabled={page >= totalPages || loading}
-                onClick={() => {
-                  setPage(p => Math.min(totalPages, p + 1));
-                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-                }}
-                className="h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-medium text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-accent hover:text-zinc-200 transition-colors cursor-pointer border border-border"
-              >
-                <span>Next</span>
-                <ChevronRight className="size-3.5" />
-              </button>
-            </div>
-          )}
+            <button
+              onClick={() => {
+                setPage((p) => Math.min(totalPages, p + 1));
+                if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+              }}
+              disabled={page >= totalPages}
+              className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-card border border-border rounded-md transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+              title="Next page"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
         </div>
       )}
 
+      {/* Task Detail Modal */}
+      {selectedTask && (
+        <TaskDetailModal
+          isOpen={true}
+          onClose={() => {
+            setSelectedTask(null);
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('task');
+              url.searchParams.delete('subtask');
+              window.history.replaceState(null, '', url.pathname + (url.search || ''));
+            }
+          }}
+          task={selectedTask}
+        />
+      )}
 
-      <TaskDetailModal
-        isOpen={!!selectedTask}
-        onClose={() => {
-          setSelectedTask(null);
-          lastUrlTaskId.current = null;
-          if (typeof window !== 'undefined') {
-            const u = new URL(window.location.href);
-            u.searchParams.delete('task');
-            u.searchParams.delete('subtask');
-            window.history.replaceState({}, '', u.pathname + (u.search || ''));
-          }
-          if (feedCache?.scrollY && feedScrollRef.current) {
-            const targetY = feedCache.scrollY;
-            requestAnimationFrame(() => {
-              if (feedScrollRef.current) {
-                feedScrollRef.current.scrollTop = targetY;
-              }
-            });
-          }
-        }}
-        task={selectedTask}
-        mode="full"
-        workspaceRoles={workspaceRoles}
-        onUpdateTask={(updatedTask) => setSelectedTask(updatedTask)}
-      />
-
+      {/* Image Lightbox Modal */}
       <ImageLightboxModal
-        isOpen={!!lightboxImage}
+        isOpen={Boolean(lightboxImage)}
         onClose={handleCloseLightbox}
         currentSrc={lightboxImage}
         images={lightboxImages}
-        onNavigate={(newSrc) => setLightboxImage(newSrc)}
+        onNavigate={(src) => setLightboxImage(src)}
       />
     </div>
   );
@@ -1157,11 +1535,13 @@ function ActivityFeedContent() {
 
 export default function ActivityPage() {
   return (
-    <Suspense fallback={
-      <div className="flex h-full w-full items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 text-zinc-500 animate-spin" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-full">
+          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      }
+    >
       <ActivityFeedContent />
     </Suspense>
   );

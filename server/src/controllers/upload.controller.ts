@@ -7,6 +7,8 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import { requireEnv } from '../config/env';
 import { logger, errMsg } from '../config/logger';
 import { prisma } from '../config/prisma';
+import { invalidateCache } from '../services/redisService';
+import { encryptText, decryptText } from '../utils/encryption';
 
 
 const accountId = requireEnv('R2_ACCOUNT_ID');
@@ -282,3 +284,127 @@ export const uploadAvatar = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message || 'Failed to upload avatar' });
   }
 };
+
+export const uploadConfetti = async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No confetti file uploaded' });
+    }
+
+    // Strict 500 KB limit for confetti images to ensure ultra-lightweight fetching and zero lag
+    if (req.file.size > 500 * 1024) {
+      return res.status(400).json({ error: 'Confetti image file size cannot exceed 500 KB' });
+    }
+
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { buffer, mimetype } = req.file;
+    const contentType = mimetype.split(';')[0].trim().toLowerCase();
+    const ext = AVATAR_EXTENSIONS[contentType];
+    if (!ext) {
+      return res.status(400).json({ error: 'Confetti image must be PNG, JPEG, GIF, WEBP or AVIF' });
+    }
+
+    // 1. Generate versioned key in separate R2 folder: nexus-confetti/
+    const objectKey = `nexus-confetti/${userId}-${Math.floor(Date.now() / 1000)}${ext}`;
+
+    // 2. Upload to R2 with immutable 1-year cache
+    const command = new PutObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+      Body: buffer,
+      ContentType: contentType,
+      CacheControl: 'public, max-age=31536000, immutable',
+    });
+
+    await s3.send(command);
+    const newConfettiUrl = `${publicUrl}/${objectKey}`;
+
+    // 3. Encrypt URL before saving to DB
+    const encryptedConfettiUrl = encryptText(newConfettiUrl);
+
+    const currentUser = await (prisma.user as any).findUnique({ where: { id: userId } });
+    const oldEncryptedUrl = currentUser?.confettiUrl;
+    const oldDecryptedUrl = decryptText(oldEncryptedUrl);
+
+    const updatedUser = await (prisma.user as any).update({
+      where: { id: userId },
+      data: { confettiUrl: encryptedConfettiUrl },
+    });
+
+    // Invalidate Redis user roster cache
+    await invalidateCache('users:all');
+
+    logger.info(`Confetti image uploaded successfully to R2 (folder: nexus-confetti): ${newConfettiUrl}`);
+
+    // 4. Delete old object from R2 if it was in nexus-confetti
+    if (oldDecryptedUrl && oldDecryptedUrl.startsWith(publicUrl)) {
+      const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
+      s3.send(new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: oldKey,
+      })).catch(err => {
+        logger.error({ err, oldKey }, `Failed to delete old confetti image from R2: ${errMsg(err)}`);
+      });
+    }
+
+    const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
+    res.status(200).json({
+      url: newConfettiUrl,
+      user: {
+        ...safeUser,
+        confettiUrl: newConfettiUrl,
+        credits: safeUser.credits != null ? Number(safeUser.credits) : null,
+      },
+    });
+  } catch (error: any) {
+    logger.error({ err: error }, `Error uploading confetti image to R2: ${error?.name}: ${errMsg(error)}`);
+    res.status(500).json({ error: error.message || 'Failed to upload confetti image' });
+  }
+};
+
+export const deleteConfetti = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const currentUser = await (prisma.user as any).findUnique({ where: { id: userId } });
+    const oldEncryptedUrl = currentUser?.confettiUrl;
+    const oldDecryptedUrl = decryptText(oldEncryptedUrl);
+
+    const updatedUser = await (prisma.user as any).update({
+      where: { id: userId },
+      data: { confettiUrl: null },
+    });
+
+    await invalidateCache('users:all');
+
+    if (oldDecryptedUrl && oldDecryptedUrl.startsWith(publicUrl)) {
+      const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
+      s3.send(new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: oldKey,
+      })).catch(err => {
+        logger.error({ err, oldKey }, `Failed to delete old confetti image from R2: ${errMsg(err)}`);
+      });
+    }
+
+    const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
+    res.status(200).json({
+      user: {
+        ...safeUser,
+        confettiUrl: null,
+        credits: safeUser.credits != null ? Number(safeUser.credits) : null,
+      },
+    });
+  } catch (error: any) {
+    logger.error({ err: error }, `Error deleting confetti image: ${error?.name}: ${errMsg(error)}`);
+    res.status(500).json({ error: error.message || 'Failed to delete confetti image' });
+  }
+};
+

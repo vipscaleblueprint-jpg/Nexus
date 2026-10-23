@@ -20,9 +20,11 @@ import {
   getOTP,
   removeOTP,
   recordFailedOTPAttempt,
+  invalidateCache,
 } from '../services/redisService';
 import { sendOTPEmail, sendPasswordChangeEmail } from '../services/emailService';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { decryptText } from '../utils/encryption';
 import { requireEnv, optionalEnv } from '../config/env';
 import { prisma } from '../config/prisma';
 import { queueUserPush } from '../services/toolsSync';
@@ -198,6 +200,7 @@ export async function login(req: Request, res: Response) {
         employmentType: user.employmentType,
         dailySheetUrl: user.dailySheetUrl,
         team: user.team,
+        confettiUrl: decryptText((user as any).confettiUrl),
       },
       rememberMe,
     });
@@ -383,7 +386,7 @@ export async function getMe(req: AuthRequest, res: Response) {
   try {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
-    const user = await prisma.user.findUnique({
+    const user = await (prisma.user as any).findUnique({
       where: { id: req.user.id },
       select: {
         id: true,
@@ -399,6 +402,8 @@ export async function getMe(req: AuthRequest, res: Response) {
         lastLoginAt: true,
         createdAt: true,
         team: true,
+        notificationPreferences: true,
+        confettiUrl: true,
       },
     });
 
@@ -414,7 +419,12 @@ export async function getMe(req: AuthRequest, res: Response) {
       setAuthCookies(res, tokens.accessToken, tokens.refreshToken, true);
     }
 
-    return res.json({ user });
+    return res.json({
+      user: {
+        ...user,
+        confettiUrl: decryptText((user as any).confettiUrl),
+      },
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -425,18 +435,26 @@ export async function updateProfile(req: AuthRequest, res: Response) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const data = req.body as UpdateProfileInput;
 
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await (prisma.user as any).update({
       where: { id: req.user.id },
       data,
       include: { team: true },
     });
     // Name and daily sheet are mirrored in the tools' assistant row.
     queueUserPush(updatedUser.email);
+    // Invalidate user roster cache so updated preferences propagate immediately
+    await invalidateCache('users:all');
 
     // Never send the password hash or Google ID back.
     // credits is a BigInt column — JSON.stringify (via res.json) can't serialize it directly.
     const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
-    return res.json({ user: { ...safeUser, credits: safeUser.credits != null ? Number(safeUser.credits) : null } });
+    return res.json({
+      user: {
+        ...safeUser,
+        confettiUrl: decryptText((safeUser as any).confettiUrl),
+        credits: safeUser.credits != null ? Number(safeUser.credits) : null,
+      },
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

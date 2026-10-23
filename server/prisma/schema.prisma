@@ -60,6 +60,8 @@ model User {
   googleId              String?               @unique
   imageUrl              String?
   credits               BigInt?
+  notificationPreferences Json?
+  confettiUrl           String?
   apiKeys               ApiKey[]
   uploadedAttachments   Attachment[]
   auditLogs             AuditLog[]

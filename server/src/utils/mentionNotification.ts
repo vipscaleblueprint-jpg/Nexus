@@ -1,5 +1,6 @@
 import { prisma } from '../config/prisma';
 import { io } from '../server';
+import { filterUsersByNotificationPreference } from './notificationPreferences';
 
 // Comment editors encode user mentions as <a href="mention://<userId>">@Name</a>
 const MENTION_HREF_RE = /mention:\/\/([A-Za-z0-9_-]+)/g;
@@ -56,7 +57,8 @@ export async function notifyMentionedUsers(params: {
     where: { id: { in: candidates }, isActive: true },
     select: { id: true },
   });
-  const recipients = validUsers.map(u => u.id);
+  const baseRecipients = validUsers.map(u => u.id);
+  const recipients = await filterUsersByNotificationPreference(baseRecipients, 'mentions');
   if (recipients.length === 0) return [];
 
   const where = isSubtask ? 'a subtask comment' : 'a comment';

@@ -5,6 +5,7 @@ import { getCache, setCache, invalidateCache, clearAllCache } from '../services/
 import { syncUsers } from './webhook.controller';
 import { queueUserPush } from '../services/toolsSync';
 import { generateApiKey } from '../utils/apiKey';
+import { decryptText } from '../utils/encryption';
 import type { AuthRequest } from '../types';
 
 export async function triggerSyncUsers(req: Request, res: Response) {
@@ -27,6 +28,7 @@ const rosterSelect = {
   email: true,
   avatarUrl: true,
   imageUrl: true,
+  confettiUrl: true,
   dailySheetUrl: true,
   starRating: true,
   employmentType: true,
@@ -36,12 +38,18 @@ const rosterSelect = {
   credits: true,
   createdAt: true,
   team: true,
+  notificationPreferences: true,
 };
 
 // credits is a BigInt column — JSON.stringify (used by res.json and setCache) can't
 // serialize those, so it has to be converted before it leaves this function.
-function serializeCredits<T extends { credits?: bigint | null }>(user: T) {
-  return { ...user, credits: user.credits != null ? Number(user.credits) : null };
+// Also decrypt confettiUrl if encrypted at rest.
+function serializeUser<T extends { credits?: bigint | null; confettiUrl?: string | null }>(user: T) {
+  return {
+    ...user,
+    credits: user.credits != null ? Number(user.credits) : null,
+    confettiUrl: decryptText(user.confettiUrl),
+  };
 }
 
 // GET /api/users - Redis Cache-Aside
@@ -56,7 +64,7 @@ export async function listUsers(req: Request, res: Response) {
       select: rosterSelect,
       orderBy: { name: 'asc' },
     });
-    const serialized = users.map(serializeCredits);
+    const serialized = users.map(serializeUser);
 
     await setCache('users:all', serialized, 300);
 
@@ -121,7 +129,7 @@ export async function updateUser(req: Request, res: Response) {
     // The tools are the source of truth for these fields, so mirror the edit there.
     queueUserPush(user.email);
 
-    return res.json({ user: serializeCredits(user) });
+    return res.json({ user: serializeUser(user) });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'User not found' });
     return res.status(500).json({ error: err.message });

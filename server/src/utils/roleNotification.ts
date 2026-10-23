@@ -140,8 +140,8 @@ export async function getStatusChangeRecipients(
 
 /**
  * Returns recipients for a checklist / audit check:
- * PMs + Auditors + Admins (scoped to team first if teamId present, fallback workspace-wide),
- * plus task assignees, excluding acting user.
+ * strictly based on task and subtask assignees (plus checklist item assignee),
+ * excluding the acting user.
  */
 export async function getChecklistCheckRecipients(
   task: {
@@ -150,30 +150,18 @@ export async function getChecklistCheckRecipients(
     assigneeId?: string | null;
     assignees?: { id: string }[];
   },
-  actingUserId?: string | null
+  actingUserId?: string | null,
+  itemAssigneeId?: string | null
 ): Promise<string[]> {
   const recipientIds = new Set<string>();
-
-  // PMs
-  const pms = await findUsersByRoleCategory('PM', {
-    teamId: task.teamId,
-    excludeUserId: actingUserId,
-    includeAdmins: true,
-  });
-  pms.forEach((id) => recipientIds.add(id));
-
-  // Auditors
-  const auditors = await findUsersByRoleCategory('AUDITOR', {
-    teamId: task.teamId,
-    excludeUserId: actingUserId,
-    includeAdmins: true,
-  });
-  auditors.forEach((id) => recipientIds.add(id));
 
   // Task assignees
   if (task.assigneeId) recipientIds.add(task.assigneeId);
   if (task.assignees && Array.isArray(task.assignees)) {
     task.assignees.forEach((a) => recipientIds.add(a.id));
+  }
+  if (itemAssigneeId) {
+    recipientIds.add(itemAssigneeId);
   }
 
   if (actingUserId) {
@@ -219,18 +207,18 @@ export function formatChecklistNotificationTitle(
   const lower = itemName.trim().toLowerCase();
   if (isAudit) {
     if (lower.includes('funnel')) {
-      return `${actorName} has checked funnel auditing on "${taskTitle}"`;
+      return `${actorName} has checked Funnel auditing on task ${taskTitle}`;
     }
     if (lower.includes('design')) {
-      return `${actorName} has checked design auditing on "${taskTitle}"`;
+      return `${actorName} has checked Design auditing on task ${taskTitle}`;
     }
     if (lower.includes('ui') && lower.includes('ux')) {
-      return `${actorName} has checked UI/UX auditing on "${taskTitle}"`;
+      return `${actorName} has checked UI UX auditing on task ${taskTitle}`;
     }
     if (lower.includes('instructions')) {
-      return `${actorName} has checked instructions auditing on "${taskTitle}"`;
+      return `${actorName} has checked Instructions auditing on task ${taskTitle}`;
     }
-    return `${actorName} has checked ${itemName} on "${taskTitle}"`;
+    return `${actorName} has checked ${itemName} auditing on task ${taskTitle}`;
   }
-  return `${actorName} has checked ${itemName} on "${taskTitle}"`;
+  return `${actorName} completed ${itemName} in ${taskTitle}`;
 }

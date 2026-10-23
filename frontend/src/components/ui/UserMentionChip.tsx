@@ -2,8 +2,9 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Mail, Users, Briefcase, Shield } from 'lucide-react';
+import { Mail, Users, Briefcase, Shield, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
+import { triggerMentionConfetti } from './MentionConfetti';
 
 const HOVER_OPEN_DELAY = 300;
 const HOVER_CLOSE_DELAY = 150;
@@ -76,6 +77,9 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
             clearTimer();
             setPinned(true);
             setOpen(true);
+            if (user) {
+              triggerMentionConfetti(user, { x: e.clientX, y: e.clientY });
+            }
           }}
         >
           {children}
@@ -102,12 +106,25 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
                 {initials}
               </div>
             )}
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-1.5">
                 <span className="text-sm font-semibold text-zinc-100 truncate">{user.name}</span>
-                {!user.isActive && (
-                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-zinc-800 text-zinc-500">Inactive</span>
-                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      triggerMentionConfetti(user, { x: e.clientX, y: e.clientY });
+                    }}
+                    className="p-1 rounded-md text-zinc-400 hover:text-amber-300 hover:bg-zinc-800 transition-colors"
+                    title="Celebrate mention"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  </button>
+                  {!user.isActive && (
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-zinc-800 text-zinc-500">Inactive</span>
+                  )}
+                </div>
               </div>
               {user.email && (
                 <a

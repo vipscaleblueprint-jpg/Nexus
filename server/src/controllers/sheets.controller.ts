@@ -26,7 +26,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
-import { invalidateCache } from '../services/redisService';
+import { invalidateCache, redis } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
 
@@ -392,6 +392,17 @@ function formatSheetComment(fileName: unknown, datePosted: unknown, message: str
 
 const commentInclude = { user: { select: { id: true, name: true, avatarUrl: true, email: true } } };
 
+/**
+ * getTaskComments serves comments from its own Redis list (comments:list:<task>[:sub:<subtask>]),
+ * which invalidateCache(`task:…`) doesn't touch. Without this, a reload kept showing the list
+ * from before the sheet wrote the comment.
+ */
+async function dropCommentCache(taskId: string, subtaskId: string | null) {
+  await redis
+    .del(`comments:list:${taskId}`, ...(subtaskId ? [`comments:list:${taskId}:sub:${subtaskId}`] : []))
+    .catch(() => {});
+}
+
 export const handleSheetComment = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
   try {
@@ -417,6 +428,7 @@ export const handleSheetComment = async (req: Request, res: Response) => {
       await prisma.taskComment.delete({ where: { id: existing.id } });
       io.to(`list:${existing.task.listId}`).emit('task:comment_deleted', { taskId: existing.taskId, commentId: existing.id });
       await invalidateCache(`task:${existing.taskId}`);
+      await dropCommentCache(existing.taskId, existing.subtaskId);
       // n8n deletes the ClickUp copy with this.
       return res.status(200).json({ success: true, id: existing.id, clickup_comment_id: existing.externalId });
     }
@@ -458,11 +470,13 @@ export const handleSheetComment = async (req: Request, res: Response) => {
         io.emit('task:comment_added', { taskId: target!.taskId, subtaskId: target!.subtaskId, comment });
         io.to(`list:${target!.listId}`).emit('task:comment_added', { taskId: target!.taskId, subtaskId: target!.subtaskId, comment });
         await invalidateCache(`task:${existing.taskId}`, `task:${target!.taskId}`);
+        await dropCommentCache(target!.taskId, target!.subtaskId);
       } else {
         io.emit('task:comment_updated', { taskId: existing.taskId, comment });
         io.to(`list:${existing.task.listId}`).emit('task:comment_updated', { taskId: existing.taskId, comment });
         await invalidateCache(`task:${existing.taskId}`);
       }
+      await dropCommentCache(existing.taskId, existing.subtaskId);
       const current = target ?? (await findByNexusLink(existing.taskId));
       return res.status(200).json({
         success: true,
@@ -500,6 +514,7 @@ export const handleSheetComment = async (req: Request, res: Response) => {
     io.emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment });
     io.to(`list:${target.listId}`).emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment });
     await invalidateCache(`task:${target.taskId}`);
+    await dropCommentCache(target.taskId, target.subtaskId);
     return res.status(200).json({
       success: true,
       id: comment.id,

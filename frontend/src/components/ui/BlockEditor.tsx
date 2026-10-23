@@ -10,6 +10,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import Link from '@tiptap/extension-link';
 import { openExternalLink, parseNexusTaskLink } from '@/lib/links';
+import { useDomLinkPreview } from './LinkHoverPreview';
 import { insertNexusTaskMention, cleanPastedHtml, stripMarksFromSlice } from '@/lib/nexusLinkPaste';
 import { TaskMention } from '../editor/extensions/TaskMention';
 import { Badge, EndBadgeOnNewLine } from '../editor/extensions/Badge';
@@ -104,6 +105,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
+  const { renderCard } = useDomLinkPreview(editorContainerRef);
 
   let initialContent: any = content || '';
   if (typeof initialContent === 'string' && initialContent.startsWith('{"type":"doc"')) {
@@ -648,6 +650,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
         `}</style>
         <EditorContent editor={editor} />
       </div>
+      {renderCard()}
     </div>
   );
 }, (prev, next) => {

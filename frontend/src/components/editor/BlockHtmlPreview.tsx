@@ -13,6 +13,7 @@ import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDet
 import { getStatusColor } from '@/components/editor/nodes/TaskMentionNode';
 import { getPriorityConfig } from '@/lib/priority';
 import { parseNexusTaskLink } from '@/lib/links';
+import { LinkWithPreview } from '@/components/ui/LinkHoverPreview';
 
 const PASS_THROUGH_TAGS = new Set([
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'u', 's', 'code', 'pre', 'blockquote',
@@ -168,7 +169,7 @@ function toReact(node: Node, key: number): React.ReactNode {
       if (labelText) mockSpan.setAttribute('data-label', labelText);
       return <MentionChipPreview key={key} el={mockSpan} />;
     }
-    return <span key={key} className="underline text-blue-400">{children}</span>;
+    return <LinkWithPreview key={key} href={href} className="underline text-blue-400">{children}</LinkWithPreview>;
   }
   // data-badge keeps the badge pill shape (globals.css); its colours come through safeStyle
   if (tag === 'span') return <span key={key} style={safeStyle(el)} data-badge={el.hasAttribute('data-badge') ? '' : undefined}>{children}</span>;

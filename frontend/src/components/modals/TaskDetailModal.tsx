@@ -31,6 +31,7 @@ import { getFolderColor } from '@/components/layout/Sidebar';
 import { CommentEditor, ComposerSendButton, ComposerToolButton } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
+import { LinkWithPreview } from '../ui/LinkHoverPreview';
 import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { ActionErrorModal, ActionErrorInfo } from './ActionErrorModal';
@@ -42,6 +43,7 @@ import { BlurUpImage } from '../ui/BlurUpImage';
 import { extractImagesFromComments } from '@/lib/commentImages';
 import { RecurrencePicker, formatTimeDisplay } from './RecurrencePicker';
 import { RecurringConfig } from '@/lib/types';
+import { ActivityDayDivider, getDayKey, isTodayDate } from '../ui/ActivityDayDivider';
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
@@ -775,7 +777,16 @@ export function TaskDetailModalContent({
       el.setSelectionRange(el.value.length, el.value.length);
     }
   }, [isEditingTitle]);
-  const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
+  const [expandedBlocks, setExpandedBlocks] = useState<(string | number)[]>([]);
+  const [collapsedDays, setCollapsedDays] = useState<Record<string, boolean>>({});
+  const toggleCollapseDay = useCallback((dayKey: string) => {
+    setCollapsedDays(prev => ({
+      ...prev,
+      [dayKey]: !prev[dayKey]
+    }));
+  }, []);
+
+
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Assignees as they were before the current debounced batch of toggles (for the added/removed activity diff)
@@ -810,6 +821,7 @@ export function TaskDetailModalContent({
     setPrevTaskModalId(task?.id);
     setVisibleActivityCount(INITIAL_ACTIVITY_COUNT);
     setIsLoadingOlderActivities(false);
+    setCollapsedDays({});
   }
 
   const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment'), [activities]);
@@ -912,9 +924,14 @@ export function TaskDetailModalContent({
         );
       }
       return (
-        <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
+        <LinkWithPreview
+          {...rest}
+          href={normalizeHref(href)}
+          className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors"
+          onClick={(e) => { e.stopPropagation(); }}
+        >
           {rest.children}
-        </a>
+        </LinkWithPreview>
       );
     },
     span: (props: any) => {
@@ -3496,18 +3513,7 @@ export function TaskDetailModalContent({
                   </div>
                 )}
 
-                {/* Initial Creation item */}
-                {!hasOlderActivities && (
-                  <div className="flex gap-4 text-sm text-zinc-400 items-start">
-                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                    <div className="flex-1 leading-relaxed">
-                      <span className="text-zinc-200 font-medium">{task.creator?.name || 'System'}</span> created this task
-                    </div>
-                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                      {new Date(task.createdAt || Date.now()).toLocaleDateString()}
-                    </span>
-                  </div>
-                )}
+
 
                 {/* Sort activities and comments oldest to newest */}
                 {loadError && (
@@ -3691,43 +3697,62 @@ export function TaskDetailModalContent({
                   return (
                     <>
                       {/* Combined Timeline */}
-                      {paginatedCombined.length > 0 && (() => {
-                        const timelineItems: any[] = [];
-                        let currentGroupKey: string | null = null;
-                        let currentBlock: any[] = [];
-                        const blocks: any[][] = [];
-                        
-                        paginatedCombined.forEach(item => {
-                          const key = item.isActivityType ? 'activity' : 'comment';
-                          if (currentGroupKey === null) {
-                              currentGroupKey = key;
-                              currentBlock.push(item);
-                          } else if (currentGroupKey === key && item.isActivityType) {
-                              currentBlock.push(item);
+                      {(paginatedCombined.length > 0 || (!hasOlderActivities && task?.createdAt)) && (() => {
+                        const rawItems: any[] = [];
+                        if (!hasOlderActivities && task?.createdAt) {
+                          const creationTime = new Date(task.createdAt).getTime();
+                          rawItems.push({
+                            isCreationEvent: true,
+                            sortDate: paginatedCombined.length > 0
+                              ? Math.min(isNaN(creationTime) ? Date.now() : creationTime, paginatedCombined[0].sortDate - 1)
+                              : (isNaN(creationTime) ? Date.now() : creationTime),
+                          });
+                        }
+                        rawItems.push(...paginatedCombined);
+
+                        // Group rawItems by day (YYYY-MM-DD)
+                        interface DayGroup {
+                          dayKey: string;
+                          date: Date | number | string;
+                          isNew: boolean;
+                          items: any[];
+                        }
+
+                        const dayGroups: DayGroup[] = [];
+                        let currentDayGroup: DayGroup | null = null;
+
+                        rawItems.forEach(item => {
+                          const itemDate = item.sortDate || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now());
+                          const dayKey = getDayKey(itemDate);
+
+                          if (!currentDayGroup || currentDayGroup.dayKey !== dayKey) {
+                            const isNew = isTodayDate(itemDate);
+                            currentDayGroup = {
+                              dayKey,
+                              date: itemDate,
+                              isNew,
+                              items: [item],
+                            };
+                            dayGroups.push(currentDayGroup);
                           } else {
-                              blocks.push(currentBlock);
-                              currentGroupKey = key;
-                              currentBlock = [item];
+                            currentDayGroup.items.push(item);
                           }
                         });
-                        if (currentBlock.length > 0) blocks.push(currentBlock);
-                        
-                        blocks.forEach((block, bIdx) => {
-                            const isExpanded = expandedBlocks.includes(bIdx);
-                            if (!block[0].isActivityType || block.length <= 1) {
-                                timelineItems.push(...block);
-                            } else if (isExpanded) {
-                                timelineItems.push({ isShowLess: true, blockId: bIdx });
-                                timelineItems.push(...block);
-                            } else {
-                                timelineItems.push({ isShowMore: true, count: block.length - 1, blockId: bIdx });
-                                timelineItems.push(...block.slice(-1));
-                            }
-                        });
 
-                        return (
-                          <>
-                            {timelineItems.map((item, idx) => {
+                        const renderTimelineItem = (item: any) => {
+                              if (item.isCreationEvent) {
+                                return (
+                                  <div key="task-initial-creation" className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="text-zinc-200 font-medium">{task.creator?.name || 'System'}</span> created this task
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {new Date(task.createdAt || Date.now()).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                );
+                              }
                               if (item.isShowMore) {
                                 return (
                                   <button
@@ -3752,7 +3777,7 @@ export function TaskDetailModalContent({
                                   </button>
                                 );
                               }
-                            if (item.isActivityType) {
+                              if (item.isActivityType) {
                               const act = item;
                               const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                               if (act.type === 'status_change') {
@@ -3929,9 +3954,75 @@ export function TaskDetailModalContent({
                             } else {
                               return renderComment(item);
                             }
-                          })}
-                      </>
-                    );
+                          };
+
+                          return (
+                            <>
+                              {dayGroups.map((dayGroup) => {
+                                const isCollapsed = Boolean(collapsedDays[dayGroup.dayKey]);
+
+                                let currentGroupKey: string | null = null;
+                                let currentBlock: any[] = [];
+                                const blocks: any[][] = [];
+
+                                dayGroup.items.forEach(item => {
+                                  const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? 'activity' : 'comment');
+                                  if (currentGroupKey === null) {
+                                    currentGroupKey = key;
+                                    currentBlock.push(item);
+                                  } else if (currentGroupKey === key && item.isActivityType) {
+                                    currentBlock.push(item);
+                                  } else {
+                                    blocks.push(currentBlock);
+                                    currentGroupKey = key;
+                                    currentBlock = [item];
+                                  }
+                                });
+                                if (currentBlock.length > 0) blocks.push(currentBlock);
+
+                                const dayTimelineItems: any[] = [];
+                                blocks.forEach((block, bIdx) => {
+                                  const blockId = `${dayGroup.dayKey}-${bIdx}`;
+                                  const isExpanded = expandedBlocks.includes(blockId);
+                                  if (!block[0].isActivityType || block.length <= 1) {
+                                    dayTimelineItems.push(...block);
+                                  } else if (isExpanded) {
+                                    dayTimelineItems.push({ isShowLess: true, blockId });
+                                    dayTimelineItems.push(...block);
+                                  } else {
+                                    dayTimelineItems.push({ isShowMore: true, count: block.length - 1, blockId });
+                                    dayTimelineItems.push(...block.slice(-1));
+                                  }
+                                });
+
+                                return (
+                                  <div key={`day-section-${dayGroup.dayKey}`} className="w-full">
+                                    <ActivityDayDivider
+                                      date={dayGroup.date}
+                                      isNew={dayGroup.isNew}
+                                      isCollapsed={isCollapsed}
+                                      itemCount={dayGroup.items.length}
+                                      onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
+                                    />
+                                    <AnimatePresence initial={false}>
+                                      {!isCollapsed && (
+                                        <motion.div
+                                          key={`day-content-${dayGroup.dayKey}`}
+                                          initial={{ height: 0, opacity: 0 }}
+                                          animate={{ height: 'auto', opacity: 1 }}
+                                          exit={{ height: 0, opacity: 0 }}
+                                          transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
+                                          className="overflow-hidden space-y-4 pt-1"
+                                        >
+                                          {dayTimelineItems.map((item) => renderTimelineItem(item))}
+                                        </motion.div>
+                                      )}
+                                    </AnimatePresence>
+                                  </div>
+                                );
+                              })}
+                            </>
+                          );
                   })()}
                 </>
               );
@@ -4330,6 +4421,14 @@ export function SubtaskDetailView({
   }, [isEditingTitle]);
   const [activities, setActivities] = useState<any[]>([]);
   const activityScrollRef = useRef<HTMLDivElement>(null);
+  const [collapsedDays, setCollapsedDays] = useState<Record<string, boolean>>({});
+  const toggleCollapseDay = useCallback((dayKey: string) => {
+    setCollapsedDays(prev => ({
+      ...prev,
+      [dayKey]: !prev[dayKey]
+    }));
+  }, []);
+
 
   const INITIAL_ACTIVITY_COUNT = 20;
   const ACTIVITY_BATCH_SIZE = 20;
@@ -4340,6 +4439,7 @@ export function SubtaskDetailView({
     setPrevSubtaskModalId(subtask?.id);
     setVisibleActivityCount(INITIAL_ACTIVITY_COUNT);
     setIsLoadingOlderActivities(false);
+    setCollapsedDays({});
   }
 
   const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment'), [activities]);
@@ -4410,7 +4510,7 @@ export function SubtaskDetailView({
   }, [hasOlderActivities, isLoadingOlderActivities, loadOlderActivities]);
 
   const [editingUser, setEditingUser] = useState<string | null>(null);
-  const [expandedBlocks, setExpandedBlocks] = useState<number[]>([]);
+  const [expandedBlocks, setExpandedBlocks] = useState<(string | number)[]>([]);
   const [isRoleOpen, setIsRoleOpen] = useState(false);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const roleToAssigneeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -4480,9 +4580,14 @@ export function SubtaskDetailView({
         );
       }
       return (
-        <a {...rest} href={normalizeHref(href)} className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors" target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); }}>
+        <LinkWithPreview
+          {...rest}
+          href={normalizeHref(href)}
+          className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors"
+          onClick={(e) => { e.stopPropagation(); }}
+        >
           {rest.children}
-        </a>
+        </LinkWithPreview>
       );
     },
     span: (props: any) => {
@@ -6439,18 +6544,7 @@ export function SubtaskDetailView({
                 </div>
               )}
 
-              {/* Initial Creation item */}
-              {!hasOlderActivities && (
-                <div className="flex gap-4 text-sm text-zinc-400 items-start">
-                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
-                  <div className="flex-1 leading-relaxed">
-                    <span className="text-zinc-200 font-medium">{subtask.creator?.name || 'System'}</span> created this subtask
-                  </div>
-                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                    {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}
-                  </span>
-                </div>
-              )}
+
 
               {/* Sort activities and comments oldest to newest */}
               {loadError && (
@@ -6641,43 +6735,62 @@ export function SubtaskDetailView({
                 return (
                   <>
                     {/* Combined Timeline */}
-                    {paginatedCombined.length > 0 && (() => {
-                      const timelineItems: any[] = [];
-                      let currentGroupKey: string | null = null;
-                      let currentBlock: any[] = [];
-                      const blocks: any[][] = [];
-                      
-                      paginatedCombined.forEach(item => {
-                        const key = item.isActivityType ? 'activity' : 'comment';
-                        if (currentGroupKey === null) {
-                            currentGroupKey = key;
-                            currentBlock.push(item);
-                        } else if (currentGroupKey === key && item.isActivityType) {
-                            currentBlock.push(item);
+                    {(paginatedCombined.length > 0 || (!hasOlderActivities && subtask?.createdAt)) && (() => {
+                      const rawItems: any[] = [];
+                      if (!hasOlderActivities && subtask?.createdAt) {
+                        const creationTime = new Date(subtask.createdAt).getTime();
+                        rawItems.push({
+                          isCreationEvent: true,
+                          sortDate: paginatedCombined.length > 0
+                            ? Math.min(isNaN(creationTime) ? Date.now() : creationTime, paginatedCombined[0].sortDate - 1)
+                            : (isNaN(creationTime) ? Date.now() : creationTime),
+                        });
+                      }
+                      rawItems.push(...paginatedCombined);
+
+                      // Group rawItems by day (YYYY-MM-DD)
+                      interface DayGroup {
+                        dayKey: string;
+                        date: Date | number | string;
+                        isNew: boolean;
+                        items: any[];
+                      }
+
+                      const dayGroups: DayGroup[] = [];
+                      let currentDayGroup: DayGroup | null = null;
+
+                      rawItems.forEach(item => {
+                        const itemDate = item.sortDate || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now());
+                        const dayKey = getDayKey(itemDate);
+
+                        if (!currentDayGroup || currentDayGroup.dayKey !== dayKey) {
+                          const isNew = isTodayDate(itemDate);
+                          currentDayGroup = {
+                            dayKey,
+                            date: itemDate,
+                            isNew,
+                            items: [item],
+                          };
+                          dayGroups.push(currentDayGroup);
                         } else {
-                            blocks.push(currentBlock);
-                            currentGroupKey = key;
-                            currentBlock = [item];
+                          currentDayGroup.items.push(item);
                         }
                       });
-                      if (currentBlock.length > 0) blocks.push(currentBlock);
-                      
-                      blocks.forEach((block, bIdx) => {
-                          const isExpanded = expandedBlocks.includes(bIdx);
-                          if (!block[0].isActivityType || block.length <= 1) {
-                              timelineItems.push(...block);
-                          } else if (isExpanded) {
-                              timelineItems.push({ isShowLess: true, blockId: bIdx });
-                              timelineItems.push(...block);
-                          } else {
-                              timelineItems.push({ isShowMore: true, count: block.length - 1, blockId: bIdx });
-                              timelineItems.push(...block.slice(-1));
-                          }
-                      });
 
-                      return (
-                        <>
-                          {timelineItems.map((item: any, idx: number) => {
+                      const renderTimelineItem = (item: any) => {
+                            if (item.isCreationEvent) {
+                              return (
+                                <div key="subtask-initial-creation" className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="text-zinc-200 font-medium">{subtask.creator?.name || 'System'}</span> created this subtask
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              );
+                            }
                             if (item.isShowMore) {
                               return (
                                 <button
@@ -6702,7 +6815,7 @@ export function SubtaskDetailView({
                                 </button>
                               );
                             }
-                          if (item.isActivityType) {
+                            if (item.isActivityType) {
                             const act = item;
                             const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                             if (act.type === 'status_change') {
@@ -6819,9 +6932,75 @@ export function SubtaskDetailView({
                           } else {
                             return renderComment(item);
                           }
-                        })}
-                      </>
-                    );
+                        };
+
+                        return (
+                          <>
+                            {dayGroups.map((dayGroup) => {
+                              const isCollapsed = Boolean(collapsedDays[dayGroup.dayKey]);
+
+                              let currentGroupKey: string | null = null;
+                              let currentBlock: any[] = [];
+                              const blocks: any[][] = [];
+
+                              dayGroup.items.forEach(item => {
+                                const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? 'activity' : 'comment');
+                                if (currentGroupKey === null) {
+                                  currentGroupKey = key;
+                                  currentBlock.push(item);
+                                } else if (currentGroupKey === key && item.isActivityType) {
+                                  currentBlock.push(item);
+                                } else {
+                                  blocks.push(currentBlock);
+                                  currentGroupKey = key;
+                                  currentBlock = [item];
+                                }
+                              });
+                              if (currentBlock.length > 0) blocks.push(currentBlock);
+
+                              const dayTimelineItems: any[] = [];
+                              blocks.forEach((block, bIdx) => {
+                                const blockId = `${dayGroup.dayKey}-${bIdx}`;
+                                const isExpanded = expandedBlocks.includes(blockId);
+                                if (!block[0].isActivityType || block.length <= 1) {
+                                  dayTimelineItems.push(...block);
+                                } else if (isExpanded) {
+                                  dayTimelineItems.push({ isShowLess: true, blockId });
+                                  dayTimelineItems.push(...block);
+                                } else {
+                                  dayTimelineItems.push({ isShowMore: true, count: block.length - 1, blockId });
+                                  dayTimelineItems.push(...block.slice(-1));
+                                }
+                              });
+
+                              return (
+                                <div key={`day-section-${dayGroup.dayKey}`} className="w-full">
+                                  <ActivityDayDivider
+                                    date={dayGroup.date}
+                                    isNew={dayGroup.isNew}
+                                    isCollapsed={isCollapsed}
+                                    itemCount={dayGroup.items.length}
+                                    onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
+                                  />
+                                  <AnimatePresence initial={false}>
+                                    {!isCollapsed && (
+                                      <motion.div
+                                        key={`day-content-${dayGroup.dayKey}`}
+                                        initial={{ height: 0, opacity: 0 }}
+                                        animate={{ height: 'auto', opacity: 1 }}
+                                        exit={{ height: 0, opacity: 0 }}
+                                        transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
+                                        className="overflow-hidden space-y-4 pt-1"
+                                      >
+                                        {dayTimelineItems.map((item) => renderTimelineItem(item))}
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
+                                </div>
+                              );
+                            })}
+                          </>
+                        );
                   })()}
                 </>
               );

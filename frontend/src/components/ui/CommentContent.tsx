@@ -12,6 +12,7 @@ import { extractImagesFromContent } from '@/lib/commentImages';
 import { UserMentionChip } from './UserMentionChip';
 import { TaskMentionChip } from './TaskMentionChip';
 import { BlurUpImage } from './BlurUpImage';
+import { LinkWithPreview } from './LinkHoverPreview';
 
 // Shared across instances so a feed of many comments requests the user list only once
 let usersRequested = false;
@@ -148,16 +149,14 @@ function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
     );
   }
   return (
-    <a
+    <LinkWithPreview
       {...rest}
       href={normalizeHref(target)}
-      target="_blank"
-      rel="noopener noreferrer"
       className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors"
       onClick={(e) => e.stopPropagation()}
     >
       {children}
-    </a>
+    </LinkWithPreview>
   );
 }
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { BlockEditor } from '../ui/BlockEditor';
+import { CommentContent } from '../ui/CommentContent';
 import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
@@ -1698,10 +1699,8 @@ function SubtaskRow({
                               <span className="text-[12px] font-medium text-zinc-300 truncate">{comment.user?.name || 'System'}</span>
                               <span className="text-[10px] text-zinc-500 shrink-0">{dateStr}</span>
                             </div>
-                            <div className="text-[12px] text-zinc-400 leading-relaxed break-words prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-popover prose-pre:border prose-pre:border-zinc-800">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                                {comment.content || ''}
-                              </ReactMarkdown>
+                            <div className="text-[12px] text-zinc-400 leading-relaxed break-words prose prose-invert prose-sm max-w-none">
+                              <CommentContent content={comment.content || ''} />
                             </div>
                           </div>
                         </div>

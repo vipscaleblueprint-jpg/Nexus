@@ -314,6 +314,7 @@ export const KanbanColumn = memo(function KanbanColumn({
       {/* ── EXPANDED VIEW ── */}
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div 
+          data-column-header="true"
           className={`flex flex-col px-3 pt-3 pb-2 shrink-0 group/colheader ${isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'}`}
           {...(!isEditing ? dragListeners : {})}
           {...(!isEditing ? dragAttributes : {})}

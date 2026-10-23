@@ -100,7 +100,7 @@ const SortableGroupWrapper = memo(function SortableGroupWrapper({
     <div
       ref={sortable.setNodeRef}
       style={style}
-      className={`flex-shrink-0 snap-start self-stretch flex items-stretch ${sortable.isDragging ? 'z-50 relative' : ''}`}
+      className={`flex-shrink-0 self-stretch flex items-stretch ${sortable.isDragging ? 'z-50 relative' : ''}`}
     >
       {children(sortable)}
     </div>
@@ -451,32 +451,129 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
   };
 
+  // Click-and-drag horizontal scrolling state stored in refs for zero React re-renders during drag
+  const isMouseDownBoardRef = useRef(false);
   const isDraggingBoardRef = useRef(false);
-  const startXRef = useRef(0);
-  const scrollLeftRef = useRef(0);
+  const dragStartXRef = useRef(0);
+  const dragStartYRef = useRef(0);
+  const dragScrollLeftRef = useRef(0);
 
-  const handleHeaderMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return; // Only left click
-    isDraggingBoardRef.current = true;
-    startXRef.current = e.pageX - (boardContainerRef.current?.offsetLeft || 0);
-    scrollLeftRef.current = boardContainerRef.current?.scrollLeft || 0;
-  };
+  // Cleanup styles and abort any drag on unmount or when window loses focus (e.g. screenshotting, Alt+Tab)
+  useEffect(() => {
+    const handleGlobalCancel = () => {
+      if (isMouseDownBoardRef.current || isDraggingBoardRef.current) {
+        isMouseDownBoardRef.current = false;
+        isDraggingBoardRef.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
 
-  const handleHeaderMouseLeave = () => {
+    window.addEventListener('blur', handleGlobalCancel);
+    window.addEventListener('mouseup', handleGlobalCancel);
+    return () => {
+      window.removeEventListener('blur', handleGlobalCancel);
+      window.removeEventListener('mouseup', handleGlobalCancel);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
+
+  const handleBoardMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // Only primary (left) or auxiliary (middle) button
+    if (e.button !== 0 && e.button !== 1) return;
+
+    // Do not initiate board drag if an active DnD drag (task/column/group) is running
+    if (isDraggingRef.current || activeTask || activeColumn || activeGroup) return;
+
+    const container = boardContainerRef.current;
+    if (!container) return;
+
+    // CRITICAL: Do NOT intercept clicks or drags on native scrollbars!
+    // When the user drags the horizontal scrollbar at the bottom of the container,
+    // we must let the browser handle native scrollbar interaction so it never snaps back.
+    const rect = container.getBoundingClientRect();
+    const isHorizontalScrollbarClick = e.clientY >= rect.top + container.clientTop + container.clientHeight - 4;
+    const isVerticalScrollbarClick = e.clientX >= rect.left + container.clientLeft + container.clientWidth - 4;
+    if (isHorizontalScrollbarClick || isVerticalScrollbarClick) {
+      return;
+    }
+
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    // Interactive controls and items with their own drag handles should not drag the screen
+    if (
+      target.closest('button, input, textarea, select, option, label, a') ||
+      target.closest('[data-kanban-card]') ||
+      target.closest('[data-column-header]') ||
+      target.closest('[data-group-drag-handle]') ||
+      target.closest('[role="dialog"], [role="menu"], [data-portal], .no-board-drag')
+    ) {
+      return;
+    }
+
+    isMouseDownBoardRef.current = true;
     isDraggingBoardRef.current = false;
-  };
+    dragStartXRef.current = e.clientX;
+    dragStartYRef.current = e.clientY;
+    dragScrollLeftRef.current = container.scrollLeft;
 
-  const handleHeaderMouseUp = () => {
-    isDraggingBoardRef.current = false;
-  };
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isMouseDownBoardRef.current || !boardContainerRef.current) return;
 
-  const handleHeaderMouseMove = (e: React.MouseEvent) => {
-    if (!isDraggingBoardRef.current || !boardContainerRef.current) return;
-    e.preventDefault();
-    const x = e.pageX - (boardContainerRef.current.offsetLeft || 0);
-    const walk = (x - startXRef.current) * 1.5;
-    boardContainerRef.current.scrollLeft = scrollLeftRef.current - walk;
-  };
+      // Safety check: if neither left nor middle mouse button is pressed (e.g. released during screenshot,
+      // alt-tab, or outside window), immediately cancel drag to prevent sticking.
+      if ((moveEvent.buttons & 1) === 0 && (moveEvent.buttons & 4) === 0) {
+        onMouseUp();
+        return;
+      }
+
+      const dx = moveEvent.clientX - dragStartXRef.current;
+      const dy = moveEvent.clientY - dragStartYRef.current;
+
+      // Small threshold (4px) to distinguish intentional drags from simple clicks
+      if (!isDraggingBoardRef.current) {
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+          isDraggingBoardRef.current = true;
+          document.body.style.cursor = 'grabbing';
+          document.body.style.userSelect = 'none';
+        } else {
+          return;
+        }
+      }
+
+      moveEvent.preventDefault();
+
+      // Natural 1:1 direct horizontal panning — stays exactly where dragged
+      boardContainerRef.current.scrollLeft = dragScrollLeftRef.current - dx;
+    };
+
+    const onMouseUp = () => {
+      isMouseDownBoardRef.current = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('blur', onMouseUp);
+
+      if (isDraggingBoardRef.current) {
+        isDraggingBoardRef.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+
+        // Capture and discard the next click event so dragging does not trigger accidental clicks
+        const captureClick = (clickEvent: MouseEvent) => {
+          clickEvent.stopPropagation();
+          clickEvent.preventDefault();
+          window.removeEventListener('click', captureClick, true);
+        };
+        window.addEventListener('click', captureClick, true);
+      }
+    };
+
+    window.addEventListener('mousemove', onMouseMove, { passive: false });
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', onMouseUp);
+  }, [activeTask, activeColumn, activeGroup]);
 
   const pointerSensorOptions = useMemo(() => ({
     activationConstraint: {
@@ -1009,7 +1106,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       <div
           ref={boardContainerRef}
           onWheel={handleWheelScroll}
-          className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 pb-5 kanban-board-scroll transition-all duration-300`}
+          onMouseDown={handleBoardMouseDown}
+          className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 pb-5 kanban-board-scroll cursor-grab active:cursor-grabbing`}
         >
           <SortableContext
             items={sortableColumnIds}
@@ -1066,13 +1164,10 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                           {!category.isCatchAll && (
                             <div
                               className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing"
-                              onMouseDown={!category.id.startsWith('group_') ? handleHeaderMouseDown : undefined}
-                              onMouseLeave={!category.id.startsWith('group_') ? handleHeaderMouseLeave : undefined}
-                            onMouseUp={!category.id.startsWith('group_') ? handleHeaderMouseUp : undefined}
-                            onMouseMove={!category.id.startsWith('group_') ? handleHeaderMouseMove : undefined}
-                            {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.listeners : {})}
-                            {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.attributes : {})}
-                          >
+                              {...(category.id.startsWith('group_') ? { 'data-group-drag-handle': 'true' } : {})}
+                              {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.listeners : {})}
+                              {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.attributes : {})}
+                            >
                             <div className="flex items-center gap-1.5">
                               {editingGroup === category.title ? (
                                 <input
@@ -1327,7 +1422,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
           </SortableContext>
 
           {/* Add Group Column / Input */}
-          <div className="flex-shrink-0 w-[350px] snap-start">
+          <div className="flex-shrink-0 w-[350px]">
             <div className="flex flex-col pt-3">
               {!isAddingGroup ? (
                 <button
@@ -1383,7 +1478,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
           );
         })() : null}
         {activeGroup ? (
-          <div className="flex-shrink-0 snap-start self-stretch flex items-stretch h-[500px] z-50 relative cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
+          <div className="flex-shrink-0 self-stretch flex items-stretch h-[500px] z-50 relative cursor-grabbing opacity-90 scale-[1.02] shadow-2xl">
             <div className="rounded-2xl border bg-card w-[320px] h-full p-4 pt-3 flex flex-col shadow-2xl" style={{ borderColor: activeGroup.borderColor }}>
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg mb-3">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">{activeGroup.title}</span>

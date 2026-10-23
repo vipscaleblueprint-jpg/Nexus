@@ -1301,7 +1301,7 @@ export const KanbanCard = memo(function KanbanCard({
     // Outer wrapper owns the DnD ref+style so dnd-kit tracks a single stable DOM node.
     // Card visuals and subtasks are children — prevents the infinite loop that occurs
     // when a Fragment is used as the root of a useSortable component.
-    <div ref={setNodeRef} style={style} className="relative">
+    <div ref={setNodeRef} style={style} className="relative" data-kanban-card="true">
       {/* ── Visible card ── */}
       <div
         {...attributes}

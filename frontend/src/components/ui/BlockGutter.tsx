@@ -11,8 +11,14 @@ import {
   CheckSquare,
   List,
   Trash2,
+  IndentDecrease,
+  IndentIncrease,
 } from 'lucide-react';
 import { moveTopLevelBlock } from './BlockEditor';
+
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+const SHORTCUT_INDENT = IS_MAC ? '⌘]' : 'Ctrl+]';
+const SHORTCUT_OUTDENT = IS_MAC ? '⌘[' : 'Ctrl+[';
 
 interface BlockGutterProps {
   editor: Editor;
@@ -401,6 +407,41 @@ export function BlockGutter({ editor, editorContainerRef, disabled = false }: Bl
           >
             <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
             Toggle List
+          </button>
+
+          <div className="my-1 border-t border-zinc-800/80" />
+
+          <button
+            type="button"
+            onClick={() => {
+              if (menuState && editor) {
+                editor.chain().focus().setTextSelection(menuState.pos + 1).outdent().run();
+                setMenuState(null);
+              }
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <div className="flex items-center gap-2">
+              <IndentDecrease className="h-3.5 w-3.5 text-zinc-400" />
+              Decrease Indent
+            </div>
+            <kbd className={KBD_CLASS}>{SHORTCUT_OUTDENT}</kbd>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (menuState && editor) {
+                editor.chain().focus().setTextSelection(menuState.pos + 1).indent().run();
+                setMenuState(null);
+              }
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+          >
+            <div className="flex items-center gap-2">
+              <IndentIncrease className="h-3.5 w-3.5 text-zinc-400" />
+              Increase Indent
+            </div>
+            <kbd className={KBD_CLASS}>{SHORTCUT_INDENT}</kbd>
           </button>
 
           <div className="my-1 border-t border-zinc-800/80" />

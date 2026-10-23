@@ -149,7 +149,31 @@ export function decodeEmojiHexTokens(text: string): string {
  */
 export function commentHtmlForMarkdown(content: string): string {
   if (!content) return '';
-  const decoded = decodeEmojiHexTokens(content);
+  let decoded = decodeEmojiHexTokens(content);
+
+  // Normalize TipTap task items: ensure inputs inside data-checked="true" have checked="checked",
+  // and inputs inside data-checked="false" do not have checked attribute so ReactMarkdown
+  // reliably sets props.checked = true on checked items.
+  if (typeof DOMParser !== 'undefined' && /data-type=["']taskItem["']/i.test(decoded)) {
+    try {
+      const doc = new DOMParser().parseFromString(`<body>${decoded}</body>`, 'text/html');
+      doc.querySelectorAll('li[data-type="taskItem"]').forEach((li) => {
+        const isChecked = li.getAttribute('data-checked') === 'true';
+        const input = li.querySelector('input[type="checkbox"]');
+        if (input) {
+          if (isChecked) {
+            input.setAttribute('checked', 'checked');
+          } else {
+            input.removeAttribute('checked');
+          }
+        }
+      });
+      decoded = doc.body.innerHTML;
+    } catch {
+      // Fallback
+    }
+  }
+
   return /^\s*<img\b/i.test(decoded) ? `<p></p>${decoded}` : decoded;
 }
 
@@ -261,3 +285,144 @@ export function parseNexusTaskLink(input: string | null | undefined): NexusTaskL
     originalUrl: trimmed,
   };
 }
+
+/**
+ * Toggles a checklist checkbox inside a comment's content (HTML or Markdown) at targetIndex.
+ * Supports TipTap taskList/taskItem HTML as well as GFM markdown task lists.
+ */
+export function toggleCommentChecklistItem(content: string, targetIndex: number, newChecked: boolean): string {
+  if (!content) return content;
+
+  // 1. Browser DOMParser: perfect for TipTap taskItems and HTML checklists with nested items
+  if (typeof DOMParser !== 'undefined' && /<\/?[a-z][\s\S]*>/i.test(content)) {
+    try {
+      const doc = new DOMParser().parseFromString(`<body>${content}</body>`, 'text/html');
+      const taskItems = Array.from(doc.querySelectorAll('li[data-type="taskItem"]'));
+      if (taskItems.length > 0) {
+        if (taskItems[targetIndex]) {
+          const item = taskItems[targetIndex];
+          item.setAttribute('data-checked', newChecked ? 'true' : 'false');
+          const input = item.querySelector('input[type="checkbox"]');
+          if (input) {
+            if (newChecked) {
+              input.setAttribute('checked', 'checked');
+            } else {
+              input.removeAttribute('checked');
+            }
+          }
+          return doc.body.innerHTML;
+        }
+      } else {
+        const checkboxes = Array.from(doc.querySelectorAll('input[type="checkbox"]'));
+        if (checkboxes.length > 0 && checkboxes[targetIndex]) {
+          const input = checkboxes[targetIndex];
+          if (newChecked) {
+            input.setAttribute('checked', 'checked');
+          } else {
+            input.removeAttribute('checked');
+          }
+          return doc.body.innerHTML;
+        }
+      }
+    } catch {
+      // Fallback to regex below
+    }
+  }
+
+  // 2. TipTap HTML task items (<li data-type="taskItem">)
+  if (/<li\b[^>]*data-type=["']taskItem["']/i.test(content)) {
+    let idx = 0;
+    return content.replace(/(<li\b[^>]*data-type=["']taskItem["'][^>]*>)([\s\S]*?)(<\/li>)/gi, (full, openTag, body, closeTag) => {
+      if (idx === targetIndex) {
+        idx++;
+        let updatedOpen = openTag;
+        if (/data-checked=["'][^"']*["']/i.test(updatedOpen)) {
+          updatedOpen = updatedOpen.replace(/data-checked=["'][^"']*["']/i, `data-checked="${newChecked ? 'true' : 'false'}"`);
+        } else {
+          updatedOpen = updatedOpen.replace(/>$/, ` data-checked="${newChecked ? 'true' : 'false'}">`);
+        }
+        let updatedBody = body;
+        if (newChecked) {
+          if (!/<input[^>]*checked/i.test(updatedBody)) {
+            updatedBody = updatedBody.replace(/(<input\b[^>]*type=["']checkbox["'][^>]*)/i, '$1 checked="checked"');
+          }
+        } else {
+          updatedBody = updatedBody.replace(/(<input\b[^>]*type=["']checkbox["'][^>]*?)\s+checked(?:=["'][^"']*["'])?/i, '$1');
+        }
+        return updatedOpen + updatedBody + closeTag;
+      }
+      idx++;
+      return full;
+    });
+  }
+
+  // 3. Generic HTML checkboxes (<input type="checkbox">)
+  if (/<input\b[^>]*type=["']checkbox["']/i.test(content)) {
+    let idx = 0;
+    return content.replace(/(<input\b[^>]*type=["']checkbox["'][^>]*)/gi, (full) => {
+      if (idx === targetIndex) {
+        idx++;
+        if (newChecked) {
+          return /checked/i.test(full) ? full : `${full} checked="checked"`;
+        } else {
+          return full.replace(/\s+checked(?:=["'][^"']*["'])?/i, '');
+        }
+      }
+      idx++;
+      return full;
+    });
+  }
+
+  // 4. Markdown checkboxes: - [ ] or * [ ]
+  let idx = 0;
+  return content.replace(/([*-]\s+\[)([ xX])(\])/g, (match, prefix, checkChar, suffix) => {
+    if (idx === targetIndex) {
+      idx++;
+      return `${prefix}${newChecked ? 'x' : ' '}${suffix}`;
+    }
+    idx++;
+    return match;
+  });
+}
+
+/**
+ * Constructs the canonical absolute URL for a Nexus task or subtask.
+ * If the task belongs to a list, links directly to its dedicated list view:
+ *   ${baseUrl}/lists/[listId]?task=[taskId](&subtask=[subtaskId])
+ * Otherwise falls back to /tasks/[taskId].
+ */
+export function getNexusTaskUrl(
+  task?: { id: string; listId?: string; list?: { id?: string } } | null,
+  subtaskId?: string | null
+): string {
+  const origin = (typeof window !== 'undefined' ? window.location.origin : '') || process.env.NEXT_PUBLIC_APP_URL || '';
+  const baseUrl = origin.replace(/\/+$/, '');
+  if (!task) {
+    return subtaskId ? `${baseUrl}/tasks/${subtaskId}` : baseUrl;
+  }
+  const listId = task.listId || task.list?.id;
+  if (listId) {
+    const subtaskParam = subtaskId ? `&subtask=${encodeURIComponent(subtaskId)}` : '';
+    return `${baseUrl}/lists/${listId}?task=${encodeURIComponent(task.id)}${subtaskParam}`;
+  }
+  return `${baseUrl}/tasks/${subtaskId || task.id}`;
+}
+
+/**
+ * Constructs the canonical relative path (pathname + query) for a Nexus task or subtask.
+ */
+export function getNexusTaskPath(
+  task?: { id: string; listId?: string; list?: { id?: string } } | null,
+  subtaskId?: string | null
+): string {
+  if (!task) {
+    return subtaskId ? `/tasks/${subtaskId}` : '/';
+  }
+  const listId = task.listId || task.list?.id;
+  if (listId) {
+    const subtaskParam = subtaskId ? `&subtask=${encodeURIComponent(subtaskId)}` : '';
+    return `/lists/${listId}?task=${encodeURIComponent(task.id)}${subtaskParam}`;
+  }
+  return `/tasks/${subtaskId || task.id}`;
+}
+

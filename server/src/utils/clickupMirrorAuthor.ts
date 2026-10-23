@@ -33,26 +33,43 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Removes a leading "[Name]" / "**[Name]**" from plain text. */
+/** Removes a leading "[Name]" / "**[Name]**" from plain text, and any trailing duplicated fallback line. */
 export function stripMirrorPrefixText(text: string, name: string): string {
-  const re = new RegExp(`^\\s*(?:\\*\\*)?\\[${escapeRegExp(name)}\\](?:\\*\\*)?[\\s:]*`, 'i');
-  return text.replace(re, '');
+  if (!text || !name) return text;
+  const escaped = escapeRegExp(name);
+  const re = new RegExp(`^\\s*(?:\\*\\*)?\\[${escaped}\\](?:\\*\\*)?[\\s:]*`, 'i');
+  let out = text.replace(re, '');
+  // Also strip trailing duplicate plain-text fallback block if ClickUp appended "\n[Name] ..."
+  const trailerRegex = new RegExp(`\\n+\\s*(?:\\*\\*)?\\[${escaped}\\](?:\\*\\*)?[\\s\\S]*$`, 'i');
+  out = out.replace(trailerRegex, '');
+  return out.trim();
 }
 
 /**
- * Removes a leading "[Name]" / "**[Name]**" from comment HTML, even when it sits inside the
- * opening <p>/<strong> tags (ClickUp bolds the prefix), then drops tags left empty by it.
+ * Removes a leading "[Name]" / "**[Name]**" from comment HTML, even when it sits inside
+ * opening tags (p, h1-h6, strong, etc.), then drops tags left empty by it.
+ * Also strips any trailing duplicated plain-text fallback block (<p>[Name]...</p>)
+ * appended by ClickUp when dual comment payloads were previously sent.
  */
 export function stripMirrorPrefixHtml(html: string, name: string): string {
+  if (!html || !name) return html;
+  const escaped = escapeRegExp(name);
   const re = new RegExp(
-    `^((?:\\s*<(?:p|strong|b|em|span)\\b[^>]*>)*\\s*)(?:\\*\\*)?\\[${escapeRegExp(name)}\\](?:\\*\\*)?(?:\\s|&nbsp;|:)*`,
+    `^((?:\\s*<(?:p|h[1-6]|strong|b|em|span|li|blockquote)\\b[^>]*>)*\\s*)(?:\\*\\*)?\\[${escaped}\\](?:\\*\\*)?(?:\\s|&nbsp;|:)*`,
     'i'
   );
   let out = html.replace(re, '$1');
-  // Bold wrapper that held only the prefix: "<p><strong></strong>Text" → "<p>Text"
-  for (let i = 0; i < 3; i++) out = out.replace(/^((?:\s*<p\b[^>]*>)?\s*)<(strong|b|em|span)\b[^>]*>\s*<\/\2>/i, '$1');
-  // Prefix was alone on the first line
-  out = out.replace(/^\s*<p\b[^>]*>\s*(?:<br\s*\/?>)?\s*<\/p>/i, '');
+  // Bold/span wrapper that held only the prefix: "<p><strong></strong>Text" → "<p>Text"
+  for (let i = 0; i < 3; i++) {
+    out = out.replace(/^((?:\s*<(?:p|h[1-6]|li|blockquote)\b[^>]*>)?\s*)<(strong|b|em|span)\b[^>]*>\s*<\/\2>/i, '$1');
+  }
+  // Prefix was alone on the first block/line
+  out = out.replace(/^\s*<(p|h[1-6]|li|blockquote)\b[^>]*>\s*(?:<br\s*\/?>)?\s*<\/\1>/i, '');
+
+  // Strip trailing duplicated plain-text fallback block if ClickUp appended <p>[Name] ...</p>
+  const trailerRegex = new RegExp(`<p>\\s*(?:<[^>]+>)*\\s*\\[(?:${escaped})\\][\\s\\S]*$`, 'i');
+  out = out.replace(trailerRegex, '');
+
   return out.trim();
 }
 

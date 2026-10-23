@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { useAppStore } from '@/lib/store';
@@ -13,6 +13,50 @@ import { ToastContainer } from '@/components/ui/ToastContainer';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
+import { formatTabTitle, resolveRouteTitle, updateFaviconBadge } from '@/lib/tabManager';
+
+function TabTitleSync() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const {
+    pageTitle,
+    modalTitle,
+    setPageTitle,
+    setModalTitle,
+    spaces,
+    allLists,
+    allDocs,
+    tasksIndex,
+    unreadNotifications,
+  } = useAppStore();
+
+  // Reset titles on navigation if pathname changes
+  const prevPathnameRef = useRef(pathname);
+  useEffect(() => {
+    if (prevPathnameRef.current !== pathname) {
+      prevPathnameRef.current = pathname;
+      setModalTitle(null);
+      setPageTitle(null);
+    }
+  }, [pathname, setModalTitle, setPageTitle]);
+
+  // Compute and apply dynamic tab title
+  useEffect(() => {
+    const fallback = resolveRouteTitle(pathname, searchParams, { spaces, allLists, allDocs, tasksIndex });
+    const effectiveTitle = modalTitle || pageTitle || fallback;
+    const formatted = formatTabTitle(effectiveTitle);
+    if (document.title !== formatted) {
+      document.title = formatted;
+    }
+  }, [pathname, searchParams, modalTitle, pageTitle, spaces, allLists, allDocs, tasksIndex]);
+
+  // Dynamic Favicon Notification Badge
+  useEffect(() => {
+    updateFaviconBadge(unreadNotifications > 0);
+  }, [unreadNotifications]);
+
+  return null;
+}
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -164,13 +208,19 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
   }, [currentUser?.id, setUnreadNotifications, resetStore]);
 
   if (pathname === '/login') {
-    return <>{children}</>;
+    return (
+      <>
+        <Suspense fallback={null}><TabTitleSync /></Suspense>
+        {children}
+      </>
+    );
   }
 
   // Security Auth Gate: Never render layout, sidebar, or protected children until session is verified
   if (!currentUser) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground font-sans select-none">
+        <Suspense fallback={null}><TabTitleSync /></Suspense>
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
           <span className="text-sm font-medium text-zinc-400 tracking-wide">Please wait...</span>
@@ -181,6 +231,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
+      <Suspense fallback={null}><TabTitleSync /></Suspense>
       <Suspense fallback={<div className="w-[260px] h-full bg-background" />}>
         <Sidebar spaces={spaces} />
       </Suspense>

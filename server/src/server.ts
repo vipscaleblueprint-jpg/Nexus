@@ -293,6 +293,19 @@ io.on('connection', (socket) => {
     socket.to(`list:${data.listId}`).emit('subtask_editing_stop', data);
   });
 
+  // Handle instant live comment content streaming (e.g. checkbox toggle without waiting for DB)
+  socket.on('task_comment_live_update', (data: { listId?: string; taskId: string; subtaskId?: string; commentId: string; content: string }) => {
+    const payload = {
+      taskId: data.taskId,
+      comment: { id: data.commentId, content: data.content, subtaskId: data.subtaskId },
+    };
+    if (data.listId) {
+      socket.to(`list:${data.listId}`).emit('task:comment_updated', payload);
+    } else {
+      socket.broadcast.emit('task:comment_updated', payload);
+    }
+  });
+
   // --- Document Real-time Sync ---
   socket.on('join_doc', (docId: string) => {
     socket.join(`doc:${docId}`);

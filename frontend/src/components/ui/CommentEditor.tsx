@@ -18,7 +18,10 @@ import { TaskMention } from '@/components/editor/extensions/TaskMention';
 import { insertNexusTaskMention, cleanPastedHtml, stripMarksFromSlice } from '@/lib/nexusLinkPaste';
 import { TextColorPanel } from '@/components/editor/TextColorPanel';
 import { toast } from '@/lib/toast';
-import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2 } from 'lucide-react';
+import { Indent } from '@/components/editor/extensions/Indent';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
+import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2, IndentDecrease, IndentIncrease, CheckSquare } from 'lucide-react';
 
 const colors = [
   '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1', '#d946ef', '#22c55e', '#14b8a6', '#52525b', 'transparent'
@@ -74,10 +77,18 @@ export interface CommentEditorRef {
   insertMention: (name: string, matchLength: number, userId: string) => void;
   insertImages: (files: File[]) => void;
   insertEmoji: (emoji: string) => void;
+  indent: () => void;
+  outdent: () => void;
+  toggleTaskList: () => void;
+  toggleBulletList: () => void;
+  toggleOrderedList: () => void;
 }
 
 // The line-move shortcut as the user's keyboard labels it (Option on a Mac)
 const ALT_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? '⌥' : 'Alt';
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+const SHORTCUT_INDENT = IS_MAC ? '⌘]' : 'Ctrl+]';
+const SHORTCUT_OUTDENT = IS_MAC ? '⌘[' : 'Ctrl+[';
 // Theme tokens, so the keys read as keys in both light and dark mode
 const KBD_CLASS = 'inline-flex min-w-[18px] items-center justify-center rounded-[5px] border border-border bg-background px-1 font-sans text-[10px] font-medium leading-4 text-foreground/70 shadow-[0_1px_0_var(--border)]';
 
@@ -120,6 +131,7 @@ const CommentBlocks = Extension.create({
   addKeyboardShortcuts() {
     return {
       'Shift-Enter': ({ editor }) => editor.commands.first(({ commands }) => [
+        () => commands.splitListItem('taskItem'),
         () => commands.splitListItem('listItem'),
         () => commands.splitBlock(),
       ]),
@@ -183,7 +195,12 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       EndBadgeOnNewLine,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder }),
-      TaskMention,
+      TaskMention.configure({ isComment: true } as any),
+      TaskList,
+      TaskItem.configure({
+        nested: true,
+      }),
+      Indent,
       Link.configure({
         openOnClick: false,
         protocols: ['mention'],
@@ -206,10 +223,33 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-sm prose-invert prose-p:my-0 focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full'
+        class: 'prose prose-sm prose-invert prose-p:my-0 focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full comment-editor-content',
+        'data-is-comment': 'true',
       },
       handleKeyDown: (view, event) => {
+        if (!editor) return false;
         if (onKeyDown && onKeyDown(event)) {
+          return true;
+        }
+        const isIndentKey = (event.ctrlKey || event.metaKey) && (event.key === ']' || event.code === 'BracketRight');
+        const isOutdentKey = (event.ctrlKey || event.metaKey) && (event.key === '[' || event.code === 'BracketLeft');
+        if (isIndentKey) {
+          event.preventDefault();
+          editor.commands.indent();
+          return true;
+        }
+        if (isOutdentKey) {
+          event.preventDefault();
+          editor.commands.outdent();
+          return true;
+        }
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          if (event.shiftKey) {
+            editor.commands.outdent();
+          } else {
+            editor.commands.indent();
+          }
           return true;
         }
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -501,6 +541,26 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       if (!editor || editor.isDestroyed) return;
       editor.chain().focus().insertContent(emoji).run();
     },
+    indent: () => {
+      if (!editor || editor.isDestroyed) return;
+      editor.chain().focus().indent().run();
+    },
+    outdent: () => {
+      if (!editor || editor.isDestroyed) return;
+      editor.chain().focus().outdent().run();
+    },
+    toggleTaskList: () => {
+      if (!editor || editor.isDestroyed) return;
+      editor.chain().focus().toggleTaskList().run();
+    },
+    toggleBulletList: () => {
+      if (!editor || editor.isDestroyed) return;
+      editor.chain().focus().toggleBulletList().run();
+    },
+    toggleOrderedList: () => {
+      if (!editor || editor.isDestroyed) return;
+      editor.chain().focus().toggleOrderedList().run();
+    },
   }));
 
   React.useEffect(() => {
@@ -560,30 +620,36 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       {editor && (
         <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
           <div className="pointer-events-auto">
-            <BubbleMenu pluginKey={`bubbleMenu-${id}`} editor={editor} tippyOptions={{ duration: 100, zIndex: 999999, placement: 'top' }} shouldShow={({ state }) => !state.selection.empty} className="flex items-center bg-popover border border-[#27272a] p-1 rounded-xl shadow-2xl mb-2 gap-0.5 text-zinc-300">
+            <BubbleMenu
+              pluginKey={`bubbleMenu-${id}`}
+              editor={editor}
+              tippyOptions={{ duration: 100, maxWidth: 390, zIndex: 999999, placement: 'top' }}
+              shouldShow={({ state }) => !state.selection.empty}
+              className="flex items-center flex-wrap max-w-[min(390px,calc(100vw-32px))] bg-popover/95 backdrop-blur-md border border-zinc-700/80 p-0.5 rounded-xl shadow-2xl mb-2 gap-0.5 text-zinc-300 z-[999999]"
+            >
               {/* Text Color / Highlight Dropdown */}
               <div className="relative group/color">
-                <button onMouseDown={e => e.preventDefault()} className="px-2 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-center gap-1 text-sm font-medium" title="Text color, highlight & badge">
-                  <span className="w-5 h-5 flex items-center justify-center font-serif text-[15px] border border-zinc-600 rounded">A</span>
+                <button onMouseDown={e => e.preventDefault()} className="h-6.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-800 transition-colors flex items-center gap-1 text-xs font-medium" title="Text color, highlight & badge">
+                  <span className="w-4 h-4 flex items-center justify-center font-serif text-[13px] border border-zinc-600 rounded">A</span>
                 </button>
                 <div className="absolute bottom-full pb-2 left-0 hidden group-hover/color:flex flex-col z-[9999]" onMouseDown={e => e.preventDefault()}>
                   <TextColorPanel editor={editor} textColors={colors} highlightColors={colors} />
                 </div>
               </div>
 
-              <div className="w-px h-5 bg-zinc-800 mx-1" />
+              <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
 
-              <button onClick={() => editor.chain().focus().toggleBold().run()} className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('bold') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}>
-                <Bold className="w-4 h-4" />
+              <button onClick={() => editor.chain().focus().toggleBold().run()} className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors ${editor.isActive('bold') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`} title="Bold">
+                <Bold className="w-3.5 h-3.5" />
               </button>
-              <button onClick={() => editor.chain().focus().toggleItalic().run()} className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('italic') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}>
-                <Italic className="w-4 h-4" />
+              <button onClick={() => editor.chain().focus().toggleItalic().run()} className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors ${editor.isActive('italic') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`} title="Italic">
+                <Italic className="w-3.5 h-3.5" />
               </button>
-              <button onClick={() => editor.chain().focus().toggleUnderline().run()} className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('underline') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}>
-                <UnderlineIcon className="w-4 h-4" />
+              <button onClick={() => editor.chain().focus().toggleUnderline().run()} className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors ${editor.isActive('underline') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`} title="Underline">
+                <UnderlineIcon className="w-3.5 h-3.5" />
               </button>
-              <button onClick={() => editor.chain().focus().toggleStrike().run()} className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('strike') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}>
-                <Strikethrough className="w-4 h-4" />
+              <button onClick={() => editor.chain().focus().toggleStrike().run()} className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors ${editor.isActive('strike') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`} title="Strikethrough">
+                <Strikethrough className="w-3.5 h-3.5" />
               </button>
               <button 
                 onClick={() => {
@@ -598,24 +664,66 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
                   
                   editor.chain().focus().extendMarkRange('link').setLink({ href: normalizeHref(url) }).run();
                 }}
-                className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive('link') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors ${editor.isActive('link') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+                title="Add link"
               >
-                <Link2 className="w-4 h-4" />
+                <Link2 className="w-3.5 h-3.5" />
               </button>
 
-              <div className="w-px h-5 bg-zinc-800 mx-1" />
+              <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
 
-              <button onClick={() => editor.chain().focus().setTextAlign('left').run()} className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'left' }) ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}>
-                <AlignLeft className="w-4 h-4" />
+              <button
+                type="button"
+                onClick={() => editor.chain().focus().toggleBulletList().run()}
+                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bulletList') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+                title="Bullet list"
+              >
+                <List className="w-3.5 h-3.5" />
               </button>
-              <button onClick={() => editor.chain().focus().setTextAlign('center').run()} className={`p-1.5 rounded-lg hover:bg-zinc-800 transition-colors ${editor.isActive({ textAlign: 'center' }) ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}>
-                <AlignCenter className="w-4 h-4" />
+              <button
+                type="button"
+                onClick={() => editor.chain().focus().toggleOrderedList().run()}
+                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('orderedList') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+                title="Numbered list"
+              >
+                <ListOrdered className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => editor.chain().focus().toggleTaskList().run()}
+                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('taskList') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+                title="Checklist"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
+
+              <button
+                type="button"
+                onClick={() => editor.chain().focus().outdent().run()}
+                className="h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 hover:text-zinc-100 transition-colors text-zinc-400 cursor-pointer"
+                title={`Decrease indent (${SHORTCUT_OUTDENT})`}
+              >
+                <IndentDecrease className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => editor.chain().focus().indent().run()}
+                className="h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 hover:text-zinc-100 transition-colors text-zinc-400 cursor-pointer"
+                title={`Increase indent (${SHORTCUT_INDENT})`}
+              >
+                <IndentIncrease className="w-3.5 h-3.5" />
               </button>
             </BubbleMenu>
           </div>
         </div>
       )}
       <style>{`
+        .ProseMirror li > p[data-indent],
+        .ProseMirror li > div[data-indent] {
+          margin-left: 0 !important;
+        }
         .ProseMirror p.is-editor-empty:first-child::before {
           content: attr(data-placeholder);
           float: left;
@@ -642,6 +750,30 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             <AtSign className="h-4 w-4" />
           </ComposerToolButton>
           {footer}
+          <div className="w-px h-3.5 bg-zinc-700/60 mx-1" />
+          <ComposerToolButton
+            onClick={() => editor.chain().focus().outdent().run()}
+            disabled={disabled}
+            title={`Decrease indent (${SHORTCUT_OUTDENT})`}
+          >
+            <IndentDecrease className="h-4 w-4" />
+          </ComposerToolButton>
+          <ComposerToolButton
+            onClick={() => editor.chain().focus().indent().run()}
+            disabled={disabled}
+            title={`Increase indent (${SHORTCUT_INDENT})`}
+          >
+            <IndentIncrease className="h-4 w-4" />
+          </ComposerToolButton>
+          <div className="w-px h-3.5 bg-zinc-700/60 mx-1" />
+          <ComposerToolButton
+            onClick={() => editor.chain().focus().toggleTaskList().run()}
+            disabled={disabled}
+            title="Checklist"
+            className={editor.isActive('taskList') ? 'text-indigo-400 bg-indigo-500/10' : ''}
+          >
+            <CheckSquare className="h-4 w-4" />
+          </ComposerToolButton>
           <div className="ml-auto flex items-center gap-2.5">
             {onSubmit && (
               <span className="hidden items-center gap-1 text-[10.5px] text-zinc-500 opacity-0 transition-opacity group-focus-within/composer:opacity-100 sm:flex">

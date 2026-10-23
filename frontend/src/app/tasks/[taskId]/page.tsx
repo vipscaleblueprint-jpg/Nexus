@@ -15,7 +15,7 @@ export default function TaskFullPage() {
   const searchParams = useSearchParams();
   const fromPath = searchParams.get('from');
   const taskId = params.taskId as string;
-  const { workspaceRoles, loadRoles, currentUser, workspaceUsers, workspaceTeams, tasksIndex, tasks } = useAppStore();
+  const { workspaceRoles, loadRoles, currentUser, workspaceUsers, workspaceTeams, tasksIndex, tasks, setPageTitle } = useAppStore();
 
   const handleClose = () => {
     if (fromPath) {
@@ -97,6 +97,13 @@ export default function TaskFullPage() {
     window.addEventListener('task:updated', handleTaskUpdated);
     return () => window.removeEventListener('task:updated', handleTaskUpdated);
   }, [task?.id, subtask?.id]);
+
+  useEffect(() => {
+    const title = subtask?.title || task?.title;
+    if (title) {
+      setPageTitle(title);
+    }
+  }, [subtask?.title, task?.title, setPageTitle]);
 
   if (loading) {
     return (

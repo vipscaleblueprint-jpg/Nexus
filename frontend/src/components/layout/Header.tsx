@@ -28,8 +28,9 @@ export function Header() {
   const resetStore = useAppStore(state => state.resetStore);
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const pageTitle = useAppStore(state => state.pageTitle);
 
-  const title = PAGE_TITLES[pathname] ?? "Nexus";
+  const title = pageTitle || PAGE_TITLES[pathname] || "Nexus";
 
   const handleLogout = async () => {
     try {

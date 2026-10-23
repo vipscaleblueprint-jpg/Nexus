@@ -55,6 +55,15 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const { node, updateAttributes, getPos, editor } = props;
   const { id, label, mentionType, taskStatus, taskAssignees, taskPriority, taskHasDescription, frozenTaskData, taskListName } = node.attrs;
 
+  const editorAttrs = props.editor?.options?.editorProps?.attributes as any;
+  const isComment = Boolean(
+    (props.extension?.options as any)?.isComment ||
+    (node?.attrs as any)?.isComment ||
+    editorAttrs?.['data-is-comment'] === 'true' ||
+    (typeof editorAttrs?.class === 'string' &&
+      /(?:^|\s)comment-(?:editor|content)(?:\s|$)/.test(editorAttrs.class))
+  );
+
   const currentUser = useAppStore(s => s.currentUser);
   // Only Project Managers and Admins can set Team Role and Assignees
   const canSetAssignees = useCanSetAssignees();
@@ -532,7 +541,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         }
       }}
     >
-      <motion.span layout className={`relative inline align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 box-decoration-clone leading-relaxed ${chipBg} ${isClosedNode ? 'opacity-75' : ''}`}>
+      <motion.span layout className={`relative ${isComment ? 'inline-flex items-center max-w-full' : 'inline'} align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 ${isComment ? '' : 'box-decoration-clone'} leading-relaxed ${chipBg} ${isClosedNode ? 'opacity-75' : ''}`}>
         
         {isClosedNode && (
           <div className="absolute top-1/2 left-1.5 right-1.5 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
@@ -557,7 +566,11 @@ export const TaskMentionNode = (props: NodeViewProps) => {
 
         {/* Task Title */}
         <span
-          className={`${titleClass} mr-1.5 truncate max-w-[220px] sm:max-w-[340px] md:max-w-[440px] shrink min-w-[50px] inline-block align-middle`}
+          className={`${titleClass} mr-1.5 truncate ${
+            isComment
+              ? 'max-w-[130px] sm:max-w-[150px] md:max-w-[170px]'
+              : 'max-w-[220px] sm:max-w-[340px] md:max-w-[440px]'
+          } shrink min-w-[50px] inline-block align-middle`}
           {...titleProps}
         >
           {label || ''}

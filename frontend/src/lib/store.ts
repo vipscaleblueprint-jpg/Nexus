@@ -198,6 +198,16 @@ interface AppState {
   setUnreadNotifications: (count: number) => void;
   decrementUnreadNotifications: () => void;
 
+  // Page & Modal Titles (for browser tab and header display)
+  pageTitle: string | null;
+  modalTitle: string | null;
+  setPageTitle: (title: string | null) => void;
+  setModalTitle: (title: string | null) => void;
+
+  // Active Dashboard Tab (e.g. 'all', 'my') to preserve sidebar highlight when modals open
+  activeDashboardTab: string | null;
+  setActiveDashboardTab: (tab: string | null) => void;
+
   // UI State
   isSidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -232,6 +242,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       workspaceTeamsIndex: {},
       hasLoadedTeams: false,
       unreadNotifications: 0,
+      pageTitle: null,
+      modalTitle: null,
+      activeDashboardTab: null,
     });
   },
   
@@ -451,6 +464,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   unreadNotifications: 0,
   setUnreadNotifications: (count) => set({ unreadNotifications: count }),
   decrementUnreadNotifications: () => set((state) => ({ unreadNotifications: Math.max(0, state.unreadNotifications - 1) })),
+
+  pageTitle: null,
+  modalTitle: null,
+  setPageTitle: (pageTitle) => set({ pageTitle }),
+  setModalTitle: (modalTitle) => set({ modalTitle }),
+
+  activeDashboardTab: null,
+  setActiveDashboardTab: (activeDashboardTab) => set({ activeDashboardTab }),
 
   isSidebarCollapsed: true,
   toggleSidebar: () => set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Paperclip, X, FileText, Check, Loader2, SmilePlus } from 'lucide-react';
+import { Paperclip, X, FileText, Check, Loader2, SmilePlus, IndentDecrease, IndentIncrease, CheckSquare } from 'lucide-react';
 import { CommentEditor, CommentEditorRef, ComposerToolButton } from '../ui/CommentEditor';
 import { EmojiPicker } from '../ui/EmojiPicker';
 import { uploadApi } from '@/api/upload';
@@ -533,7 +533,7 @@ export function EditCommentForm({
       {/* Action Toolbar */}
       <div className="flex flex-col gap-2 pt-2 border-t border-zinc-800/60">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <input
               type="file"
               ref={fileInputRef}
@@ -571,6 +571,33 @@ export function EditCommentForm({
                 />
               )}
             </div>
+
+            <div className="w-px h-3.5 bg-zinc-700/60 mx-0.5" />
+
+            <ComposerToolButton
+              onClick={() => commentEditorRef.current?.outdent()}
+              disabled={isSaving}
+              title="Decrease indent (Ctrl+[)"
+            >
+              <IndentDecrease className="w-4 h-4" />
+            </ComposerToolButton>
+            <ComposerToolButton
+              onClick={() => commentEditorRef.current?.indent()}
+              disabled={isSaving}
+              title="Increase indent (Ctrl+])"
+            >
+              <IndentIncrease className="w-4 h-4" />
+            </ComposerToolButton>
+
+            <div className="w-px h-3.5 bg-zinc-700/60 mx-0.5" />
+
+            <ComposerToolButton
+              onClick={() => commentEditorRef.current?.toggleTaskList()}
+              disabled={isSaving}
+              title="Checklist"
+            >
+              <CheckSquare className="w-4 h-4" />
+            </ComposerToolButton>
           </div>
 
           <div className="flex items-center gap-2 shrink-0 ml-auto">
@@ -606,6 +633,7 @@ export function EditCommentForm({
         {/* Micro instructions line: clean, readable, and never squished into narrow columns */}
         <div className="flex items-center gap-2 text-[11px] text-zinc-500 flex-wrap select-none px-0.5">
           <span>• Type <span className="text-zinc-400 font-medium">@</span> to mention</span>
+          <span>• Indent <span className="text-zinc-400 font-mono text-[10px]">(Ctrl+[ / Ctrl+])</span></span>
           <span>• Paste images <span className="text-zinc-400 font-mono text-[10px]">(Ctrl+V)</span></span>
         </div>
       </div>

@@ -1489,6 +1489,9 @@ export async function updateTaskComment(req: Request, res: Response) {
     const payload = { taskId, comment };
     // Delete the Redis List so next fetch rebuilds it with the edited content
     redis.del(`comments:list:${taskId}`).catch(() => {});
+    if (comment.subtaskId) {
+      redis.del(`comments:list:${taskId}:sub:${comment.subtaskId}`).catch(() => {});
+    }
     if (listId) {
       io.to(`list:${listId}`).emit('task:comment_updated', payload);
     } else {
@@ -1561,6 +1564,9 @@ export async function deleteTaskComment(req: Request, res: Response) {
     const payload = { taskId, commentId };
     // Delete the Redis List so next fetch rebuilds it cleanly without the deleted comment
     redis.del(`comments:list:${taskId}`).catch(() => {});
+    if (existingComment?.subtaskId) {
+      redis.del(`comments:list:${taskId}:sub:${existingComment.subtaskId}`).catch(() => {});
+    }
     if (listId) {
       io.to(`list:${listId}`).emit('task:comment_deleted', payload);
     } else {

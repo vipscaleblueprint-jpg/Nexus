@@ -16,18 +16,24 @@ import { Badge, EndBadgeOnNewLine } from '../editor/extensions/Badge';
 import { TextColorPanel } from '../editor/TextColorPanel';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
 import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
+import { Indent } from '../editor/extensions/Indent';
 import { taskSuggestion } from '../editor/suggestions/taskSuggestion';
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
   List, ListOrdered, Palette, X, CheckSquare,
-  ListTree, ChevronRight, Heading1, Heading2, Heading3
+  ListTree, ChevronRight, Heading1, Heading2, Heading3,
+  IndentDecrease, IndentIncrease
 } from 'lucide-react';
 import React, { useEffect, useRef, memo } from 'react';
 import { Extension, type Editor } from '@tiptap/core';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { BlockGutter } from './BlockGutter';
 
+
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+const SHORTCUT_INDENT = IS_MAC ? '⌘]' : 'Ctrl+]';
+const SHORTCUT_OUTDENT = IS_MAC ? '⌘[' : 'Ctrl+[';
 
 /** Typography of the editable area; static previews of a block use it too so they render identically. */
 export const BLOCK_EDITOR_CONTENT_CLASS = 'prose dark:prose-invert max-w-none break-words focus:outline-none min-h-[24px] text-sm text-zinc-900 dark:text-zinc-100 cursor-text prose-p:my-0 prose-ul:my-0 prose-ol:my-0 m-0 p-0 [&_p]:whitespace-pre-wrap [&_li]:whitespace-pre-wrap [&_h1]:whitespace-pre-wrap [&_h2]:whitespace-pre-wrap [&_h3]:whitespace-pre-wrap block w-full';
@@ -85,6 +91,8 @@ interface BlockEditorProps {
   loadingFallback?: React.ReactNode;
   /** Whether to show the left gutter with + and ⠿ drag handle (default: true). */
   enableGutter?: boolean;
+  onIndent?: () => void;
+  onOutdent?: () => void;
 }
 
 export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorProps) {
@@ -145,6 +153,22 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       ToggleSummary,
       ToggleContent,
       BlockReorder,
+      Indent.configure({
+        onIndent: () => {
+          if (propsRef.current.onIndent) {
+            propsRef.current.onIndent();
+            return true;
+          }
+          return false;
+        },
+        onOutdent: () => {
+          if (propsRef.current.onOutdent) {
+            propsRef.current.onOutdent();
+            return true;
+          }
+          return false;
+        },
+      }),
     ],
     content: initialContent,
     onUpdate: ({ editor }) => {
@@ -231,6 +255,29 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
         },
       },
       handleKeyDown: (view, event) => {
+        if (!editor) return false;
+        const isIndentKey = (event.ctrlKey || event.metaKey) && (event.key === ']' || event.code === 'BracketRight');
+        const isOutdentKey = (event.ctrlKey || event.metaKey) && (event.key === '[' || event.code === 'BracketLeft');
+        if (isIndentKey) {
+          event.preventDefault();
+          editor.commands.indent();
+          return true;
+        }
+        if (isOutdentKey) {
+          event.preventDefault();
+          editor.commands.outdent();
+          return true;
+        }
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          if (event.shiftKey) {
+            editor.commands.outdent();
+          } else {
+            editor.commands.indent();
+          }
+          return true;
+        }
+
         // Intercept Backspace and Delete at boundaries to merge blocks
         if (event.key === 'Backspace') {
           const { selection, doc } = view.state;
@@ -429,7 +476,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       )}
       <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
         <div className="pointer-events-auto">
-          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999, appendTo: typeof document !== 'undefined' ? document.body : undefined, popperOptions: { strategy: 'absolute', modifiers: [{ name: 'preventOverflow', enabled: false }, { name: 'flip', enabled: false }, { name: 'hide', enabled: true }] } }} className="flex flex-wrap items-center gap-0.5 bg-card p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
+          <BubbleMenu editor={editor} tippyOptions={{ duration: 100, maxWidth: 'none', zIndex: 99999, appendTo: typeof document !== 'undefined' ? document.body : undefined, popperOptions: { strategy: 'absolute', modifiers: [{ name: 'preventOverflow', enabled: false }, { name: 'flip', enabled: false }, { name: 'hide', enabled: true }] } }} className="flex items-center w-max max-w-none whitespace-nowrap gap-0.5 bg-card p-1 rounded-lg border border-zinc-700 shadow-2xl z-99999">
             {/* Keep editor focus + text selection while clicking any toolbar button */}
             <div className="contents" onMouseDown={e => e.preventDefault()}>
 
@@ -543,6 +590,25 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
               title="Task List"
             >
               <CheckSquare className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-zinc-700 mx-1" />
+
+            <button
+              type="button"
+              onClick={() => editor.chain().focus().outdent().run()}
+              className="p-1.5 rounded hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-zinc-300"
+              title={`Decrease indent (${SHORTCUT_OUTDENT})`}
+            >
+              <IndentDecrease className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => editor.chain().focus().indent().run()}
+              className="p-1.5 rounded hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-zinc-300"
+              title={`Increase indent (${SHORTCUT_INDENT})`}
+            >
+              <IndentIncrease className="w-3.5 h-3.5" />
             </button>
 
             <div className="w-px h-4 bg-zinc-700 mx-1" />

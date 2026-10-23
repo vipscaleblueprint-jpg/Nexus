@@ -223,6 +223,15 @@ textarea,
   -webkit-user-select: text;
 }
 
+/* Prevent inner elements of list items from receiving rogue indent margin that creates a gap between bullet/number and text */
+.ProseMirror li > p[data-indent],
+.ProseMirror li > div[data-indent],
+.ProseMirror li > h1[data-indent],
+.ProseMirror li > h2[data-indent],
+.ProseMirror li > h3[data-indent] {
+  margin-left: 0 !important;
+}
+
 /* Every native clickable element gets a hand cursor by default; disabled
    states fall back to a non-interactive cursor instead. */
 button:not(:disabled),
@@ -412,49 +421,69 @@ input:disabled,
   white-space: nowrap;
 }
 
-/* Tiptap Task List Styles - Ultra Bulletproof */
+/* Tiptap & Markdown Task List Styles - Ultra Bulletproof & Long-text Resilient */
 .prose ul[data-type="taskList"],
-.prose ul:has(input[type="checkbox"]) {
+.prose ul:has(input[type="checkbox"]),
+.prose ul.contains-task-list {
   list-style: none !important;
   padding: 0 !important;
-  margin: 0 !important;
+  margin: 0.35rem 0 !important;
+}
+
+.prose ul[data-type="taskList"] ul[data-type="taskList"],
+.prose ul.contains-task-list ul.contains-task-list,
+.prose ul:has(input[type="checkbox"]) ul:has(input[type="checkbox"]) {
+  padding-left: 1.5rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
 }
 
 .prose ul[data-type="taskList"] p,
-.prose ul:has(input[type="checkbox"]) p {
+.prose ul:has(input[type="checkbox"]) p,
+.prose ul.contains-task-list p {
   margin: 0 !important;
-  display: inline-block;
+  display: block !important;
+  width: 100% !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  line-height: 1.55 !important;
 }
 
 .prose li[data-type="taskItem"],
-.prose li:has(input[type="checkbox"]) {
+.prose li:has(input[type="checkbox"]),
+.prose li.task-list-item {
   display: flex !important;
   flex-direction: row !important;
   flex-wrap: nowrap !important;
   align-items: flex-start !important;
-  margin-top: 0.5rem !important;
-  margin-bottom: 0.5rem !important;
+  margin-top: 0.375rem !important;
+  margin-bottom: 0.375rem !important;
   padding-left: 0 !important;
   white-space: normal !important;
   list-style-type: none !important;
+  gap: 0.5rem !important;
+  min-width: 0 !important;
+  width: 100% !important;
 }
 
 /* Hide Tailwind's default bullet point/marker */
 .prose li[data-type="taskItem"]::before,
 .prose li[data-type="taskItem"]::marker,
 .prose li:has(input[type="checkbox"])::before,
-.prose li:has(input[type="checkbox"])::marker {
+.prose li:has(input[type="checkbox"])::marker,
+.prose li.task-list-item::before,
+.prose li.task-list-item::marker {
   display: none !important;
   content: "" !important;
   color: transparent !important;
 }
 
-/* Label wrapper (if present) */
-.prose li[data-type="taskItem"]>label,
-.prose li:has(input[type="checkbox"])>label {
-  margin-top: 0.2rem !important;
-  margin-right: 0.75rem !important;
-  display: flex !important;
+/* Label wrapper (if present in TipTap) */
+.prose li[data-type="taskItem"] > label,
+.prose li:has(input[type="checkbox"]) > label {
+  margin: 0 !important;
+  margin-top: 0.15rem !important;
+  display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   cursor: pointer !important;
@@ -462,21 +491,23 @@ input:disabled,
   flex-shrink: 0 !important;
 }
 
-/* The actual checkbox - target any checkbox inside the prose editor */
+/* The actual checkbox - modern, rounded, high-contrast in light & dark mode */
 .prose input[type="checkbox"] {
   appearance: none !important;
   -webkit-appearance: none !important;
   width: 16px !important;
   height: 16px !important;
-  border-radius: 50% !important;
-  border: 1.5px solid #52525b !important;
-  /* zinc-600 */
+  border-radius: 4px !important;
+  border: 1.5px solid #71717a !important; /* zinc-500 */
   background-color: transparent !important;
-  transition: all 0.2s ease-in-out !important;
+  transition: all 0.15s ease-in-out !important;
   cursor: pointer !important;
   margin: 0 !important;
+  margin-top: 0.18rem !important;
   padding: 0 !important;
-  display: inline-block !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   flex-shrink: 0 !important;
   position: static !important;
   opacity: 1 !important;
@@ -485,16 +516,15 @@ input:disabled,
 
 /* Hover state */
 .prose input[type="checkbox"]:hover {
-  border-color: #a1a1aa !important;
-  /* zinc-400 */
+  border-color: #6366f1 !important;
+  background-color: rgba(99, 102, 241, 0.12) !important;
 }
 
 /* Checked state */
 .prose input[type="checkbox"]:checked,
 .prose li[data-checked="true"] input[type="checkbox"] {
-  background-color: #10b981 !important;
-  /* emerald-500 */
-  border-color: #10b981 !important;
+  background-color: #6366f1 !important; /* indigo-500 */
+  border-color: #6366f1 !important;
   background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e") !important;
   background-position: center !important;
   background-size: 100% 100% !important;
@@ -502,26 +532,58 @@ input:disabled,
 }
 
 /* Content wrapper */
-.prose li[data-type="taskItem"]>div,
-.prose li:has(input[type="checkbox"])>div {
-  flex: 1 1 auto !important;
+.prose li[data-type="taskItem"] > div,
+.prose li:has(input[type="checkbox"]) > div,
+.prose li.task-list-item > div {
+  flex: 1 1 0% !important;
   min-width: 0 !important;
+  width: 100% !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
 }
 
 /* Dim text when checked */
-.prose li[data-type="taskItem"][data-checked="true"]>div>p,
-.prose li:has(input[type="checkbox"]:checked)>div>p {
-  color: #71717a !important;
-  /* zinc-500 */
-  text-decoration: line-through !important;
+.prose li[data-type="taskItem"][data-checked="true"] > div > p,
+.prose li:has(input[type="checkbox"]:checked) > div > p,
+.prose li[data-checked="true"] > div,
+.prose li:has(input[type="checkbox"]:checked) {
+  color: #71717a !important; /* zinc-500 */
 }
 
-/* Dim text when checked */
-.prose li[data-type="taskItem"][data-checked="true"]>div>p,
-.prose li:has(input[type="checkbox"]:checked)>div>p {
-  color: #71717a !important;
-  /* zinc-500 */
+.prose li[data-type="taskItem"][data-checked="true"] > div > p,
+.prose li:has(input[type="checkbox"]:checked) > div > p {
   text-decoration: line-through !important;
+  text-decoration-color: #71717a !important;
+}
+
+/* Light Mode Overrides */
+:root.theme-light .prose input[type="checkbox"],
+.theme-light .prose input[type="checkbox"] {
+  border-color: #a1a1aa !important; /* zinc-400 */
+  background-color: #ffffff !important;
+}
+
+:root.theme-light .prose input[type="checkbox"]:hover,
+.theme-light .prose input[type="checkbox"]:hover {
+  border-color: #6366f1 !important;
+  background-color: rgba(99, 102, 241, 0.08) !important;
+}
+
+:root.theme-light .prose input[type="checkbox"]:checked,
+.theme-light .prose input[type="checkbox"]:checked,
+:root.theme-light .prose li[data-checked="true"] input[type="checkbox"],
+.theme-light .prose li[data-checked="true"] input[type="checkbox"] {
+  background-color: #6366f1 !important;
+  border-color: #6366f1 !important;
+  background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e") !important;
+}
+
+:root.theme-light .prose li[data-type="taskItem"][data-checked="true"] > div > p,
+.theme-light .prose li[data-type="taskItem"][data-checked="true"] > div > p,
+:root.theme-light .prose li:has(input[type="checkbox"]:checked) > div > p,
+.theme-light .prose li:has(input[type="checkbox"]:checked) > div > p {
+  color: #9ca3af !important; /* zinc-400 */
+  text-decoration-color: #9ca3af !important;
 }
 @theme {
   --animate-pop-in: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;

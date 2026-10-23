@@ -99,6 +99,14 @@ export default function BoardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const setPageTitle = useAppStore(s => s.setPageTitle);
+
+  useEffect(() => {
+    if (list?.name) {
+      setPageTitle(list.name);
+    }
+  }, [list?.name, setPageTitle]);
+
   // Instantly hydrate or switch list from localStorage cache whenever list ID changes
   useEffect(() => {
     if (!currentUser) return;

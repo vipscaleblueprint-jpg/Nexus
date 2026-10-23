@@ -121,6 +121,8 @@ import {
   Link as LinkIcon,
   Bot,
   Check,
+  UserCheck,
+  CalendarCheck,
   Palette,
 } from 'lucide-react';
 
@@ -783,10 +785,8 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const filterParam = searchParams?.get('filter');
-  const isMyTasksActive = pathname === '/tasks' && filterParam === 'my';
-  const isAllTasksActive = (pathname === '/' || pathname === '/tasks') && filterParam !== 'my';
 
-  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications } = useAppStore();
+  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications, activeDashboardTab } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
   // ── Resizable Nexus sub-sidebar (width persisted per user) ──
@@ -1433,18 +1433,8 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                     </button>
                   </div>
 
-                  {/* ── ALL TASKS ── */}
-                  <Link
-                    href="/"
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md font-medium text-xs transition-colors group cursor-pointer mb-1 ${
-                      isAllTasksActive
-                        ? 'bg-accent text-accent-foreground font-semibold'
-                        : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
-                    }`}
-                  >
-                    <Sparkles className="size-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
-                    <span className="truncate flex-1">All Tasks</span>
-                  </Link>
+                  {/* ── ALL TASKS DROPDOWN (All Tasks, My Tasks, Clients, Priorities) ── */}
+                  <AllTasksDropdownItem />
 
                   {/* Spaces & Root Folders */}
                   {spaces.filter(s => s.name !== 'Member Directory').map((space) => {
@@ -1534,6 +1524,135 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 }
 
 
+
+
+function AllTasksDropdownItem() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const filterParam = searchParams?.get('filter');
+  const activeDashboardTab = useAppStore((s) => s.activeDashboardTab);
+
+  const isDashboardRoute = pathname === '/' || pathname === '/tasks';
+  const effectiveTab = activeDashboardTab || (isDashboardRoute ? (filterParam || 'all') : null);
+
+  const isAllActive = effectiveTab === 'all';
+  const isMyActive = effectiveTab === 'my';
+  const isClientsActive = effectiveTab === 'clients';
+  const isPrioritiesActive = effectiveTab === 'priorities';
+  const isAnyDashboardActive = Boolean(effectiveTab);
+
+  // Closed by default, per user instruction: "in default its always close"
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="space-y-px mb-1">
+      <div
+        className={`group flex items-center justify-between rounded-md px-2 py-1.5 font-medium text-xs transition-colors cursor-pointer select-none ${
+          isAnyDashboardActive && !isOpen
+            ? 'bg-accent text-accent-foreground font-semibold'
+            : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
+        }`}
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="flex items-center gap-2 truncate flex-1 min-w-0">
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsOpen(!isOpen);
+            }}
+            className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer"
+          >
+            {/* Hover-revealed Chevron arrow, similar to the other sidebar tree items */}
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }} className="flex">
+                <ChevronRight className="size-3 text-zinc-400" />
+              </motion.div>
+            </div>
+            {/* Default sparkles icon, hidden on group hover (retains the blue/cyan design) */}
+            <div className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity">
+              <Sparkles className="size-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
+            </div>
+          </div>
+
+          <Link
+            href="/"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isOpen) setIsOpen(true);
+            }}
+            className="truncate flex-1 min-w-0 hover:text-white"
+          >
+            <span className="truncate block">All Tasks</span>
+          </Link>
+        </div>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="ml-3 pl-2.5 border-l border-zinc-800 space-y-0.5 mt-0.5 overflow-hidden"
+          >
+            {/* 1. All Tasks */}
+            <Link
+              href="/"
+              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
+                isAllActive
+                  ? 'bg-accent text-accent-foreground font-semibold'
+                  : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
+              }`}
+            >
+              <Sparkles className="size-3.5 text-cyan-400 shrink-0" />
+              <span className="truncate flex-1">All Tasks</span>
+            </Link>
+
+            {/* 2. My Tasks */}
+            <Link
+              href="/?filter=my"
+              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
+                isMyActive
+                  ? 'bg-accent text-accent-foreground font-semibold'
+                  : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
+              }`}
+            >
+              <UserCheck className="size-3.5 text-teal-400 shrink-0" />
+              <span className="truncate flex-1">My Tasks</span>
+            </Link>
+
+            {/* 3. Clients */}
+            <Link
+              href="/?filter=clients"
+              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
+                isClientsActive
+                  ? 'bg-accent text-accent-foreground font-semibold'
+                  : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
+              }`}
+            >
+              <Users className="size-3.5 text-purple-400 shrink-0" />
+              <span className="truncate flex-1">Clients</span>
+            </Link>
+
+            {/* 4. Priorities */}
+            <Link
+              href="/?filter=priorities"
+              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
+                isPrioritiesActive
+                  ? 'bg-accent text-accent-foreground font-semibold'
+                  : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
+              }`}
+            >
+              <Target className="size-3.5 text-rose-400 shrink-0" />
+              <span className="truncate flex-1">Priorities</span>
+            </Link>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 
 function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onAction }: {
@@ -1846,7 +1965,8 @@ function DocTreeItem({ doc, onAddPage, onAction }: {
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const isActive = pathname === `/docs/${doc.id}` && !searchParams?.get('page');
+  const activeDashboardTab = useAppStore((s) => s.activeDashboardTab);
+  const isActive = !activeDashboardTab && pathname === `/docs/${doc.id}` && !searchParams?.get('page');
 
   const [isOpen, setIsOpen] = usePersistedOpen(`doc-${doc.id}`, false);
   const [isEditing, setIsEditing] = useState(false);
@@ -1933,7 +2053,8 @@ function PageTreeItem({ page, onAction }: {
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const isActive = pathname === `/docs/${page.docId}` && searchParams?.get('page') === page.id;
+  const activeDashboardTab = useAppStore((s) => s.activeDashboardTab);
+  const isActive = !activeDashboardTab && pathname === `/docs/${page.docId}` && searchParams?.get('page') === page.id;
 
   const [isOpen, setIsOpen] = usePersistedOpen(`page-${page.id}`, false);
   const [isEditing, setIsEditing] = useState(false);
@@ -2002,7 +2123,8 @@ function ListTreeItem({ list, onAction }: {
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const pathname = usePathname();
-  const isActive = pathname === `/lists/${list.id}` || pathname.startsWith(`/lists/${list.id}/`);
+  const activeDashboardTab = useAppStore((s) => s.activeDashboardTab);
+  const isActive = !activeDashboardTab && (pathname === `/lists/${list.id}` || pathname.startsWith(`/lists/${list.id}/`));
 
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(list.name);

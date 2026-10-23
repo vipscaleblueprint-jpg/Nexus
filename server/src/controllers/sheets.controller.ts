@@ -46,7 +46,13 @@ function clickUpLinkOf(externalId: string | null | undefined): string | null {
   return externalId.startsWith('http') ? externalId : `https://app.clickup.com/t/${externalId}`;
 }
 
-/** The task (and subtask) a Nexus task link or bare task id points to. */
+/** ClickUp's task id from a link like https://app.clickup.com/t/abc123 or …/t/<team>/abc123. */
+function clickUpIdOf(link: string): string | null {
+  const id = link.trim().replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop();
+  return id && /^[a-z0-9]+$/i.test(id) ? id : null;
+}
+
+/** The task (and subtask) a Nexus task link, bare task id, or ClickUp link points to. */
 async function findByNexusLink(link: unknown): Promise<LinkedTarget | null> {
   if (typeof link !== 'string' || !link.trim()) return null;
   const value = link.trim();
@@ -61,19 +67,45 @@ async function findByNexusLink(link: unknown): Promise<LinkedTarget | null> {
       taskId = url.searchParams.get('task');
       subtaskId = url.searchParams.get('subtask');
     } catch {
-      return null;
+      // Not a standard URL
     }
   }
-  if (!taskId || !UUID.test(taskId)) return null;
 
-  const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, listId: true, externalId: true } });
-  if (!task) return null;
-
-  if (subtaskId && UUID.test(subtaskId)) {
-    const subtask = await prisma.subtask.findFirst({ where: { id: subtaskId, taskId }, select: { id: true, externalId: true } });
-    if (subtask) return { taskId, subtaskId: subtask.id, listId: task.listId, clickUpLink: clickUpLinkOf(subtask.externalId) };
+  if (taskId && UUID.test(taskId)) {
+    const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, listId: true, externalId: true } });
+    if (task) {
+      if (subtaskId && UUID.test(subtaskId)) {
+        const subtask = await prisma.subtask.findFirst({ where: { id: subtaskId, taskId }, select: { id: true, externalId: true } });
+        if (subtask) return { taskId, subtaskId: subtask.id, listId: task.listId, clickUpLink: clickUpLinkOf(subtask.externalId) };
+      }
+      return { taskId, subtaskId: null, listId: task.listId, clickUpLink: clickUpLinkOf(task.externalId) };
+    }
   }
-  return { taskId, subtaskId: null, listId: task.listId, clickUpLink: clickUpLinkOf(task.externalId) };
+
+  // Fallback: check if the input is a ClickUp link or ClickUp task ID
+  const cuId = clickUpIdOf(value);
+  if (cuId) {
+    const match = { OR: [{ externalId: cuId }, { externalId: { endsWith: `/${cuId}` } }] };
+    const [subtask, task] = await Promise.all([
+      prisma.subtask.findFirst({
+        where: match,
+        select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+      }),
+      prisma.task.findFirst({
+        where: match,
+        select: { id: true, listId: true, externalId: true },
+      }),
+    ]);
+
+    if (subtask) {
+      return { taskId: subtask.taskId, subtaskId: subtask.id, listId: subtask.task.listId, clickUpLink: clickUpLinkOf(subtask.externalId) };
+    }
+    if (task) {
+      return { taskId: task.id, subtaskId: null, listId: task.listId, clickUpLink: clickUpLinkOf(task.externalId) };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -103,7 +135,15 @@ export const handleSheetUpdate = async (req: Request, res: Response) => {
   try {
     const { task_link, what_to_update } = req.body || {};
     const target = await findByNexusLink(task_link);
-    if (!target) return res.status(404).json({ error: 'Task not found in Nexus' });
+    if (!target) {
+      console.warn('[Sheets] handleSheetUpdate: task not found for link:', task_link);
+      return res.status(404).json({
+        error: 'Task not found in Nexus',
+        receivedLink: task_link,
+        what_to_update,
+        hint: 'Ensure task_link is a valid Nexus task URL, Nexus UUID, or ClickUp task link/ID linked to a task in Nexus.',
+      });
+    }
 
     if (what_to_update === 'status') return await applyStatus(target, req.body.new_status, res);
     const assignee = req.body.assignee ?? req.body.assignee_name;
@@ -284,11 +324,7 @@ async function removeAssignee(target: LinkedTarget, assignee: unknown, res: Resp
 const NEXUS_APP_URL = (process.env.FRONTEND_URL || 'https://nexus.vipscaleph.com').replace(/\/+$/, '');
 const MAX_RESOLVE_LINKS = 500;
 
-/** ClickUp's task id from a link like https://app.clickup.com/t/abc123 or …/t/<team>/abc123. */
-function clickUpIdOf(link: string): string | null {
-  const id = link.trim().replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop();
-  return id && /^[a-z0-9]+$/i.test(id) ? id : null;
-}
+
 
 /**
  * POST /api/webhooks/sheets/nexus-links  { clickup_links: string[] }
@@ -439,7 +475,16 @@ export const handleSheetComment = async (req: Request, res: Response) => {
       });
     }
 
-    if (!target) return res.status(404).json({ error: 'Task not found in Nexus' });
+    if (!target) {
+      console.warn('[Sheets] handleSheetComment: task not found for link:', link);
+      return res.status(404).json({
+        error: 'Task not found in Nexus',
+        receivedLink: link,
+        action,
+        authorName: body.name,
+        hint: 'Ensure task_link or clickup_link is a valid Nexus task URL, Nexus UUID, or ClickUp task link/ID linked to a task in Nexus.',
+      });
+    }
 
     const author = (await findUserByName(body.name)) ?? (await getOrCreateVipScaleUser());
     const comment = await prisma.taskComment.create({

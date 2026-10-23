@@ -17,6 +17,8 @@ interface TaskMentionChipProps {
   initialLabel?: string;
   attrs?: Record<string, any>;
   className?: string;
+  isComment?: boolean;
+  maxTitleWidth?: string;
 }
 
 export function TaskMentionChip({
@@ -26,6 +28,8 @@ export function TaskMentionChip({
   initialLabel,
   attrs = {},
   className = '',
+  isComment = true,
+  maxTitleWidth,
 }: TaskMentionChipProps) {
   const isSubtask = mentionType === 'subtask' || Boolean(parentTaskId);
   const globalTask = useAppStore(s => s.tasksIndex[taskId]);
@@ -127,6 +131,13 @@ export function TaskMentionChip({
     onClick: openTask,
   };
 
+  const effectiveIsComment = isComment !== false && attrs?.isComment !== false;
+  const computedMaxTitleWidth = maxTitleWidth || (
+    effectiveIsComment
+      ? 'max-w-[130px] sm:max-w-[150px] md:max-w-[170px]'
+      : 'max-w-[220px] sm:max-w-[340px] md:max-w-[440px]'
+  );
+
   return (
     <span className={`inline-block align-middle my-0.5 mx-0.5 select-none max-w-full ${className}`}>
       <span
@@ -155,7 +166,7 @@ export function TaskMentionChip({
 
         {/* Task Title */}
         <span
-          className={`${titleClass} mr-1.5 truncate max-w-[220px] sm:max-w-[340px] md:max-w-[440px] shrink min-w-[50px]`}
+          className={`${titleClass} mr-1.5 truncate ${computedMaxTitleWidth} shrink min-w-[50px]`}
           {...titleProps}
         >
           {resolvedTitle}

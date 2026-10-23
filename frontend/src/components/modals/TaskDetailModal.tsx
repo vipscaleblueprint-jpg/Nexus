@@ -31,8 +31,9 @@ import { getFolderColor } from '@/components/layout/Sidebar';
 import { CommentEditor, ComposerSendButton, ComposerToolButton } from '../ui/CommentEditor';
 import { UserMentionChip } from '../ui/UserMentionChip';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
-import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink } from '@/lib/links';
+import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { ActionErrorModal, ActionErrorInfo } from './ActionErrorModal';
 import { EditCommentForm } from './EditCommentForm';
 import { CommentReplyInput } from './CommentReplyInput';
 import { EmojiPicker } from '../ui/EmojiPicker';
@@ -51,11 +52,71 @@ const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', 
 
 // Parsing a comment (remark-gfm + rehype-raw) is the costly part of the feed. Memoized on its content, so typing
 // in the comment box or posting another comment doesn't re-parse every comment already shown.
-const CommentMarkdown = React.memo(function CommentMarkdown({ content, components }: { content: string; components: any }) {
+const CommentMarkdown = React.memo(function CommentMarkdown({
+  content,
+  components,
+  onToggleChecklist
+}: {
+  content: string;
+  components?: any;
+  onToggleChecklist?: (itemIndex: number, checked: boolean) => void;
+}) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  const mergedComponents = React.useMemo(() => {
+    return {
+      ...components,
+      input: (props: any) => {
+        if (props.type === 'checkbox') {
+          const isChecked = Boolean(
+            props.checked === true ||
+            props.checked === 'checked' ||
+            props.checked === '' ||
+            props['data-checked'] === true ||
+            props['data-checked'] === 'true'
+          );
+          return (
+            <input
+              type="checkbox"
+              checked={isChecked}
+              disabled={!onToggleChecklist}
+              onChange={(e) => {
+                e.stopPropagation();
+                if (!onToggleChecklist) return;
+                const target = e.target as HTMLInputElement;
+                const newChecked = target.checked;
+                const container = containerRef.current;
+                if (!container) return;
+                const checkboxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
+                const clickedIndex = checkboxes.indexOf(target);
+                if (clickedIndex !== -1) {
+                  onToggleChecklist(clickedIndex, newChecked);
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="cursor-pointer transition-transform active:scale-95"
+            />
+          );
+        }
+        if (components?.input) {
+          return components.input(props);
+        }
+        return <input {...props} />;
+      },
+    };
+  }, [components, onToggleChecklist]);
+
   return (
-    <ReactMarkdown remarkPlugins={COMMENT_REMARK_PLUGINS} rehypePlugins={COMMENT_REHYPE_PLUGINS} components={components} urlTransform={keepUrl}>
-      {commentHtmlForMarkdown(content)}
-    </ReactMarkdown>
+    <div ref={containerRef} className="comment-markdown-body w-full">
+      <ReactMarkdown
+        remarkPlugins={COMMENT_REMARK_PLUGINS}
+        rehypePlugins={COMMENT_REHYPE_PLUGINS}
+        components={mergedComponents}
+        urlTransform={keepUrl}
+      >
+        {commentHtmlForMarkdown(content)}
+      </ReactMarkdown>
+    </div>
   );
 });
 
@@ -487,6 +548,7 @@ export function TaskDetailModalContent({
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
@@ -531,6 +593,15 @@ export function TaskDetailModalContent({
       }
     }
   }, [task?.subtasks, activeSubtask]);
+
+  const setModalTitle = useAppStore(state => state.setModalTitle);
+  useEffect(() => {
+    if (activeSubtask?.title) {
+      setModalTitle(activeSubtask.title);
+    } else if (task?.title) {
+      setModalTitle(task.title);
+    }
+  }, [activeSubtask?.title, task?.title, setModalTitle]);
 
   useEffect(() => {
     const handleOpenDetailInContent = (e: any) => {
@@ -1152,6 +1223,66 @@ export function TaskDetailModalContent({
     }
   };
 
+  const handleToggleCommentChecklist = async (commentId: string, itemIndex: number, newChecked: boolean) => {
+    if (!task?.id) return;
+    const currentComment = richComments.flatMap(c => [c, ...(c.replies || [])]).find(c => c.id === commentId);
+    if (!currentComment || !currentComment.content) return;
+
+    const updatedContent = toggleCommentChecklistItem(currentComment.content, itemIndex, newChecked);
+    if (updatedContent === currentComment.content) return;
+
+    // 1. Instant local optimistic update
+    setRichComments(prev => prev.map(c => {
+      if (c.id === commentId) return { ...c, content: updatedContent };
+      return {
+        ...c,
+        replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: updatedContent } : r)
+      };
+    }));
+
+    const isSubtask = !!(task as any).parentTaskId;
+    const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+
+    // 2. Synchronously update local activityCache so background fetches never revert optimistic state
+    const cacheKey = isSubtask ? `subtask:${task.id}` : targetId;
+    const cached = activityCache.get(cacheKey);
+    if (cached?.comments) {
+      cached.comments = cached.comments.map((c: any) => {
+        if (c.id === commentId) return { ...c, content: updatedContent };
+        return {
+          ...c,
+          replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: updatedContent } : r)
+        };
+      });
+    }
+
+    // 3. Immediately emit live websocket update so other clients and tabs sync instantly
+    if (socket) {
+      socket.emit('task_comment_live_update', {
+        listId: task.listId,
+        taskId: targetId,
+        subtaskId: isSubtask ? task.id : undefined,
+        commentId,
+        content: updatedContent,
+      });
+    }
+
+    // 4. Background DB persistence
+    try {
+      await tasksApi.updateComment(targetId, commentId, updatedContent, task.listId);
+    } catch (err) {
+      console.warn('Failed to update comment checklist item:', err);
+      setRichComments(prev => prev.map(c => {
+        if (c.id === commentId) return { ...c, content: currentComment.content };
+        return {
+          ...c,
+          replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: currentComment.content } : r)
+        };
+      }));
+      toast.error('Failed to update checklist item');
+    }
+  };
+
   const handleDeleteComment = async (commentId: string) => {
     if (!task?.id) return;
     try {
@@ -1496,6 +1627,17 @@ export function TaskDetailModalContent({
           };
         })
       );
+      const cacheKey = (currentTask as any).parentTaskId ? `subtask:${currentTask.id}` : targetId;
+      const cached = activityCache.get(cacheKey);
+      if (cached?.comments) {
+        cached.comments = cached.comments.map((c: any) => {
+          if (c.id === payload.comment.id) return { ...c, ...payload.comment };
+          return {
+            ...c,
+            replies: c.replies?.map((r: any) => r.id === payload.comment.id ? { ...r, ...payload.comment } : r)
+          };
+        });
+      }
     };
 
     const handleCommentDeleted = (payload: { taskId: string; commentId: string }) => {
@@ -1758,7 +1900,29 @@ export function TaskDetailModalContent({
       if (taskRef.current) taskRef.current.status = oldStatus;
       if (onUpdateTask) onUpdateTask({ ...task, status: oldStatus });
       else task.status = oldStatus;
-      toast.error(err.message || 'Failed to move task');
+      const errMsg = err?.response?.data?.error || err.message || 'Failed to move task';
+      const statusCode = err?.response?.status;
+      toast.error(errMsg);
+      setActionError({
+        title: 'Failed to Update Task Status',
+        action: `Moving status from "${oldStatus}" to "${newStatus}"`,
+        message: errMsg,
+        statusCode,
+        technicalDetails: typeof err === 'object' ? JSON.stringify(err.response?.data || err, null, 2) : String(err),
+        context: {
+          taskId: task.id,
+          taskTitle: task.title,
+          targetStatus: newStatus,
+          previousStatus: oldStatus,
+          listId: task.listId,
+        },
+        troubleshooting: [
+          'Verify whether all mandatory audit checklist items and open subtasks are completed before moving.',
+          'Check if your workspace role has permission to move tasks into this status.',
+          'If synced with ClickUp or n8n: verify that the status exists and matches the board configuration.'
+        ],
+        onRetry: () => handleStatusChangeAction(newStatus),
+      });
     }
   };
 
@@ -2207,7 +2371,29 @@ export function TaskDetailModalContent({
       // Take the unsent comment back out of the feed and give the text back if nothing new was typed
       setRichComments(prev => prev.filter(c => c.id !== tempId));
       setComment(prev => (prev.trim() && prev !== '<p></p>' ? prev : draftHtml));
-      toast.error(err.message || 'Failed to post comment');
+      const errMsg = err?.response?.data?.error || err.message || 'Failed to post comment';
+      const statusCode = err?.response?.status;
+      toast.error(errMsg);
+      setActionError({
+        title: 'Failed to Post Comment',
+        action: 'Sending comment to task',
+        message: errMsg,
+        statusCode,
+        technicalDetails: typeof err === 'object' ? JSON.stringify(err.response?.data || err, null, 2) : String(err),
+        context: {
+          taskId: task.id,
+          taskTitle: task.title,
+          listId: task.listId,
+          subtaskId: (task as any).parentTaskId ? task.id : 'None (Main Task)',
+          externalId: (task as any).externalId || 'None',
+        },
+        troubleshooting: [
+          'If this task was synced from ClickUp or Sheets: verify the task has a valid link or externalId.',
+          'Verify your network connection to the server.',
+          'If triggered via n8n: ensure the comment payload includes a valid "message" and "task_link".'
+        ],
+        onRetry: handleAddComment,
+      });
     } finally {
       setIsUploading(false);
       setIsSubmittingComment(false);
@@ -2396,10 +2582,7 @@ export function TaskDetailModalContent({
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
-                const origin = (typeof window !== 'undefined' ? window.location.origin : '') || process.env.NEXT_PUBLIC_APP_URL || '';
-                const baseUrl = origin.replace(/\/+$/, '');
-                const targetId = activeSubtask ? activeSubtask.id : task.id;
-                const link = `${baseUrl}/tasks/${targetId}`;
+                const link = getNexusTaskUrl(task, activeSubtask?.id);
                 navigator.clipboard.writeText(link);
                 toast.success('Link copied to clipboard');
               }}
@@ -3394,7 +3577,11 @@ export function TaskDetailModalContent({
                           </div>
                         ) : (
                           <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
-                            <CommentMarkdown content={comment.content || ''} components={markdownComponents} />
+                            <CommentMarkdown
+                              content={comment.content || ''}
+                              components={markdownComponents}
+                              onToggleChecklist={(itemIndex, checked) => handleToggleCommentChecklist(comment.id, itemIndex, checked)}
+                            />
                           </div>
                         )}
                         {/* Reaction pills */}
@@ -3961,6 +4148,11 @@ export function TaskDetailModalContent({
           itemName="this comment"
         />
       )}
+      <ActionErrorModal
+        isOpen={!!actionError}
+        onClose={() => setActionError(null)}
+        error={actionError}
+      />
 
     </div>
   );
@@ -4239,6 +4431,7 @@ export function SubtaskDetailView({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
   
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const descContentRef = useRef<HTMLDivElement>(null);
@@ -4451,7 +4644,29 @@ export function SubtaskDetailView({
       setLocalCompleted(oldCompleted);
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
       syncSubtaskToParent(currentSubtask);
-      toast.error(err?.message || 'Failed to update subtask status');
+      const errMsg = err?.response?.data?.error || err?.message || 'Failed to update subtask status';
+      const statusCode = err?.response?.status;
+      toast.error(errMsg);
+      setActionError({
+        title: 'Failed to Update Subtask Status',
+        action: `Moving subtask "${subtask.title}" to status "${newStatus}"`,
+        message: errMsg,
+        statusCode,
+        technicalDetails: typeof err === 'object' ? JSON.stringify(err.response?.data || err, null, 2) : String(err),
+        context: {
+          subtaskId: subtask.id,
+          subtaskTitle: subtask.title,
+          parentTaskId: parentTask.id,
+          targetStatus: newStatus,
+          previousStatus: oldStatus,
+        },
+        troubleshooting: [
+          'Verify whether subtask audits or checklists must be completed first.',
+          'Verify your connection to the server.',
+          'If mapped to ClickUp/n8n: verify whether ClickUp subtask status allows this transition.'
+        ],
+        onRetry: () => handleStatusChangeAction(newStatus),
+      });
     } finally {
       setIsSubmittingStatus(false);
     }
@@ -4641,6 +4856,20 @@ export function SubtaskDetailView({
           };
         })
       );
+      const currentSubtask = subtaskRef.current;
+      if (currentSubtask) {
+        const cacheKey = `subtask:${currentSubtask.id}`;
+        const cached = activityCache.get(cacheKey);
+        if (cached?.comments) {
+          cached.comments = cached.comments.map((c: any) => {
+            if (c.id === payload.comment.id) return { ...c, ...payload.comment };
+            return {
+              ...c,
+              replies: c.replies?.map((r: any) => r.id === payload.comment.id ? { ...r, ...payload.comment } : r)
+            };
+          });
+        }
+      }
     };
 
     const handleCommentDeleted = (payload: { taskId: string; commentId: string }) => {
@@ -5114,7 +5343,28 @@ export function SubtaskDetailView({
       // Take the unsent comment back out and give the text back if nothing new was typed
       setRichComments((prev: any[]) => prev.filter(c => c.id !== tempId));
       setComment((prev: string) => (prev.trim() && prev !== '<p></p>' ? prev : draftHtml));
-      toast.error(err?.message || 'Failed to post comment');
+      const errMsg = err?.response?.data?.error || err?.message || 'Failed to post comment';
+      const statusCode = err?.response?.status;
+      toast.error(errMsg);
+      setActionError({
+        title: 'Failed to Post Subtask Comment',
+        action: `Sending comment to subtask "${subtask.title}"`,
+        message: errMsg,
+        statusCode,
+        technicalDetails: typeof err === 'object' ? JSON.stringify(err.response?.data || err, null, 2) : String(err),
+        context: {
+          subtaskId: subtask.id,
+          subtaskTitle: subtask.title,
+          parentTaskId: parentTask.id,
+          parentTaskTitle: parentTask.title,
+        },
+        troubleshooting: [
+          'Verify whether the subtask or parent task exists in Nexus.',
+          'If mirrored to ClickUp/n8n: verify the subtask externalId is valid.',
+          'Check your network connection to the server.'
+        ],
+        onRetry: handleAddComment,
+      });
       setIsUploading(false);
     } finally {
       setIsSubmittingComment(false);
@@ -5143,6 +5393,62 @@ export function SubtaskDetailView({
       toast.error('Failed to update comment');
     } finally {
       setIsSubmittingEdit(false);
+    }
+  };
+
+  const handleToggleCommentChecklist = async (commentId: string, itemIndex: number, newChecked: boolean) => {
+    const currentComment = richComments.flatMap(c => [c, ...(c.replies || [])]).find(c => c.id === commentId);
+    if (!currentComment || !currentComment.content || !parentTask?.id) return;
+
+    const updatedContent = toggleCommentChecklistItem(currentComment.content, itemIndex, newChecked);
+    if (updatedContent === currentComment.content) return;
+
+    // 1. Instant local optimistic update
+    setRichComments(prev => prev.map(c => {
+      if (c.id === commentId) return { ...c, content: updatedContent };
+      return {
+        ...c,
+        replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: updatedContent } : r)
+      };
+    }));
+
+    // 2. Synchronously update subtask activityCache so background fetches never revert
+    const cacheKey = `subtask:${subtask.id}`;
+    const cached = activityCache.get(cacheKey);
+    if (cached?.comments) {
+      cached.comments = cached.comments.map((c: any) => {
+        if (c.id === commentId) return { ...c, content: updatedContent };
+        return {
+          ...c,
+          replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: updatedContent } : r)
+        };
+      });
+    }
+
+    // 3. Immediately emit live websocket update so other clients and tabs sync instantly
+    if (socket) {
+      socket.emit('task_comment_live_update', {
+        listId: parentTask.listId,
+        taskId: parentTask.id,
+        subtaskId: subtask.id,
+        commentId,
+        content: updatedContent,
+      });
+    }
+
+    // 4. Background DB persistence
+    try {
+      await tasksApi.updateComment(parentTask.id, commentId, updatedContent, parentTask.listId);
+    } catch (err) {
+      console.warn('Failed to update subtask comment checklist item:', err);
+      setRichComments(prev => prev.map(c => {
+        if (c.id === commentId) return { ...c, content: currentComment.content };
+        return {
+          ...c,
+          replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: currentComment.content } : r)
+        };
+      }));
+      toast.error('Failed to update checklist item');
     }
   };
 
@@ -5364,9 +5670,7 @@ export function SubtaskDetailView({
           {/* Action buttons could go here */}
           <button
             onClick={() => {
-              const origin = (typeof window !== 'undefined' ? window.location.origin : '') || process.env.NEXT_PUBLIC_APP_URL || '';
-              const baseUrl = origin.replace(/\/+$/, '');
-              const link = `${baseUrl}/tasks/${subtask.id}`;
+              const link = getNexusTaskUrl(parentTask, subtask.id);
               navigator.clipboard.writeText(link);
               toast.success('Link copied to clipboard');
             }}
@@ -6219,7 +6523,11 @@ export function SubtaskDetailView({
                         </div>
                       ) : (
                         <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
-                          <CommentMarkdown content={c.content || ''} components={markdownComponents} />
+                          <CommentMarkdown
+                            content={c.content || ''}
+                            components={markdownComponents}
+                            onToggleChecklist={(itemIndex, checked) => handleToggleCommentChecklist(c.id, itemIndex, checked)}
+                          />
                         </div>
                       )}
 
@@ -6712,16 +7020,34 @@ export function SubtaskDetailView({
         images={commentImages}
         onNavigate={setLightboxImage}
       />
+      <ActionErrorModal
+        isOpen={!!actionError}
+        onClose={() => setActionError(null)}
+        error={actionError}
+      />
     </div>
   );
 }
 
 export function TaskDetailModal(props: Props) {
   const [fullTask, setFullTask] = useState<Task | null>(props.task ?? null);
+  const setModalTitle = useAppStore(state => state.setModalTitle);
   const lastTaskIdRef = useRef<string | null>(null);
   // Fields the user changed while the background fetch below was in flight; its (older) copy must not
   // overwrite them, or the edit appears to revert.
   const locallyEditedKeysRef = useRef<Set<string>>(new Set());
+
+  // Dynamic Tab Title synchronization for Task Modal
+  useEffect(() => {
+    if (props.isOpen && (fullTask?.title || props.task?.title)) {
+      setModalTitle(fullTask?.title || props.task?.title || 'Task');
+    } else if (!props.isOpen) {
+      setModalTitle(null);
+    }
+    return () => {
+      setModalTitle(null);
+    };
+  }, [props.isOpen, fullTask?.title, props.task?.title, setModalTitle]);
 
   // Show modal instantly with prop data; then silently refresh in background
   useEffect(() => {

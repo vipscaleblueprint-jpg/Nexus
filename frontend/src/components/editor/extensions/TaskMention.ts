@@ -7,6 +7,13 @@ export const TaskMention = Mention.extend({
   inline: true,
   group: 'inline',
 
+  addOptions() {
+    return {
+      ...this.parent?.(),
+      isComment: false,
+    };
+  },
+
   renderText({ node }) {
     return node.attrs.label || '';
   },

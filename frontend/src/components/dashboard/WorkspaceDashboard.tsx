@@ -55,6 +55,7 @@ import { TaskDetailModal, getAssigneeAvatarColor } from "@/components/modals/Tas
 import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
 import { getPriorityConfig } from "@/lib/priority";
+import { getNexusTaskPath } from "@/lib/links";
 
 const FOCUS_REFETCH_INTERVAL_MS = 60 * 1000;
 
@@ -483,7 +484,7 @@ function WorkspaceDashboardContent({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache, workspaceUsers, loadUsers, hasLoadedUsers } = useAppStore();
+  const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache, workspaceUsers, loadUsers, hasLoadedUsers, setPageTitle, setActiveDashboardTab } = useAppStore();
 
   const [searchQuery, setSearchQuery] = useState("");
   // All Tasks Filters & Sort
@@ -502,6 +503,11 @@ function WorkspaceDashboardContent({
   const [socket, setSocket] = useState<Socket | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
+
+  // Track previous dashboard URL before opening a task modal so we can restore it on close
+  const previousDashboardUrlRef = useRef<string | null>(null);
+  const hadSelectedTask = useRef(false);
+  const lastOpenedUrlTaskId = useRef<string | null>(null);
 
   // Track local updates to prevent socket echoes from causing UI bouncing
   const pendingTaskUpdatesRef = useRef<Record<string, number>>({});
@@ -522,6 +528,14 @@ function WorkspaceDashboardContent({
   const [selectedListId, setSelectedListId] = useState<string>("");
   const [isCreatingInline, setIsCreatingInline] = useState(false);
 
+  // Sync active dashboard tab with global store so sidebar retains its active highlight when task modals update browser URL
+  useEffect(() => {
+    setActiveDashboardTab(currentTab);
+    return () => {
+      setActiveDashboardTab(null);
+    };
+  }, [currentTab, setActiveDashboardTab]);
+
   // Sync tab with URL query parameter
   useEffect(() => {
     const filter = searchParams?.get("filter");
@@ -535,6 +549,29 @@ function WorkspaceDashboardContent({
       setCurrentTab("all");
     }
   }, [searchParams, activeView]);
+
+  useEffect(() => {
+    if (activeView === 'folders') {
+      setPageTitle('Folders');
+    } else if (activeView === 'spaces') {
+      setPageTitle('Spaces');
+    } else if (activeView === 'lists') {
+      setPageTitle('Lists');
+    } else if (activeView === 'docs') {
+      setPageTitle('Docs');
+    } else if (currentTab === 'my') {
+      const view = searchParams?.get('view');
+      if (view === 'today') setPageTitle('Today & Overdue');
+      else if (view === 'personal') setPageTitle('Personal List');
+      else setPageTitle('My Tasks');
+    } else if (currentTab === 'clients') {
+      setPageTitle('Clients');
+    } else if (currentTab === 'priorities') {
+      setPageTitle('Priorities');
+    } else {
+      setPageTitle('Dashboard');
+    }
+  }, [activeView, currentTab, setPageTitle]);
 
   // Load workspace roles for permissions inside TaskDetailModal
   useEffect(() => {
@@ -670,14 +707,85 @@ function WorkspaceDashboardContent({
 
   // Subtask rows open their parent task with the subtask panel showing (TaskDetailModal reads ?subtask=)
   const openRow = (row: Task) => {
-    const parent = (row as any).isSubtask ? ((row as any).parentTask as Task) : null;
-    // Also clear a leftover ?subtask= so a plain task row never reopens an old subtask panel
-    const url = new URL(window.location.href);
-    if (parent) url.searchParams.set("subtask", row.id);
-    else url.searchParams.delete("subtask");
-    window.history.replaceState(null, "", url.pathname + url.search);
-    setSelectedTask(parent || row);
+    const isSub = Boolean((row as any).isSubtask);
+    const parent = isSub ? ((row as any).parentTask as Task) : null;
+    const taskToOpen = parent || row;
+    const subtaskId = isSub ? row.id : null;
+
+    if (typeof window !== "undefined") {
+      // Remember dashboard URL so we can restore it when the task modal is closed
+      if (!previousDashboardUrlRef.current && !window.location.pathname.startsWith("/lists/")) {
+        previousDashboardUrlRef.current = window.location.pathname + (window.location.search || "");
+      }
+      const dedicatedPath = getNexusTaskPath(taskToOpen, subtaskId);
+      window.history.replaceState(null, "", dedicatedPath);
+    }
+
+    setSelectedTask(taskToOpen);
   };
+
+  // Keep the browser address bar in sync with the selected task's dedicated list URL,
+  // and restore the dashboard URL when the modal is closed.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (selectedTask) {
+      hadSelectedTask.current = true;
+      if (!previousDashboardUrlRef.current && !window.location.pathname.startsWith("/lists/")) {
+        previousDashboardUrlRef.current = window.location.pathname + (window.location.search || "");
+      }
+      const url = new URL(window.location.href);
+      const subtaskId = url.searchParams.get("subtask") || null;
+      const dedicatedPath = getNexusTaskPath(selectedTask, subtaskId);
+      if (window.location.pathname + window.location.search !== dedicatedPath) {
+        window.history.replaceState(null, "", dedicatedPath);
+      }
+    } else if (hadSelectedTask.current) {
+      hadSelectedTask.current = false;
+      const basePath = pathname === "/tasks" ? "/tasks" : "/";
+      const viewParam = searchParams?.get("view");
+      const viewQuery = currentTab === "my" && viewParam ? `&view=${viewParam}` : "";
+      const fallbackUrl = currentTab === "all" ? basePath : `${basePath}?filter=${currentTab}${viewQuery}`;
+      const restoreUrl = previousDashboardUrlRef.current || fallbackUrl;
+      previousDashboardUrlRef.current = null;
+      window.history.replaceState(null, "", restoreUrl);
+    }
+  }, [selectedTask, pathname, currentTab]);
+
+  // Deep-linking: open task automatically if ?task= or ?subtask= parameter is present on initial load
+  useEffect(() => {
+    if (loadingTasks && tasks.length === 0) return;
+    const taskIdParam = searchParams?.get("task");
+    const subtaskIdParam = searchParams?.get("subtask");
+    const actualTaskId = taskIdParam ? taskIdParam.split("/")[0].trim() : null;
+
+    if (actualTaskId && actualTaskId !== lastOpenedUrlTaskId.current && actualTaskId !== selectedTask?.id) {
+      lastOpenedUrlTaskId.current = actualTaskId;
+      const found = tasks.find((t) => t.id === actualTaskId);
+      if (found) {
+        openRow(found);
+      } else {
+        tasksApi.getTask(actualTaskId).then((res) => {
+          if (res?.task) {
+            openRow(res.task);
+          }
+        }).catch(() => {});
+      }
+    } else if (!actualTaskId && subtaskIdParam && !selectedTask) {
+      for (const t of tasks) {
+        const foundSub = t.subtasks?.find((st: any) => st.id === subtaskIdParam);
+        if (foundSub) {
+          lastOpenedUrlTaskId.current = t.id;
+          openRow({
+            ...foundSub,
+            parentTask: t,
+            isSubtask: true,
+          } as any);
+          break;
+        }
+      }
+    }
+  }, [tasks, loadingTasks, searchParams, selectedTask]);
 
   // User's assigned tasks
   const myTasks = useMemo(() => {
@@ -702,6 +810,22 @@ function WorkspaceDashboardContent({
 
   const filteredMyTasks = useMemo(() => {
     let result = showClosed ? [...myTasks] : myTasks.filter((t) => !isClosedTask(t));
+
+    const viewParam = searchParams?.get("view");
+    if (viewParam === "today") {
+      const endOfToday = new Date();
+      endOfToday.setHours(23, 59, 59, 999);
+      result = result.filter((t) => {
+        if (!t.dueDate) return false;
+        const due = new Date(t.dueDate);
+        return !isNaN(due.getTime()) && due.getTime() <= endOfToday.getTime();
+      });
+    } else if (viewParam === "personal") {
+      result = result.filter((t) => {
+        const listName = (t.list?.name || "").toLowerCase();
+        return listName.includes("personal") || (!t.assigneeId && t.creatorId === currentUser?.id);
+      });
+    }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -751,7 +875,7 @@ function WorkspaceDashboardContent({
     });
 
     return result;
-  }, [myTasks, searchQuery, filterPriority, filterStatus, sortBy]);
+  }, [myTasks, searchQuery, filterPriority, filterStatus, sortBy, searchParams, currentUser?.id]);
 
   const myTasksBadgeCount = useMemo(() => {
     if (currentTab === "my" && (searchQuery.trim() || filterPriority !== "all" || filterStatus !== "all")) {
@@ -1669,11 +1793,19 @@ function WorkspaceDashboardContent({
               <h3 className="text-base font-semibold text-zinc-200">
                 {searchQuery
                   ? "No matching tasks found"
+                  : searchParams?.get("view") === "today"
+                  ? "No tasks due today or overdue"
+                  : searchParams?.get("view") === "personal"
+                  ? "No personal tasks found"
                   : "No tasks assigned to you"}
               </h3>
               <p className="text-xs text-zinc-500 max-w-sm mx-auto leading-relaxed">
                 {searchQuery
                   ? `No tasks matched your search query "${searchQuery}".`
+                  : searchParams?.get("view") === "today"
+                  ? "Tasks assigned to you with due dates for today or in the past will appear here."
+                  : searchParams?.get("view") === "personal"
+                  ? "Tasks created by you or in your personal list will appear here."
                   : `Tasks assigned to ${currentUser?.name || "you"} will appear here in real time.`}
               </p>
               {!searchQuery && (

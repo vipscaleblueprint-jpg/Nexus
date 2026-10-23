@@ -508,6 +508,8 @@ const DocBlockRow = memo(({
   handleUpdateBlockContent,
   handleBlurBlock,
   handleKeyDown,
+  handleIndentBlock,
+  handleOutdentBlock,
   handleSplitBlock,
   handleFocusBlock,
   editorRegistryRef,
@@ -711,6 +713,8 @@ const DocBlockRow = memo(({
                 onChange={(newContent) => handleUpdateBlockContent(block.id, newContent)}
                 onBlur={() => handleBlurBlock(block.id)}
                 onKeyDown={(e) => handleKeyDown(e, block.id, index)}
+                onIndent={() => handleIndentBlock && handleIndentBlock(block.id, index)}
+                onOutdent={() => handleOutdentBlock && handleOutdentBlock(block.id, index)}
                 onSplit={(contents) => handleSplitBlock(block.id, index, contents)}
                 onFocus={() => handleFocusBlock(block.id)}
                 onEditorReady={(editor) => { editorRegistryRef.current[block.id] = editor; }}
@@ -865,6 +869,14 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [pageTitle, setPageTitle] = useState('');
   const pageTitleRef = useRef(pageTitle);
   useEffect(() => { pageTitleRef.current = pageTitle; }, [pageTitle]);
+
+  const setAppPageTitle = useAppStore(state => state.setPageTitle);
+  useEffect(() => {
+    const title = pageTitle || activePage?.title || doc?.title;
+    if (title) {
+      setAppPageTitle(title);
+    }
+  }, [pageTitle, activePage?.title, doc?.title, setAppPageTitle]);
   const [blocks, setBlocks] = useState<DocBlock[]>([]);
   // Stable ref so event-handler closures registered with deps:[] never read stale blocks
   const blocksRef = useRef<DocBlock[]>([]);
@@ -1624,10 +1636,73 @@ export default function DocPage({ docId }: { docId?: string }) {
     }, 10);
   };
 
+  const handleIndentBlock = (blockId: string, index?: number) => {
+    const currentBlocks = [...blocksRef.current];
+    const blockIndex = typeof index === 'number' && index >= 0 && index < currentBlocks.length
+      ? index
+      : currentBlocks.findIndex(b => b.id === blockId);
+    if (blockIndex <= 0) return false;
+
+    const block = currentBlocks[blockIndex];
+    const currentDepth = block.depth || 0;
+    const prevBlock = currentBlocks[blockIndex - 1];
+    const maxDepth = (prevBlock.depth || 0) + 1;
+    if (currentDepth < maxDepth) {
+      currentBlocks[blockIndex] = { ...block, depth: currentDepth + 1 };
+      setBlocks(currentBlocks);
+      handleSavePage(currentBlocks);
+      return true;
+    }
+    return false;
+  };
+
+  const handleOutdentBlock = (blockId: string, index?: number) => {
+    const currentBlocks = [...blocksRef.current];
+    const blockIndex = typeof index === 'number' && index >= 0 && index < currentBlocks.length
+      ? index
+      : currentBlocks.findIndex(b => b.id === blockId);
+    if (blockIndex === -1) return false;
+
+    const block = currentBlocks[blockIndex];
+    const currentDepth = block.depth || 0;
+    if (currentDepth > 0) {
+      currentBlocks[blockIndex] = { ...block, depth: currentDepth - 1 };
+      setBlocks(currentBlocks);
+      handleSavePage(currentBlocks);
+      return true;
+    }
+    return false;
+  };
+
   const handleKeyDown = (e: any, blockId: string, index: number) => {
     // Clear block selection when user starts typing normally inside an editor
     if (selectedBlockIdsRef.current.size > 0 && !e.shiftKey && e.key !== 'Escape') {
       setSelectedBlockIds(new Set());
+    }
+
+    const isIndentKey = (e.ctrlKey || e.metaKey) && (e.key === ']' || e.code === 'BracketRight');
+    const isOutdentKey = (e.ctrlKey || e.metaKey) && (e.key === '[' || e.code === 'BracketLeft');
+
+    if (isIndentKey) {
+      e.preventDefault();
+      const editor = editorRegistryRef.current[blockId];
+      if (editor) {
+        editor.commands.indent();
+      } else {
+        handleIndentBlock(blockId, index);
+      }
+      return;
+    }
+
+    if (isOutdentKey) {
+      e.preventDefault();
+      const editor = editorRegistryRef.current[blockId];
+      if (editor) {
+        editor.commands.outdent();
+      } else {
+        handleOutdentBlock(blockId, index);
+      }
+      return;
     }
 
     if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
@@ -1649,32 +1724,31 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
 
     if (e.key === 'Tab') {
-      e.preventDefault();
-      const currentBlocks = [...blocksRef.current];
-      const blockIndex = currentBlocks.findIndex(b => b.id === blockId);
-      if (blockIndex === -1) return;
-      
-      const block = currentBlocks[blockIndex];
-      const currentDepth = block.depth || 0;
-      
+      const editor = editorRegistryRef.current[blockId];
+      const hasListItem = !!editor?.schema?.nodes?.listItem;
+      const hasTaskItem = !!editor?.schema?.nodes?.taskItem;
+
       if (e.shiftKey) {
-        // Outdent
-        if (currentDepth > 0) {
-          currentBlocks[blockIndex] = { ...block, depth: currentDepth - 1 };
-          setBlocks(currentBlocks);
-          handleSavePage(currentBlocks);
+        if ((hasListItem && editor?.can()?.liftListItem('listItem')) || (hasTaskItem && editor?.can()?.liftListItem('taskItem'))) {
+          e.preventDefault();
+          if (hasListItem && editor?.can()?.liftListItem('listItem')) editor.commands.liftListItem('listItem');
+          else if (hasTaskItem) editor.commands.liftListItem('taskItem');
+          return;
         }
       } else {
-        // Indent (max depth is prev block's depth + 1)
-        if (blockIndex > 0) {
-          const prevBlock = currentBlocks[blockIndex - 1];
-          const maxDepth = (prevBlock.depth || 0) + 1;
-          if (currentDepth < maxDepth) {
-            currentBlocks[blockIndex] = { ...block, depth: currentDepth + 1 };
-            setBlocks(currentBlocks);
-            handleSavePage(currentBlocks);
-          }
+        if ((hasListItem && editor?.can()?.sinkListItem('listItem')) || (hasTaskItem && editor?.can()?.sinkListItem('taskItem'))) {
+          e.preventDefault();
+          if (hasListItem && editor?.can()?.sinkListItem('listItem')) editor.commands.sinkListItem('listItem');
+          else if (hasTaskItem) editor.commands.sinkListItem('taskItem');
+          return;
         }
+      }
+
+      e.preventDefault();
+      if (e.shiftKey) {
+        handleOutdentBlock(blockId, index);
+      } else {
+        handleIndentBlock(blockId, index);
       }
       return;
     }
@@ -3280,6 +3354,8 @@ export default function DocPage({ docId }: { docId?: string }) {
                         handleUpdateBlockContent={handleUpdateBlockContent}
                         handleBlurBlock={handleBlurBlock}
                         handleKeyDown={handleKeyDown}
+                        handleIndentBlock={handleIndentBlock}
+                        handleOutdentBlock={handleOutdentBlock}
                         handleSplitBlock={handleSplitBlock}
                         handleFocusBlock={handleFocusBlock}
                         editorRegistryRef={editorRegistryRef}

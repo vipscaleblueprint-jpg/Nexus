@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, Fragment } from 'react';
 import { useAppStore } from '@/lib/store';
 import { notificationsApi, TaskNotification } from '@/api/notifications';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -29,6 +29,7 @@ import { tasksApi } from '@/api/tasks';
 import { toast } from '@/lib/toast';
 import { CommentContent } from '@/components/ui/CommentContent';
 import { extractImagesFromContent } from '@/lib/commentImages';
+import { ActivityCard } from '@/components/ui/ActivityCard';
 
 type ViewMode = 'for_me' | 'show_all';
 type Category = 'all' | 'status' | 'checklists' | 'audits' | 'assigned' | 'comments';
@@ -154,7 +155,7 @@ const FEED_CACHE_TTL_MS = 60_000;
 function ActivityFeedContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { decrementUnreadNotifications, currentUser, tasksIndex, tasks } = useAppStore();
+  const { decrementUnreadNotifications, currentUser, tasksIndex, tasks, workspaceRoles } = useAppStore();
   const hadSelectedTask = useRef(false);
   const lastUrlTaskId = useRef<string | null>(null);
 
@@ -180,7 +181,7 @@ function ActivityFeedContent() {
   const [category, setCategory] = useState<Category>('all');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(50);
+  const [limit, setLimit] = useState(25);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -833,12 +834,12 @@ function ActivityFeedContent() {
           const typeArray = Array.from(auditTypes);
           let mergedTitle = '';
           if (typeArray.length >= 4) {
-            mergedTitle = `${current.actorName} has checked all auditing on task ${current.taskTitle}`;
+            mergedTitle = `${current.actorName} checked all auditing on ${current.taskTitle}`;
           } else if (typeArray.length > 1) {
             const last = typeArray.pop();
-            mergedTitle = `${current.actorName} has checked ${typeArray.join(', ')} and ${last} auditing on task ${current.taskTitle}`;
+            mergedTitle = `${current.actorName} checked ${typeArray.join(', ').toLowerCase()} and ${last?.toLowerCase()} auditing on ${current.taskTitle}`;
           } else {
-            mergedTitle = `${current.actorName} has checked ${typeArray[0] || 'auditing'} auditing on task ${current.taskTitle}`;
+            mergedTitle = `${current.actorName} checked ${typeArray[0]?.toLowerCase() || 'auditing'} auditing on ${current.taskTitle}`;
           }
 
           const hasUnread = cluster.some((c) => !c.isRead);
@@ -989,7 +990,7 @@ function ActivityFeedContent() {
       } else if (isYesterday(d)) {
         g = 'Yesterday';
       } else {
-        g = format(d, 'EEEE, MMMM d');
+        g = format(d, 'EEE, MMM d');
       }
       if (!grouped[g]) grouped[g] = [];
       grouped[g].push(item);
@@ -1015,8 +1016,9 @@ function ActivityFeedContent() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-background text-foreground relative pt-8">
-      {/* Header Bar */}
+    <div className={`flex flex-col h-full bg-background text-foreground relative ${selectedTask ? 'overflow-hidden' : 'pt-8'}`}>
+      <div className={selectedTask ? 'hidden' : 'flex flex-col flex-1 min-h-0'}>
+        {/* Header Bar */}
       <div className="px-8 flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
@@ -1031,7 +1033,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'for_me'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
               title="Personal feed: tasks assigned to you or involving you"
             >
@@ -1046,7 +1048,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'show_all'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
               title="Workspace-wide feed: all tasks and team activities"
             >
@@ -1066,7 +1068,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'all'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               All time
@@ -1079,7 +1081,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'today'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               Today
@@ -1092,7 +1094,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'last7'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               Last 7 days
@@ -1105,7 +1107,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'last30'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               Last 30 days
@@ -1116,7 +1118,7 @@ function ActivityFeedContent() {
             <>
               <button
                 onClick={handleMarkAllAsRead}
-                className="px-3 py-1.5 text-xs font-medium text-zinc-200 bg-card hover:bg-accent border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <Check className="size-3.5" />
                 Mark all as read
@@ -1133,10 +1135,10 @@ function ActivityFeedContent() {
 
           <button
             onClick={() => router.push('/settings#notifications')}
-            className="px-3 py-1.5 text-xs font-medium text-zinc-300 hover:text-white bg-card hover:bg-accent border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
             title="Customize your notification preferences in settings"
           >
-            <SlidersHorizontal className="size-3.5 text-zinc-400" />
+            <SlidersHorizontal className="size-3.5 text-muted-foreground" />
             <span className="hidden sm:inline">Customize</span>
           </button>
         </div>
@@ -1156,12 +1158,12 @@ function ActivityFeedContent() {
                 setPage(1);
               }}
               className={`pb-3 px-1 text-sm font-semibold transition-colors relative whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer ${
-                isActive ? 'text-indigo-400' : 'text-zinc-400 hover:text-zinc-200'
+                isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <span>{cat.label}</span>
               {unreadCount > 0 && (
-                <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/40">
+                <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200">
                   {unreadCount}
                 </span>
               )}
@@ -1193,239 +1195,94 @@ function ActivityFeedContent() {
             <p>{viewMode === 'show_all' ? 'No activity logs found' : 'You are all caught up!'}</p>
           </div>
         ) : (
-          <div className="space-y-8 pb-10">
+          <div className="space-y-6 pb-10">
             {/* UNREAD / "NEW" SECTION */}
             {unreadItems.length > 0 && (
-              <div className="relative mb-8">
-                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-4 flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
+              <div className="mb-6">
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-3">
+                  <h3 className="text-sm font-semibold text-sky-500 dark:text-sky-400 px-1">
                     New
-                    <span className="text-[11px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded-full">
-                      {unreadItems.length}
-                    </span>
                   </h3>
                 </div>
 
-                <div className="space-y-4">
-                  {unreadItems.map((item, idx) => {
-                    const initials = getInitials(item.actorName);
-                    const avatarBg = getAvatarBg(item.actorName);
-
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => {
-                          if (item.taskId) {
-                            handleOpenTask(item.rawItem);
-                          }
-                        }}
-                        className="group/card flex gap-4 cursor-pointer relative"
-                      >
-                        {/* Timeline connector */}
-                        {idx !== unreadItems.length - 1 && (
-                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-border" />
-                        )}
-
-                        {/* Avatar */}
-                        <div className="shrink-0 relative">
-                          <div className="relative z-10">
-                            {item.actorAvatar ? (
-                              <img
-                                src={item.actorAvatar}
-                                alt=""
-                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                  if (e.currentTarget.nextElementSibling) {
-                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display =
-                                      'flex';
-                                  }
-                                }}
-                              />
-                            ) : null}
-                            <div
-                              className={`size-10 rounded-full ${avatarBg} text-white flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm`}
-                              style={{ display: item.actorAvatar ? 'none' : 'flex' }}
-                            >
-                              {initials}
-                            </div>
-
-                            <div
-                              className={`absolute -bottom-1 -right-1 size-4 rounded-full ${item.iconBg} text-white flex items-center justify-center ring-2 ring-background`}
-                            >
-                              <item.IconToUse className="size-2.5" />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Card Content - Unread Styling (Bold text + Blue dot) */}
-                        <div className="flex-1 min-w-0 bg-card border border-blue-500/40 bg-blue-500/[0.03] rounded-2xl p-5 shadow-xs transition-all hover:border-blue-500/60 hover:bg-blue-500/[0.05]">
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <div className="flex items-center gap-2 flex-wrap text-sm leading-tight font-semibold text-white">
-                              <span>{item.actorName}</span>
-                              <span className="text-zinc-200">
-                                {renderStyledStatusText(
-                                  item.title.replace(item.actorName, '').trim() || item.title
-                                )}
-                              </span>
-                            </div>
-
-                            <div
-                              className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shrink-0"
-                              title="Unread"
-                            />
-                          </div>
-
-                          {/* Comment Quote Body */}
-                          {item.content && (
-                            <div className="my-2.5 pl-3.5 border-l-2 border-indigo-500/40 text-sm text-zinc-200">
-                              <CommentContent
-                                content={item.content}
-                                className="text-sm text-zinc-200 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-indigo-300 prose-a:underline [&_a]:text-indigo-300 [&_a]:underline"
-                                onPreviewImage={handlePreviewImage}
-                              />
-                            </div>
-                          )}
-
-                          {/* Footer */}
-                          <div className="flex items-center justify-between gap-4 mt-3">
-                            <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-                              <Clock className="size-3.5 text-zinc-500" />
-                              <span>{format(new Date(item.createdAt), 'MMM d, h:mm a')}</span>
-                            </div>
-
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleClear(item.id, item.childIds);
-                              }}
-                              className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-indigo-400 hover:bg-accent rounded-md transition-all flex items-center gap-1 cursor-pointer"
-                              title="Clear notification"
-                            >
-                              <Check className="size-3" />
-                              <span>Clear</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="space-y-3">
+                  {unreadItems.map((item) => (
+                    <ActivityCard
+                      key={item.id}
+                      id={item.id}
+                      type={item.type}
+                      actorName={item.actorName}
+                      actorAvatar={item.actorAvatar}
+                      taskTitle={item.taskTitle}
+                      isSubtask={item.isSubtask}
+                      subtaskTitle={item.subtaskTitle}
+                      title={item.title}
+                      content={item.content}
+                      isRead={item.isRead}
+                      createdAt={item.createdAt}
+                      details={item.rawItem?.details}
+                      onPreviewImage={handlePreviewImage}
+                      onClick={() => {
+                        if (item.taskId) {
+                          handleOpenTask(item.rawItem);
+                        }
+                      }}
+                      onClear={(e) => {
+                        e.stopPropagation();
+                        handleClear(item.id, item.childIds);
+                      }}
+                      onMarkAsRead={(e) => {
+                        e.stopPropagation();
+                        handleMarkAsRead(item.id, item.childIds);
+                      }}
+                    />
+                  ))}
                 </div>
               </div>
             )}
 
             {/* READ ITEMS GROUPED BY DAY */}
             {Object.entries(readItemsGrouped).map(([groupName, items]) => (
-              <div key={groupName} className="relative">
-                {/* Date Group Heading (Today, Yesterday, [Day, Month Day]) */}
-                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-4">
-                  <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest px-1">
+              <div key={groupName} className="mb-6">
+                {/* Date Group Heading (Today, Yesterday, Thu, Oct 22) */}
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-3">
+                  <h3 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 px-1">
                     {groupName}
                   </h3>
                 </div>
 
-                <div className="space-y-4">
-                  {items.map((item, idx) => {
-                    const initials = getInitials(item.actorName);
-                    const avatarBg = getAvatarBg(item.actorName);
-
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => {
-                          if (item.taskId) {
-                            handleOpenTask(item.rawItem);
-                          }
-                        }}
-                        className="group/card flex gap-4 cursor-pointer relative"
-                      >
-                        {/* Timeline Connector Line */}
-                        {idx !== items.length - 1 && (
-                          <div className="absolute left-5 top-12 bottom-[-16px] w-[2px] bg-border" />
-                        )}
-
-                        {/* Avatar */}
-                        <div className="shrink-0 relative">
-                          <div className="relative z-10">
-                            {item.actorAvatar ? (
-                              <img
-                                src={item.actorAvatar}
-                                alt=""
-                                className="size-10 rounded-full object-cover shrink-0 ring-4 ring-background shadow-sm opacity-85"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                  if (e.currentTarget.nextElementSibling) {
-                                    (e.currentTarget.nextElementSibling as HTMLElement).style.display =
-                                      'flex';
-                                  }
-                                }}
-                              />
-                            ) : null}
-                            <div
-                              className={`size-10 rounded-full ${avatarBg} text-white flex items-center justify-center text-sm font-bold shrink-0 ring-4 ring-background shadow-sm opacity-85`}
-                              style={{ display: item.actorAvatar ? 'none' : 'flex' }}
-                            >
-                              {initials}
-                            </div>
-
-                            <div
-                              className={`absolute -bottom-1 -right-1 size-4 rounded-full ${item.iconBg} text-white flex items-center justify-center ring-2 ring-background`}
-                            >
-                              <item.IconToUse className="size-2.5" />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Card Content - Normal Gray for Read Items */}
-                        <div className="flex-1 min-w-0 bg-card border border-border rounded-2xl p-5 shadow-xs transition-all hover:border-zinc-700 hover:bg-accent/40">
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <div className="flex items-center gap-2 flex-wrap text-sm leading-tight font-normal text-zinc-400">
-                              <span className="font-semibold text-zinc-300">{item.actorName}</span>
-                              <span className="text-zinc-400">
-                                {renderStyledStatusText(
-                                  item.title.replace(item.actorName, '').trim() || item.title
-                                )}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Quote Body */}
-                          {item.content && (
-                            <div className="my-2.5 pl-3.5 border-l-2 border-zinc-700 text-sm text-zinc-400">
-                              <CommentContent
-                                content={item.content}
-                                className="text-sm text-zinc-400 max-w-full prose prose-sm prose-invert prose-p:my-1 prose-a:text-indigo-400 prose-a:underline [&_a]:text-indigo-400 [&_a]:underline"
-                                onPreviewImage={handlePreviewImage}
-                              />
-                            </div>
-                          )}
-
-                          {/* Footer */}
-                          <div className="flex items-center justify-between gap-4 mt-3">
-                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                              <Clock className="size-3.5 text-zinc-500" />
-                              <span>{format(new Date(item.createdAt), 'MMM d, h:mm a')}</span>
-                            </div>
-
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleClear(item.id, item.childIds);
-                              }}
-                              className="opacity-0 group-hover/card:opacity-100 px-2.5 py-1 text-[11px] font-medium text-zinc-500 hover:text-indigo-400 hover:bg-accent rounded-md transition-all flex items-center gap-1 cursor-pointer"
-                              title="Clear notification"
-                            >
-                              <Check className="size-3" />
-                              <span>Clear</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="space-y-3">
+                  {items.map((item) => (
+                    <ActivityCard
+                      key={item.id}
+                      id={item.id}
+                      type={item.type}
+                      actorName={item.actorName}
+                      actorAvatar={item.actorAvatar}
+                      taskTitle={item.taskTitle}
+                      isSubtask={item.isSubtask}
+                      subtaskTitle={item.subtaskTitle}
+                      title={item.title}
+                      content={item.content}
+                      isRead={item.isRead}
+                      createdAt={item.createdAt}
+                      details={item.rawItem?.details}
+                      onPreviewImage={handlePreviewImage}
+                      onClick={() => {
+                        if (item.taskId) {
+                          handleOpenTask(item.rawItem);
+                        }
+                      }}
+                      onClear={(e) => {
+                        e.stopPropagation();
+                        handleClear(item.id, item.childIds);
+                      }}
+                      onMarkAsRead={(e) => {
+                        e.stopPropagation();
+                        handleMarkAsRead(item.id, item.childIds);
+                      }}
+                    />
+                  ))}
                 </div>
               </div>
             ))}
@@ -1433,61 +1290,73 @@ function ActivityFeedContent() {
         )}
       </div>
 
-      {/* Persistent Bottom Pagination Bar */}
+      {/* Persistent Bottom Pagination Bar (Matching Image 1) */}
       {total > 0 && (
         <div className="px-8 py-3.5 border-t border-border bg-background/95 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-          <div className="flex items-center gap-3 text-xs text-zinc-400">
-            <span>
-              Showing{' '}
-              <span className="font-semibold text-zinc-200">
-                {Math.min((page - 1) * limit + 1, total)}
-              </span>
-              –
-              <span className="font-semibold text-zinc-200">
-                {Math.min(page * limit, total)}
-              </span>{' '}
-              of <span className="font-semibold text-zinc-200">{total}</span> activities
-            </span>
-
-            <div className="flex items-center gap-1.5 ml-2 border-l border-border pl-3">
-              <span className="text-[11px] text-zinc-500">Per page:</span>
-              {[25, 50, 100].map((size) => (
-                <button
-                  key={size}
-                  onClick={() => {
-                    setLimit(size);
-                    setPage(1);
-                    if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-                  }}
-                  className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors cursor-pointer ${
-                    limit === size
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-card'
-                  }`}
-                >
-                  {size}
-                </button>
-              ))}
-            </div>
+          <div className="text-xs text-muted-foreground select-none">
+            Showing {Math.min((page - 1) * limit + 1, total)}–{Math.min(page * limit, total)} of {total} activities
           </div>
 
           <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground select-none">Per page</span>
+            <select
+              value={limit}
+              onChange={(e) => {
+                setLimit(Number(e.target.value));
+                setPage(1);
+                if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+              }}
+              className="bg-card border border-border text-foreground rounded px-2.5 py-1 text-xs cursor-pointer focus:outline-none focus:border-indigo-500"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => {
                 setPage((p) => Math.max(1, p - 1));
                 if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
               }}
               disabled={page <= 1}
-              className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-card border border-border rounded-md transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
-              title="Previous page"
+              className="text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-200/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
             >
-              <ChevronLeft className="size-4" />
+              Prev
             </button>
 
-            <span className="text-xs text-zinc-400 px-2 font-medium">
-              Page <span className="text-zinc-200 font-semibold">{page}</span> of{' '}
-              <span className="text-zinc-200 font-semibold">{totalPages}</span>
-            </span>
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .filter((p) => {
+                if (totalPages <= 7) return true;
+                if (p === 1 || p === totalPages) return true;
+                if (Math.abs(p - page) <= 1) return true;
+                return false;
+              })
+              .map((p, idx, arr) => {
+                const prevPage = arr[idx - 1];
+                const isGap = prevPage && p - prevPage > 1;
+
+                return (
+                  <Fragment key={p}>
+                    {isGap && <span className="text-muted-foreground/60 px-1 text-xs select-none">...</span>}
+                    <button
+                      onClick={() => {
+                        setPage(p);
+                        if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                      }}
+                      className={`w-7 h-7 rounded text-xs transition-all flex items-center justify-center cursor-pointer ${
+                        page === p
+                          ? 'bg-foreground text-background font-bold shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 font-medium'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  </Fragment>
+                );
+              })}
 
             <button
               onClick={() => {
@@ -1495,19 +1364,20 @@ function ActivityFeedContent() {
                 if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
               }}
               disabled={page >= totalPages}
-              className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-card border border-border rounded-md transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
-              title="Next page"
+              className="text-xs text-foreground hover:text-foreground hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-200/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
             >
-              <ChevronRight className="size-4" />
+              Next
             </button>
           </div>
         </div>
       )}
+      </div>
 
       {/* Task Detail Modal */}
       {selectedTask && (
         <TaskDetailModal
           isOpen={true}
+          mode="full"
           onClose={() => {
             setSelectedTask(null);
             if (typeof window !== 'undefined') {
@@ -1518,6 +1388,10 @@ function ActivityFeedContent() {
             }
           }}
           task={selectedTask}
+          workspaceRoles={workspaceRoles}
+          onUpdateTask={(updatedTask) => {
+            setSelectedTask(updatedTask);
+          }}
         />
       )}
 

@@ -146,7 +146,7 @@ export function TaskMentionChip({
         }`}
       >
         {isClosed && (
-          <div className="absolute top-1/2 left-1.5 right-1.5 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
+          <span className="absolute top-1/2 left-1.5 right-1.5 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
         )}
 
         {/* Status circle icon */}
@@ -220,7 +220,7 @@ export function TaskMentionChip({
                 const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500'];
                 const bgColor = colors[i % colors.length];
                 return (
-                  <div
+                  <span
                     key={role}
                     className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 ${chipRing} ${
                       i > 0 ? '-ml-2' : ''
@@ -229,7 +229,7 @@ export function TaskMentionChip({
                     title={role}
                   >
                     {role.substring(0, 2).toUpperCase()}
-                  </div>
+                  </span>
                 );
               })
             ) : (

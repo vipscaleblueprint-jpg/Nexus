@@ -20,6 +20,7 @@ import {
   Pencil,
   Search,
   X,
+  ArrowDownUp,
 } from 'lucide-react';
 // useRouter is imported above
 import { ListSkeleton } from '@/components/ui/Skeleton';
@@ -133,6 +134,40 @@ export default function BoardPage() {
   const setSearch = (text: string) => setSearchState({ listId: id, text });
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Global preference: Latest closed tasks on top across all clients (defaults to true)
+  const SORT_CLOSED_STORAGE_KEY = 'nexus_kanban_sort_latest_closed';
+  const [sortLatestClosed, setSortLatestClosed] = useState<boolean>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem(SORT_CLOSED_STORAGE_KEY) : null;
+      return stored !== null ? stored === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleSortLatestClosed = () => {
+    setSortLatestClosed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SORT_CLOSED_STORAGE_KEY, String(next));
+      } catch {}
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexus:kanban-sort-closed-changed', { detail: next }));
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const handleSync = (e: any) => {
+      if (typeof e.detail === 'boolean') {
+        setSortLatestClosed(e.detail);
+      }
+    };
+    window.addEventListener('nexus:kanban-sort-closed-changed', handleSync);
+    return () => window.removeEventListener('nexus:kanban-sort-closed-changed', handleSync);
+  }, []);
+
   // "/" focuses the search, like ClickUp, unless typing somewhere already
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -235,6 +270,17 @@ export default function BoardPage() {
           if (taskToOpen) {
             setSelectedTask(taskToOpen);
           }
+        }
+      } else if (actualTaskId) {
+        // If task in list.tasks has an updated status, keep selectedTask in sync
+        const matching = list.tasks.find((t: any) => t.id === actualTaskId);
+        if (matching) {
+          setSelectedTask((prev: any) => {
+            if (prev && prev.id === matching.id && prev.status !== matching.status) {
+              return { ...prev, status: matching.status };
+            }
+            return prev;
+          });
         }
       }
     }
@@ -343,6 +389,7 @@ export default function BoardPage() {
           ),
         };
       });
+      setSelectedTask((prev: any) => (prev?.id === data.taskId ? { ...prev, status: data.status } : prev));
     });
 
     s.on('task:comment_added', (payload: { taskId: string, comment: any }) => {
@@ -484,12 +531,14 @@ export default function BoardPage() {
 
     // Optimistically update UI, and remember it so an older in-flight list fetch can't undo it
     localTaskEditsRef.current.set(taskId, Date.now());
+    const nowIso = new Date().toISOString();
     setList((prev: any) => ({
       ...prev,
       tasks: prev.tasks.map((t: any) =>
-        t.id === taskId ? { ...t, status: newStatus } : t
+        t.id === taskId ? { ...t, status: newStatus, updatedAt: nowIso } : t
       ),
     }));
+    setSelectedTask((prev: any) => (prev?.id === taskId ? { ...prev, status: newStatus } : prev));
 
     try {
       await tasksApi.moveTask(taskId, newStatus, id as string, currentUser?.id);
@@ -715,6 +764,23 @@ export default function BoardPage() {
             </button>
 
             <div className="ml-auto mb-2 flex items-center gap-2">
+              <button
+                onClick={toggleSortLatestClosed}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold border transition-all cursor-pointer ${
+                  sortLatestClosed
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 shadow-xs'
+                    : 'bg-secondary/60 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                }`}
+                title={
+                  sortLatestClosed
+                    ? 'Filter active: Latest closed tasks show on top across all clients - Click for default order'
+                    : 'Filter: Click to show latest closed tasks on top across all clients'
+                }
+              >
+                <ArrowDownUp className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Latest Closed on Top</span>
+              </button>
+
               {isSearching && (
                 <span className={`text-[11px] ${visibleTasks.length ? 'text-zinc-500' : 'text-amber-400'}`}>
                   {visibleTasks.length ? `${visibleTasks.length} of ${list?.tasks?.length ?? 0}` : 'No matching tasks'}

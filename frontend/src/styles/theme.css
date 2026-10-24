@@ -1,0 +1,284 @@
+/**
+ * Nexus Customizable Color Theme System
+ * Tokens: --bg, --surface, --border, --text, --muted, --accent, --on-accent, --success, --warning, --danger, --info
+ *
+ * Bases on the original Nexus dark mode and light mode with properly subtle interactive hovers.
+ */
+
+/* ==========================================================================
+   DEFAULT FALLBACK (Nexus Original Dark & Light)
+   ========================================================================== */
+:root:not([data-palette]),
+:root:not([data-palette])[data-theme="dark"] {
+  --bg: #131316;
+  --surface: #18181c;
+  --border: #242429;
+  --text: #e4e4e7;
+  --muted: #94949e;
+  --accent: #4F46E5;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #242429;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #38BDF8;
+}
+
+:root:not([data-palette])[data-theme="light"],
+:root.theme-light:not([data-palette]) {
+  --bg: #FFFFFF;
+  --surface: #F9F9F9;
+  --border: #E8E8E8;
+  --text: #202020;
+  --muted: #595959;
+  --accent: #4F46E5;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #EAEAEA;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0EA5E9;
+}
+
+/* ==========================================================================
+   PALETTE 1: NEXUS (DEFAULT - BASED ON ORIGINAL THEME)
+   ========================================================================== */
+:root[data-palette="nexus"][data-theme="dark"] {
+  --bg: #131316;
+  --surface: #18181c;
+  --border: #242429;
+  --text: #e4e4e7;
+  --muted: #94949e;
+  --accent: #4F46E5;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #242429;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #38BDF8;
+}
+
+:root[data-palette="nexus"][data-theme="light"],
+:root[data-palette="nexus"].theme-light {
+  --bg: #FFFFFF;
+  --surface: #F9F9F9;
+  --border: #E8E8E8;
+  --text: #202020;
+  --muted: #595959;
+  --accent: #4F46E5;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #EAEAEA;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0EA5E9;
+}
+
+/* ==========================================================================
+   PALETTE 2: PINK
+   ========================================================================== */
+:root[data-palette="pink"][data-theme="light"],
+:root[data-palette="pink"].theme-light {
+  --bg: #FFFFFF;
+  --surface: #F9F9F9;
+  --border: #E8E8E8;
+  --text: #202020;
+  --muted: #595959;
+  --accent: #DB2777;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #EAEAEA;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0EA5E9;
+}
+
+:root[data-palette="pink"][data-theme="dark"] {
+  --bg: #14080E;
+  --surface: #1F0F17;
+  --border: #3A1D2B;
+  --text: #F8E8EF;
+  --muted: #B896A8;
+  --accent: #F472B6;
+  --on-accent: #0F172A;
+  --hover-subtle: #2A1721;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #38BDF8;
+}
+
+/* ==========================================================================
+   PALETTE 3: OCEAN
+   ========================================================================== */
+:root[data-palette="ocean"][data-theme="light"],
+:root[data-palette="ocean"].theme-light {
+  --bg: #FFFFFF;
+  --surface: #F9F9F9;
+  --border: #E8E8E8;
+  --text: #202020;
+  --muted: #595959;
+  --accent: #0369A1;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #EAEAEA;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0EA5E9;
+}
+
+:root[data-palette="ocean"][data-theme="dark"] {
+  --bg: #07131D;
+  --surface: #0D1D2A;
+  --border: #173043;
+  --text: #E3EEF6;
+  --muted: #8FA6B8;
+  --accent: #38BDF8;
+  --on-accent: #0F172A;
+  --hover-subtle: #142838;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #38BDF8;
+}
+
+/* ==========================================================================
+   PALETTE 4: FOREST
+   ========================================================================== */
+:root[data-palette="forest"][data-theme="light"],
+:root[data-palette="forest"].theme-light {
+  --bg: #FFFFFF;
+  --surface: #F9F9F9;
+  --border: #E8E8E8;
+  --text: #202020;
+  --muted: #595959;
+  --accent: #15803D;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #EAEAEA;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0EA5E9;
+}
+
+:root[data-palette="forest"][data-theme="dark"] {
+  --bg: #08130D;
+  --surface: #0E1D14;
+  --border: #183024;
+  --text: #E2EFE6;
+  --muted: #8CA697;
+  --accent: #4ADE80;
+  --on-accent: #0F172A;
+  --hover-subtle: #14291D;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #38BDF8;
+}
+
+/* ==========================================================================
+   PALETTE 5: SUNSET
+   ========================================================================== */
+:root[data-palette="sunset"][data-theme="light"],
+:root[data-palette="sunset"].theme-light {
+  --bg: #FFFFFF;
+  --surface: #F9F9F9;
+  --border: #E8E8E8;
+  --text: #202020;
+  --muted: #595959;
+  --accent: #C2410C;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #EAEAEA;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0EA5E9;
+}
+
+:root[data-palette="sunset"][data-theme="dark"] {
+  --bg: #140C07;
+  --surface: #1F140C;
+  --border: #352315;
+  --text: #F4E9E0;
+  --muted: #B09A88;
+  --accent: #FB923C;
+  --on-accent: #0F172A;
+  --hover-subtle: #291B12;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #38BDF8;
+}
+
+/* ==========================================================================
+   PALETTE 6: GRAPHITE
+   ========================================================================== */
+:root[data-palette="graphite"][data-theme="light"],
+:root[data-palette="graphite"].theme-light {
+  --bg: #FFFFFF;
+  --surface: #F9F9F9;
+  --border: #E8E8E8;
+  --text: #202020;
+  --muted: #595959;
+  --accent: #27272A;
+  --on-accent: #FFFFFF;
+  --hover-subtle: #EAEAEA;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0EA5E9;
+}
+
+:root[data-palette="graphite"][data-theme="dark"] {
+  --bg: #09090B;
+  --surface: #121214;
+  --border: #27272A;
+  --text: #F4F4F5;
+  --muted: #A1A1AA;
+  --accent: #E4E4E7;
+  --on-accent: #0F172A;
+  --hover-subtle: #1C1C20;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #38BDF8;
+}
+
+/* ==========================================================================
+   DYNAMIC PALETTE BRIDGE TO APP TOKENS
+   ========================================================================== */
+:root[data-palette] {
+  --background: var(--bg);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --border: var(--border);
+  --foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --muted-foreground: var(--muted);
+  --secondary: var(--surface);
+  --secondary-foreground: var(--text);
+  --input: var(--border);
+}
+
+:root {
+  --accent-tint: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --accent-tint-hover: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+
+/* Utility classes */
+.bg-theme-bg { background-color: var(--bg); }
+.bg-theme-surface { background-color: var(--surface); }
+.border-theme-border { border-color: var(--border); }
+.text-theme-text { color: var(--text); }
+.text-theme-muted { color: var(--muted); }
+.bg-theme-accent { background-color: var(--accent); }
+.text-theme-accent { color: var(--accent); }
+.text-theme-on-accent { color: var(--on-accent); }
+.bg-accent-tint { background-color: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.bg-accent-tint-hover:hover { background-color: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
+
+.theme-focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

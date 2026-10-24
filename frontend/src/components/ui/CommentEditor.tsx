@@ -19,6 +19,7 @@ import { insertNexusTaskMention, cleanPastedHtml, stripMarksFromSlice } from '@/
 import { TextColorPanel } from '@/components/editor/TextColorPanel';
 import { toast } from '@/lib/toast';
 import { Indent } from '@/components/editor/extensions/Indent';
+import { ListKeymap, handleListEnter } from '@/components/editor/extensions/ListKeymap';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2, IndentDecrease, IndentIncrease, CheckSquare } from 'lucide-react';
@@ -130,11 +131,10 @@ const CommentBlocks = Extension.create({
   priority: 1000,
   addKeyboardShortcuts() {
     return {
-      'Shift-Enter': ({ editor }) => editor.commands.first(({ commands }) => [
-        () => commands.splitListItem('taskItem'),
-        () => commands.splitListItem('listItem'),
-        () => commands.splitBlock(),
-      ]),
+      'Shift-Enter': ({ editor }) => {
+        if (handleListEnter(editor as Editor)) return true;
+        return editor.commands.splitBlock();
+      },
       'Alt-ArrowUp': ({ editor }) => {
         const index = editor.state.selection.$from.index(0);
         return moveTopLevelBlock(editor as Editor, index, index - 1);
@@ -201,12 +201,13 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         nested: true,
       }),
       Indent,
+      ListKeymap,
       Link.configure({
         openOnClick: false,
         protocols: ['mention'],
         defaultProtocol: 'https',
         HTMLAttributes: {
-          class: 'text-blue-400 underline cursor-pointer',
+          class: 'text-blue-600 dark:text-blue-400 underline cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 transition-colors',
         },
       })
     ],
@@ -252,10 +253,18 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
           }
           return true;
         }
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          if (onSubmit) onSubmit();
-          return true;
+        if (event.key === 'Enter') {
+          if (handleListEnter(editor)) {
+            event.preventDefault();
+            return true;
+          }
+          if (!event.shiftKey) {
+            if (onSubmit) {
+              event.preventDefault();
+              onSubmit();
+              return true;
+            }
+          }
         }
         return false;
       },

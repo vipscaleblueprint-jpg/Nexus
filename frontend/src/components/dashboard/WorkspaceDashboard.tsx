@@ -3,6 +3,7 @@
 import React, {
   useState,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useCallback,
   useRef,
@@ -55,7 +56,6 @@ import { TaskDetailModal, getAssigneeAvatarColor } from "@/components/modals/Tas
 import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
 import { getPriorityConfig } from "@/lib/priority";
-import { getNexusTaskPath } from "@/lib/links";
 
 const FOCUS_REFETCH_INTERVAL_MS = 60 * 1000;
 
@@ -504,10 +504,51 @@ function WorkspaceDashboardContent({
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
 
-  // Track previous dashboard URL before opening a task modal so we can restore it on close
-  const previousDashboardUrlRef = useRef<string | null>(null);
-  const hadSelectedTask = useRef(false);
+  const closedTaskIdRef = useRef<string | null>(null);
   const lastOpenedUrlTaskId = useRef<string | null>(null);
+  const savedScrollTopRef = useRef<number>(0);
+  const clickedTaskIdRef = useRef<string | null>(null);
+
+  const handleCloseTaskModal = useCallback(() => {
+    if (selectedTask) {
+      closedTaskIdRef.current = selectedTask.id;
+    }
+    setSelectedTask(null);
+
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has("task") || url.searchParams.has("subtask")) {
+          url.searchParams.delete("task");
+          url.searchParams.delete("subtask");
+          window.history.replaceState(null, "", url.pathname + (url.search || ""));
+        }
+      } catch {}
+    }
+
+    const targetScroll = savedScrollTopRef.current;
+    const targetTaskId = clickedTaskIdRef.current;
+
+    const restoreScroll = () => {
+      const container = document.getElementById("main-scroll-container");
+      if (container && targetScroll !== null && targetScroll !== undefined) {
+        if (container.scrollTop !== targetScroll) {
+          container.scrollTop = targetScroll;
+        }
+      }
+      if (targetTaskId) {
+        const rowEl = document.getElementById(`task-row-${targetTaskId}`);
+        if (rowEl && container && Math.abs(container.scrollTop - targetScroll) > 40) {
+          rowEl.scrollIntoView({ block: "nearest", behavior: "instant" as ScrollBehavior });
+        }
+      }
+    };
+
+    restoreScroll();
+    requestAnimationFrame(restoreScroll);
+    setTimeout(restoreScroll, 30);
+    setTimeout(restoreScroll, 100);
+  }, [selectedTask]);
 
   // Track local updates to prevent socket echoes from causing UI bouncing
   const pendingTaskUpdatesRef = useRef<Record<string, number>>({});
@@ -538,6 +579,7 @@ function WorkspaceDashboardContent({
 
   // Sync tab with URL query parameter
   useEffect(() => {
+    if (selectedTask) return; // Keep dashboard tab stable while a task modal is open
     const filter = searchParams?.get("filter");
     if (filter === "my" || activeView === "my") {
       setCurrentTab("my");
@@ -548,7 +590,7 @@ function WorkspaceDashboardContent({
     } else {
       setCurrentTab("all");
     }
-  }, [searchParams, activeView]);
+  }, [searchParams, activeView, selectedTask]);
 
   useEffect(() => {
     if (activeView === 'folders') {
@@ -713,44 +755,31 @@ function WorkspaceDashboardContent({
     const subtaskId = isSub ? row.id : null;
 
     if (typeof window !== "undefined") {
-      // Remember dashboard URL so we can restore it when the task modal is closed
-      if (!previousDashboardUrlRef.current && !window.location.pathname.startsWith("/lists/")) {
-        previousDashboardUrlRef.current = window.location.pathname + (window.location.search || "");
+      const container = document.getElementById("main-scroll-container");
+      if (container) {
+        savedScrollTopRef.current = container.scrollTop;
       }
-      const dedicatedPath = getNexusTaskPath(taskToOpen, subtaskId);
-      window.history.replaceState(null, "", dedicatedPath);
+    }
+    clickedTaskIdRef.current = row.id || taskToOpen.id;
+
+    closedTaskIdRef.current = null;
+    lastOpenedUrlTaskId.current = taskToOpen.id;
+
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("task", taskToOpen.id);
+        if (subtaskId) {
+          url.searchParams.set("subtask", subtaskId);
+        } else {
+          url.searchParams.delete("subtask");
+        }
+        window.history.replaceState(null, "", url.pathname + (url.search || ""));
+      } catch {}
     }
 
     setSelectedTask(taskToOpen);
   };
-
-  // Keep the browser address bar in sync with the selected task's dedicated list URL,
-  // and restore the dashboard URL when the modal is closed.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    if (selectedTask) {
-      hadSelectedTask.current = true;
-      if (!previousDashboardUrlRef.current && !window.location.pathname.startsWith("/lists/")) {
-        previousDashboardUrlRef.current = window.location.pathname + (window.location.search || "");
-      }
-      const url = new URL(window.location.href);
-      const subtaskId = url.searchParams.get("subtask") || null;
-      const dedicatedPath = getNexusTaskPath(selectedTask, subtaskId);
-      if (window.location.pathname + window.location.search !== dedicatedPath) {
-        window.history.replaceState(null, "", dedicatedPath);
-      }
-    } else if (hadSelectedTask.current) {
-      hadSelectedTask.current = false;
-      const basePath = pathname === "/tasks" ? "/tasks" : "/";
-      const viewParam = searchParams?.get("view");
-      const viewQuery = currentTab === "my" && viewParam ? `&view=${viewParam}` : "";
-      const fallbackUrl = currentTab === "all" ? basePath : `${basePath}?filter=${currentTab}${viewQuery}`;
-      const restoreUrl = previousDashboardUrlRef.current || fallbackUrl;
-      previousDashboardUrlRef.current = null;
-      window.history.replaceState(null, "", restoreUrl);
-    }
-  }, [selectedTask, pathname, currentTab]);
 
   // Deep-linking: open task automatically if ?task= or ?subtask= parameter is present on initial load
   useEffect(() => {
@@ -758,6 +787,10 @@ function WorkspaceDashboardContent({
     const taskIdParam = searchParams?.get("task");
     const subtaskIdParam = searchParams?.get("subtask");
     const actualTaskId = taskIdParam ? taskIdParam.split("/")[0].trim() : null;
+
+    if (actualTaskId && actualTaskId === closedTaskIdRef.current) {
+      return;
+    }
 
     if (actualTaskId && actualTaskId !== lastOpenedUrlTaskId.current && actualTaskId !== selectedTask?.id) {
       lastOpenedUrlTaskId.current = actualTaskId;
@@ -785,7 +818,7 @@ function WorkspaceDashboardContent({
         }
       }
     }
-  }, [tasks, loadingTasks, searchParams, selectedTask]);
+  }, [tasks, loadingTasks, searchParams]);
 
   // User's assigned tasks
   const myTasks = useMemo(() => {
@@ -1282,7 +1315,7 @@ function WorkspaceDashboardContent({
     <div className="p-6 w-full h-full space-y-6 relative">
       <TaskDetailModal
         isOpen={!!selectedTask}
-        onClose={() => setSelectedTask(null)}
+        onClose={handleCloseTaskModal}
         task={selectedTask || null}
         mode="full"
         socket={socket}
@@ -1296,7 +1329,7 @@ function WorkspaceDashboardContent({
         // activity and notifies assignees), then reports the change back through onUpdateTask.
       />
 
-      <div className={selectedTask ? "hidden" : "flex flex-col gap-6"}>
+      <div className="flex flex-col gap-6">
 
 
       {/* ─── TOOLBAR ─── */}
@@ -1544,6 +1577,7 @@ function WorkspaceDashboardContent({
                           return (
                             <div
                               key={task.id}
+                              id={`task-row-${task.id}`}
                               onClick={() => openRow(task)}
                               className={`group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''} ${(task as any).isSubtask ? 'bg-violet-500/[0.05] border-l-2 border-l-violet-500/70' : ''}`}
                             >
@@ -1872,6 +1906,7 @@ function WorkspaceDashboardContent({
                             return (
                               <div
                                 key={task.id}
+                                id={`task-row-${task.id}`}
                                 onClick={() => openRow(task)}
                                 className={`group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''} ${(task as any).isSubtask ? 'bg-violet-500/[0.05] border-l-2 border-l-violet-500/70' : ''}`}
                               >

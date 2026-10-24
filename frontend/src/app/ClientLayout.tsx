@@ -15,6 +15,7 @@ import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
 import { formatTabTitle, resolveRouteTitle, updateFaviconBadge } from '@/lib/tabManager';
+import { applyTheme, getStoredTheme } from '@/lib/theme';
 
 function TabTitleSync() {
   const pathname = usePathname();
@@ -87,6 +88,12 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     markNavigation(pathname);
   }, [pathname]);
+
+  // Synchronize active theme for current user
+  useEffect(() => {
+    const config = getStoredTheme(currentUser?.id);
+    applyTheme(config);
+  }, [currentUser?.id]);
 
   // Auth Gate & Session Verification
   useEffect(() => {
@@ -238,9 +245,12 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       </Suspense>
       <div className="flex-1 flex flex-col h-screen overflow-hidden bg-background">
         <Header />
-        <main id="main-scroll-container" className="flex-1 overflow-y-auto bg-background">
-          {children}
-        </main>
+        <div className="flex-1 relative overflow-hidden">
+          <main id="main-scroll-container" className="w-full h-full overflow-y-auto bg-background">
+            {children}
+          </main>
+          <div id="nexus-task-modal-portal" />
+        </div>
       </div>
       <ToastContainer />
       <MentionConfetti />

@@ -99,7 +99,7 @@ function PreloadableMarkdownVideo({ src }: { src: string }) {
   }
 
   return (
-    <div
+    <span
       className="my-2 inline-block relative group/video cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none"
       onClick={(e) => {
         e.preventDefault();
@@ -117,7 +117,7 @@ function PreloadableMarkdownVideo({ src }: { src: string }) {
         className="max-w-full md:max-w-md max-h-[300px] rounded-lg border border-zinc-800/70 bg-black/60 shadow-sm"
         onClick={(e) => e.stopPropagation()}
       />
-    </div>
+    </span>
   );
 }
 
@@ -152,7 +152,7 @@ function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
     <LinkWithPreview
       {...rest}
       href={normalizeHref(target)}
-      className="text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 rounded-sm transition-colors"
+      className="text-blue-600 dark:text-blue-400 hover:bg-blue-500/15 hover:text-blue-700 dark:hover:text-blue-300 rounded-sm transition-colors underline"
       onClick={(e) => e.stopPropagation()}
     >
       {children}

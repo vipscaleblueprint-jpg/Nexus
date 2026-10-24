@@ -224,7 +224,7 @@ export function CommentReplyInput({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         disabled={isSubmitting}
-        className="flex-1 min-w-0 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500/60 transition-colors disabled:opacity-50"
+        className="flex-1 min-w-0 bg-zinc-800/60 border border-zinc-700/60 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-[var(--accent)] transition-colors disabled:opacity-50"
       />
       <button
         type="button"
@@ -242,7 +242,11 @@ export function CommentReplyInput({
         type="button"
         onClick={handleSubmit}
         disabled={!text.trim() || isSubmitting}
-        className="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white transition-colors disabled:opacity-50 disabled:hover:bg-indigo-600 cursor-pointer"
+        style={{
+          backgroundColor: 'var(--accent)',
+          color: 'var(--on-accent, #ffffff)',
+        }}
+        className="p-1.5 rounded-md transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer"
         title="Send reply"
       >
         <Send className="w-3.5 h-3.5" />
@@ -285,15 +289,28 @@ export function CommentReplyInput({
                   onMouseEnter={() => setSelectedIndex(idx)}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => insertMention(u)}
+                  style={
+                    isSelected
+                      ? {
+                          backgroundColor: 'color-mix(in srgb, var(--accent) 25%, transparent)',
+                        }
+                      : undefined
+                  }
                   className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${
-                    isSelected ? 'bg-indigo-600/30 text-white' : 'text-zinc-200 hover:bg-zinc-800/60'
+                    isSelected ? 'text-white' : 'text-zinc-200 hover:bg-zinc-800/60'
                   }`}
                 >
                   {u.avatarUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
                   ) : (
-                    <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                    <div
+                      style={{
+                        backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+                        color: 'var(--accent)',
+                      }}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                    >
                       {(u.name || '?').substring(0, 2).toUpperCase()}
                     </div>
                   )}

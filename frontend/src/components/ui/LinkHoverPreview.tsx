@@ -106,11 +106,13 @@ export function parseLinkMetadata(href: string, anchorText?: string): LinkMetada
 function computePosition(triggerRect: DOMRect, cardWidth: number, cardHeight: number) {
   if (typeof window === 'undefined') return { top: 0, left: 0 };
 
-  let top = triggerRect.bottom + GAP;
-  if (top + cardHeight > window.innerHeight - EDGE) {
-    const above = triggerRect.top - GAP - cardHeight;
-    if (above >= EDGE) {
-      top = above;
+  // Requirement: Move the hovered URL preview ABOVE the trigger link by default
+  let top = triggerRect.top - GAP - cardHeight;
+  if (top < EDGE) {
+    // If not enough room above the viewport, flip to below
+    const below = triggerRect.bottom + GAP;
+    if (below + cardHeight <= window.innerHeight - EDGE) {
+      top = below;
     } else {
       top = Math.max(EDGE, window.innerHeight - EDGE - cardHeight);
     }
@@ -215,13 +217,16 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
         top: `${coords.top}px`,
         left: `${coords.left}px`,
         zIndex: 999999,
+        backgroundColor: 'var(--surface)',
+        borderColor: 'var(--border)',
       }}
-      className="w-max min-w-[280px] max-w-[360px] bg-[#18181b] border border-zinc-700/80 rounded-xl p-3 shadow-2xl shadow-black/80 text-zinc-100 select-none opacity-100 transition-opacity duration-75"
+      className="w-max min-w-[280px] max-w-[360px] rounded-xl p-3 border shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/70 select-none opacity-100 transition-opacity duration-75"
     >
       {/* Top Row: Title + Action Buttons */}
       <div className="flex items-center justify-between gap-3 mb-2">
         <span
-          className="text-xs font-semibold text-zinc-100 truncate max-w-[210px] leading-tight"
+          className="text-xs font-semibold truncate max-w-[210px] leading-tight"
+          style={{ color: 'var(--text)' }}
           title={metadata.title}
         >
           {metadata.title}
@@ -232,10 +237,20 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
           <div className="relative flex items-center justify-center">
             {showCopyTooltip && (
               <div className="absolute -top-7 left-1/2 -translate-x-1/2 pointer-events-none z-50 flex flex-col items-center">
-                <div className="bg-zinc-800 text-white text-[10px] font-medium px-2 py-0.5 rounded shadow-lg border border-zinc-700/50 whitespace-nowrap">
+                <div
+                  className="text-[10px] font-medium px-2 py-0.5 rounded shadow-lg border whitespace-nowrap"
+                  style={{
+                    backgroundColor: 'var(--bg)',
+                    borderColor: 'var(--border)',
+                    color: 'var(--text)',
+                  }}
+                >
                   {copied ? 'Copied!' : 'Copy link'}
                 </div>
-                <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-zinc-800" />
+                <div
+                  className="w-0 h-0 border-x-4 border-x-transparent border-t-4"
+                  style={{ borderTopColor: 'var(--border)' }}
+                />
               </div>
             )}
             <button
@@ -243,11 +258,11 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
               onClick={handleCopy}
               onMouseEnter={() => setShowCopyTooltip(true)}
               onMouseLeave={() => setShowCopyTooltip(false)}
-              className={`p-1.5 rounded-md transition-colors cursor-pointer ${
-                copied
-                  ? 'bg-emerald-500/20 text-emerald-400'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
-              }`}
+              className="p-1.5 rounded-md transition-colors cursor-pointer hover:bg-[var(--hover-subtle)]"
+              style={{
+                color: copied ? 'var(--success)' : 'var(--muted)',
+                backgroundColor: copied ? 'color-mix(in srgb, var(--success) 15%, transparent)' : undefined,
+              }}
               title={copied ? 'Copied!' : 'Copy link'}
             >
               {copied ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
@@ -258,10 +273,20 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
           <div className="relative flex items-center justify-center">
             {showOpenTooltip && (
               <div className="absolute -top-7 left-1/2 -translate-x-1/2 pointer-events-none z-50 flex flex-col items-center">
-                <div className="bg-zinc-800 text-white text-[10px] font-medium px-2 py-0.5 rounded shadow-lg border border-zinc-700/50 whitespace-nowrap">
+                <div
+                  className="text-[10px] font-medium px-2 py-0.5 rounded shadow-lg border whitespace-nowrap"
+                  style={{
+                    backgroundColor: 'var(--bg)',
+                    borderColor: 'var(--border)',
+                    color: 'var(--text)',
+                  }}
+                >
                   Open in new tab
                 </div>
-                <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-zinc-800" />
+                <div
+                  className="w-0 h-0 border-x-4 border-x-transparent border-t-4"
+                  style={{ borderTopColor: 'var(--border)' }}
+                />
               </div>
             )}
             <button
@@ -269,7 +294,8 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
               onClick={handleOpen}
               onMouseEnter={() => setShowOpenTooltip(true)}
               onMouseLeave={() => setShowOpenTooltip(false)}
-              className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer"
+              className="p-1.5 rounded-md transition-colors cursor-pointer hover:bg-[var(--hover-subtle)]"
+              style={{ color: 'var(--muted)' }}
               title="Open in new tab"
             >
               <ExternalLink className="w-3.5 h-3.5" />
@@ -281,7 +307,7 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
       {/* Bottom Row: Favicon + URL */}
       <div
         onClick={handleOpen}
-        className="flex items-center gap-2 group/url cursor-pointer rounded px-1 -mx-1 py-0.5 hover:bg-zinc-800/40 transition-colors"
+        className="flex items-center gap-2 group/url cursor-pointer rounded px-1.5 -mx-1 py-1 hover:bg-[var(--hover-subtle)] transition-colors"
         title="Click to open link"
       >
         {metadata.faviconUrl && !faviconFailed ? (
@@ -292,9 +318,15 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
             className="w-3.5 h-3.5 rounded-[2px] object-contain shrink-0"
           />
         ) : (
-          <Globe className="w-3.5 h-3.5 text-zinc-500 shrink-0 group-hover/url:text-zinc-400" />
+          <Globe
+            className="w-3.5 h-3.5 shrink-0"
+            style={{ color: 'var(--muted)' }}
+          />
         )}
-        <span className="text-[11px] text-zinc-400 font-mono truncate group-hover/url:text-blue-400 group-hover/url:underline transition-colors max-w-[310px]">
+        <span
+          className="text-[11px] font-mono truncate group-hover/url:underline group-hover/url:text-blue-600 dark:group-hover/url:text-blue-400 transition-colors max-w-[310px]"
+          style={{ color: 'var(--muted)' }}
+        >
           {metadata.displayUrl}
         </span>
       </div>

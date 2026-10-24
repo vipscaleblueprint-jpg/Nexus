@@ -169,7 +169,7 @@ function toReact(node: Node, key: number): React.ReactNode {
       if (labelText) mockSpan.setAttribute('data-label', labelText);
       return <MentionChipPreview key={key} el={mockSpan} />;
     }
-    return <LinkWithPreview key={key} href={href} className="underline text-blue-400">{children}</LinkWithPreview>;
+    return <LinkWithPreview key={key} href={href} className="underline text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors">{children}</LinkWithPreview>;
   }
   // data-badge keeps the badge pill shape (globals.css); its colours come through safeStyle
   if (tag === 'span') return <span key={key} style={safeStyle(el)} data-badge={el.hasAttribute('data-badge') ? '' : undefined}>{children}</span>;

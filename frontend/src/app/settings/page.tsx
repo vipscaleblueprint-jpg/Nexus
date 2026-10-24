@@ -4,11 +4,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
 import { authApi, usersApi } from '@/api';
 import { API_BASE_URL } from '@/api/client';
-import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell } from 'lucide-react';
+import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell, Palette } from 'lucide-react';
 import { UserNotificationPreferences } from '@/types';
 import { SettingsSkeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/lib/toast';
 import { ApiDocsSection } from '@/components/settings/ApiDocsSection';
+import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { uploadApi } from '@/api/upload';
 import { triggerMentionConfetti } from '@/components/ui/MentionConfetti';
@@ -88,6 +89,7 @@ export default function SettingsPage() {
 
   // Scrollspy Refs
   const profileRef = useRef<HTMLDivElement>(null);
+  const appearanceRef = useRef<HTMLDivElement>(null);
   const confettiRef = useRef<HTMLDivElement>(null);
   const passwordRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
@@ -155,6 +157,7 @@ export default function SettingsPage() {
     );
 
     if (profileRef.current) observer.observe(profileRef.current);
+    if (appearanceRef.current) observer.observe(appearanceRef.current);
     if (confettiRef.current) observer.observe(confettiRef.current);
     if (passwordRef.current) observer.observe(passwordRef.current);
     if (notificationsRef.current) observer.observe(notificationsRef.current);
@@ -450,85 +453,46 @@ export default function SettingsPage() {
   return (
     <div className="flex w-full h-full bg-background overflow-hidden">
       {/* Settings Sidebar (Scrollspy) */}
-      <div className="w-64 shrink-0 bg-background border-r border-zinc-800 flex flex-col">
-        <div className="p-4 border-b border-zinc-800">
-          <h1 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-            <Settings className="w-4 h-4 text-zinc-400" />
+      <div className="w-64 shrink-0 bg-background border-r border-[var(--border)] flex flex-col">
+        <div className="p-4 border-b border-[var(--border)]">
+          <h1 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+            <Settings className="w-4 h-4" style={{ color: 'var(--muted)' }} />
             Settings
           </h1>
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
-          <button
-            onClick={() => scrollToSection('profile')}
-            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
-              activeSection === 'profile'
-                ? 'bg-zinc-800/80 text-white font-medium'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <UserIcon className={`w-4 h-4 ${activeSection === 'profile' ? 'text-indigo-400' : 'text-zinc-500'}`} />
-            Profile
-          </button>
-
-          <button
-            onClick={() => scrollToSection('confetti')}
-            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
-              activeSection === 'confetti'
-                ? 'bg-zinc-800/80 text-white font-medium'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Sparkles className={`w-4 h-4 ${activeSection === 'confetti' ? 'text-indigo-400' : 'text-zinc-500'}`} />
-            Mention Confetti
-          </button>
-          
-          <button
-            onClick={() => scrollToSection('password')}
-            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
-              activeSection === 'password'
-                ? 'bg-zinc-800/80 text-white font-medium'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Lock className={`w-4 h-4 ${activeSection === 'password' ? 'text-indigo-400' : 'text-zinc-500'}`} />
-            Password
-          </button>
-          
-          <button
-            onClick={() => scrollToSection('notifications')}
-            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
-              activeSection === 'notifications'
-                ? 'bg-zinc-800/80 text-white font-medium'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Bell className={`w-4 h-4 ${activeSection === 'notifications' ? 'text-indigo-400' : 'text-zinc-500'}`} />
-            Notifications
-          </button>
-          
-          <button
-            onClick={() => scrollToSection('api')}
-            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
-              activeSection === 'api'
-                ? 'bg-zinc-800/80 text-white font-medium'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Code className={`w-4 h-4 ${activeSection === 'api' ? 'text-indigo-400' : 'text-zinc-500'}`} />
-            API Integrations
-          </button>
-          
-          <button
-            onClick={() => scrollToSection('docs')}
-            className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-colors ${
-              activeSection === 'docs'
-                ? 'bg-zinc-800/80 text-white font-medium'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Book className={`w-4 h-4 ${activeSection === 'docs' ? 'text-indigo-400' : 'text-zinc-500'}`} />
-            API Documentation
-          </button>
+          {[
+            { id: 'profile', label: 'Profile', icon: UserIcon },
+            { id: 'appearance', label: 'Appearance', icon: Palette },
+            { id: 'confetti', label: 'Mention Confetti', icon: Sparkles },
+            { id: 'password', label: 'Password', icon: Lock },
+            { id: 'notifications', label: 'Notifications', icon: Bell },
+            { id: 'api', label: 'API Integrations', icon: Code },
+            { id: 'docs', label: 'API Documentation', icon: Book },
+          ].map((item) => {
+            const IconComponent = item.icon;
+            const isActive = activeSection === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => scrollToSection(item.id)}
+                className={`flex items-center gap-2 px-3 py-2 w-full text-left rounded-lg text-sm transition-all cursor-pointer theme-focus-ring ${
+                  isActive ? '' : 'hover:bg-accent hover:text-foreground'
+                }`}
+                style={{
+                  backgroundColor: isActive ? 'color-mix(in srgb, var(--accent) 15%, var(--surface))' : 'transparent',
+                  color: isActive ? 'var(--text)' : 'var(--muted)',
+                  fontWeight: isActive ? 600 : 400,
+                }}
+              >
+                <IconComponent
+                  className="w-4 h-4 transition-colors"
+                  style={{ color: isActive ? 'var(--accent)' : 'var(--muted)' }}
+                />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
         </nav>
       </div>
 
@@ -537,10 +501,12 @@ export default function SettingsPage() {
         <div className="max-w-[700px] mx-auto py-10 px-8 pb-32 space-y-12">
           
           <div className="mb-4">
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
               Account Settings
             </h1>
-            <p className="text-zinc-500 text-sm mt-1">Manage your profile details, security, and integrations.</p>
+            <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>
+              Manage your profile details, security, appearance, and integrations.
+            </p>
           </div>
 
           {/* PROFILE SECTION */}
@@ -650,6 +616,11 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* APPEARANCE & THEMES SECTION */}
+          <div ref={appearanceRef}>
+            <AppearanceSettings />
+          </div>
 
           {/* MENTION CONFETTI & CELEBRATION SECTION */}
           <section id="confetti" ref={confettiRef} className="scroll-mt-8 space-y-6">

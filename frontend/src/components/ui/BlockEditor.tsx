@@ -18,6 +18,7 @@ import { TextColorPanel } from '../editor/TextColorPanel';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
 import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
 import { Indent } from '../editor/extensions/Indent';
+import { ListKeymap, handleListEnter } from '../editor/extensions/ListKeymap';
 import { taskSuggestion } from '../editor/suggestions/taskSuggestion';
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
@@ -147,7 +148,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
         linkOnPaste: true,
         defaultProtocol: 'https',
         HTMLAttributes: {
-          class: 'text-blue-400 underline cursor-pointer hover:text-blue-300',
+          class: 'text-blue-600 dark:text-blue-400 underline cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 transition-colors',
         },
       }),
       LiveKanbanBlock,
@@ -155,6 +156,7 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       ToggleSummary,
       ToggleContent,
       BlockReorder,
+      ListKeymap,
       Indent.configure({
         onIndent: () => {
           if (propsRef.current.onIndent) {
@@ -305,11 +307,17 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
                 return true;
              }
           }
-        } else if (event.key === 'Enter' && event.shiftKey) {
-          event.preventDefault();
-          event.stopPropagation();
-          view.dispatch(view.state.tr.split(view.state.selection.from));
-          return true;
+        } else if (event.key === 'Enter') {
+          if (handleListEnter(editor)) {
+            event.preventDefault();
+            return true;
+          }
+          if (event.shiftKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            view.dispatch(view.state.tr.split(view.state.selection.from));
+            return true;
+          }
         } else if (event.key === 'Escape' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
           if (propsRef.current.onKeyDown) {
             propsRef.current.onKeyDown(event as any);

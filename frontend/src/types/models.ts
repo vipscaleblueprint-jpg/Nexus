@@ -190,6 +190,7 @@ export interface Task {
     folder?: { id: string; name: string };
   };
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Subtask {

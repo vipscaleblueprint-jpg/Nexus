@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2 } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, ZoomIn, ZoomOut } from 'lucide-react';
 import { getThumbnailUrl } from '@/lib/thumbnail';
 
 export interface ImageLightboxModalProps {
@@ -24,12 +24,16 @@ export function ImageLightboxModal({
   children,
 }: ImageLightboxModalProps) {
   // Track which original image has finished loading; reset strictly on currentSrc change (< > navigation)
+  const [aspect, setAspect] = useState<'portrait' | 'landscape' | null>(null);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [prevSrc, setPrevSrc] = useState(currentSrc);
 
   if (prevSrc !== currentSrc) {
     setPrevSrc(currentSrc);
     setLoadedSrc(null);
+    setAspect(null);
+    setIsZoomed(false);
   }
   const currentIndex = useMemo(() => {
     if (!currentSrc || !images || images.length === 0) return -1;
@@ -120,6 +124,16 @@ export function ImageLightboxModal({
             >
               <ExternalLink className="w-5 h-5" />
             </a>
+            {aspect === 'portrait' && (
+              <button
+                type="button"
+                onClick={() => setIsZoomed((z) => !z)}
+                className="p-2 sm:p-2.5 rounded-full bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-300 hover:text-white shadow-lg backdrop-blur-md transition-all cursor-pointer flex items-center justify-center"
+                title={isZoomed ? "Fit to screen" : "Zoom to full width"}
+              >
+                {isZoomed ? <ZoomOut className="w-5 h-5" /> : <ZoomIn className="w-5 h-5" />}
+              </button>
+            )}
           </>
         )}
         <button
@@ -189,7 +203,21 @@ export function ImageLightboxModal({
             onClick={(e) => e.stopPropagation()}
           />
         ) : currentSrc ? (
-          <div className="relative max-w-full max-h-[90vh] flex items-center justify-center overflow-hidden rounded-lg">
+          <div
+            className={`relative flex items-center justify-center rounded-lg transition-all duration-200 ${
+              aspect === 'portrait' && isZoomed
+                ? 'w-full max-w-2xl sm:max-w-3xl max-h-[92vh] overflow-y-auto custom-scrollbar cursor-zoom-out p-2'
+                : aspect === 'portrait'
+                ? 'max-w-full max-h-[90vh] overflow-hidden cursor-zoom-in'
+                : 'max-w-full max-h-[90vh] overflow-hidden'
+            }`}
+            onClick={(e) => {
+              if (aspect === 'portrait') {
+                e.stopPropagation();
+                setIsZoomed((z) => !z);
+              }
+            }}
+          >
             {/* Loading indicator while the active original size image downloads */}
             {loadedSrc !== currentSrc && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-zinc-700/70 text-xs font-medium text-zinc-300 shadow-2xl backdrop-blur-md pointer-events-none">
@@ -204,7 +232,9 @@ export function ImageLightboxModal({
                 src={getThumbnailUrl(currentSrc, 360, 35)}
                 alt=""
                 aria-hidden="true"
-                className="max-w-full max-h-[90vh] object-contain rounded-lg filter blur-md scale-[1.02] opacity-80 pointer-events-none transition-opacity duration-200"
+                className={`object-contain rounded-lg filter blur-md scale-[1.02] opacity-80 pointer-events-none transition-opacity duration-200 ${
+                  aspect === 'portrait' && isZoomed ? 'w-full h-auto' : 'max-w-full max-h-[90vh]'
+                }`}
               />
             )}
 
@@ -213,11 +243,20 @@ export function ImageLightboxModal({
               key={currentSrc}
               src={currentSrc}
               alt={fileName || 'Expanded view'}
-              onLoad={() => setLoadedSrc(currentSrc)}
-              className={`max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default transition-opacity duration-200 ${
+              onLoad={(e) => {
+                setLoadedSrc(currentSrc);
+                const { naturalWidth, naturalHeight } = e.currentTarget;
+                if (naturalWidth && naturalHeight) {
+                  setAspect(naturalHeight > naturalWidth ? 'portrait' : 'landscape');
+                }
+              }}
+              className={`rounded-lg shadow-2xl transition-opacity duration-200 ${
+                aspect === 'portrait' && isZoomed
+                  ? 'w-full h-auto object-contain cursor-zoom-out'
+                  : 'max-w-full max-h-[90vh] object-contain cursor-default'
+              } ${
                 loadedSrc === currentSrc ? 'opacity-100' : 'opacity-0 absolute inset-0 m-auto'
               }`}
-              onClick={(e) => e.stopPropagation()}
             />
           </div>
         ) : null}

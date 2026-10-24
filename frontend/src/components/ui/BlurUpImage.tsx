@@ -9,6 +9,7 @@ interface BlurUpImageProps {
   src: string;
   alt?: string;
   className?: string;
+  imgClassName?: string;
   onPreview?: (src: string) => void;
 }
 
@@ -16,6 +17,7 @@ export function BlurUpImage({
   src,
   alt = 'attachment',
   className = '',
+  imgClassName = '',
   onPreview,
 }: BlurUpImageProps) {
   const [thumbLoaded, setThumbLoaded] = useState(false);
@@ -91,7 +93,7 @@ export function BlurUpImage({
   }
 
   return (
-    <div
+    <span
       role="button"
       tabIndex={0}
       className={`my-2 inline-block relative group/image cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none ${className}`}
@@ -102,6 +104,17 @@ export function BlurUpImage({
           onPreview(src);
         } else {
           window.open(src, '_blank');
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          if (onPreview) {
+            onPreview(src);
+          } else {
+            window.open(src, '_blank');
+          }
         }
       }}
       title={cleanFileName ? `${cleanFileName} · Click to preview original` : 'Click to preview original'}
@@ -125,7 +138,7 @@ export function BlurUpImage({
         decoding="async"
         onLoad={() => setThumbLoaded(true)}
         onError={handleImageError}
-        className={`max-w-full md:max-w-md max-h-[360px] object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-all duration-300 ${
+        className={`${imgClassName || 'max-w-full md:max-w-md max-h-[360px]'} object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-all duration-300 ${
           thumbLoaded
             ? 'block group-hover/image:brightness-95 filter blur-0 opacity-100'
             : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
@@ -141,6 +154,6 @@ export function BlurUpImage({
           </span>
         </span>
       )}
-    </div>
+    </span>
   );
 }

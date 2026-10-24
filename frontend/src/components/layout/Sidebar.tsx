@@ -19,6 +19,7 @@ import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
 import { spacesApi, usersApi, authApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { SIDEBAR_SESSION_KEY } from '@/lib/sidebarSession';
+import { getStoredTheme, saveStoredTheme, applyTheme, ThemeMode } from '@/lib/theme';
 
 import {
   DndContext,
@@ -678,35 +679,42 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   };
 
   useEffect(() => {
-    const storedTheme = localStorage.getItem('nexus-theme');
-    if (storedTheme === 'light') {
-      setIsLightMode(true);
-      document.documentElement.classList.add('theme-light');
-    } else {
-      setIsLightMode(false);
-      document.documentElement.classList.remove('theme-light');
-    }
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light' ||
+                    document.documentElement.classList.contains('theme-light');
+    setIsLightMode(isLight);
+
+    const handleThemeChange = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const theme = customEvent.detail?.theme;
+      if (theme) {
+        setIsLightMode(theme === 'light');
+      } else {
+        const isNowLight = document.documentElement.getAttribute('data-theme') === 'light' ||
+                           document.documentElement.classList.contains('theme-light');
+        setIsLightMode(isNowLight);
+      }
+    };
+
+    window.addEventListener('nexus-theme-change', handleThemeChange);
+    return () => window.removeEventListener('nexus-theme-change', handleThemeChange);
   }, []);
 
   const toggleTheme = () => {
-    const newMode = !isLightMode;
-    
-    const applyTheme = () => {
-      setIsLightMode(newMode);
-      if (newMode) {
-        document.documentElement.classList.add('theme-light');
-        localStorage.setItem('nexus-theme', 'light');
-      } else {
-        document.documentElement.classList.remove('theme-light');
-        localStorage.setItem('nexus-theme', 'dark');
-      }
+    const nextMode: ThemeMode = isLightMode ? 'dark' : 'light';
+    const stored = getStoredTheme();
+    const newConfig = { ...stored, mode: nextMode };
+
+    const executeApply = () => {
+      setIsLightMode(nextMode === 'light');
+      applyTheme(newConfig);
+      saveStoredTheme(newConfig);
     };
 
     const hasViewTransition = typeof document !== 'undefined' && 'startViewTransition' in document;
     const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     if (!hasViewTransition || prefersReducedMotion) {
-      applyTheme();
+      executeApply();
       return;
     }
 
@@ -720,7 +728,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     // 3. Synchronously commit React DOM updates so the browser captures the exact new state immediately
     const transition = (document as any).startViewTransition(() => {
       flushSync(() => {
-        applyTheme();
+        executeApply();
       });
     });
 

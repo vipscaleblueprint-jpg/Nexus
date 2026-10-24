@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Clock } from 'lucide-react';
+import { X, User, Flag, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock } from 'lucide-react';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import * as Popover from '@radix-ui/react-popover';
@@ -40,6 +40,7 @@ import { EditCommentForm } from './EditCommentForm';
 import { CommentReplyInput } from './CommentReplyInput';
 import { EmojiPicker } from '../ui/EmojiPicker';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { FullscreenCommentModal } from './FullscreenCommentModal';
 import { BlurUpImage } from '../ui/BlurUpImage';
 import { extractImagesFromComments } from '@/lib/commentImages';
 import { RecurrencePicker, formatTimeDisplay } from './RecurrencePicker';
@@ -672,17 +673,6 @@ export function TaskDetailModalContent({
     const handleWindowTaskActivity = (e: any) => {
       const data = e.detail;
       if (!data || !task || data.taskId !== task.id) return;
-      if (data.activity?.type === 'status_change' && data.activity?.newStatus && !data.activity?.subtaskTitle) {
-        if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
-          setLocalStatus(data.activity.newStatus);
-          if (taskRef.current) {
-            taskRef.current.status = data.activity.newStatus;
-          }
-        }
-        if (onUpdateTaskRef.current && taskRef.current && taskRef.current.status !== data.activity.newStatus) {
-          onUpdateTaskRef.current({ ...taskRef.current, status: data.activity.newStatus });
-        }
-      }
       if (data.activity) {
         setActivities((prev) => {
           if (prev.some((a) => a.id === data.activity.id)) return prev;
@@ -818,11 +808,25 @@ export function TaskDetailModalContent({
   const [visibleActivityCount, setVisibleActivityCount] = useState(INITIAL_ACTIVITY_COUNT);
   const [isLoadingOlderActivities, setIsLoadingOlderActivities] = useState(false);
   const [prevTaskModalId, setPrevTaskModalId] = useState(task?.id);
+  const [fullscreenCommentId, setFullscreenCommentId] = useState<string | null>(null);
+
+  const activeFullscreenComment = useMemo(() => {
+    if (!fullscreenCommentId) return null;
+    const top = richComments.find(c => c.id === fullscreenCommentId);
+    if (top) return top;
+    for (const c of richComments) {
+      const r = c.replies?.find((rep: any) => rep.id === fullscreenCommentId);
+      if (r) return r;
+    }
+    return null;
+  }, [fullscreenCommentId, richComments]);
+
   if (task?.id !== prevTaskModalId) {
     setPrevTaskModalId(task?.id);
     setVisibleActivityCount(INITIAL_ACTIVITY_COUNT);
     setIsLoadingOlderActivities(false);
     setCollapsedDays({});
+    setFullscreenCommentId(null);
   }
 
   const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment'), [activities]);
@@ -1117,23 +1121,6 @@ export function TaskDetailModalContent({
           ? actRes.activities.filter((a: any) => a.subtaskTitle === task.title)
           : actRes.activities;
 
-        if (!isSubtask && Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
-          const statusLogs = fetchedActivities
-            .filter((a: any) => a.type === 'status_change' && a.newStatus && !a.subtaskTitle)
-            .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          if (statusLogs.length > 0) {
-            const latestStatus = statusLogs[0].newStatus;
-            if (latestStatus && latestStatus !== localStatusRef.current) {
-              setLocalStatus(latestStatus);
-              if (taskRef.current) {
-                taskRef.current.status = latestStatus;
-              }
-              if (onUpdateTaskRef.current && taskRef.current) {
-                onUpdateTaskRef.current({ ...taskRef.current, status: latestStatus });
-              }
-            }
-          }
-        }
 
         setActivities((prev) => {
           const optimistic = prev.filter(
@@ -1562,23 +1549,7 @@ export function TaskDetailModalContent({
           return [...prev, data.activity];
         });
 
-        if (data.activity.type === 'status_change' && data.activity.newStatus) {
-          if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
-            setLocalStatus(data.activity.newStatus);
-            if (taskRef.current) {
-              taskRef.current.status = data.activity.newStatus;
-            }
-          }
-          if (currentTask.status !== data.activity.newStatus && onUpdateTaskRef.current) {
-            onUpdateTaskRef.current({ ...currentTask, status: data.activity.newStatus });
-          }
-        }
 
-        if (data.activity.type === 'priority_change' && data.activity.newPriority) {
-          if (currentTask.priority !== data.activity.newPriority && onUpdateTaskRef.current) {
-            onUpdateTaskRef.current({ ...currentTask, priority: data.activity.newPriority });
-          }
-        }
       }
     };
 
@@ -2525,7 +2496,7 @@ export function TaskDetailModalContent({
         className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-card">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0 bg-card">
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
@@ -2651,7 +2622,7 @@ export function TaskDetailModalContent({
         <div className="flex flex-1 overflow-hidden">
 
           {/* Left Panel: Details & Description */}
-          <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto border-r border-border custom-scrollbar">
             <div className="p-8">
 
               <div className="mb-8 group max-w-3xl w-full">
@@ -3548,7 +3519,22 @@ export function TaskDetailModalContent({
                       if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
                     });
                     return (
-                      <div key={comment.id} className={`flex flex-col gap-2 text-sm w-full min-w-0 max-w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'mt-2 bg-muted' : ''}`}>
+                      <div
+                        key={comment.id}
+                        className={`group/comment flex flex-col gap-2 text-sm w-full min-w-0 max-w-full p-4 rounded-xl shadow-sm transition-all ${
+                          isReply
+                            ? 'mt-2 border'
+                            : 'bg-card border border-zinc-800/60'
+                        }`}
+                        style={
+                          isReply
+                            ? {
+                                backgroundColor: 'color-mix(in srgb, var(--accent) 6%, var(--surface, #18181c))',
+                                borderColor: 'color-mix(in srgb, var(--accent) 25%, var(--border, #242429))',
+                              }
+                            : undefined
+                        }
+                      >
                         <div className="flex items-center gap-3 w-full">
                           {comment.user?.avatarUrl ? (
                             <img src={comment.user.avatarUrl} alt={comment.user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
@@ -3562,25 +3548,35 @@ export function TaskDetailModalContent({
                               <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
                               <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
                             </div>
-                            {comment.user?.id === currentUser?.id && (
-                              <Popover.Root>
-                                <Popover.Trigger asChild>
-                                  <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
-                                    <MoreHorizontal className="w-3.5 h-3.5" />
-                                  </button>
-                                </Popover.Trigger>
-                                <Popover.Portal>
-                                  <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
-                                    <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
-                                      <Pencil className="w-3.5 h-3.5" /> Edit
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setFullscreenCommentId(comment.id)}
+                                className="opacity-0 hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300 p-1.5 rounded-md hover:bg-zinc-800/60 cursor-pointer"
+                                title="Full screen view"
+                              >
+                                <Maximize2 className="w-3.5 h-3.5" />
+                              </button>
+                              {comment.user?.id === currentUser?.id && (
+                                <Popover.Root>
+                                  <Popover.Trigger asChild>
+                                    <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
+                                      <MoreHorizontal className="w-3.5 h-3.5" />
                                     </button>
-                                    <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
-                                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                                    </button>
-                                  </Popover.Content>
-                                </Popover.Portal>
-                              </Popover.Root>
-                            )}
+                                  </Popover.Trigger>
+                                  <Popover.Portal>
+                                    <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
+                                      <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                        <Pencil className="w-3.5 h-3.5" /> Edit
+                                      </button>
+                                      <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                                      </button>
+                                    </Popover.Content>
+                                  </Popover.Portal>
+                                </Popover.Root>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -3597,7 +3593,7 @@ export function TaskDetailModalContent({
                             />
                           </div>
                         ) : (
-                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                          <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:underline hover:prose-a:text-blue-700 dark:hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                             <CommentMarkdown
                               content={comment.content || ''}
                               components={markdownComponents}
@@ -3701,7 +3697,12 @@ export function TaskDetailModalContent({
                         )}
                         {/* Replies */}
                         {!isReply && comment.replies?.length > 0 && (
-                          <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800 min-w-0 max-w-full">
+                          <div
+                            className="pl-4 flex flex-col gap-2 mt-1 border-l-2 min-w-0 max-w-full"
+                            style={{
+                              borderLeftColor: 'color-mix(in srgb, var(--accent) 55%, var(--border, #242429))',
+                            }}
+                          >
                             {comment.replies.map((r: any) => renderComment(r, true))}
                           </div>
                         )}
@@ -4242,6 +4243,22 @@ export function TaskDetailModalContent({
         </div>
       </div>
 
+      {/* Fullscreen Comment Modal */}
+      <FullscreenCommentModal
+        isOpen={!!activeFullscreenComment}
+        onClose={() => setFullscreenCommentId(null)}
+        comment={activeFullscreenComment}
+        taskTitle={task.title}
+        parentTaskId={task.id}
+        currentUser={currentUser}
+        workspaceUsers={workspaceUsers}
+        onToggleReaction={handleToggleReaction}
+        onSubmitReply={handleSubmitReply}
+        onToggleChecklist={handleToggleCommentChecklist}
+        onEdit={handleSaveEdit}
+        onDelete={(cId) => setCommentToDelete(cId)}
+        onPreviewImage={setLightboxImage}
+      />
       {/* Lightbox Modal */}
       <ImageLightboxModal
         isOpen={!!lightboxImage}
@@ -4397,10 +4414,24 @@ export function SubtaskDetailView({
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
 
+  const [fullscreenCommentId, setFullscreenCommentId] = useState<string | null>(null);
+
+  const activeFullscreenComment = useMemo(() => {
+    if (!fullscreenCommentId) return null;
+    const top = richComments.find(c => c.id === fullscreenCommentId);
+    if (top) return top;
+    for (const c of richComments) {
+      const r = c.replies?.find((rep: any) => rep.id === fullscreenCommentId);
+      if (r) return r;
+    }
+    return null;
+  }, [fullscreenCommentId, richComments]);
+
   useEffect(() => {
     setReplyingToId(null);
     setReplyText('');
     setShowEmojiPickerFor(null);
+    setFullscreenCommentId(null);
   }, [subtask?.id]);
 
   const [showMentionMenu, setShowMentionMenu] = useState(false);
@@ -5691,7 +5722,7 @@ export function SubtaskDetailView({
       className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 bg-card shrink-0">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setActiveSubtask && setActiveSubtask(null)}
@@ -6532,7 +6563,7 @@ export function SubtaskDetailView({
         </div >
 
         {/* Right Panel: Activity Log */}
-        < div className="w-[380px] bg-card flex flex-col border-l border-zinc-800/60 shrink-0 z-10" >
+        <div className="w-[380px] bg-card flex flex-col border-l border-zinc-800/60 shrink-0 z-10">
           <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
             <div className="flex gap-3">
@@ -6587,7 +6618,22 @@ export function SubtaskDetailView({
                   });
 
                   return (
-                    <div key={c.id} className={`flex flex-col gap-2 text-sm w-full min-w-0 max-w-full bg-card p-4 rounded-xl border border-zinc-800/60 shadow-sm ${isReply ? 'mt-2 bg-muted' : 'mt-2'}`}>
+                    <div
+                      key={c.id}
+                      className={`group/comment flex flex-col gap-2 text-sm w-full min-w-0 max-w-full p-4 rounded-xl shadow-sm transition-all ${
+                        isReply
+                          ? 'mt-2 border'
+                          : 'bg-card border border-zinc-800/60 mt-2'
+                      }`}
+                      style={
+                        isReply
+                          ? {
+                              backgroundColor: 'color-mix(in srgb, var(--accent) 6%, var(--surface, #18181c))',
+                              borderColor: 'color-mix(in srgb, var(--accent) 25%, var(--border, #242429))',
+                            }
+                          : undefined
+                      }
+                    >
                       <div className="flex items-center gap-3 w-full">
                         {c.user?.avatarUrl ? (
                           <img src={c.user.avatarUrl} alt={c.user?.name} className="w-8 h-8 rounded-full shrink-0 object-cover" />
@@ -6601,25 +6647,35 @@ export function SubtaskDetailView({
                             <span className="text-zinc-200 font-medium text-[13px]">{c.user?.name || 'Someone'}</span>
                             <span className="text-[11px] text-zinc-500">{dateStr} {timeStr}</span>
                           </div>
-                          {c.user?.id === currentUser?.id && (
-                            <Popover.Root>
-                              <Popover.Trigger asChild>
-                                <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
-                                  <MoreHorizontal className="w-3.5 h-3.5" />
-                                </button>
-                              </Popover.Trigger>
-                              <Popover.Portal>
-                                <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
-                                  <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
-                                    <Pencil className="w-3.5 h-3.5" /> Edit
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setFullscreenCommentId(c.id)}
+                              className="opacity-0 hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300 p-1.5 rounded-md hover:bg-zinc-800/60 cursor-pointer"
+                              title="Full screen view"
+                            >
+                              <Maximize2 className="w-3.5 h-3.5" />
+                            </button>
+                            {c.user?.id === currentUser?.id && (
+                              <Popover.Root>
+                                <Popover.Trigger asChild>
+                                  <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
+                                    <MoreHorizontal className="w-3.5 h-3.5" />
                                   </button>
-                                  <button onClick={(e) => { e.stopPropagation(); setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
-                                    <Trash2 className="w-3.5 h-3.5" /> Delete
-                                  </button>
-                                </Popover.Content>
-                              </Popover.Portal>
-                            </Popover.Root>
-                          )}
+                                </Popover.Trigger>
+                                <Popover.Portal>
+                                  <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
+                                    <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                      <Pencil className="w-3.5 h-3.5" /> Edit
+                                    </button>
+                                    <button onClick={(e) => { e.stopPropagation(); setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                                    </button>
+                                  </Popover.Content>
+                                </Popover.Portal>
+                              </Popover.Root>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -6636,7 +6692,7 @@ export function SubtaskDetailView({
                           />
                         </div>
                       ) : (
-                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-400 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
+                        <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:underline hover:prose-a:text-blue-700 dark:hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                           <CommentMarkdown
                             content={c.content || ''}
                             components={markdownComponents}
@@ -6744,7 +6800,12 @@ export function SubtaskDetailView({
 
                       {/* Replies */}
                       {!isReply && c.replies?.length > 0 && (
-                        <div className="pl-4 flex flex-col gap-2 mt-1 border-l-2 border-zinc-800 min-w-0 max-w-full">
+                        <div
+                          className="pl-4 flex flex-col gap-2 mt-1 border-l-2 min-w-0 max-w-full"
+                          style={{
+                            borderLeftColor: 'color-mix(in srgb, var(--accent) 55%, var(--border, #242429))',
+                          }}
+                        >
                           {c.replies.map((r: any) => renderComment(r, true))}
                         </div>
                       )}
@@ -7216,6 +7277,22 @@ export function SubtaskDetailView({
           itemName="this comment"
         />
       )}
+      {/* Fullscreen Comment Modal */}
+      <FullscreenCommentModal
+        isOpen={!!activeFullscreenComment}
+        onClose={() => setFullscreenCommentId(null)}
+        comment={activeFullscreenComment}
+        taskTitle={subtask?.title || parentTask?.title}
+        parentTaskId={parentTask?.id || subtask?.id}
+        currentUser={currentUser}
+        workspaceUsers={workspaceUsers}
+        onToggleReaction={handleToggleReaction}
+        onSubmitReply={handleSubmitReply}
+        onToggleChecklist={handleToggleCommentChecklist}
+        onEdit={handleSaveEdit}
+        onDelete={(cId) => setCommentToDelete(cId)}
+        onPreviewImage={setLightboxImage}
+      />
       {/* Lightbox Modal */}
       <ImageLightboxModal
         isOpen={!!lightboxImage}
@@ -7234,12 +7311,17 @@ export function SubtaskDetailView({
 }
 
 export function TaskDetailModal(props: Props) {
+  const [mounted, setMounted] = useState(false);
   const [fullTask, setFullTask] = useState<Task | null>(props.task ?? null);
   const setModalTitle = useAppStore(state => state.setModalTitle);
   const lastTaskIdRef = useRef<string | null>(null);
   // Fields the user changed while the background fetch below was in flight; its (older) copy must not
   // overwrite them, or the edit appears to revert.
   const locallyEditedKeysRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Dynamic Tab Title synchronization for Task Modal
   useEffect(() => {
@@ -7274,6 +7356,11 @@ export function TaskDetailModal(props: Props) {
               // and keep fields the user edited after the request was sent.
               const merged: any = { ...prev, ...res.task };
               locallyEditedKeysRef.current.forEach((key) => { merged[key] = (prev as any)[key]; });
+              // If the task was opened with a specific status (e.g. from KanbanBoard drag-and-drop),
+              // and the background getTask returned a stale or cached status, keep the canonical status
+              if (prev.status && res.task.status !== prev.status && ((res as any).cached || !res.task.status)) {
+                merged.status = prev.status;
+              }
               return merged;
             });
           }
@@ -7314,34 +7401,15 @@ export function TaskDetailModal(props: Props) {
   }, [fullTask?.id]);
 
   useEffect(() => {
-    const handleWrapperTaskActivity = (e: any) => {
-      const data = e.detail;
-      if (!data || !fullTask || data.taskId !== fullTask.id) return;
-      if (data.activity?.type === 'status_change' && data.activity?.newStatus && !data.activity?.subtaskTitle) {
-        setFullTask(prev => prev ? { ...prev, status: data.activity.newStatus } : prev);
-      }
-    };
-    window.addEventListener('task_activity', handleWrapperTaskActivity);
-    return () => window.removeEventListener('task_activity', handleWrapperTaskActivity);
-  }, [fullTask?.id]);
-
-  useEffect(() => {
     if (!props.socket || !fullTask?.id) return;
     const handleSocketTaskUpdated = (incoming: any) => {
       if (incoming && incoming.id === fullTask.id) {
         setFullTask(prev => prev ? { ...prev, ...incoming } : prev);
       }
     };
-    const handleSocketActivity = (data: any) => {
-      if (data?.taskId === fullTask.id && data.activity?.type === 'status_change' && data.activity?.newStatus && !data.activity?.subtaskTitle) {
-        setFullTask(prev => prev ? { ...prev, status: data.activity.newStatus } : prev);
-      }
-    };
     props.socket.on('task:updated', handleSocketTaskUpdated);
-    props.socket.on('task_activity', handleSocketActivity);
     return () => {
       props.socket.off('task:updated', handleSocketTaskUpdated);
-      props.socket.off('task_activity', handleSocketActivity);
     };
   }, [props.socket, fullTask?.id]);
 
@@ -7378,19 +7446,13 @@ export function TaskDetailModal(props: Props) {
   }, [props.isOpen]);
 
   useEffect(() => {
-    const main = document.getElementById('main-scroll-container');
-    if (props.isOpen) {
+    if (props.mode === 'modal' && props.isOpen) {
       document.body.style.overflow = 'hidden';
-      if (main) main.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-      if (main) main.style.overflow = '';
+      return () => {
+        document.body.style.overflow = '';
+      };
     }
-    return () => {
-      document.body.style.overflow = '';
-      if (main) main.style.overflow = '';
-    };
-  }, [props.isOpen]);
+  }, [props.isOpen, props.mode]);
 
 
   const handleUpdateTask = (updatedTask: Task) => {
@@ -7403,17 +7465,20 @@ export function TaskDetailModal(props: Props) {
     if (props.onUpdateTask) props.onUpdateTask(updatedTask);
   };
 
-  const content = (
-    <AnimatePresence>
-      {props.isOpen && fullTask && (
-        props.mode === 'full' ? (
+  if (!mounted || typeof document === 'undefined') return null;
+
+  if (props.mode === 'full') {
+    const portalTarget = document.getElementById('nexus-task-modal-portal');
+    const fullContent = (
+      <AnimatePresence>
+        {props.isOpen && fullTask && (
           <motion.div
             key="full-modal"
             initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 1 }}
             transition={{ duration: 0 }}
-            className="absolute inset-0 z-[100] bg-background flex flex-col cursor-default"
+            className="absolute inset-0 z-50 bg-background flex flex-col cursor-default"
           >
             <TaskDetailModalContent
               {...props}
@@ -7421,42 +7486,47 @@ export function TaskDetailModal(props: Props) {
               onUpdateTask={handleUpdateTask}
             />
           </motion.div>
-        ) : (
-          // Backdrop appears instantly; only the modal card animates
-          <div
-            key="modal-backdrop"
-            data-task-detail-modal=""
-            className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
-            onPointerDown={(e) => {
-              if (e.target === e.currentTarget) {
-                props.onClose();
-              }
-            }}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.97 }}
-              transition={{ duration: 0.15, ease: 'easeOut' }}
-              className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-zinc-800 flex flex-col cursor-default"
-            >
-              <TaskDetailModalContent
-                {...props}
-                task={fullTask}
-                onUpdateTask={handleUpdateTask}
-              />
-            </motion.div>
-          </div>
-        )
-      )}
-    </AnimatePresence>
-  );
+        )}
+      </AnimatePresence>
+    );
 
-  if (props.mode === 'full') {
-    return content;
+    if (portalTarget) {
+      return createPortal(fullContent, portalTarget);
+    }
+    return fullContent;
   }
 
-  return createPortal(content, document.body);
+  return createPortal(
+    <AnimatePresence>
+      {props.isOpen && fullTask && (
+        <div
+          key="modal-backdrop"
+          data-task-detail-modal=""
+          className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) {
+              props.onClose();
+            }
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.97 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-border flex flex-col cursor-default"
+          >
+            <TaskDetailModalContent
+              {...props}
+              task={fullTask}
+              onUpdateTask={handleUpdateTask}
+            />
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>,
+    document.body
+  );
 }
 
 // Force hot reload

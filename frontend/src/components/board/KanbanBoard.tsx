@@ -21,7 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
-import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil, ArrowDownUp } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
@@ -131,6 +131,8 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
   activeColumn,
   onTaskMove,
   onSubtaskStatusChange,
+  isSortLatestClosed,
+  onToggleSortClosed,
 }: any) {
   const dbStatus = listStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
   const permissionCheck = canUserMoveTask({ status } as any, listStatuses, currentUser, workspaceRoles);
@@ -224,6 +226,8 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
         dragListeners={sortable.listeners}
         dragAttributes={sortable.attributes}
         isOver={sortable.isOver}
+        isSortLatestClosed={isSortLatestClosed}
+        onToggleSortClosed={onToggleSortClosed}
       />
     </div>
   );
@@ -258,6 +262,40 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
 
+  // Global preference: Latest closed tasks on top across all clients (defaults to true)
+  const SORT_CLOSED_STORAGE_KEY = 'nexus_kanban_sort_latest_closed';
+  const [sortLatestClosedFirst, setSortLatestClosedFirst] = useState<boolean>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem(SORT_CLOSED_STORAGE_KEY) : null;
+      return stored !== null ? stored === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleSortLatestClosed = useCallback(() => {
+    setSortLatestClosedFirst((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SORT_CLOSED_STORAGE_KEY, String(next));
+      } catch { }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexus:kanban-sort-closed-changed', { detail: next }));
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleSync = (e: any) => {
+      if (typeof e.detail === 'boolean') {
+        setSortLatestClosedFirst(e.detail);
+      }
+    };
+    window.addEventListener('nexus:kanban-sort-closed-changed', handleSync);
+    return () => window.removeEventListener('nexus:kanban-sort-closed-changed', handleSync);
+  }, []);
+
   const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
     isOpen: boolean;
     task: any;
@@ -274,11 +312,12 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
   // Optimistic handler for task status changes from card dropdown
   const handleTaskMoveFromCard = useCallback((taskId: string, newStatus: string) => {
+    const nowIso = new Date().toISOString();
     setLocalTasks((prev) => {
       const newTasks = [...prev];
       const idx = newTasks.findIndex(t => t.id === taskId);
       if (idx > -1) {
-        newTasks[idx] = { ...newTasks[idx], status: newStatus };
+        newTasks[idx] = { ...newTasks[idx], status: newStatus, updatedAt: nowIso };
       }
       return newTasks;
     });
@@ -590,20 +629,58 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     useSensor(KeyboardSensor, keyboardSensorOptions)
   );
 
+  const isClosedStatus = useCallback((statusName: string) => {
+    const upper = (statusName || '').trim().toUpperCase();
+    if (upper === 'CLOSED' || upper === 'DONE' || upper === 'COMPLETED') return true;
+    const dbStatus = localStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === upper);
+    if (dbStatus && (dbStatus.groupName || '').trim().toLowerCase() === 'closed task') return true;
+    return false;
+  }, [localStatuses]);
+
+  const getTaskClosedTimestamp = useCallback((task: Task): number => {
+    if (task.updatedAt) {
+      const time = new Date(task.updatedAt).getTime();
+      if (!isNaN(time) && time > 0) return time;
+    }
+    if (task.createdAt) {
+      const time = new Date(task.createdAt).getTime();
+      if (!isNaN(time) && time > 0) return time;
+    }
+    return 0;
+  }, []);
+
   // Group tasks by status (case-insensitive, so legacy "In Progress" lands in the "IN PROGRESS" column)
   const tasksByStatus = useMemo(() => {
     const canonicalStatus: Record<string, string> = {};
     localStatuses.forEach((s: any) => {
       if (s.name) canonicalStatus[s.name.trim().toUpperCase()] = s.name;
     });
-    return localTasks.reduce((acc: Record<string, Task[]>, task) => {
+    const map = localTasks.reduce((acc: Record<string, Task[]>, task) => {
       const raw = task.status || 'PENDING';
       const status = canonicalStatus[raw.trim().toUpperCase()] || raw;
       if (!acc[status]) acc[status] = [];
       acc[status].push(task);
       return acc;
     }, {});
-  }, [localTasks, localStatuses]);
+
+    // When sortLatestClosedFirst is active, sort closed columns so latest closed tasks appear at the top
+    if (sortLatestClosedFirst) {
+      Object.keys(map).forEach((statusName) => {
+        if (isClosedStatus(statusName)) {
+          map[statusName].sort((a, b) => {
+            const timeA = getTaskClosedTimestamp(a);
+            const timeB = getTaskClosedTimestamp(b);
+            if (timeB !== timeA) return timeB - timeA;
+            const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return createdB - createdA;
+          });
+        }
+      });
+    }
+
+    return map;
+  }, [localTasks, localStatuses, sortLatestClosedFirst, isClosedStatus, getTaskClosedTimestamp]);
 
   // Group columns into configured categories + dynamic custom groups
   const categorizedColumns = useMemo(() => {
@@ -811,11 +888,12 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
 
     if (overStatus && activeTask.status !== overStatus) {
+      const nowIso = new Date().toISOString();
       setLocalTasks((prev) => {
         const newTasks = [...prev];
         const idx = newTasks.findIndex(t => t.id === activeId);
         if (idx > -1) {
-          newTasks[idx] = { ...newTasks[idx], status: overStatus };
+          newTasks[idx] = { ...newTasks[idx], status: overStatus, updatedAt: nowIso };
         }
         return newTasks;
       });
@@ -1059,12 +1137,13 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
 
     if (finalStatus !== originalTask.status) {
+      const nowIso = new Date().toISOString();
       // Optimistic update locally on top of the latest tasks (in case we missed websocket updates while dragging)
       setLocalTasks(() => {
         const newTasks = [...latestTasksRef.current];
         const idx = newTasks.findIndex(t => t.id === activeId);
         if (idx > -1) {
-          newTasks[idx] = { ...newTasks[idx], status: finalStatus };
+          newTasks[idx] = { ...newTasks[idx], status: finalStatus, updatedAt: nowIso };
         }
         return newTasks;
       });
@@ -1119,6 +1198,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                 (sum: number, s: string) => sum + (tasksByStatus[s]?.length || 0),
                 0
               );
+              const isClosedCategory = category.title === 'Closed Task' || category.statuses.some((s: string) => isClosedStatus(s));
 
               return (
                 <SortableGroupWrapper key={category.id} category={category} activeGroup={activeGroup}>
@@ -1212,17 +1292,42 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                   className="bg-zinc-800 text-[10px] font-bold uppercase tracking-wider text-white px-2 py-1 rounded outline-none w-40 border border-zinc-700 focus:border-indigo-500"
                                 />
                               ) : (
-                                <div
-                                  className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/5"
-                                  onClick={(e) => { e.stopPropagation(); toggleCategory(category.id); }}
-                                  title="Collapse section"
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                >
-                                  <span className="whitespace-nowrap text-zinc-300">{category.title}</span>
-                                  <span className="opacity-60 shrink-0 text-zinc-400">({totalCategoryTasks})</span>
-                                  <div className="p-0.5 ml-1 rounded transition-all opacity-0 group-hover:opacity-100 hover:bg-zinc-700/50">
-                                    <ChevronLeft className="w-3 h-3 shrink-0 text-zinc-400" />
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <div
+                                    className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/5"
+                                    onClick={(e) => { e.stopPropagation(); toggleCategory(category.id); }}
+                                    title="Collapse section"
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                  >
+                                    <span className="whitespace-nowrap text-zinc-300">{category.title}</span>
+                                    <span className="opacity-60 shrink-0 text-zinc-400">({totalCategoryTasks})</span>
+                                    <div className="p-0.5 ml-1 rounded transition-all opacity-0 group-hover:opacity-100 hover:bg-zinc-700/50">
+                                      <ChevronLeft className="w-3 h-3 shrink-0 text-zinc-400" />
+                                    </div>
                                   </div>
+
+                                  {isClosedCategory && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleSortLatestClosed();
+                                      }}
+                                      onMouseDown={(e) => e.stopPropagation()}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-all flex items-center gap-1 cursor-pointer select-none border ${
+                                        sortLatestClosedFirst
+                                          ? 'bg-emerald-500/20 text-emerald-300 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30 shadow-xs'
+                                          : 'bg-zinc-800 text-zinc-400 border-zinc-700/60 hover:text-zinc-200 hover:bg-zinc-700/50'
+                                      }`}
+                                      title={
+                                        sortLatestClosedFirst
+                                          ? 'Filter active: Latest closed on top across all clients - Click for default order'
+                                          : 'Filter: Click to show latest closed on top'
+                                      }
+                                    >
+                                      <ArrowDownUp className="w-2.5 h-2.5 shrink-0" />
+                                      <span>{sortLatestClosedFirst ? 'Latest on top' : 'Default'}</span>
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1249,15 +1354,28 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
                               {openGroupMenu === category.title && openGroupMenuRect && typeof window !== 'undefined' && createPortal(
                                 <div
-                                  className="fixed w-40 bg-secondary border border-zinc-700/50 rounded-lg shadow-xl z-[9999] py-1 animate-in fade-in zoom-in-95 duration-100"
+                                  className="fixed w-48 bg-secondary border border-zinc-700/50 rounded-lg shadow-xl z-[9999] py-1 animate-in fade-in zoom-in-95 duration-100"
                                   style={{
                                     top: openGroupMenuRect.bottom + 4,
-                                    left: openGroupMenuRect.right - 160 // 160px is w-40
+                                    left: openGroupMenuRect.right - 192 // 192px is w-48
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onPointerDown={(e) => e.stopPropagation()}
                                 >
+                                  {isClosedCategory && (
+                                    <button
+                                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer border-b border-zinc-800/80 mb-1"
+                                      onClick={() => {
+                                        toggleSortLatestClosed();
+                                        setOpenGroupMenu(null);
+                                        setOpenGroupMenuRect(null);
+                                      }}
+                                    >
+                                      <ArrowDownUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                      <span>{sortLatestClosedFirst ? 'Show Default Order' : 'Show Latest Closed on Top'}</span>
+                                    </button>
+                                  )}
                                   {!category.isCatchAll && (
                                     <button
                                       className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
@@ -1361,6 +1479,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                     activeColumn={activeColumn}
                                     onTaskMove={handleTaskMoveFromCard}
                                     onSubtaskStatusChange={handleSubtaskStatusChangeFromBoard}
+                                    isSortLatestClosed={sortLatestClosedFirst}
+                                    onToggleSortClosed={toggleSortLatestClosed}
                                   />
                                 );
                               })}

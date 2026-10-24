@@ -317,14 +317,6 @@ export function FullscreenCommentModal({
   }
 
   const isAuthor = comment?.user?.id === currentUser?.id;
-  const createdAtFormatted = comment?.createdAt
-    ? `${new Date(comment.createdAt).toLocaleDateString([], {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      })} at ${new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-    : '';
 
   return createPortal(
     <AnimatePresence>
@@ -393,37 +385,6 @@ export function FullscreenCommentModal({
               className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10 lg:p-14 w-full"
             >
               <div className="w-full max-w-5xl mx-auto flex flex-col gap-6">
-                {/* Author Row */}
-                <div className="flex items-center justify-between gap-4 border-b border-border pb-5">
-                  <div className="flex items-center gap-3.5">
-                    {comment.user?.avatarUrl ? (
-                      <img
-                        src={comment.user.avatarUrl}
-                        alt={comment.user.name}
-                        className="w-12 h-12 rounded-full object-cover shrink-0 ring-2 ring-border shadow-sm"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center text-white text-base font-bold shadow-sm">
-                        {(comment.user?.name || 'U').charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="text-foreground font-semibold text-lg">
-                          {comment.user?.name || 'Someone'}
-                        </span>
-                        {isAuthor && (
-                          <span className="text-[10px] bg-muted text-muted-foreground px-2 py-0.5 rounded-full border border-border font-medium">
-                            You
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-xs text-muted-foreground mt-0.5">{createdAtFormatted}</span>
-                    </div>
-                  </div>
-
-                </div>
-
                 {/* Comment Content / Edit Form */}
                 {isEditing ? (
                   <div className="w-full">

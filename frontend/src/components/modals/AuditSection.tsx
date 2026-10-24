@@ -108,110 +108,210 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   }, 0);
 
   const handleToggleItem = async (text: string, currentItem?: ChecklistItem) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    try {
-      let targetChecklistId = currentItem?.checklistId || auditChecklist?.id;
-      let newChecklists = [...checklists];
+    const newCompleted = currentItem ? !currentItem.completed : true;
 
-      if ((!currentItem || !currentItem.completed) && highlightedAudits) {
-        const remaining = highlightedAudits.filter(
-          t => t.toLowerCase() !== text.toLowerCase()
-        );
-        setHighlightedAudits(remaining.length === 0 ? null : remaining);
-      }
-
-      // Create checklist if it doesn't exist
-      if (!targetChecklistId) {
-        const res = await tasksApi.createChecklist(task.id, { 
-          name: 'Audit', 
-          subtaskId 
-        });
-        targetChecklistId = res.checklist.id;
-        newChecklists.push(res.checklist);
-        onUpdateChecklists(newChecklists);
-      }
-
-      // If item doesn't exist, create it (completed = true since we toggle from false)
-      if (!currentItem) {
-        const res = await tasksApi.createChecklistItem(task.id, targetChecklistId!, { text });
-        const updatedItem = await tasksApi.updateChecklistItem(task.id, targetChecklistId!, res.item.id, { completed: true });
-        
-        newChecklists = newChecklists.map(c => {
-          if (c.id === targetChecklistId) {
-            return { ...c, items: [...(c.items || []), updatedItem.item] };
-          }
-          return c;
-        });
-        onUpdateChecklists(newChecklists);
-      } else {
-        // Optimistic update
-        const newCompleted = !currentItem.completed;
-        const optimisticChecklists = newChecklists.map(c => {
-          if (c.id === targetChecklistId) {
-            return {
-              ...c,
-              items: c.items.map(i => i.id === currentItem.id ? { ...i, completed: newCompleted } : i)
-            };
-          }
-          return c;
-        });
-        onUpdateChecklists(optimisticChecklists);
-
-        // API update
-        await tasksApi.updateChecklistItem(task.id, targetChecklistId!, currentItem.id, { completed: newCompleted });
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
+    // Remove from highlighted audits immediately if checking
+    if (newCompleted && highlightedAudits) {
+      const remaining = highlightedAudits.filter(
+        t => t.toLowerCase() !== text.toLowerCase()
+      );
+      setHighlightedAudits(remaining.length === 0 ? null : remaining);
     }
-  };
 
-  const handleUpdateAssignee = async (text: string, currentItem: ChecklistItem | undefined, assigneeId: string) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    try {
-      let targetChecklistId = currentItem?.checklistId || auditChecklist?.id;
-      let newChecklists = [...checklists];
+    // 1. Immediately update the frontend (0ms optimistic update)
+    let targetChecklistId = currentItem?.checklistId || auditChecklist?.id;
+    const tempChecklistCreated = !targetChecklistId;
+    if (!targetChecklistId) {
+      targetChecklistId = `temp-cl-${Date.now()}`;
+    }
 
-      if (!targetChecklistId) {
-        const res = await tasksApi.createChecklist(task.id, { name: 'Audit', subtaskId });
-        targetChecklistId = res.checklist.id;
-        newChecklists.push(res.checklist);
-        onUpdateChecklists(newChecklists);
-      }
+    let optimisticItemId = currentItem?.id;
+    const tempItemCreated = !optimisticItemId;
+    if (!optimisticItemId) {
+      optimisticItemId = `temp-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    }
 
-      let itemId = currentItem?.id;
-      if (!itemId) {
-        const res = await tasksApi.createChecklistItem(task.id, targetChecklistId!, { text });
-        itemId = res.item.id;
-        newChecklists = newChecklists.map(c => {
-          if (c.id === targetChecklistId) {
-            return { ...c, items: [...(c.items || []), res.item] };
-          }
-          return c;
-        });
-        onUpdateChecklists(newChecklists);
-      }
+    let optimisticChecklists = [...checklists];
 
-      // Optimistic
-      const optimistic = newChecklists.map(c => {
+    if (tempChecklistCreated) {
+      const newCl: Checklist = {
+        id: targetChecklistId,
+        taskId: task.id,
+        subtaskId: subtaskId || undefined,
+        name: 'Audit',
+        createdAt: new Date().toISOString(),
+        items: [],
+      };
+      optimisticChecklists.push(newCl);
+    }
+
+    if (tempItemCreated) {
+      const newItem: ChecklistItem = {
+        id: optimisticItemId,
+        checklistId: targetChecklistId,
+        text,
+        completed: newCompleted,
+        createdAt: new Date().toISOString(),
+        checkedById: newCompleted ? currentUser?.id : undefined,
+      };
+
+      optimisticChecklists = optimisticChecklists.map(c => {
+        if (c.id === targetChecklistId) {
+          return { ...c, items: [...(c.items || []), newItem] };
+        }
+        return c;
+      });
+    } else {
+      optimisticChecklists = optimisticChecklists.map(c => {
         if (c.id === targetChecklistId) {
           return {
             ...c,
-            items: c.items.map(i => i.id === itemId ? { ...i, assigneeId } : i)
+            items: (c.items || []).map(i =>
+              i.id === optimisticItemId
+                ? {
+                    ...i,
+                    completed: newCompleted,
+                    checkedById: newCompleted ? currentUser?.id : undefined,
+                  }
+                : i
+            ),
           };
         }
         return c;
       });
-      onUpdateChecklists(optimistic);
+    }
 
-      await tasksApi.updateChecklistItem(task.id, targetChecklistId!, itemId!, { assigneeId });
+    // Apply to frontend state immediately
+    onUpdateChecklists(optimisticChecklists);
+
+    // 2. Persist to DB in the background
+    try {
+      let realChecklistId = targetChecklistId;
+      if (tempChecklistCreated) {
+        const res = await tasksApi.createChecklist(task.id, {
+          name: 'Audit',
+          subtaskId,
+        });
+        realChecklistId = res.checklist.id;
+      }
+
+      if (tempItemCreated) {
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { text });
+        const realItemId = res.item.id;
+        const updatedItemRes = await tasksApi.updateChecklistItem(task.id, realChecklistId, realItemId, { completed: newCompleted });
+
+        // Reconcile temporary IDs with actual database IDs
+        const reconciled = optimisticChecklists.map(c => {
+          if (c.id === targetChecklistId || c.id === realChecklistId) {
+            return {
+              ...c,
+              id: realChecklistId,
+              items: (c.items || []).map(i => i.id === optimisticItemId ? updatedItemRes.item : i),
+            };
+          }
+          return c;
+        });
+        onUpdateChecklists(reconciled);
+      } else {
+        await tasksApi.updateChecklistItem(task.id, realChecklistId, optimisticItemId!, { completed: newCompleted });
+      }
     } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
+      console.error('[AuditSection] Failed to persist audit toggle:', e);
+      // Revert if API call fails
+      onUpdateChecklists(checklists);
+    }
+  };
+
+  const handleUpdateAssignee = async (text: string, currentItem: ChecklistItem | undefined, assigneeId: string) => {
+    const selectedUser = users.find(u => u.id === assigneeId);
+
+    let targetChecklistId = currentItem?.checklistId || auditChecklist?.id;
+    const tempChecklistCreated = !targetChecklistId;
+    if (!targetChecklistId) {
+      targetChecklistId = `temp-cl-${Date.now()}`;
+    }
+
+    let optimisticItemId = currentItem?.id;
+    const tempItemCreated = !optimisticItemId;
+    if (!optimisticItemId) {
+      optimisticItemId = `temp-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    }
+
+    let optimisticChecklists = [...checklists];
+
+    if (tempChecklistCreated) {
+      optimisticChecklists.push({
+        id: targetChecklistId,
+        taskId: task.id,
+        subtaskId: subtaskId || undefined,
+        name: 'Audit',
+        createdAt: new Date().toISOString(),
+        items: [],
+      });
+    }
+
+    if (tempItemCreated) {
+      const newItem: ChecklistItem = {
+        id: optimisticItemId,
+        checklistId: targetChecklistId,
+        text,
+        completed: false,
+        assigneeId: assigneeId || undefined,
+        assignee: selectedUser || undefined,
+        createdAt: new Date().toISOString(),
+      };
+      optimisticChecklists = optimisticChecklists.map(c => {
+        if (c.id === targetChecklistId) {
+          return { ...c, items: [...(c.items || []), newItem] };
+        }
+        return c;
+      });
+    } else {
+      optimisticChecklists = optimisticChecklists.map(c => {
+        if (c.id === targetChecklistId) {
+          return {
+            ...c,
+            items: (c.items || []).map(i =>
+              i.id === optimisticItemId ? { ...i, assigneeId: assigneeId || undefined, assignee: selectedUser || undefined } : i
+            ),
+          };
+        }
+        return c;
+      });
+    }
+
+    // Apply to frontend state immediately
+    onUpdateChecklists(optimisticChecklists);
+
+    try {
+      let realChecklistId = targetChecklistId;
+      if (tempChecklistCreated) {
+        const res = await tasksApi.createChecklist(task.id, { name: 'Audit', subtaskId });
+        realChecklistId = res.checklist.id;
+      }
+
+      if (tempItemCreated) {
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { text });
+        const realItemId = res.item.id;
+        const updatedItemRes = await tasksApi.updateChecklistItem(task.id, realChecklistId, realItemId, { assigneeId });
+
+        const reconciled = optimisticChecklists.map(c => {
+          if (c.id === targetChecklistId || c.id === realChecklistId) {
+            return {
+              ...c,
+              id: realChecklistId,
+              items: (c.items || []).map(i => i.id === optimisticItemId ? updatedItemRes.item : i),
+            };
+          }
+          return c;
+        });
+        onUpdateChecklists(reconciled);
+      } else {
+        await tasksApi.updateChecklistItem(task.id, realChecklistId, optimisticItemId!, { assigneeId });
+      }
+    } catch (e) {
+      console.error('[AuditSection] Failed to persist assignee:', e);
+      onUpdateChecklists(checklists);
     }
   };
 

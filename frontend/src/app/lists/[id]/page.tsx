@@ -20,7 +20,6 @@ import {
   Pencil,
   Search,
   X,
-  ArrowDownUp,
 } from 'lucide-react';
 // useRouter is imported above
 import { ListSkeleton } from '@/components/ui/Skeleton';
@@ -134,39 +133,7 @@ export default function BoardPage() {
   const setSearch = (text: string) => setSearchState({ listId: id, text });
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Global preference: Latest closed tasks on top across all clients (defaults to true)
-  const SORT_CLOSED_STORAGE_KEY = 'nexus_kanban_sort_latest_closed';
-  const [sortLatestClosed, setSortLatestClosed] = useState<boolean>(() => {
-    try {
-      const stored = typeof window !== 'undefined' ? localStorage.getItem(SORT_CLOSED_STORAGE_KEY) : null;
-      return stored !== null ? stored === 'true' : true;
-    } catch {
-      return true;
-    }
-  });
 
-  const toggleSortLatestClosed = () => {
-    setSortLatestClosed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(SORT_CLOSED_STORAGE_KEY, String(next));
-      } catch {}
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('nexus:kanban-sort-closed-changed', { detail: next }));
-      }
-      return next;
-    });
-  };
-
-  useEffect(() => {
-    const handleSync = (e: any) => {
-      if (typeof e.detail === 'boolean') {
-        setSortLatestClosed(e.detail);
-      }
-    };
-    window.addEventListener('nexus:kanban-sort-closed-changed', handleSync);
-    return () => window.removeEventListener('nexus:kanban-sort-closed-changed', handleSync);
-  }, []);
 
   // "/" focuses the search, like ClickUp, unless typing somewhere already
   useEffect(() => {
@@ -399,6 +366,100 @@ export default function BoardPage() {
           return { ...prev, comments: [...(prev.comments || []), payload.comment] };
         }
         return prev;
+      });
+    });
+
+    s.on('task:checklist_item_updated', (payload: { taskId: string; checklistId: string; item: any; subtaskId?: string }) => {
+      setList((prev: any) => {
+        if (!prev || !prev.tasks) return prev;
+        const newTasks = prev.tasks.map((t: any) => {
+          if (payload.subtaskId) {
+            if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
+              const updatedSubtasks = t.subtasks.map((st: any) => {
+                if (st.id === payload.subtaskId && st.checklists) {
+                  const updatedChecklists = st.checklists.map((c: any) => {
+                    if (c.id === payload.checklistId) {
+                      const updatedItems = (c.items || []).map((i: any) =>
+                        (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                          ? { ...i, ...payload.item }
+                          : i
+                      );
+                      return { ...c, items: updatedItems };
+                    }
+                    return c;
+                  });
+                  return { ...st, checklists: updatedChecklists };
+                }
+                return st;
+              });
+              return { ...t, subtasks: updatedSubtasks };
+            }
+          } else if (t.id === payload.taskId && t.checklists) {
+            const updatedChecklists = t.checklists.map((c: any) => {
+              if (c.id === payload.checklistId) {
+                const updatedItems = (c.items || []).map((i: any) =>
+                  (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                    ? { ...i, ...payload.item }
+                    : i
+                );
+                return { ...c, items: updatedItems };
+              }
+              return c;
+            });
+            return { ...t, checklists: updatedChecklists };
+          }
+          return t;
+        });
+        return { ...prev, tasks: newTasks };
+      });
+    });
+
+    s.on('task:checklist_item_created', (payload: { taskId: string; checklistId: string; item: any; subtaskId?: string }) => {
+      setList((prev: any) => {
+        if (!prev || !prev.tasks) return prev;
+        const newTasks = prev.tasks.map((t: any) => {
+          if (payload.subtaskId) {
+            if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
+              const updatedSubtasks = t.subtasks.map((st: any) => {
+                if (st.id === payload.subtaskId && st.checklists) {
+                  const updatedChecklists = st.checklists.map((c: any) => {
+                    if (c.id === payload.checklistId) {
+                      if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
+                      const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
+                      if (tempIdx !== -1) {
+                        const newItems = [...c.items];
+                        newItems[tempIdx] = payload.item;
+                        return { ...c, items: newItems };
+                      }
+                      return { ...c, items: [...(c.items || []), payload.item] };
+                    }
+                    return c;
+                  });
+                  return { ...st, checklists: updatedChecklists };
+                }
+                return st;
+              });
+              return { ...t, subtasks: updatedSubtasks };
+            }
+          } else if (t.id === payload.taskId && t.checklists) {
+            const updatedChecklists = t.checklists.map((c: any) => {
+              if (c.id === payload.checklistId) {
+                if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
+                const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
+                if (tempIdx !== -1) {
+                  const newItems = [...c.items];
+                  newItems[tempIdx] = payload.item;
+                  return { ...c, items: newItems };
+                }
+                return { ...c, items: [...(c.items || []), payload.item] };
+              }
+              return c;
+            });
+            return { ...t, checklists: updatedChecklists };
+          }
+          return t;
+        });
+        return { ...prev, tasks: newTasks };
       });
     });
 
@@ -764,23 +825,6 @@ export default function BoardPage() {
             </button>
 
             <div className="ml-auto mb-2 flex items-center gap-2">
-              <button
-                onClick={toggleSortLatestClosed}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold border transition-all cursor-pointer ${
-                  sortLatestClosed
-                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 shadow-xs'
-                    : 'bg-secondary/60 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-                }`}
-                title={
-                  sortLatestClosed
-                    ? 'Filter active: Latest closed tasks show on top across all clients - Click for default order'
-                    : 'Filter: Click to show latest closed tasks on top across all clients'
-                }
-              >
-                <ArrowDownUp className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">Latest Closed on Top</span>
-              </button>
-
               {isSearching && (
                 <span className={`text-[11px] ${visibleTasks.length ? 'text-zinc-500' : 'text-amber-400'}`}>
                   {visibleTasks.length ? `${visibleTasks.length} of ${list?.tasks?.length ?? 0}` : 'No matching tasks'}

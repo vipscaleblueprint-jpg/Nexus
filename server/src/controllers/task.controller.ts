@@ -2600,6 +2600,8 @@ export async function createChecklist(req: Request, res: Response) {
       include: { items: true },
     });
 
+    io.emit('task:checklist_created', { taskId, subtaskId: subtaskId || null, checklist });
+
     // --- ClickUp Sync: create checklist (fire-and-forget) ---
     (async () => {
       try {
@@ -2687,6 +2689,7 @@ export async function deleteChecklist(req: Request, res: Response) {
     });
     
     await prisma.checklist.delete({ where: { id: checklistId } });
+    io.emit('task:checklist_deleted', { taskId: cl?.taskId || req.params.id, subtaskId: cl?.subtaskId || null, checklistId });
 
     // --- ClickUp Sync ---
     (async () => {
@@ -2738,7 +2741,14 @@ export async function createChecklistItem(req: Request, res: Response) {
         text: text || '',
         checklistId,
       },
+      include: {
+        checklist: { select: { taskId: true, subtaskId: true } },
+      },
     });
+
+    const taskId = item.checklist?.taskId || req.params.id;
+    const subtaskId = item.checklist?.subtaskId || null;
+    io.emit('task:checklist_item_created', { taskId, subtaskId, checklistId, item });
 
     // --- ClickUp Sync: add checklist item ---
     (async () => {
@@ -2819,7 +2829,16 @@ export async function updateChecklistItem(req: Request, res: Response) {
     const item = await prisma.checklistItem.update({
       where: { id: itemId },
       data,
+      include: {
+        checkedBy: { select: { id: true, name: true, avatarUrl: true } },
+        assignee: { select: { id: true, name: true, avatarUrl: true } },
+        checklist: { select: { taskId: true, subtaskId: true } },
+      },
     });
+
+    const taskId = item.checklist?.taskId || req.params.id;
+    const subtaskId = item.checklist?.subtaskId || null;
+    io.emit('task:checklist_item_updated', { taskId, subtaskId, checklistId: req.params.checklistId, item });
 
     // --- Background Operations: ClickUp Sync, AuditLog & Role Notifications ---
     (async () => {
@@ -3017,8 +3036,22 @@ export async function updateChecklistItem(req: Request, res: Response) {
 export async function deleteChecklistItem(req: Request, res: Response) {
   try {
     const { itemId } = req.params;
-    const item = await prisma.checklistItem.findUnique({ where: { id: itemId }, select: { externalId: true, checklist: { select: { externalId: true } } } });
+    const item = await prisma.checklistItem.findUnique({
+      where: { id: itemId },
+      select: {
+        externalId: true,
+        checklistId: true,
+        checklist: { select: { externalId: true, taskId: true, subtaskId: true } },
+      },
+    });
     await prisma.checklistItem.delete({ where: { id: itemId } });
+
+    io.emit('task:checklist_item_deleted', {
+      taskId: item?.checklist?.taskId || req.params.id,
+      subtaskId: item?.checklist?.subtaskId || null,
+      checklistId: item?.checklistId || req.params.checklistId,
+      itemId,
+    });
 
     // --- ClickUp Sync ---
     if (item?.externalId && item.checklist?.externalId) {

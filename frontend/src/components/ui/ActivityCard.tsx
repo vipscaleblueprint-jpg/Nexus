@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MessageSquare,
   UserPlus,
@@ -11,6 +11,8 @@ import {
   RefreshCw,
   Clock,
   CheckSquare,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { CommentContent } from '@/components/ui/CommentContent';
@@ -86,7 +88,7 @@ export function StatusPill({ status, color }: { status: string; color?: string }
   if (color) {
     return (
       <span
-        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider select-none leading-none border"
+        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border"
         style={{
           backgroundColor: `${color}20`,
           color: color,
@@ -100,7 +102,7 @@ export function StatusPill({ status, color }: { status: string; color?: string }
 
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider select-none leading-none border ${pillClasses}`}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border ${pillClasses}`}
     >
       {clean}
     </span>
@@ -130,6 +132,31 @@ export function ActivityCard({
   const normType = (type || '').toUpperCase();
   const initial = (actorName || 'U').trim().charAt(0).toUpperCase();
   const avatarBg = getAvatarBg(actorName);
+
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+  const contentWrapperRef = useRef<HTMLDivElement>(null);
+
+  const maxHeight = compact ? 120 : 160;
+
+  useEffect(() => {
+    const el = contentWrapperRef.current;
+    if (!el) return;
+
+    const checkOverflow = () => {
+      if (el.scrollHeight > maxHeight + 10) {
+        setCanExpand(true);
+      } else {
+        setCanExpand(false);
+      }
+    };
+
+    checkOverflow();
+
+    const observer = new ResizeObserver(checkOverflow);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [content, maxHeight]);
 
   // Determine micro-badge icon
   let MicroIcon = MessageSquare;
@@ -173,7 +200,8 @@ export function ActivityCard({
   const isMention =
     normType === 'MENTION' ||
     title.toLowerCase().includes('mentioned you') ||
-    (content && content.includes('@'));
+    title.toLowerCase().includes('mentioned') ||
+    Boolean(content && (content.includes('mention://') || content.includes('@')));
 
   // Extract display task / subtask title
   const effectiveTaskTitle = subtaskTitle || taskTitle || 'task';
@@ -210,10 +238,10 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-bold text-foreground">{actorName}</span>
+          <span className="font-medium text-foreground">{actorName}</span>
           <span className="text-muted-foreground font-normal"> changed status on </span>
           {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-bold text-foreground">{effectiveTaskTitle}</span>
+          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
           {newStatus && (
             <span className="inline-flex items-center ml-1.5 align-middle gap-1 flex-wrap">
               {oldStatus && (
@@ -251,10 +279,10 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-bold text-foreground">{actorName}</span>
+          <span className="font-medium text-foreground">{actorName}</span>
           <span className="text-muted-foreground font-normal"> checked {auditText} auditing on </span>
           {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-bold text-foreground">{effectiveTaskTitle}</span>
+          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
         </span>
       );
     }
@@ -278,9 +306,9 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-bold text-foreground">{actorName}</span>
+          <span className="font-medium text-foreground">{actorName}</span>
           <span className="text-muted-foreground font-normal"> completed {countText} in </span>
-          <span className="font-bold text-foreground">{effectiveTaskTitle}</span>
+          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
         </span>
       );
     }
@@ -297,13 +325,13 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-bold text-foreground">{actorName}</span>
+          <span className="font-medium text-foreground">{actorName}</span>
           <span className="text-muted-foreground font-normal">
             {' '}
             {isUnassign ? 'unassigned you from' : 'assigned you to'}{' '}
           </span>
           {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-bold text-foreground">{effectiveTaskTitle}</span>
+          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
         </span>
       );
     }
@@ -315,10 +343,10 @@ export function ActivityCard({
     ) {
       return (
         <span className="leading-snug">
-          <span className="font-bold text-foreground">{actorName}</span>
+          <span className="font-medium text-foreground">{actorName}</span>
           <span className="text-muted-foreground font-normal"> replied to your comment on </span>
           {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-bold text-foreground">{effectiveTaskTitle}</span>
+          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
         </span>
       );
     }
@@ -331,12 +359,14 @@ export function ActivityCard({
     ) {
       return (
         <span className="leading-snug">
-          <span className="font-bold text-foreground">{actorName}</span>
+          <span className="font-medium text-foreground">{actorName}</span>
           <span className="text-muted-foreground font-normal"> commented on </span>
           {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-bold text-foreground">{effectiveTaskTitle}</span>
+          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
           {isMention && (
-            <span className="text-blue-500 [.theme-light_&]:text-blue-600 font-semibold ml-1.5">Mentioned you</span>
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
+              @mention
+            </span>
           )}
         </span>
       );
@@ -350,8 +380,13 @@ export function ActivityCard({
 
     return (
       <span className="leading-snug">
-        <span className="font-bold text-foreground">{actorName}</span>
+        <span className="font-medium text-foreground">{actorName}</span>
         <span className="text-muted-foreground font-normal"> {restOfTitle}</span>
+        {isMention && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
+            @mention
+          </span>
+        )}
       </span>
     );
   };
@@ -394,7 +429,7 @@ export function ActivityCard({
         <div
           className={`${
             compact ? 'size-8 text-xs' : 'size-9 text-xs sm:text-sm'
-          } rounded-full ${avatarBg} text-white on-solid flex items-center justify-center font-bold shrink-0 ring-2 ring-card shadow-xs select-none`}
+          } rounded-full ${avatarBg} text-white on-solid flex items-center justify-center font-medium shrink-0 ring-2 ring-card shadow-xs select-none`}
           style={{ display: actorAvatar ? 'none' : 'flex' }}
         >
           {initial}
@@ -422,20 +457,48 @@ export function ActivityCard({
           )}
         </div>
 
-        {/* Comment quote box */}
+        {/* Comment quote box with height limit & See more toggle */}
         {content && (
-          <div
-            className={`mt-2.5 px-3 py-2.5 rounded-xl bg-background/60 border border-border text-foreground font-normal leading-relaxed ${
-              compact ? 'text-xs' : 'text-sm'
-            }`}
-          >
-            <CommentContent
-              content={content}
-              className={`${
+          <div className="mt-2.5">
+            <div
+              ref={contentWrapperRef}
+              style={{ maxHeight: !isExpanded && canExpand ? maxHeight : undefined }}
+              className={`relative px-3 py-2.5 rounded-xl bg-background/60 border border-border text-foreground font-normal leading-relaxed transition-all duration-200 ${
                 compact ? 'text-xs' : 'text-sm'
-              } text-foreground max-w-full prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline`}
-              onPreviewImage={onPreviewImage}
-            />
+              } ${!isExpanded && canExpand ? 'overflow-hidden' : ''}`}
+            >
+              <CommentContent
+                content={content}
+                className={`${
+                  compact ? 'text-xs' : 'text-sm'
+                } text-foreground max-w-full prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline`}
+                onPreviewImage={onPreviewImage}
+              />
+
+              {/* Bottom gradient fade when truncated */}
+              {!isExpanded && canExpand && (
+                <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-background/95 via-background/60 to-transparent pointer-events-none rounded-b-xl" />
+              )}
+            </div>
+
+            {/* See more / See less button */}
+            {canExpand && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsExpanded(!isExpanded);
+                }}
+                className="mt-1 text-[11px] font-medium text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 hover:underline inline-flex items-center gap-1 cursor-pointer select-none"
+              >
+                <span>{isExpanded ? 'See less' : 'See more'}</span>
+                {isExpanded ? (
+                  <ChevronUp className="w-3 h-3" />
+                ) : (
+                  <ChevronDown className="w-3 h-3" />
+                )}
+              </button>
+            )}
           </div>
         )}
       </div>

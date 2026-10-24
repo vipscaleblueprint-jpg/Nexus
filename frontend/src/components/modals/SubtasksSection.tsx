@@ -1605,30 +1605,113 @@ function SubtaskRow({
                       const handleToggleAuditItem = async () => {
                         if (!canCheck) return;
                         
+                        const newCompleted = !isCompleted;
                         let targetChecklistId = auditChecklist?.id;
-                        let newChecklists = [...(subtask.checklists || [])];
+                        const tempChecklistCreated = !targetChecklistId;
+                        if (!targetChecklistId) {
+                          targetChecklistId = `temp-cl-${Date.now()}`;
+                        }
 
+                        let optimisticItemId = item?.id;
+                        const tempItemCreated = !optimisticItemId;
+                        if (!optimisticItemId) {
+                          optimisticItemId = `temp-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                        }
+
+                        const parentTaskId = taskId || subtask.taskId || '';
+                        let optimisticChecklists = [...(subtask.checklists || [])];
+
+                        if (tempChecklistCreated) {
+                          const newCl = {
+                            id: targetChecklistId,
+                            taskId: parentTaskId,
+                            subtaskId: subtask.id,
+                            name: 'Audit',
+                            createdAt: new Date().toISOString(),
+                            items: [],
+                          };
+                          optimisticChecklists.push(newCl);
+                        }
+
+                        if (tempItemCreated) {
+                          const newItem = {
+                            id: optimisticItemId,
+                            checklistId: targetChecklistId,
+                            text,
+                            completed: true,
+                            createdAt: new Date().toISOString(),
+                            checkedById: currentUser?.id,
+                            checkedBy: currentUser,
+                          };
+
+                          optimisticChecklists = optimisticChecklists.map((c: any) => {
+                            if (c.id === targetChecklistId) {
+                              return { ...c, items: [...(c.items || []), newItem] };
+                            }
+                            return c;
+                          });
+                        } else {
+                          optimisticChecklists = optimisticChecklists.map((c: any) => {
+                            if (c.id === targetChecklistId) {
+                              return {
+                                ...c,
+                                items: (c.items || []).map((i: any) =>
+                                  i.id === optimisticItemId
+                                    ? {
+                                        ...i,
+                                        completed: newCompleted,
+                                        checkedById: newCompleted ? currentUser?.id : null,
+                                        checkedBy: newCompleted ? currentUser : undefined,
+                                      }
+                                    : i
+                                ),
+                              };
+                            }
+                            return c;
+                          });
+                        }
+
+                        // Instant 0ms update to parent and local UI
+                        onUpdate(subtask.id, { checklists: optimisticChecklists });
+
+                        // Background persistence
                         try {
-                          if (!targetChecklistId) {
-                            const res = await tasksApi.createChecklist(taskId!, { name: 'Audit', subtaskId: subtask.id });
-                            targetChecklistId = res.checklist.id;
-                            newChecklists.push(res.checklist);
-                            onUpdate(subtask.id, { checklists: newChecklists });
+                          const currentTaskId = taskId || subtask.taskId;
+                          if (!currentTaskId) return;
+
+                          let realChecklistId = auditChecklist?.id;
+                          if (!realChecklistId) {
+                            const res = await tasksApi.createChecklist(currentTaskId, { name: 'Audit', subtaskId: subtask.id });
+                            realChecklistId = res.checklist.id;
                           }
+                          if (!realChecklistId) return;
 
                           if (!item) {
-                            const res = await tasksApi.createChecklistItem(taskId!, targetChecklistId!, { text });
-                            const updatedItem = await tasksApi.updateChecklistItem(taskId!, targetChecklistId!, res.item.id, { completed: true });
-                            newChecklists = newChecklists.map((c: any) => c.id === targetChecklistId ? { ...c, items: [...(c.items || []), updatedItem.item] } : c);
-                            onUpdate(subtask.id, { checklists: newChecklists });
+                            const res = await tasksApi.createChecklistItem(currentTaskId, realChecklistId, { text });
+                            const updatedRes = await tasksApi.updateChecklistItem(currentTaskId, realChecklistId, res.item.id, { completed: true });
+                            const persistedItem = updatedRes.item || res.item;
+
+                            // Reconcile temporary IDs
+                            const currentSubChecklists = subtask.checklists || optimisticChecklists;
+                            const reconciled = currentSubChecklists.map((c: any) => {
+                              if (c.id === targetChecklistId || c.id === realChecklistId) {
+                                const items = (c.items || []).map((i: any) =>
+                                  (i.id === optimisticItemId || i.text.toLowerCase() === text.toLowerCase())
+                                    ? { ...i, ...persistedItem }
+                                    : i
+                                );
+                                return { ...c, id: realChecklistId, items };
+                              }
+                              return c;
+                            });
+                            onUpdate(subtask.id, { checklists: reconciled });
                           } else {
-                            const newCompleted = !isCompleted;
-                            newChecklists = newChecklists.map((c: any) => c.id === targetChecklistId ? { ...c, items: c.items.map((i: any) => i.id === item.id ? { ...i, completed: newCompleted } : i) } : c);
-                            onUpdate(subtask.id, { checklists: newChecklists });
-                            await tasksApi.updateChecklistItem(taskId!, targetChecklistId!, item.id, { completed: newCompleted });
+                            await tasksApi.updateChecklistItem(currentTaskId, realChecklistId, item.id, { completed: newCompleted });
                           }
                         } catch (e) {
-                          console.error(e);
+                          console.error('[SubtasksSection] Failed to persist audit toggle:', e);
+                          // Revert on failure
+                          onUpdate(subtask.id, { checklists: subtask.checklists || [] });
                         }
                       };
 

@@ -167,6 +167,9 @@ interface Props {
   listStatuses?: any[];
   workspaceRoles?: any[];
   mode?: 'modal' | 'full';
+  targetCommentId?: string | null;
+  targetCommentText?: string | null;
+  scrollToComments?: boolean;
 }
 
 export const ALL_STATUSES = [
@@ -497,6 +500,9 @@ export function TaskDetailModalContent({
   listStatuses = [],
   workspaceRoles = [],
   mode = 'modal',
+  targetCommentId,
+  targetCommentText,
+  scrollToComments,
 }: Props) {
   const router = useRouter();
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(true);
@@ -843,6 +849,59 @@ export function TaskDetailModalContent({
     return combined.slice(combined.length - visibleActivityCount);
   }, [combined, visibleActivityCount]);
 
+  const isTargetingComment = Boolean(targetCommentId || targetCommentText || scrollToComments);
+
+  // If a target comment is older than visibleActivityCount, expand visibleActivityCount so it is rendered
+  useEffect(() => {
+    if (targetCommentId && combined.length > visibleActivityCount) {
+      const idx = combined.findIndex((item) => item.id === targetCommentId || item.commentId === targetCommentId);
+      if (idx !== -1 && idx < combined.length - visibleActivityCount) {
+        setVisibleActivityCount(combined.length);
+      }
+    }
+  }, [targetCommentId, combined, visibleActivityCount]);
+
+  const scrollToTargetComment = useCallback(() => {
+    const container = activityScrollRef.current;
+    if (!container) return false;
+
+    let targetEl: HTMLElement | null = null;
+    if (targetCommentId) {
+      targetEl =
+        document.getElementById(`comment-${targetCommentId}`) ||
+        (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
+    }
+    if (!targetEl && targetCommentText) {
+      const snippet = targetCommentText.trim().toLowerCase().slice(0, 40);
+      if (snippet) {
+        const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment'));
+        for (const el of commentEls) {
+          if (el.textContent?.toLowerCase().includes(snippet)) {
+            targetEl = el;
+            break;
+          }
+        }
+      }
+    }
+    if (!targetEl && (scrollToComments || targetCommentId)) {
+      targetEl = container.querySelector<HTMLElement>('.group\\/comment');
+    }
+
+    if (targetEl) {
+      const containerRect = container.getBoundingClientRect();
+      const elRect = targetEl.getBoundingClientRect();
+      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
+      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
+
+      targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
+      setTimeout(() => {
+        targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
+      }, 2500);
+      return true;
+    }
+    return false;
+  }, [targetCommentId, targetCommentText, scrollToComments]);
+
   const scrollToLatestComment = useCallback(() => {
     const scroll = () => {
       if (activityScrollRef.current) {
@@ -861,17 +920,31 @@ export function TaskDetailModalContent({
   }, [task?.id]);
 
   useEffect(() => {
-    if (!hasScrolledInitiallyRef.current && (activities.length > 0 || richComments.length > 0)) {
+    if (isTargetingComment) {
+      if (activities.length > 0 || richComments.length > 0) {
+        let attempts = 0;
+        const tryScroll = () => {
+          attempts++;
+          const found = scrollToTargetComment();
+          if (!found && attempts < 8) {
+            setTimeout(tryScroll, 100);
+          }
+        };
+        requestAnimationFrame(() => {
+          setTimeout(tryScroll, 60);
+        });
+      }
+    } else if (!hasScrolledInitiallyRef.current && (activities.length > 0 || richComments.length > 0)) {
       hasScrolledInitiallyRef.current = true;
       scrollToLatestComment();
     }
-  }, [activities, richComments, scrollToLatestComment]);
+  }, [activities, richComments, isTargetingComment, scrollToTargetComment, scrollToLatestComment]);
 
   useEffect(() => {
-    if (!activeSubtask && !hasScrolledInitiallyRef.current) {
+    if (!activeSubtask && !hasScrolledInitiallyRef.current && !isTargetingComment) {
       scrollToLatestComment();
     }
-  }, [activeSubtask, scrollToLatestComment]);
+  }, [activeSubtask, scrollToLatestComment, isTargetingComment]);
 
   const loadOlderActivities = useCallback(() => {
     if (!hasOlderActivities || isLoadingOlderActivities) return;
@@ -1649,9 +1722,101 @@ export function TaskDetailModalContent({
       );
     };
 
+    const handleChecklistItemUpdated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask || payload.taskId !== currentTask.id) return;
+
+      if (!payload.subtaskId) {
+        const checklists = (currentTask.checklists || []).map((c: any) => {
+          if (c.id === payload.checklistId) {
+            const items = (c.items || []).map((i: any) =>
+              (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                ? { ...i, ...payload.item }
+                : i
+            );
+            return { ...c, items };
+          }
+          return c;
+        });
+        const updatedTask = { ...currentTask, checklists };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      } else {
+        const subtasks = (currentTask.subtasks || []).map((st: any) => {
+          if (st.id === payload.subtaskId) {
+            const checklists = (st.checklists || []).map((c: any) => {
+              if (c.id === payload.checklistId) {
+                const items = (c.items || []).map((i: any) =>
+                  (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                    ? { ...i, ...payload.item }
+                    : i
+                );
+                return { ...c, items };
+              }
+              return c;
+            });
+            return { ...st, checklists };
+          }
+          return st;
+        });
+        const updatedTask = { ...currentTask, subtasks };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      }
+    };
+
+    const handleChecklistItemCreated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask || payload.taskId !== currentTask.id) return;
+
+      if (!payload.subtaskId) {
+        const checklists = (currentTask.checklists || []).map((c: any) => {
+          if (c.id === payload.checklistId) {
+            if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
+            const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
+            if (tempIdx !== -1) {
+              const newItems = [...c.items];
+              newItems[tempIdx] = payload.item;
+              return { ...c, items: newItems };
+            }
+            return { ...c, items: [...(c.items || []), payload.item] };
+          }
+          return c;
+        });
+        const updatedTask = { ...currentTask, checklists };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      } else {
+        const subtasks = (currentTask.subtasks || []).map((st: any) => {
+          if (st.id === payload.subtaskId) {
+            const checklists = (st.checklists || []).map((c: any) => {
+              if (c.id === payload.checklistId) {
+                if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
+                const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
+                if (tempIdx !== -1) {
+                  const newItems = [...c.items];
+                  newItems[tempIdx] = payload.item;
+                  return { ...c, items: newItems };
+                }
+                return { ...c, items: [...(c.items || []), payload.item] };
+              }
+              return c;
+            });
+            return { ...st, checklists };
+          }
+          return st;
+        });
+        const updatedTask = { ...currentTask, subtasks };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      }
+    };
+
     socket.on('task:comment_added', handleCommentAdded);
     socket.on('task:comment_updated', handleCommentUpdated);
     socket.on('task:comment_deleted', handleCommentDeleted);
+    socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
+    socket.on('task:checklist_item_created', handleChecklistItemCreated);
 
     return () => {
       socket.off('task_editing_start', handleEditingStart);
@@ -1661,6 +1826,8 @@ export function TaskDetailModalContent({
       socket.off('task:comment_added', handleCommentAdded);
       socket.off('task:comment_updated', handleCommentUpdated);
       socket.off('task:comment_deleted', handleCommentDeleted);
+      socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
+      socket.off('task:checklist_item_created', handleChecklistItemCreated);
     };
   }, [socket, task?.id, currentUser?.name]);
 
@@ -2489,6 +2656,9 @@ export function TaskDetailModalContent({
             permission={permission}
             listStatuses={internalListStatuses}
             workspaceTeams={workspaceTeams}
+            targetCommentId={targetCommentId}
+            targetCommentText={targetCommentText}
+            scrollToComments={scrollToComments}
           />
         </div>
       )}
@@ -3521,6 +3691,9 @@ export function TaskDetailModalContent({
                     return (
                       <div
                         key={comment.id}
+                        id={`comment-${comment.id}`}
+                        data-comment-id={comment.id}
+                        data-comment-text={(comment.content || '').slice(0, 80)}
                         className={`group/comment flex flex-col gap-2 text-sm w-full min-w-0 max-w-full p-4 rounded-xl shadow-sm transition-all ${
                           isReply
                             ? 'mt-2 border'
@@ -3552,7 +3725,7 @@ export function TaskDetailModalContent({
                               <button
                                 type="button"
                                 onClick={() => setFullscreenCommentId(comment.id)}
-                                className="opacity-0 hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300 p-1.5 rounded-md hover:bg-zinc-800/60 cursor-pointer"
+                                className="opacity-0 group-hover/comment:opacity-100 transition-opacity text-zinc-300 hover:text-white p-1.5 rounded-md hover:bg-zinc-800/60 cursor-pointer"
                                 title="Full screen view"
                               >
                                 <Maximize2 className="w-3.5 h-3.5" />
@@ -4310,6 +4483,9 @@ export function SubtaskDetailView({
   listStatuses,
   workspaceTeams = [],
   mode = 'modal',
+  targetCommentId,
+  targetCommentText,
+  scrollToComments,
 }: {
   subtask: any;
   parentTask: any;
@@ -4325,6 +4501,9 @@ export function SubtaskDetailView({
   workspaceTeams?: any[];
   workspaceRoles?: any[];
   mode?: 'modal' | 'full';
+  targetCommentId?: string | null;
+  targetCommentText?: string | null;
+  scrollToComments?: boolean;
 }) {
   const router = useRouter();
 
@@ -4507,6 +4686,59 @@ export function SubtaskDetailView({
     return combined.slice(combined.length - visibleActivityCount);
   }, [combined, visibleActivityCount]);
 
+  const isTargetingComment = Boolean(targetCommentId || targetCommentText || scrollToComments);
+
+  // If a target comment is older than visibleActivityCount, expand visibleActivityCount so it is rendered
+  useEffect(() => {
+    if (targetCommentId && combined.length > visibleActivityCount) {
+      const idx = combined.findIndex((item) => item.id === targetCommentId || item.commentId === targetCommentId);
+      if (idx !== -1 && idx < combined.length - visibleActivityCount) {
+        setVisibleActivityCount(combined.length);
+      }
+    }
+  }, [targetCommentId, combined, visibleActivityCount]);
+
+  const scrollToTargetComment = useCallback(() => {
+    const container = activityScrollRef.current;
+    if (!container) return false;
+
+    let targetEl: HTMLElement | null = null;
+    if (targetCommentId) {
+      targetEl =
+        document.getElementById(`comment-${targetCommentId}`) ||
+        (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
+    }
+    if (!targetEl && targetCommentText) {
+      const snippet = targetCommentText.trim().toLowerCase().slice(0, 40);
+      if (snippet) {
+        const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment'));
+        for (const el of commentEls) {
+          if (el.textContent?.toLowerCase().includes(snippet)) {
+            targetEl = el;
+            break;
+          }
+        }
+      }
+    }
+    if (!targetEl && (scrollToComments || targetCommentId)) {
+      targetEl = container.querySelector<HTMLElement>('.group\\/comment');
+    }
+
+    if (targetEl) {
+      const containerRect = container.getBoundingClientRect();
+      const elRect = targetEl.getBoundingClientRect();
+      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
+      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
+
+      targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
+      setTimeout(() => {
+        targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
+      }, 2500);
+      return true;
+    }
+    return false;
+  }, [targetCommentId, targetCommentText, scrollToComments]);
+
   const scrollToLatestComment = useCallback(() => {
     const scroll = () => {
       if (activityScrollRef.current) {
@@ -4525,11 +4757,25 @@ export function SubtaskDetailView({
   }, [subtask?.id]);
 
   useEffect(() => {
-    if (!hasScrolledInitiallyRef.current && (activities.length > 0 || richComments.length > 0)) {
+    if (isTargetingComment) {
+      if (activities.length > 0 || richComments.length > 0) {
+        let attempts = 0;
+        const tryScroll = () => {
+          attempts++;
+          const found = scrollToTargetComment();
+          if (!found && attempts < 8) {
+            setTimeout(tryScroll, 100);
+          }
+        };
+        requestAnimationFrame(() => {
+          setTimeout(tryScroll, 60);
+        });
+      }
+    } else if (!hasScrolledInitiallyRef.current && (activities.length > 0 || richComments.length > 0)) {
       hasScrolledInitiallyRef.current = true;
       scrollToLatestComment();
     }
-  }, [activities, richComments, scrollToLatestComment]);
+  }, [activities, richComments, isTargetingComment, scrollToTargetComment, scrollToLatestComment]);
 
   const loadOlderActivities = useCallback(() => {
     if (!hasOlderActivities || isLoadingOlderActivities) return;
@@ -5039,6 +5285,44 @@ export function SubtaskDetailView({
       );
     };
 
+    const handleChecklistItemUpdated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
+      const currentSub = subtaskRef.current;
+      if (!currentSub || payload.subtaskId !== currentSub.id) return;
+
+      const checklists = (currentSub.checklists || []).map((c: any) => {
+        if (c.id === payload.checklistId) {
+          const items = (c.items || []).map((i: any) =>
+            (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+              ? { ...i, ...payload.item }
+              : i
+          );
+          return { ...c, items };
+        }
+        return c;
+      });
+      syncSubtaskToParent({ ...currentSub, checklists });
+    };
+
+    const handleChecklistItemCreated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
+      const currentSub = subtaskRef.current;
+      if (!currentSub || payload.subtaskId !== currentSub.id) return;
+
+      const checklists = (currentSub.checklists || []).map((c: any) => {
+        if (c.id === payload.checklistId) {
+          if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
+          const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
+          if (tempIdx !== -1) {
+            const newItems = [...c.items];
+            newItems[tempIdx] = payload.item;
+            return { ...c, items: newItems };
+          }
+          return { ...c, items: [...(c.items || []), payload.item] };
+        }
+        return c;
+      });
+      syncSubtaskToParent({ ...currentSub, checklists });
+    };
+
     socket.on('task_editing_start', handleEditingStart);
     socket.on('task_editing_stop', handleEditingStop);
     socket.on('task_editing_content', handleEditingContent);
@@ -5046,6 +5330,8 @@ export function SubtaskDetailView({
     socket.on('task:comment_added', handleCommentAdded);
     socket.on('task:comment_updated', handleCommentUpdated);
     socket.on('task:comment_deleted', handleCommentDeleted);
+    socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
+    socket.on('task:checklist_item_created', handleChecklistItemCreated);
 
     return () => {
       socket.off('task_editing_start', handleEditingStart);
@@ -5055,6 +5341,8 @@ export function SubtaskDetailView({
       socket.off('task:comment_added', handleCommentAdded);
       socket.off('task:comment_updated', handleCommentUpdated);
       socket.off('task:comment_deleted', handleCommentDeleted);
+      socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
+      socket.off('task:checklist_item_created', handleChecklistItemCreated);
     };
   }, [socket, subtask?.id, currentUser?.name, parentTask.id, syncSubtaskToParent]);
 
@@ -6620,6 +6908,9 @@ export function SubtaskDetailView({
                   return (
                     <div
                       key={c.id}
+                      id={`comment-${c.id}`}
+                      data-comment-id={c.id}
+                      data-comment-text={(c.content || '').slice(0, 80)}
                       className={`group/comment flex flex-col gap-2 text-sm w-full min-w-0 max-w-full p-4 rounded-xl shadow-sm transition-all ${
                         isReply
                           ? 'mt-2 border'
@@ -6651,7 +6942,7 @@ export function SubtaskDetailView({
                             <button
                               type="button"
                               onClick={() => setFullscreenCommentId(c.id)}
-                              className="opacity-0 hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300 p-1.5 rounded-md hover:bg-zinc-800/60 cursor-pointer"
+                              className="opacity-0 group-hover/comment:opacity-100 transition-opacity text-zinc-300 hover:text-white p-1.5 rounded-md hover:bg-zinc-800/60 cursor-pointer"
                               title="Full screen view"
                             >
                               <Maximize2 className="w-3.5 h-3.5" />
@@ -7407,9 +7698,54 @@ export function TaskDetailModal(props: Props) {
         setFullTask(prev => prev ? { ...prev, ...incoming } : prev);
       }
     };
+    const handleSocketChecklistUpdated = (payload: any) => {
+      if (!payload || payload.taskId !== fullTask.id) return;
+      setFullTask(prev => {
+        if (!prev) return prev;
+        if (!payload.subtaskId) {
+          const checklists = (prev.checklists || []).map(c => {
+            if (c.id === payload.checklistId) {
+              const items = (c.items || []).map(i =>
+                (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                  ? { ...i, ...payload.item }
+                  : i
+              );
+              return { ...c, items };
+            }
+            return c;
+          });
+          return { ...prev, checklists };
+        } else {
+          const subtasks = (prev.subtasks || []).map((st: any) => {
+            if (st.id === payload.subtaskId) {
+              const checklists = (st.checklists || []).map((c: any) => {
+                if (c.id === payload.checklistId) {
+                  const items = (c.items || []).map((i: any) =>
+                    (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                      ? { ...i, ...payload.item }
+                      : i
+                  );
+                  return { ...c, items };
+                }
+                return c;
+              });
+              return { ...st, checklists };
+            }
+            return st;
+          });
+          return { ...prev, subtasks };
+        }
+      });
+    };
+
     props.socket.on('task:updated', handleSocketTaskUpdated);
+    props.socket.on('task:checklist_item_updated', handleSocketChecklistUpdated);
+    props.socket.on('task:checklist_item_created', handleSocketChecklistUpdated);
+
     return () => {
       props.socket.off('task:updated', handleSocketTaskUpdated);
+      props.socket.off('task:checklist_item_updated', handleSocketChecklistUpdated);
+      props.socket.off('task:checklist_item_created', handleSocketChecklistUpdated);
     };
   }, [props.socket, fullTask?.id]);
 

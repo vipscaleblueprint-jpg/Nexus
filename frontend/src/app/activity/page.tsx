@@ -70,11 +70,11 @@ function renderStyledStatusText(text: string) {
     }
     const val = match[0];
     const upper = val.toUpperCase().replace(/[\s\-_]+/g, '');
-    let colorClass = 'text-amber-400 font-semibold';
+    let colorClass = 'text-amber-400 font-medium';
     if (upper === 'CLOSED' || upper === 'DONE') {
-      colorClass = 'text-emerald-400 font-semibold';
+      colorClass = 'text-emerald-400 font-medium';
     } else if (upper === 'INPROGRESS') {
-      colorClass = 'text-blue-400 font-semibold';
+      colorClass = 'text-blue-400 font-medium';
     }
 
     parts.push(
@@ -196,6 +196,11 @@ function ActivityFeedContent() {
   );
   const [loading, setLoading] = useState<boolean>(() => !initialCacheValid);
   const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [targetCommentInfo, setTargetCommentInfo] = useState<{
+    id?: string | null;
+    text?: string | null;
+    subtaskId?: string | null;
+  } | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -270,7 +275,7 @@ function ActivityFeedContent() {
     }
   };
 
-  const handleOpenTask = async (n: any) => {
+  const handleOpenTask = async (n: any, item?: FeedItem) => {
     const rawTaskId = typeof n === 'string' ? n : n.task?.id || n.taskId || n.entityId;
     const taskId = rawTaskId ? String(rawTaskId).split('/')[0].trim() : null;
 
@@ -285,6 +290,30 @@ function ActivityFeedContent() {
       handleMarkAsRead(n.id, n.childIds);
     }
     if (!taskId) return;
+
+    // Detect if this activity click is specifically for a comment
+    const isComment =
+      item?.type === 'COMMENT' ||
+      item?.type === 'REPLY' ||
+      item?.type === 'MENTION' ||
+      n?.action === 'COMMENT' ||
+      n?.action === 'REPLY' ||
+      n?.type === 'COMMENT' ||
+      n?.type === 'REPLY' ||
+      n?.type === 'MENTION' ||
+      Boolean(n?.details?.commentId);
+
+    if (isComment) {
+      const cId =
+        n?.details?.commentId ||
+        n?.commentId ||
+        (typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('comment') : null);
+      const cText = item?.content || n?.details?.text || n?.content || null;
+      const sId = n?.details?.subtaskId || n?.subtaskId || null;
+      setTargetCommentInfo({ id: cId, text: cText, subtaskId: sId });
+    } else {
+      setTargetCommentInfo(null);
+    }
 
     lastUrlTaskId.current = taskId;
 
@@ -310,6 +339,12 @@ function ActivityFeedContent() {
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href);
         url.searchParams.set('task', taskId);
+        if (isComment) {
+          const cId = n?.details?.commentId || n?.commentId;
+          if (cId) url.searchParams.set('comment', cId);
+        } else {
+          url.searchParams.delete('comment');
+        }
         window.history.replaceState(null, '', url.pathname + url.search);
       }
       hadSelectedTask.current = true;
@@ -325,6 +360,12 @@ function ActivityFeedContent() {
           if (res.subtask) {
             url.searchParams.set('subtask', res.subtask.id);
           }
+          if (isComment) {
+            const cId = n?.details?.commentId || n?.commentId;
+            if (cId) url.searchParams.set('comment', cId);
+          } else {
+            url.searchParams.delete('comment');
+          }
           window.history.replaceState(null, '', url.pathname + url.search);
         }
         hadSelectedTask.current = true;
@@ -338,6 +379,7 @@ function ActivityFeedContent() {
         const url = new URL(window.location.href);
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
+        url.searchParams.delete('comment');
         window.history.replaceState(null, '', url.pathname + (url.search || ''));
       }
       lastUrlTaskId.current = null;
@@ -347,9 +389,13 @@ function ActivityFeedContent() {
   // Open task if ?task= param is present in URL
   useEffect(() => {
     const taskIdParam = searchParams.get('task');
+    const commentParam = searchParams.get('comment');
     const actualTaskId = taskIdParam ? taskIdParam.split('/')[0].trim() : null;
 
     if (actualTaskId) {
+      if (commentParam && !targetCommentInfo) {
+        setTargetCommentInfo({ id: commentParam });
+      }
       if (actualTaskId !== lastUrlTaskId.current && actualTaskId !== selectedTask?.id) {
         lastUrlTaskId.current = actualTaskId;
         handleOpenTask(actualTaskId);
@@ -357,6 +403,7 @@ function ActivityFeedContent() {
     } else if (hadSelectedTask.current && selectedTask) {
       lastUrlTaskId.current = null;
       setSelectedTask(null);
+      setTargetCommentInfo(null);
     }
   }, [searchParams]);
 
@@ -1021,7 +1068,7 @@ function ActivityFeedContent() {
         {/* Header Bar */}
       <div className="px-8 flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
         <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+          <h1 className="text-2xl font-medium tracking-tight">Activity</h1>
 
           {/* Prominent For Me vs Show All Segmented Toggle */}
           <div className="flex items-center bg-card p-1 rounded-lg border border-border shadow-xs">
@@ -1030,7 +1077,7 @@ function ActivityFeedContent() {
                 setViewMode('for_me');
                 setPage(1);
               }}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'for_me'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
@@ -1045,7 +1092,7 @@ function ActivityFeedContent() {
                 setViewMode('show_all');
                 setPage(1);
               }}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'show_all'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
@@ -1157,13 +1204,13 @@ function ActivityFeedContent() {
                 setCategory(cat.value);
                 setPage(1);
               }}
-              className={`pb-3 px-1 text-sm font-semibold transition-colors relative whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer ${
-                isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'
+              className={`pb-3 px-1 text-sm font-medium transition-colors relative whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer ${
+                isActive ? 'text-indigo-600 dark:text-indigo-400 font-semibold' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <span>{cat.label}</span>
               {unreadCount > 0 && (
-                <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200">
+                <span className="px-1.5 py-0.2 text-[10px] font-medium rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200">
                   {unreadCount}
                 </span>
               )}
@@ -1200,7 +1247,7 @@ function ActivityFeedContent() {
             {unreadItems.length > 0 && (
               <div className="mb-6">
                 <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-3">
-                  <h3 className="text-sm font-semibold text-sky-500 dark:text-sky-400 px-1">
+                  <h3 className="text-sm font-medium text-sky-500 dark:text-sky-400 px-1">
                     New
                   </h3>
                 </div>
@@ -1224,7 +1271,7 @@ function ActivityFeedContent() {
                       onPreviewImage={handlePreviewImage}
                       onClick={() => {
                         if (item.taskId) {
-                          handleOpenTask(item.rawItem);
+                          handleOpenTask(item.rawItem, item);
                         }
                       }}
                       onClear={(e) => {
@@ -1246,7 +1293,7 @@ function ActivityFeedContent() {
               <div key={groupName} className="mb-6">
                 {/* Date Group Heading (Today, Yesterday, Thu, Oct 22) */}
                 <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-3">
-                  <h3 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 px-1">
+                  <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-400 px-1">
                     {groupName}
                   </h3>
                 </div>
@@ -1270,7 +1317,7 @@ function ActivityFeedContent() {
                       onPreviewImage={handlePreviewImage}
                       onClick={() => {
                         if (item.taskId) {
-                          handleOpenTask(item.rawItem);
+                          handleOpenTask(item.rawItem, item);
                         }
                       }}
                       onClear={(e) => {
@@ -1380,14 +1427,19 @@ function ActivityFeedContent() {
           mode="full"
           onClose={() => {
             setSelectedTask(null);
+            setTargetCommentInfo(null);
             if (typeof window !== 'undefined') {
               const url = new URL(window.location.href);
               url.searchParams.delete('task');
               url.searchParams.delete('subtask');
+              url.searchParams.delete('comment');
               window.history.replaceState(null, '', url.pathname + (url.search || ''));
             }
           }}
           task={selectedTask}
+          targetCommentId={targetCommentInfo?.id}
+          targetCommentText={targetCommentInfo?.text}
+          scrollToComments={Boolean(targetCommentInfo)}
           workspaceRoles={workspaceRoles}
           onUpdateTask={(updatedTask) => {
             setSelectedTask(updatedTask);

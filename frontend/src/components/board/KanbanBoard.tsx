@@ -1305,29 +1305,6 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                       <ChevronLeft className="w-3 h-3 shrink-0 text-zinc-400" />
                                     </div>
                                   </div>
-
-                                  {isClosedCategory && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleSortLatestClosed();
-                                      }}
-                                      onMouseDown={(e) => e.stopPropagation()}
-                                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-all flex items-center gap-1 cursor-pointer select-none border ${
-                                        sortLatestClosedFirst
-                                          ? 'bg-emerald-500/20 text-emerald-300 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30 shadow-xs'
-                                          : 'bg-zinc-800 text-zinc-400 border-zinc-700/60 hover:text-zinc-200 hover:bg-zinc-700/50'
-                                      }`}
-                                      title={
-                                        sortLatestClosedFirst
-                                          ? 'Filter active: Latest closed on top across all clients - Click for default order'
-                                          : 'Filter: Click to show latest closed on top'
-                                      }
-                                    >
-                                      <ArrowDownUp className="w-2.5 h-2.5 shrink-0" />
-                                      <span>{sortLatestClosedFirst ? 'Latest on top' : 'Default'}</span>
-                                    </button>
-                                  )}
                                 </div>
                               )}
                             </div>

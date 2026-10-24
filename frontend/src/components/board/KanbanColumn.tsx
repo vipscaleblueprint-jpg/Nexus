@@ -2,7 +2,7 @@ import { useState, useEffect, memo, useMemo, useCallback } from 'react';
 
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Plus, MoreHorizontal, Archive, Trash2, Link2, Hash, ExternalLink, Star, Edit2, Bell, Clock, ArrowRight, Merge, Copy, RefreshCw, LayoutTemplate, Share2, Target, Play, Mail, Lock, Pencil, ArrowDownUp } from 'lucide-react';
+import { Plus, MoreHorizontal, Archive, Trash2, Link2, Hash, ExternalLink, Star, Edit2, Bell, Clock, ArrowRight, Merge, Copy, RefreshCw, LayoutTemplate, Share2, Target, Play, Mail, Lock, Pencil } from 'lucide-react';
 import { Task } from '@/lib/types';
 import { ActionMenu } from '../ui/ActionMenu';
 import { KanbanCard } from './KanbanCard';
@@ -374,30 +374,6 @@ export const KanbanColumn = memo(function KanbanColumn({
             </div>
             
             <div className={`flex items-center gap-1 ${colors.text} shrink-0`}>
-              {isClosedColumn && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleSortClosed?.();
-                  }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className={`px-1.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 border ${
-                    isSortLatestClosed
-                      ? 'bg-emerald-500/20 text-emerald-300 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30 shadow-xs'
-                      : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-black/5 dark:hover:bg-white/5'
-                  }`}
-                  title={
-                    isSortLatestClosed
-                      ? 'Filter active: Latest closed on top (across all clients) - Click for default order'
-                      : 'Filter: Click to show latest closed on top'
-                  }
-                >
-                  <ArrowDownUp className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-semibold hidden sm:inline">
-                    {isSortLatestClosed ? 'Latest' : 'Default'}
-                  </span>
-                </button>
-              )}
               <button 
                 className="p-1 hover:bg-black/5 rounded transition-colors cursor-pointer"
                 onClick={onToggleCollapse}

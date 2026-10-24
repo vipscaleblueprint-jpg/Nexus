@@ -14,7 +14,7 @@ import { useAppStore } from "@/lib/store";
 import { fetchListStatuses } from "@/lib/listStatusCache";
 import { ActivityCard } from "@/components/ui/ActivityCard";
 
-type TabType = "all" | "unread";
+type TabType = "all" | "mentions" | "unread";
 
 export function NotificationBell() {
   const router = useRouter();
@@ -365,7 +365,7 @@ export function NotificationBell() {
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-500 border-2 border-background flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
+            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-500 border-2 border-background flex items-center justify-center text-[9px] font-semibold text-white shadow-sm"
           >
             {unreadCount > 99 ? "99+" : unreadCount}
           </motion.div>
@@ -381,15 +381,15 @@ export function NotificationBell() {
             transition={{ duration: 0.15, ease: "easeOut" }}
             className="absolute right-0 mt-2 w-88 sm:w-[420px] bg-card border border-border rounded-xl shadow-2xl z-[200] overflow-hidden origin-top-right flex flex-col max-h-[85vh]"
           >
-            {/* Header: Notifications on left, All & Unread on right (matching Image 3 & 4) */}
+            {/* Header: Notifications on left, All, @ Mentions & Unread on right */}
             <div className="px-4 py-3.5 border-b border-border flex items-center justify-between bg-card">
-              <h3 className="font-bold text-base text-foreground tracking-tight">Notifications</h3>
+              <h3 className="font-semibold text-base text-foreground tracking-tight">Notifications</h3>
 
-              <div className="flex items-center gap-5">
+              <div className="flex items-center gap-4">
                 <button
                   onClick={() => handleTabChange("all")}
-                  className={`relative pb-1 text-sm font-semibold transition-colors cursor-pointer ${
-                    activeTab === "all" ? "text-foreground font-bold" : "text-muted-foreground hover:text-foreground"
+                  className={`relative pb-1 text-sm font-medium transition-colors cursor-pointer ${
+                    activeTab === "all" ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   All
@@ -402,9 +402,24 @@ export function NotificationBell() {
                 </button>
 
                 <button
+                  onClick={() => handleTabChange("mentions")}
+                  className={`relative pb-1 text-sm font-medium transition-colors cursor-pointer ${
+                    activeTab === "mentions" ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  @ Mentions
+                  {activeTab === "mentions" && (
+                    <motion.div
+                      layoutId="activeBellTab"
+                      className="absolute -bottom-1 left-0 right-0 h-[2px] bg-foreground rounded-full"
+                    />
+                  )}
+                </button>
+
+                <button
                   onClick={() => handleTabChange("unread")}
-                  className={`relative pb-1 text-sm font-semibold transition-colors cursor-pointer ${
-                    activeTab === "unread" ? "text-foreground font-bold" : "text-muted-foreground hover:text-foreground"
+                  className={`relative pb-1 text-sm font-medium transition-colors cursor-pointer ${
+                    activeTab === "unread" ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   Unread
@@ -434,7 +449,11 @@ export function NotificationBell() {
                     <Bell className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <p className="text-xs font-medium text-muted-foreground">
-                    {activeTab === "unread" ? "No unread notifications" : "You're all caught up!"}
+                    {activeTab === "unread"
+                      ? "No unread notifications"
+                      : activeTab === "mentions"
+                      ? "No @mentions yet"
+                      : "You're all caught up!"}
                   </p>
                 </div>
               ) : (
@@ -507,7 +526,7 @@ export function NotificationBell() {
                   setIsOpen(false);
                   router.push("/activity");
                 }}
-                className="w-full py-1.5 px-3 rounded-lg bg-secondary hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border text-xs font-semibold text-secondary-foreground hover:text-foreground transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                className="w-full py-1.5 px-3 rounded-lg bg-secondary hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border text-xs font-medium text-secondary-foreground hover:text-foreground transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <span>View all activity</span>
                 <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />

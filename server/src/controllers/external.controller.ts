@@ -8,6 +8,14 @@ import { invalidateCache } from '../services/redisService';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { updatePageBlocks } from '../services/pageContentService';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
+import {
+  resolveClickUpListId,
+  mapNexusStatusToClickUp,
+  mapNexusPriorityToClickUp,
+  safeCreateClickUpTask,
+  safeCreateClickUpChecklist,
+  safeCreateClickUpChecklistItem,
+} from '../services/clickupService';
 
 
 async function getOrCreateVipScaleUser() {
@@ -98,7 +106,7 @@ export async function createExternalList(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { name, spaceId, folderId, statuses, externalId } = req.body;
+    const { name, spaceId, folderId, statuses, externalId, clickUpListId } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: 'name is required' });
@@ -141,6 +149,10 @@ export async function createExternalList(req: Request, res: Response) {
     }
 
     if (list) {
+      // If list already exists, ensure clickUpListId is updated if passed
+      if (clickUpListId && !list.clickUpListId) {
+        list = await prisma.list.update({ where: { id: list.id }, data: { clickUpListId: String(clickUpListId) } });
+      }
       // Return early if the list already exists (to avoid duplicate status seeding).
       // existingTaskTitles lets callers that seed tasks skip the ones already there.
       const existingTasks = await prisma.task.findMany({ where: { listId: list.id }, select: { title: true } });
@@ -153,6 +165,7 @@ export async function createExternalList(req: Request, res: Response) {
         spaceId: targetSpaceId || null,
         folderId: targetFolderId || null,
         externalId: externalId ? String(externalId) : null,
+        clickUpListId: clickUpListId ? String(clickUpListId) : null,
         customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management', 'Closed Task']
       }
     });
@@ -364,7 +377,7 @@ export async function createTask(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { title, listId, description, priority, status, assigneeId, checklists } = req.body;
+    const { title, listId, description, priority, status, assigneeId, checklists, externalId } = req.body;
 
     if (!title || !listId) {
       return res.status(400).json({ error: 'title and listId are required' });
@@ -425,6 +438,7 @@ export async function createTask(req: Request, res: Response) {
         status: status || 'PENDING',
         creatorId: vipScaleUser.id,
         assigneeId: assigneeId || undefined,
+        externalId: externalId ? String(externalId) : undefined,
       }
     });
 
@@ -498,6 +512,41 @@ export async function createTask(req: Request, res: Response) {
       }
     } catch (error) {
       console.error('Failed to inject task into Priorities Journal:', error);
+    }
+
+    // --- ClickUp Sync: fallback if externalId was not pre-created ---
+    if (!externalId) {
+      (async () => {
+        try {
+          const clickUpListId = resolveClickUpListId(list);
+          if (clickUpListId) {
+            const cuPayload = {
+              name: task.title,
+              description: task.description || undefined,
+              status: mapNexusStatusToClickUp(task.status),
+              priority: mapNexusPriorityToClickUp(task.priority),
+            };
+            const clickUpTaskId = await safeCreateClickUpTask(clickUpListId, cuPayload);
+            if (clickUpTaskId) {
+              await prisma.task.update({
+                where: { id: task.id },
+                data: { externalId: clickUpTaskId },
+              });
+
+              for (const cl of finalChecklists) {
+                const cuChecklistId = await safeCreateClickUpChecklist(clickUpTaskId, cl.name);
+                if (cuChecklistId && cl.items && Array.isArray(cl.items)) {
+                  for (const itemText of cl.items) {
+                    await safeCreateClickUpChecklistItem(cuChecklistId, itemText);
+                  }
+                }
+              }
+            }
+          }
+        } catch (cuErr) {
+          console.error('[ClickUp] external createTask fallback sync error:', cuErr);
+        }
+      })();
     }
 
     // --- REALTIME WEBSOCKET AND CACHE INVALIDATION ---

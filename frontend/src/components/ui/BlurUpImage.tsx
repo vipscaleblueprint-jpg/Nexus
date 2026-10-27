@@ -10,6 +10,9 @@ interface BlurUpImageProps {
   alt?: string;
   className?: string;
   imgClassName?: string;
+  isReply?: boolean;
+  maxWidth?: number | string;
+  maxHeight?: number | string;
   onPreview?: (src: string) => void;
 }
 
@@ -18,6 +21,9 @@ export function BlurUpImage({
   alt = 'attachment',
   className = '',
   imgClassName = '',
+  isReply = false,
+  maxWidth,
+  maxHeight,
   onPreview,
 }: BlurUpImageProps) {
   const [thumbLoaded, setThumbLoaded] = useState(false);
@@ -92,11 +98,17 @@ export function BlurUpImage({
     );
   }
 
+  const effectiveMaxWidth = maxWidth ?? (isReply ? 260 : 340);
+  const effectiveMaxHeight = maxHeight ?? (isReply ? 180 : 220);
+  const styleMaxWidth = typeof effectiveMaxWidth === 'number' ? `${effectiveMaxWidth}px` : effectiveMaxWidth;
+  const styleMaxHeight = typeof effectiveMaxHeight === 'number' ? `${effectiveMaxHeight}px` : effectiveMaxHeight;
+
   return (
     <span
       role="button"
       tabIndex={0}
-      className={`my-2 inline-block relative group/image cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none ${className}`}
+      style={{ maxWidth: styleMaxWidth }}
+      className={`my-1.5 inline-block relative group/image cursor-pointer max-w-full rounded-lg overflow-hidden align-middle select-none ${className}`}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -121,10 +133,18 @@ export function BlurUpImage({
     >
       {/* Loading skeleton while thumbnail loads */}
       {!thumbLoaded && (
-        <span className="inline-flex items-center justify-center w-[200px] h-[140px] bg-zinc-900/80 border border-zinc-800/80 rounded-lg animate-pulse">
+        <span
+          style={{
+            width: isReply ? 160 : 200,
+            height: isReply ? 110 : 130,
+            maxWidth: styleMaxWidth,
+            maxHeight: styleMaxHeight,
+          }}
+          className="inline-flex items-center justify-center bg-zinc-900/80 border border-zinc-800/80 rounded-lg animate-pulse"
+        >
           <span className="flex flex-col items-center gap-2 text-zinc-500">
-            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
-            <span className="text-[11px] font-medium text-zinc-400">Loading preview...</span>
+            <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+            <span className="text-[10px] font-medium text-zinc-400">Loading preview...</span>
           </span>
         </span>
       )}
@@ -138,7 +158,13 @@ export function BlurUpImage({
         decoding="async"
         onLoad={() => setThumbLoaded(true)}
         onError={handleImageError}
-        className={`${imgClassName || 'max-w-full md:max-w-md max-h-[360px]'} object-contain rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-all duration-300 ${
+        style={{
+          maxWidth: styleMaxWidth,
+          maxHeight: styleMaxHeight,
+          width: 'auto',
+          height: 'auto',
+        }}
+        className={`${imgClassName || 'object-contain'} rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-all duration-300 ${
           thumbLoaded
             ? 'block group-hover/image:brightness-95 filter blur-0 opacity-100'
             : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'

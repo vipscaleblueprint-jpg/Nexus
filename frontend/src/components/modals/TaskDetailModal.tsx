@@ -373,8 +373,8 @@ export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[]
   });
 }
 
-function LazyMarkdownImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (src: string) => void }) {
-  return <BlurUpImage src={src} alt={alt} onPreview={onPreview} />;
+function LazyMarkdownImage({ src, alt, onPreview, isReply }: { src: string; alt?: string; onPreview: (src: string) => void; isReply?: boolean }) {
+  return <BlurUpImage src={src} alt={alt} onPreview={onPreview} isReply={isReply} />;
 }
 
 function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: string) => void }) {
@@ -985,7 +985,7 @@ export function TaskDetailModalContent({
   }, [hasOlderActivities, isLoadingOlderActivities, loadOlderActivities]);
 
 
-  const markdownComponents = React.useMemo(() => ({
+  const createMarkdownComponents = useCallback((isReply = false) => ({
     a: (props: any) => {
       const { node, ...rest } = props;
       const href = rest.href || '';
@@ -993,7 +993,7 @@ export function TaskDetailModalContent({
         return <LazyMarkdownVideo src={href} onPreview={setLightboxImage} />;
       }
       if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
-        return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} />;
+        return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} isReply={isReply} />;
       }
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
@@ -1051,9 +1051,12 @@ export function TaskDetailModalContent({
     },
     img: (props: any) => {
       const { node, ...rest } = props;
-      return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} />;
+      return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} isReply={isReply} />;
     }
   }), [task?.id]);
+
+  const markdownComponents = React.useMemo(() => createMarkdownComponents(false), [createMarkdownComponents]);
+  const replyMarkdownComponents = React.useMemo(() => createMarkdownComponents(true), [createMarkdownComponents]);
 
   // Select only what the modal uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
   const { currentUser, workspaceUsers, workspaceUsersIndex, loadUsers, hydrateUsersFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, allLists } = useAppStore(useShallow((s) => ({
@@ -1312,7 +1315,7 @@ export function TaskDetailModalContent({
     setReplyText('');
     setReplyingToId(null);
     try {
-      const res = await tasksApi.addComment(targetId, text, currentUser.id, undefined, mentionIds || [], parentCommentId, subtaskId);
+      const res = await tasksApi.addComment(targetId, text, currentUser.id, task?.listId, mentionIds || [], parentCommentId, subtaskId);
       if (res?.comment) {
         if (mentionIds && mentionIds.length > 0) {
           mentionIds.forEach(id => {
@@ -3913,7 +3916,7 @@ export function TaskDetailModalContent({
                           <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:underline hover:prose-a:text-blue-700 dark:hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                             <CommentMarkdown
                               content={comment.content || ''}
-                              components={markdownComponents}
+                              components={isReply ? replyMarkdownComponents : markdownComponents}
                               onToggleChecklist={(itemIndex, checked) => handleToggleCommentChecklist(comment.id, itemIndex, checked)}
                             />
                           </div>
@@ -3996,7 +3999,7 @@ export function TaskDetailModalContent({
                               onClick={() => setReplyingToId(replyingToId === comment.id ? null : comment.id)}
                               className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
                             >
-                              <MessageSquare className="w-3 h-3" /> Reply {comment.replyCount > 0 && `(${comment.replyCount})`}
+                              <MessageSquare className="w-3 h-3" /> Reply {((comment.replies?.length ?? comment.replyCount) > 0) && `(${comment.replies?.length ?? comment.replyCount})`}
                             </button>
                           )}
                         </div>
@@ -5023,7 +5026,7 @@ export function SubtaskDetailView({
     return () => observer.disconnect();
   }, [localDesc, isDescExpanded]);
 
-  const markdownComponents = React.useMemo(() => ({
+  const createMarkdownComponents = useCallback((isReply = false) => ({
     a: (props: any) => {
       const { node, ...rest } = props;
       const href = rest.href || '';
@@ -5031,7 +5034,7 @@ export function SubtaskDetailView({
         return <LazyMarkdownVideo src={href} onPreview={setLightboxImage} />;
       }
       if (href.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
-        return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} />;
+        return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} isReply={isReply} />;
       }
       if (href.startsWith('mention://')) {
         const userId = href.replace('mention://', '');
@@ -5089,9 +5092,12 @@ export function SubtaskDetailView({
     },
     img: (props: any) => {
       const { node, ...rest } = props;
-      return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} />;
+      return <LazyMarkdownImage src={rest.src} alt={rest.alt || "attachment"} onPreview={setLightboxImage} isReply={isReply} />;
     }
   }), [parentTask?.id]);
+
+  const markdownComponents = React.useMemo(() => createMarkdownComponents(false), [createMarkdownComponents]);
+  const replyMarkdownComponents = React.useMemo(() => createMarkdownComponents(true), [createMarkdownComponents]);
   const editorRef = useRef<any>(null);
   const activityPanelRef = useRef<HTMLDivElement>(null);
   // Task edits are open to all
@@ -7281,7 +7287,7 @@ export function SubtaskDetailView({
                         <div className="text-zinc-300 text-[13.5px] leading-relaxed max-w-full break-words prose prose-sm prose-invert prose-p:my-0 [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:underline hover:prose-a:text-blue-700 dark:hover:prose-a:text-blue-300 prose-a:rounded-sm prose-a:transition-colors prose-img:rounded-md prose-img:my-2 prose-img:max-w-full w-full pl-11 select-text cursor-text">
                           <CommentMarkdown
                             content={c.content || ''}
-                            components={markdownComponents}
+                            components={isReply ? replyMarkdownComponents : markdownComponents}
                             onToggleChecklist={(itemIndex, checked) => handleToggleCommentChecklist(c.id, itemIndex, checked)}
                           />
                         </div>

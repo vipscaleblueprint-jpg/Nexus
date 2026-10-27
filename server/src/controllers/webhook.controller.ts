@@ -66,14 +66,14 @@ export const requireApiKey = (req: Request, res: Response) => {
 };
 
 const DEFAULT_CLIENT_STATUSES = [
-  { name: 'KYC', color: '#8A8F98', groupName: 'Client Details' },
-  { name: 'PIN BOARD', color: '#8A8F98', groupName: 'Client Details' },
-  { name: 'DAILY', color: '#8A8F98', groupName: 'Recurring' },
-  { name: 'WEEKLY', color: '#8A8F98', groupName: 'Recurring' },
-  { name: 'MONTHLY', color: '#8A8F98', groupName: 'Recurring' },
-  { name: 'PENDING', color: '#8A8F98', groupName: 'Workflow & Progress' },
-  { name: 'IN PROGRESS', color: '#8A8F98', groupName: 'Workflow & Progress' },
-  { name: 'REVISION', color: '#8A8F98', groupName: 'Workflow & Progress' },
+  { name: 'KYC', color: '#3A8F55', groupName: 'Client Details' },
+  { name: 'PIN BOARD', color: '#1F8A6E', groupName: 'Client Details' },
+  { name: 'DAILY', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'WEEKLY', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'MONTHLY', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'PENDING', color: '#D29A2A', groupName: 'Workflow & Progress' },
+  { name: 'IN PROGRESS', color: '#D04A7C', groupName: 'Workflow & Progress' },
+  { name: 'REVISION', color: '#5B6BD6', groupName: 'Workflow & Progress' },
   { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
   { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
   { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },

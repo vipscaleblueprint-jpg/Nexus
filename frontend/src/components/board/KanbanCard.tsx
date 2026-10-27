@@ -609,15 +609,15 @@ const CardContent = memo(({
               const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
 
               const STATUS_COLORS: Record<string, string> = {
-                PENDING: 'text-[#8A8F98]',
-                'IN PROGRESS': 'text-[#8A8F98]',
+                PENDING: 'text-[#D29A2A]',
+                'IN PROGRESS': 'text-[#D04A7C]',
                 CLOSED: 'text-[#2FA37A]',
-                'KYC': 'text-[#8A8F98]',
-                'PIN BOARD': 'text-[#8A8F98]',
-                'DAILY': 'text-[#8A8F98]',
-                'WEEKLY': 'text-[#8A8F98]',
-                'MONTHLY': 'text-[#8A8F98]',
-                'REVISION': 'text-[#8A8F98]',
+                'KYC': 'text-[#3A8F55]',
+                'PIN BOARD': 'text-[#1F8A6E]',
+                'DAILY': 'text-[#2F7BD0]',
+                'WEEKLY': 'text-[#2F7BD0]',
+                'MONTHLY': 'text-[#2F7BD0]',
+                'REVISION': 'text-[#5B6BD6]',
                 'WAITING': 'text-[#D9534F]',
                 'IN REVIEW': 'text-[#D97B3A]',
                 'CHECKING': 'text-[#A35DB8]',
@@ -640,8 +640,8 @@ const CardContent = memo(({
           </div>
           {openDropdown === 'status' && (
             <PortalDropdown triggerRef={statusTriggerRef} onClose={closeDropdown}>
-              <div className="w-48 max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pb-1.5 px-1.5 bg-background border border-zinc-800 rounded-md shadow-xl">
-                <div className="px-2 pt-2 pb-1 text-[10px] text-zinc-500 dark:text-zinc-500 font-bold tracking-wider uppercase sticky top-0 bg-background z-10 mb-0.5">Change Status</div>
+              <div className="w-48 max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pb-1.5 px-1.5 bg-background border border-zinc-200 dark:border-zinc-800 rounded-md shadow-xl">
+                <div className="px-2 pt-2 pb-1 text-[10px] text-zinc-500 dark:text-zinc-400 font-bold tracking-wider uppercase sticky top-0 bg-background z-10 mb-0.5">Change Status</div>
                 {(() => {
                   const statusesToRender = orderedListStatuses.length > 0 ? orderedListStatuses : ALL_STATUSES;
                   const openStatuses = statusesToRender.filter(s => !isClosedStatus(s));
@@ -659,15 +659,15 @@ const CardContent = memo(({
                   };
                   
                   const STATUS_COLORS: Record<string, string> = {
-                    PENDING: 'text-[#8A8F98]',
-                    'IN PROGRESS': 'text-[#8A8F98]',
+                    PENDING: 'text-[#D29A2A]',
+                    'IN PROGRESS': 'text-[#D04A7C]',
                     CLOSED: 'text-[#2FA37A]',
-                    'KYC': 'text-[#8A8F98]',
-                    'PIN BOARD': 'text-[#8A8F98]',
-                    'DAILY': 'text-[#8A8F98]',
-                    'WEEKLY': 'text-[#8A8F98]',
-                    'MONTHLY': 'text-[#8A8F98]',
-                    'REVISION': 'text-[#8A8F98]',
+                    'KYC': 'text-[#3A8F55]',
+                    'PIN BOARD': 'text-[#1F8A6E]',
+                    'DAILY': 'text-[#2F7BD0]',
+                    'WEEKLY': 'text-[#2F7BD0]',
+                    'MONTHLY': 'text-[#2F7BD0]',
+                    'REVISION': 'text-[#5B6BD6]',
                     'WAITING': 'text-[#D9534F]',
                     'IN REVIEW': 'text-[#D97B3A]',
                     'CHECKING': 'text-[#A35DB8]',
@@ -684,7 +684,7 @@ const CardContent = memo(({
                       <div
                         key={(customObj && customObj.id) || statusName}
                         onClick={() => handleStatusChange(statusName)}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${statusStr === statusName ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${statusStr === statusName ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
                       >
                         {(() => {
                           if (isClosed) {
@@ -703,7 +703,7 @@ const CardContent = memo(({
                           return <CustomCircleDot className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500 dark:text-zinc-500'}`} />;
                         })()}
                         <span className="uppercase">{statusName}</span>
-                        {statusName === statusStr && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                        {statusName === statusStr && <Check className="w-3 h-3 ml-auto opacity-70 text-blue-600 dark:text-blue-400" />}
                       </div>
                     );
                   };
@@ -713,7 +713,8 @@ const CardContent = memo(({
                       {openStatuses.map(renderItem)}
                       {closedStatuses.length > 0 && (
                         <>
-                          <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                          <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                          <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
                             Closed
                           </div>
                           {closedStatuses.map(renderItem)}

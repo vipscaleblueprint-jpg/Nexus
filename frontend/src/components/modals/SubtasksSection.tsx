@@ -954,7 +954,7 @@ function SubtaskRow({
                   </div>
                 </Popover.Trigger>
                 <Popover.Portal>
-                  <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                  <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-200 dark:border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                     <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                       {(() => {
                         const rawStatuses = (listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES;
@@ -978,7 +978,7 @@ function SubtaskRow({
                                 onUpdate(subtask.id, { status: s, completed: isFinal });
                                 setStatusOpen(false);
                               }}
-                              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-300' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
                             >
                               {(() => {
                                 if (isClosed) {
@@ -997,7 +997,7 @@ function SubtaskRow({
                                 return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
                               })()}
                               <span className="uppercase">{s}</span>
-                              {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                              {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70 text-indigo-600 dark:text-indigo-400" />}
                             </div>
                           );
                         };
@@ -1007,7 +1007,8 @@ function SubtaskRow({
                             {openStatuses.map(renderItem)}
                             {closedStatuses.length > 0 && (
                               <>
-                                <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                                <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                                <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
                                   Closed
                                 </div>
                                 {closedStatuses.map(renderItem)}
@@ -1281,7 +1282,7 @@ function SubtaskRow({
                 </div>
               </Popover.Trigger>
               <Popover.Portal>
-                <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-200 dark:border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                   <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                     {(() => {
                       const rawStatuses = (listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES;
@@ -1307,7 +1308,7 @@ function SubtaskRow({
                               onUpdate(subtask.id, { status: s, completed: isFinal });
                               setStatusRowOpen(false);
                             }}
-                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-300' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
                           >
                             {(() => {
                               if (isClosed) {
@@ -1319,7 +1320,7 @@ function SubtaskRow({
                               return <CustomCircleDot className={`w-3 h-3 shrink-0 ${!customObj?.color && !statusColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
                             })()}
                             <span className="uppercase">{s}</span>
-                            {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                            {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70 text-indigo-600 dark:text-indigo-400" />}
                           </div>
                         );
                       };
@@ -1329,7 +1330,8 @@ function SubtaskRow({
                           {openStatuses.map(renderItem)}
                           {closedStatuses.length > 0 && (
                             <>
-                              <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                              <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                              <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
                                 Closed
                               </div>
                               {closedStatuses.map(renderItem)}

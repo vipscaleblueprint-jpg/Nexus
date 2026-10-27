@@ -3,14 +3,14 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const DEFAULT_STATUSES: { name: string; color: string; groupName: string | null }[] = [
-  { name: 'KYC', color: '#8A8F98', groupName: 'Client Details' },
-  { name: 'Pin Board', color: '#8A8F98', groupName: 'Client Details' },
-  { name: 'Daily', color: '#8A8F98', groupName: 'Recurring' },
-  { name: 'Weekly', color: '#8A8F98', groupName: 'Recurring' },
-  { name: 'Monthly', color: '#8A8F98', groupName: 'Recurring' },
-  { name: 'Pending', color: '#8A8F98', groupName: 'Workflow & Progress' },
-  { name: 'In Progress', color: '#8A8F98', groupName: 'Workflow & Progress' },
-  { name: 'Revision', color: '#8A8F98', groupName: 'Workflow & Progress' },
+  { name: 'KYC', color: '#3A8F55', groupName: 'Client Details' },
+  { name: 'Pin Board', color: '#1F8A6E', groupName: 'Client Details' },
+  { name: 'Daily', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'Weekly', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'Monthly', color: '#2F7BD0', groupName: 'Recurring' },
+  { name: 'Pending', color: '#D29A2A', groupName: 'Workflow & Progress' },
+  { name: 'In Progress', color: '#D04A7C', groupName: 'Workflow & Progress' },
+  { name: 'Revision', color: '#5B6BD6', groupName: 'Workflow & Progress' },
   { name: 'Waiting', color: '#D9534F', groupName: 'Workflow & Progress' },
   { name: 'In Review', color: '#D97B3A', groupName: 'Workflow & Progress' },
   { name: 'Checking', color: '#A35DB8', groupName: 'Workflow & Progress' },

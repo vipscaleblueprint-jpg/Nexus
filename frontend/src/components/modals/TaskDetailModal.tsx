@@ -278,14 +278,14 @@ export function prefetchSubtaskActivities(parentTaskId: string, subtaskId: strin
 }
 
 export const STATUS_COLORS: Record<string, string> = {
-  'KYC': 'bg-[#8A8F98] text-white',
-  'PIN BOARD': 'bg-[#8A8F98] text-white',
-  'DAILY': 'bg-[#8A8F98] text-white',
-  'WEEKLY': 'bg-[#8A8F98] text-white',
-  'MONTHLY': 'bg-[#8A8F98] text-white',
-  'PENDING': 'bg-[#8A8F98] text-white',
-  'IN PROGRESS': 'bg-[#8A8F98] text-white',
-  'REVISION': 'bg-[#8A8F98] text-white',
+  'KYC': 'bg-[#3A8F55] text-white',
+  'PIN BOARD': 'bg-[#1F8A6E] text-white',
+  'DAILY': 'bg-[#2F7BD0] text-white',
+  'WEEKLY': 'bg-[#2F7BD0] text-white',
+  'MONTHLY': 'bg-[#2F7BD0] text-white',
+  'PENDING': 'bg-[#D29A2A] text-white',
+  'IN PROGRESS': 'bg-[#D04A7C] text-white',
+  'REVISION': 'bg-[#5B6BD6] text-white',
   'WAITING': 'bg-[#D9534F] text-white',
   'IN REVIEW': 'bg-[#D97B3A] text-white',
   'CHECKING': 'bg-[#A35DB8] text-white',
@@ -294,14 +294,14 @@ export const STATUS_COLORS: Record<string, string> = {
   'ON-HOLD': 'bg-[#8A8F98] text-white',
 
   // Fallback for capitalized formats
-  'Kyc': 'bg-[#8A8F98] text-white',
-  'Pin Board': 'bg-[#8A8F98] text-white',
-  'Daily': 'bg-[#8A8F98] text-white',
-  'Weekly': 'bg-[#8A8F98] text-white',
-  'Monthly': 'bg-[#8A8F98] text-white',
-  'Pending': 'bg-[#8A8F98] text-white',
-  'In Progress': 'bg-[#8A8F98] text-white',
-  'Revision': 'bg-[#8A8F98] text-white',
+  'Kyc': 'bg-[#3A8F55] text-white',
+  'Pin Board': 'bg-[#1F8A6E] text-white',
+  'Daily': 'bg-[#2F7BD0] text-white',
+  'Weekly': 'bg-[#2F7BD0] text-white',
+  'Monthly': 'bg-[#2F7BD0] text-white',
+  'Pending': 'bg-[#D29A2A] text-white',
+  'In Progress': 'bg-[#D04A7C] text-white',
+  'Revision': 'bg-[#5B6BD6] text-white',
   'Waiting': 'bg-[#D9534F] text-white',
   'In Review': 'bg-[#D97B3A] text-white',
   'Checking': 'bg-[#A35DB8] text-white',
@@ -2992,7 +2992,7 @@ export function TaskDetailModalContent({
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-200 dark:border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {(() => {
                                     const openStatuses = orderedStatuses.filter(s => !isClosedStatus(s));
@@ -3011,7 +3011,7 @@ export function TaskDetailModalContent({
                                             handleStatusChangeAction(s);
                                             setIsStatusOpen(false);
                                           }}
-                                          className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                                          className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
                                         >
                                           {(() => {
                                             if (isClosed) {
@@ -3029,7 +3029,7 @@ export function TaskDetailModalContent({
                                             return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
                                           })()}
                                           <span className="uppercase">{s}</span>
-                                          {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                          {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70 text-blue-600 dark:text-blue-400" />}
                                         </div>
                                       );
                                     };
@@ -3039,7 +3039,8 @@ export function TaskDetailModalContent({
                                         {openStatuses.map(renderItem)}
                                         {closedStatuses.length > 0 && (
                                           <>
-                                            <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                                            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                                            <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
                                               Closed
                                             </div>
                                             {closedStatuses.map(renderItem)}
@@ -6525,7 +6526,7 @@ export function SubtaskDetailView({
                               </div>
                             </Popover.Trigger>
                             <Popover.Portal>
-                              <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
+                              <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-200 dark:border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
                                   {(() => {
                                     const openStatuses = orderedStatuses.filter((s: string) => !isClosedStatus(s));
@@ -6544,7 +6545,7 @@ export function SubtaskDetailView({
                                             handleStatusChangeAction(s);
                                             setIsStatusOpen(false);
                                           }}
-                                          className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                                          className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
                                         >
                                           {(() => {
                                             if (isClosed) {
@@ -6562,7 +6563,7 @@ export function SubtaskDetailView({
                                             return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
                                           })()}
                                           <span className="uppercase">{s}</span>
-                                          {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                          {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70 text-blue-600 dark:text-blue-400" />}
                                         </div>
                                       );
                                     };
@@ -6572,7 +6573,8 @@ export function SubtaskDetailView({
                                         {openStatuses.map(renderItem)}
                                         {closedStatuses.length > 0 && (
                                           <>
-                                            <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                                            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                                            <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
                                               Closed
                                             </div>
                                             {closedStatuses.map(renderItem)}

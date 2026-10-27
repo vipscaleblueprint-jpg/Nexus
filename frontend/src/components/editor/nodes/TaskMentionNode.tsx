@@ -16,12 +16,23 @@ import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { sanitizeHtml } from '@/components/docs/docTransfer';
 
 const STATUS_HEX_MAP: Record<string, string> = {
-  PENDING: '#8A8F98',
-  'IN PROGRESS': '#8A8F98',
-  DONE: '#22c55e', 
-  REVISION: '#8A8F98',
+  KYC: '#3A8F55',
+  'PIN BOARD': '#1F8A6E',
+  DAILY: '#2F7BD0',
+  WEEKLY: '#2F7BD0',
+  MONTHLY: '#2F7BD0',
+  PENDING: '#D29A2A',
+  'IN PROGRESS': '#D04A7C',
+  IN_PROGRESS: '#D04A7C',
+  REVISION: '#5B6BD6',
+  WAITING: '#D9534F',
+  'IN REVIEW': '#D97B3A',
+  IN_REVIEW: '#D97B3A',
   CHECKING: '#A35DB8',
+  CRM: '#22A3AE',
   CLOSED: '#2FA37A',
+  DONE: '#2FA37A',
+  'ON-HOLD': '#8A8F98',
 };
 
 export const getStatusColor = (status: string) => {
@@ -719,7 +730,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       {openDropdown === 'status' && (
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
           <div className="z-[9999] w-48 p-1.5 bg-popover border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl outline-none flex flex-col gap-0.5">
-            <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider shrink-0">Change Status</div>
+            <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider shrink-0">Change Status</div>
             <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
               {(() => {
                 const openStatuses = orderedListStatuses.filter((s: string) => !isClosedStatus(s));
@@ -736,7 +747,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                       key={statusName}
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(statusName); }}
                       className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg cursor-pointer transition-colors ${
-                        isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'
+                        isActive ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'
                       }`}
                     >
                       {isClosed ? (
@@ -747,7 +758,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                         <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
                       )}
                       <span className="uppercase">{statusName}</span>
-                      {isActive && <Check className="w-4 h-4 ml-auto text-blue-500 opacity-70" />}
+                      {isActive && <Check className="w-4 h-4 ml-auto text-blue-600 dark:text-blue-400 opacity-70" />}
                     </button>
                   );
                 };
@@ -757,7 +768,8 @@ export const TaskMentionNode = (props: NodeViewProps) => {
                     {openStatuses.map(renderItem)}
                     {closedStatuses.length > 0 && (
                       <>
-                        <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                        <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                        <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
                           Closed
                         </div>
                         {closedStatuses.map(renderItem)}

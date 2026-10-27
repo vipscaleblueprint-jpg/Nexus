@@ -329,15 +329,34 @@ function SidebarPageItem({
 }
 
 const getTaskStatusBadgeColor = (status?: string) => {
-  switch (status) {
+  const norm = (status || '').toUpperCase().trim();
+  switch (norm) {
     case 'CLOSED':
-      return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+    case 'DONE':
+      return 'bg-[#2FA37A]/20 text-[#2FA37A] border border-[#2FA37A]/30';
     case 'WAITING':
-      return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+      return 'bg-[#D9534F]/20 text-[#D9534F] border border-[#D9534F]/30';
     case 'DAILY':
-      return 'bg-purple-500/20 text-purple-400 border border-purple-500/30';
+    case 'WEEKLY':
+    case 'MONTHLY':
+      return 'bg-[#2F7BD0]/20 text-[#2F7BD0] border border-[#2F7BD0]/30';
     case 'IN_PROGRESS':
-      return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
+    case 'IN PROGRESS':
+      return 'bg-[#D04A7C]/20 text-[#D04A7C] border border-[#D04A7C]/30';
+    case 'PENDING':
+      return 'bg-[#D29A2A]/20 text-[#D29A2A] border border-[#D29A2A]/30';
+    case 'REVISION':
+      return 'bg-[#5B6BD6]/20 text-[#5B6BD6] border border-[#5B6BD6]/30';
+    case 'IN REVIEW':
+    case 'IN_REVIEW':
+      return 'bg-[#D97B3A]/20 text-[#D97B3A] border border-[#D97B3A]/30';
+    case 'CHECKING':
+      return 'bg-[#A35DB8]/20 text-[#A35DB8] border border-[#A35DB8]/30';
+    case 'CRM':
+      return 'bg-[#22A3AE]/20 text-[#22A3AE] border border-[#22A3AE]/30';
+    case 'ON-HOLD':
+    case 'ON_HOLD':
+      return 'bg-[#8A8F98]/20 text-[#8A8F98] border border-[#8A8F98]/30';
     default:
       return 'bg-zinc-800 text-zinc-400 border border-zinc-700';
   }

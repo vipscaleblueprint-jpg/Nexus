@@ -1,7 +1,13 @@
 import { API_BASE_URL } from './client';
+import { validateUploadFile } from '@/lib/fileValidation';
 
 export const uploadApi = {
   uploadFile: async (file: File, folder?: string): Promise<{ url: string; name: string }> => {
+    const check = validateUploadFile(file);
+    if (!check.valid) {
+      throw new Error(check.error || 'File cannot be uploaded');
+    }
+
     const formData = new FormData();
     formData.append('file', file);
     if (folder) {

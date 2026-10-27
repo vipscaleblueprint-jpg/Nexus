@@ -3,6 +3,8 @@ import { redis } from '../config/redis';
 import { prisma } from '../config/prisma';
 import { createLogger, errMsg } from '../config/logger';
 
+import { invalidateCache } from '../services/redisService';
+
 const workerLog = createLogger('task-worker');
 
 interface TaskUpdatePayload {
@@ -21,6 +23,8 @@ export const taskUpdateWorker = new Worker<TaskUpdatePayload>(
         where: { id: taskId },
         data: data,
       });
+
+      invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all').catch(() => {});
 
       workerLog.info({ taskId }, 'Task updated successfully in DB');
     } catch (err) {

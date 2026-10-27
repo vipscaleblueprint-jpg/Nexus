@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock } from 'lucide-react';
+import { X, User, Flag, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle } from 'lucide-react';
+import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import * as Popover from '@radix-ui/react-popover';
@@ -42,6 +43,7 @@ import { EmojiPicker } from '../ui/EmojiPicker';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { FullscreenCommentModal } from './FullscreenCommentModal';
 import { BlurUpImage } from '../ui/BlurUpImage';
+import { CommentAttachmentCard, isAttachmentUrl, getFileExtension } from '../ui/CommentAttachmentCard';
 import { extractImagesFromComments } from '@/lib/commentImages';
 import { RecurrencePicker, formatTimeDisplay } from './RecurrencePicker';
 import { RecurringConfig } from '@/lib/types';
@@ -189,17 +191,24 @@ export const ALL_STATUSES = [
   'PIN BOARD',
 ];
 
+export const isClosedStatus = (status: any): boolean => {
+  if (!status) return false;
+  const name = (typeof status === 'string' ? status : (status.name || status.status || status.title || '')).trim().toUpperCase();
+  const group = (typeof status === 'object' && status.groupName ? status.groupName.trim().toLowerCase() : '');
+  return name === 'CLOSED' || name === 'DONE' || name === 'COMPLETED' || group === 'closed' || group === 'closed task';
+};
+
 export const sortStatusesWithClosedAndKycAtEnd = (statuses: any[]) => {
-  const moveToEnd = ['ON-HOLD', 'CLOSED', 'KYC', 'PIN BOARD', 'PIN_BOARD', 'PINBOARD'];
+  const moveToEnd = ['ON-HOLD', 'KYC', 'PIN BOARD', 'PIN_BOARD', 'PINBOARD', 'CLOSED'];
   const nonEnd = statuses.filter(s => !moveToEnd.includes((typeof s === 'string' ? s : (s.name || s.status || s.title || '')).toUpperCase().trim()));
   const ends = statuses.filter(s => moveToEnd.includes((typeof s === 'string' ? s : (s.name || s.status || s.title || '')).toUpperCase().trim())).sort((a, b) => {
     const orderMap: Record<string, number> = {
       'ON-HOLD': 1,
-      'CLOSED': 2,
-      'KYC': 3,
-      'PIN BOARD': 4,
-      'PIN_BOARD': 4,
-      'PINBOARD': 4,
+      'KYC': 2,
+      'PIN BOARD': 3,
+      'PIN_BOARD': 3,
+      'PINBOARD': 3,
+      'CLOSED': 4,
     };
     const aName = (typeof a === 'string' ? a : (a.name || a.status || a.title || '')).toUpperCase().trim();
     const bName = (typeof b === 'string' ? b : (b.name || b.status || b.title || '')).toUpperCase().trim();
@@ -269,14 +278,14 @@ export function prefetchSubtaskActivities(parentTaskId: string, subtaskId: strin
 }
 
 export const STATUS_COLORS: Record<string, string> = {
-  'KYC': 'bg-[#3A8F55] text-white',
-  'PIN BOARD': 'bg-[#1F8A6E] text-white',
-  'DAILY': 'bg-[#2F7BD0] text-white',
-  'WEEKLY': 'bg-[#2F7BD0] text-white',
-  'MONTHLY': 'bg-[#2F7BD0] text-white',
-  'PENDING': 'bg-[#D29A2A] text-white',
-  'IN PROGRESS': 'bg-[#D04A7C] text-white',
-  'REVISION': 'bg-[#5B6BD6] text-white',
+  'KYC': 'bg-[#8A8F98] text-white',
+  'PIN BOARD': 'bg-[#8A8F98] text-white',
+  'DAILY': 'bg-[#8A8F98] text-white',
+  'WEEKLY': 'bg-[#8A8F98] text-white',
+  'MONTHLY': 'bg-[#8A8F98] text-white',
+  'PENDING': 'bg-[#8A8F98] text-white',
+  'IN PROGRESS': 'bg-[#8A8F98] text-white',
+  'REVISION': 'bg-[#8A8F98] text-white',
   'WAITING': 'bg-[#D9534F] text-white',
   'IN REVIEW': 'bg-[#D97B3A] text-white',
   'CHECKING': 'bg-[#A35DB8] text-white',
@@ -285,14 +294,14 @@ export const STATUS_COLORS: Record<string, string> = {
   'ON-HOLD': 'bg-[#8A8F98] text-white',
 
   // Fallback for capitalized formats
-  'Kyc': 'bg-[#3A8F55] text-white',
-  'Pin Board': 'bg-[#1F8A6E] text-white',
-  'Daily': 'bg-[#2F7BD0] text-white',
-  'Weekly': 'bg-[#2F7BD0] text-white',
-  'Monthly': 'bg-[#2F7BD0] text-white',
-  'Pending': 'bg-[#D29A2A] text-white',
-  'In Progress': 'bg-[#D04A7C] text-white',
-  'Revision': 'bg-[#5B6BD6] text-white',
+  'Kyc': 'bg-[#8A8F98] text-white',
+  'Pin Board': 'bg-[#8A8F98] text-white',
+  'Daily': 'bg-[#8A8F98] text-white',
+  'Weekly': 'bg-[#8A8F98] text-white',
+  'Monthly': 'bg-[#8A8F98] text-white',
+  'Pending': 'bg-[#8A8F98] text-white',
+  'In Progress': 'bg-[#8A8F98] text-white',
+  'Revision': 'bg-[#8A8F98] text-white',
   'Waiting': 'bg-[#D9534F] text-white',
   'In Review': 'bg-[#D97B3A] text-white',
   'Checking': 'bg-[#A35DB8] text-white',
@@ -1001,6 +1010,14 @@ export function TaskDetailModalContent({
           />
         );
       }
+      if (isAttachmentUrl(href, typeof rest.children === 'string' ? rest.children : undefined)) {
+        return (
+          <CommentAttachmentCard
+            href={href}
+            fileName={typeof rest.children === 'string' ? rest.children : undefined}
+          />
+        );
+      }
       return (
         <LinkWithPreview
           {...rest}
@@ -1147,20 +1164,23 @@ export function TaskDetailModalContent({
   // ---------------------------------------------------------------------------
   const loadActivities = useCallback(async (silent = false) => {
     if (!task?.id) return;
+    const currentTaskId = task.id;
     try {
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
+      const cacheKey = isSubtask ? `subtask:${task.id}` : targetId;
 
       // ── 1. CACHE-FIRST: show cached data immediately (zero skeleton flicker) ──
-      const cached = activityCache.get(targetId);
+      const cached = activityCache.get(cacheKey);
       const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
       const cacheValid = cacheAge < ACTIVITY_CACHE_TTL_MS;
 
       if (cached && cacheValid) {
         // Serve cached data right away — user sees content instantly
+        const currentTitle = task.title || '';
         const cachedActivities = isSubtask
-          ? cached.activities.filter((a: any) => a.subtaskTitle === task.title)
+          ? cached.activities.filter((a: any) => a.subtaskId === currentTaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase()))
           : cached.activities;
         setActivities(cachedActivities);
         setRichComments(cached.comments);
@@ -1178,30 +1198,41 @@ export function TaskDetailModalContent({
         tasksApi.getActivities(targetId),
         tasksApi.getComments(targetId, subtaskId),
       ]);
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || taskRef.current?.id !== currentTaskId) return;
+
+      const currentTitle = taskRef.current?.title || task.title || '';
+      const fetchedActivities = actRes?.activities
+        ? (isSubtask
+            ? actRes.activities.filter((a: any) => a.subtaskId === currentTaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase()))
+            : actRes.activities)
+        : [];
+      const fetchedComments = commentRes?.comments || [];
 
       // ── 3. SAVE TO CACHE ──
       if (actRes?.activities && commentRes?.comments) {
-        activityCache.set(targetId, {
-          activities: actRes.activities,
-          comments: commentRes.comments,
+        activityCache.set(cacheKey, {
+          activities: fetchedActivities,
+          comments: fetchedComments,
           timestamp: Date.now(),
         });
       }
 
       if (actRes?.activities) {
-        const fetchedActivities = isSubtask
-          ? actRes.activities.filter((a: any) => a.subtaskTitle === task.title)
-          : actRes.activities;
-
-
         setActivities((prev) => {
+          if (taskRef.current?.id !== currentTaskId) return prev;
           const optimistic = prev.filter(
             (a) => typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))
           );
           const fetchedIds = new Set(fetchedActivities.map((a: any) => a.id));
           const recentReal = prev.filter(
-            (a) => !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) && !fetchedIds.has(a.id)
+            (a) =>
+              !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) &&
+              !fetchedIds.has(a.id) &&
+              (isSubtask
+                ? (a.subtaskId === currentTaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase()))
+                : (!a.subtaskId && (a.taskId === targetId || !a.taskId))) &&
+              a.date &&
+              Date.now() - new Date(a.date).getTime() < 30_000
           );
 
           const merged = [...fetchedActivities, ...recentReal, ...optimistic];
@@ -1210,22 +1241,36 @@ export function TaskDetailModalContent({
       }
       if (commentRes?.comments) {
         setRichComments((prev) => {
-          const fetchedIds = new Set(commentRes.comments.map((c: any) => c.id));
-          const optimistic = prev.filter((c) => typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-')));
-          const recentReal = prev.filter(
-            (c) => !(typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))) && !fetchedIds.has(c.id)
+          if (taskRef.current?.id !== currentTaskId) return prev;
+          const fetchedIds = new Set(fetchedComments.map((c: any) => c.id));
+          const optimistic = prev.filter(
+            (c) =>
+              typeof c.id === 'string' &&
+              (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))
           );
-          return [...commentRes.comments, ...recentReal, ...optimistic].sort(
+          const recentReal = prev.filter(
+            (c) =>
+              !(typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))) &&
+              !fetchedIds.has(c.id) &&
+              (isSubtask ? c.subtaskId === currentTaskId : (!c.subtaskId && (c.taskId === targetId || !c.taskId))) &&
+              c.createdAt &&
+              Date.now() - new Date(c.createdAt).getTime() < 30_000
+          );
+          return [...fetchedComments, ...recentReal, ...optimistic].sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
         });
       }
     } catch (err: any) {
-      console.error('Failed to load task data:', err);
-      setLoadError(err?.message || String(err));
-      commentsBootstrappedRef.current = null;
+      if (taskRef.current?.id === currentTaskId) {
+        console.error('Failed to load task data:', err);
+        setLoadError(err?.message || String(err));
+        commentsBootstrappedRef.current = null;
+      }
     } finally {
-      if (isMountedRef.current) setLoadingActivities(false);
+      if (isMountedRef.current && taskRef.current?.id === currentTaskId) {
+        setLoadingActivities(false);
+      }
     }
   }, [task?.id]);
 
@@ -1379,6 +1424,33 @@ export function TaskDetailModalContent({
       console.warn('Delete failed:', err);
     }
   };
+
+  // ── Reset activities and comments immediately when active task changes ────
+  useEffect(() => {
+    if (!task?.id) {
+      setActivities([]);
+      setRichComments([]);
+      return;
+    }
+    const isSubtask = !!(task as any).parentTaskId;
+    const targetId = isSubtask ? (task as any).parentTaskId : task.id;
+    const cacheKey = isSubtask ? `subtask:${task.id}` : targetId;
+    const cached = activityCache.get(cacheKey);
+    const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
+    if (cached && cacheAge < ACTIVITY_CACHE_TTL_MS) {
+      const currentTitle = task.title || '';
+      const cachedActivities = isSubtask
+        ? cached.activities.filter((a: any) => a.subtaskId === task.id || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase()))
+        : cached.activities;
+      setActivities(cachedActivities);
+      setRichComments(cached.comments);
+      setLoadingActivities(false);
+    } else {
+      setActivities([]);
+      setRichComments([]);
+      setLoadingActivities(true);
+    }
+  }, [task?.id]);
 
   // ── Bootstrap comments & activities ONCE per task open ──────────────────
   // After the initial load, the socket handles all new comments in real-time.
@@ -1678,7 +1750,13 @@ export function TaskDetailModalContent({
           updated[tempIdx] = payload.comment;
           return updated;
         }
-        return [...prev, payload.comment];
+        const nextComments = [...prev, payload.comment];
+        const cacheKey = isSubtask ? `subtask:${currentTask.id}` : targetId;
+        const cached = activityCache.get(cacheKey);
+        if (cached?.comments && !cached.comments.some((c: any) => c.id === payload.comment.id)) {
+          cached.comments = [...cached.comments, payload.comment];
+        }
+        return nextComments;
       });
     };
 
@@ -1720,6 +1798,11 @@ export function TaskDetailModalContent({
           replies: c.replies?.filter((r: any) => r.id !== payload.commentId)
         }))
       );
+      const cacheKey = (currentTask as any).parentTaskId ? `subtask:${currentTask.id}` : targetId;
+      const cached = activityCache.get(cacheKey);
+      if (cached?.comments) {
+        cached.comments = cached.comments.filter((c: any) => c.id !== payload.commentId);
+      }
     };
 
     const handleChecklistItemUpdated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
@@ -2609,12 +2692,46 @@ export function TaskDetailModalContent({
     }
   };
 
+  const addStagedFiles = useCallback((newFiles: File[]) => {
+    setStagedFiles(prev => {
+      const next = [...prev];
+      for (const f of newFiles) {
+        const check = validateUploadFile(f);
+        if (!check.valid) {
+          toast.error(check.error || `File ${f.name} is not allowed`);
+          continue;
+        }
+        if (check.isSoftWarning && check.softWarning) {
+          toast.warning(check.softWarning);
+        }
+        if (next.length >= MAX_FILES_PER_BATCH) {
+          toast.error(`Maximum of ${MAX_FILES_PER_BATCH} staged files reached.`);
+          break;
+        }
+        if (!next.some(existing => existing.name === f.name && existing.size === f.size && existing.lastModified === f.lastModified)) {
+          next.push(f);
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const handleCommentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file?.type.startsWith('image/')) {
-      commentEditorRef.current?.insertImages([file]);
-    } else if (file) {
-      setStagedFiles(prev => [...prev, file]);
+    if (file) {
+      const check = validateUploadFile(file);
+      if (!check.valid) {
+        toast.error(check.error || `File ${file.name} is not allowed`);
+      } else {
+        if (check.isSoftWarning && check.softWarning) {
+          toast.warning(check.softWarning);
+        }
+        if (check.isImage) {
+          commentEditorRef.current?.insertImages([file]);
+        } else {
+          addStagedFiles([file]);
+        }
+      }
     }
     if (commentFileInputRef.current) {
       commentFileInputRef.current.value = '';
@@ -2854,9 +2971,11 @@ export function TaskDetailModalContent({
                         : ALL_STATUSES;
 
                       const statusName = localStatus || 'No Status';
-                      const statusObj = internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+                      const statusObj = internalListStatuses?.find((s: any) => 
+                        (s.name || s.title || s.status || '').trim().toUpperCase() === statusName.trim().toUpperCase()
+                      );
                       const hasCustomColor = !!statusObj?.color;
-                      const defaultClasses = STATUS_COLORS[(localStatus || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
+                      const defaultClasses = STATUS_COLORS[(localStatus || '').toUpperCase()] || STATUS_COLORS[localStatus] || 'bg-zinc-800/50 text-zinc-400';
 
                       return (
                         <div
@@ -2875,36 +2994,60 @@ export function TaskDetailModalContent({
                             <Popover.Portal>
                               <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                                  {orderedStatuses.map(s => (
-                                    <div
-                                      key={s}
-                                      onClick={() => {
-                                        handleStatusChangeAction(s);
-                                        setIsStatusOpen(false);
-                                      }}
-                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
-                                    >
-                                      {(() => {
-                                        const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
-                                        if (customObj?.color) {
-                              if ((s || '').toUpperCase() === 'KYC') {
-                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                              }
-                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                            }
-                                        const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
-                                        const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
-                                        
-                                        if ((s || '').toUpperCase() === 'KYC') {
-                                          return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
-                                        }
-                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                                  {(() => {
+                                    const openStatuses = orderedStatuses.filter(s => !isClosedStatus(s));
+                                    const closedStatuses = orderedStatuses.filter(s => isClosedStatus(s));
 
-                                      })()}
-                                      {s}
-                                      {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
-                                    </div>
-                                  ))}
+                                    const renderItem = (s: string) => {
+                                      const customObj = internalListStatuses?.find(ls => (ls.name || ls.status || ls.title) === s);
+                                      const isClosed = isClosedStatus(s);
+                                      const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+                                      const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
+
+                                      return (
+                                        <div
+                                          key={s}
+                                          onClick={() => {
+                                            handleStatusChangeAction(s);
+                                            setIsStatusOpen(false);
+                                          }}
+                                          className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                                        >
+                                          {(() => {
+                                            if (isClosed) {
+                                              return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: getHexColor(customObj.color) } : statusIconStyle} />;
+                                            }
+                                            if (customObj?.color) {
+                                              if ((s || '').toUpperCase() === 'KYC') {
+                                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                                              }
+                                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                                            }
+                                            if ((s || '').toUpperCase() === 'KYC') {
+                                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                                            }
+                                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                                          })()}
+                                          <span className="uppercase">{s}</span>
+                                          {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                        </div>
+                                      );
+                                    };
+
+                                    return (
+                                      <>
+                                        {openStatuses.map(renderItem)}
+                                        {closedStatuses.length > 0 && (
+                                          <>
+                                            <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                                              Closed
+                                            </div>
+                                            {closedStatuses.map(renderItem)}
+                                          </>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               </Popover.Content>
                             </Popover.Portal>
@@ -4223,24 +4366,51 @@ export function TaskDetailModalContent({
             {/* Comment Input */}
             <div className="p-5 border-t border-zinc-800/60 shrink-0 bg-card flex flex-col gap-2">
               {stagedFiles.length > 0 && (
-                <div className="flex flex-wrap gap-3 mb-1">
+                <div className="flex flex-wrap gap-2.5 mb-1.5">
                   {stagedFiles.map((file, idx) => {
                     const isImage = file.type.startsWith('image/');
-                    const isVideo = file.type.startsWith('video/');
-                    const previewUrl = (isImage || isVideo) ? URL.createObjectURL(file) : null;
+                    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+                    const ext = getFileExtension(file.name);
+                    const isSoftWarning = isImage ? file.size > IMAGE_SOFT_MAX_BYTES : file.size > ATTACHMENT_SOFT_MAX_BYTES;
+                    const softLimitLabel = isImage ? '>3MB' : '>10MB';
+                    const sizeFormatted = formatFileSize(file.size);
                     return (
-                      <div key={idx} className="relative group flex items-center justify-center bg-muted rounded-md border border-border w-16 h-16 shrink-0 overflow-hidden">
+                      <div key={idx} className={`relative group flex items-center justify-center bg-zinc-900 rounded-lg border ${isSoftWarning ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-indigo-500/40 ring-1 ring-indigo-500/20'} w-16 h-16 shrink-0 overflow-hidden shadow-sm`}>
                         {isImage && previewUrl ? (
-                          <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
-                        ) : isVideo && previewUrl ? (
-                          <video src={previewUrl} className="w-full h-full object-cover" />
+                          <>
+                            <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
+                            <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                              {sizeFormatted}
+                            </span>
+                            {isSoftWarning && (
+                              <span className="absolute top-1 left-1 bg-amber-500 text-black text-[7px] font-bold px-1 rounded shadow" title={`Large image: ${sizeFormatted} (soft limit >3MB)`}>
+                                {softLimitLabel}
+                              </span>
+                            )}
+                          </>
                         ) : (
-                          <span className="text-[10px] text-zinc-400 font-mono truncate px-1">{file.name.slice(-6)}</span>
+                          <div className="flex flex-col items-center justify-center p-1 text-center w-full">
+                            <FileText className={`w-4 h-4 ${isSoftWarning ? 'text-amber-400' : 'text-indigo-400'} mb-0.5`} />
+                            <span className={`text-[8px] font-bold tracking-wider uppercase px-1 py-0.2 rounded ${isSoftWarning ? 'bg-amber-500/15 text-amber-400' : 'bg-indigo-500/15 text-indigo-400'}`}>
+                              {ext}
+                            </span>
+                            <span className="text-[9px] text-zinc-300 font-medium truncate max-w-[50px] mt-0.5" title={file.name}>
+                              {file.name}
+                            </span>
+                            <span className="text-[7px] text-zinc-500 font-mono mt-0.2">
+                              {sizeFormatted}
+                            </span>
+                            {isSoftWarning && (
+                              <span className="absolute top-1 left-1 bg-amber-500 text-black text-[7px] font-bold px-1 rounded shadow" title={`Large attachment: ${sizeFormatted} (soft limit >10MB)`}>
+                                {softLimitLabel}
+                              </span>
+                            )}
+                          </div>
                         )}
                         <button
                           onClick={() => setStagedFiles(prev => prev.filter((_, i) => i !== idx))}
                           title="Remove"
-                          className="absolute top-1 right-1 p-0.5 bg-card/90 hover:bg-muted border border-border rounded-full text-muted-foreground hover:text-foreground shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                          className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -4361,7 +4531,8 @@ export function TaskDetailModalContent({
                           return false;
                         }}
                         onSubmit={handleAddComment}
-                        onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
+                        onPasteFiles={addStagedFiles}
+                        onDropFiles={addStagedFiles}
                         onUploadImage={uploadCommentImage}
                         onUploadImageUrl={copyCommentImage}
                         onUploadingChange={setIsUploadingInline}
@@ -4876,6 +5047,14 @@ export function SubtaskDetailView({
           />
         );
       }
+      if (isAttachmentUrl(href, typeof rest.children === 'string' ? rest.children : undefined)) {
+        return (
+          <CommentAttachmentCard
+            href={href}
+            fileName={typeof rest.children === 'string' ? rest.children : undefined}
+          />
+        );
+      }
       return (
         <LinkWithPreview
           {...rest}
@@ -5242,7 +5421,16 @@ export function SubtaskDetailView({
           updated[tempIdx] = payload.comment;
           return updated;
         }
-        return [...prev, payload.comment];
+        const nextComments = [...prev, payload.comment];
+        const currentSubtask = subtaskRef.current;
+        if (currentSubtask) {
+          const cacheKey = `subtask:${currentSubtask.id}`;
+          const cached = activityCache.get(cacheKey);
+          if (cached?.comments && !cached.comments.some((c: any) => c.id === payload.comment.id)) {
+            cached.comments = [...cached.comments, payload.comment];
+          }
+        }
+        return nextComments;
       });
     };
 
@@ -5283,6 +5471,14 @@ export function SubtaskDetailView({
           replies: c.replies?.filter((r: any) => r.id !== payload.commentId)
         }))
       );
+      const currentSubtask = subtaskRef.current;
+      if (currentSubtask) {
+        const cacheKey = `subtask:${currentSubtask.id}`;
+        const cached = activityCache.get(cacheKey);
+        if (cached?.comments) {
+          cached.comments = cached.comments.filter((c: any) => c.id !== payload.commentId);
+        }
+      }
     };
 
     const handleChecklistItemUpdated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
@@ -5617,8 +5813,30 @@ export function SubtaskDetailView({
 
   const commentsBootstrappedRef = useRef<string | null>(null);
 
+  // ── Reset subtask activities and comments immediately when active subtask changes ──
+  useEffect(() => {
+    if (!subtask?.id) {
+      setActivities([]);
+      setRichComments([]);
+      return;
+    }
+    const cacheKey = `subtask:${subtask.id}`;
+    const cached = activityCache.get(cacheKey);
+    const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
+    if (cached && cacheAge < ACTIVITY_CACHE_TTL_MS) {
+      setActivities(cached.activities);
+      setRichComments(cached.comments);
+      setLoadingActivities(false);
+    } else {
+      setActivities([]);
+      setRichComments([]);
+      setLoadingActivities(true);
+    }
+  }, [subtask?.id]);
+
   const loadActivities = useCallback(async (silent = false) => {
     if (!subtask?.id || !parentTask?.id) return;
+    const currentSubtaskId = subtask.id;
     try {
       const cacheKey = `subtask:${subtask.id}`;
       const cached = activityCache.get(cacheKey);
@@ -5645,13 +5863,13 @@ export function SubtaskDetailView({
         tasksApi.getComments(parentTask.id, subtask.id)
       ]);
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || subtaskRef.current?.id !== currentSubtaskId) return;
 
       const currentTitle = subtaskRef.current?.title || subtask.title;
       let fetchedActivities: any[] = [];
       if (actRes?.activities) {
         fetchedActivities = actRes.activities.filter(
-          (a: any) => a.subtaskId === subtask.id || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase())
+          (a: any) => a.subtaskId === currentSubtaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase())
         );
       }
 
@@ -5666,12 +5884,18 @@ export function SubtaskDetailView({
 
       // Merge activities preserving optimistic entries
       setActivities(prev => {
+        if (subtaskRef.current?.id !== currentSubtaskId) return prev;
         const optimistic = prev.filter(
           a => typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))
         );
         const fetchedIds = new Set(fetchedActivities.map((a: any) => a.id));
         const recentReal = prev.filter(
-          a => !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) && !fetchedIds.has(a.id)
+          a =>
+            !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) &&
+            !fetchedIds.has(a.id) &&
+            (a.subtaskId === currentSubtaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase())) &&
+            a.date &&
+            Date.now() - new Date(a.date).getTime() < 30_000
         );
         const merged = [...fetchedActivities, ...recentReal, ...optimistic];
         return merged.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -5679,23 +5903,31 @@ export function SubtaskDetailView({
 
       // Merge comments preserving optimistic entries
       setRichComments(prev => {
+        if (subtaskRef.current?.id !== currentSubtaskId) return prev;
         const fetchedIds = new Set(fetchedComments.map((c: any) => c.id));
         const optimistic = prev.filter(
           c => typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))
         );
         const recentReal = prev.filter(
-          c => !(typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))) && !fetchedIds.has(c.id)
+          c =>
+            !(typeof c.id === 'string' && (c.id.startsWith('optimistic-') || c.id.startsWith('temp-'))) &&
+            !fetchedIds.has(c.id) &&
+            c.subtaskId === currentSubtaskId &&
+            c.createdAt &&
+            Date.now() - new Date(c.createdAt).getTime() < 30_000
         );
         return [...fetchedComments, ...recentReal, ...optimistic].sort(
           (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
       });
     } catch (err: any) {
-      console.error('Failed to load comments/activities:', err);
-      setLoadError(err?.message || String(err));
-      commentsBootstrappedRef.current = null;
+      if (subtaskRef.current?.id === currentSubtaskId) {
+        console.error('Failed to load comments/activities:', err);
+        setLoadError(err?.message || String(err));
+        commentsBootstrappedRef.current = null;
+      }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && subtaskRef.current?.id === currentSubtaskId) {
         setLoadingActivities(false);
       }
     }
@@ -5709,12 +5941,46 @@ export function SubtaskDetailView({
     }
   }, [subtask?.id, loadActivities]);
 
+  const addStagedFiles = useCallback((newFiles: File[]) => {
+    setStagedFiles(prev => {
+      const next = [...prev];
+      for (const f of newFiles) {
+        const check = validateUploadFile(f);
+        if (!check.valid) {
+          toast.error(check.error || `File ${f.name} is not allowed`);
+          continue;
+        }
+        if (check.isSoftWarning && check.softWarning) {
+          toast.warning(check.softWarning);
+        }
+        if (next.length >= MAX_FILES_PER_BATCH) {
+          toast.error(`Maximum of ${MAX_FILES_PER_BATCH} staged files reached.`);
+          break;
+        }
+        if (!next.some(existing => existing.name === f.name && existing.size === f.size && existing.lastModified === f.lastModified)) {
+          next.push(f);
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const handleCommentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file?.type.startsWith('image/')) {
-      commentEditorRef.current?.insertImages([file]);
-    } else if (file) {
-      setStagedFiles(prev => [...prev, file]);
+    if (file) {
+      const check = validateUploadFile(file);
+      if (!check.valid) {
+        toast.error(check.error || `File ${file.name} is not allowed`);
+      } else {
+        if (check.isSoftWarning && check.softWarning) {
+          toast.warning(check.softWarning);
+        }
+        if (check.isImage) {
+          commentEditorRef.current?.insertImages([file]);
+        } else {
+          addStagedFiles([file]);
+        }
+      }
     }
     if (commentFileInputRef.current) {
       commentFileInputRef.current.value = '';
@@ -6227,9 +6493,11 @@ export function SubtaskDetailView({
                         : ALL_STATUSES;
 
                       const statusName = localStatus || 'No Status';
-                      const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
+                      const statusObj = listStatuses?.find((s: any) => 
+                        (s.name || s.title || s.status || '').trim().toUpperCase() === statusName.trim().toUpperCase()
+                      );
                       const hasCustomColor = !!statusObj?.color;
-                      const defaultClasses = STATUS_COLORS[(localStatus || '').toUpperCase()] ?? 'bg-zinc-800/50 text-zinc-400';
+                      const defaultClasses = STATUS_COLORS[(localStatus || '').toUpperCase()] || STATUS_COLORS[localStatus] || 'bg-zinc-800/50 text-zinc-400';
 
                       const getHex = (colorStr: string) => {
                         const tailwindColors: Record<string, string> = {
@@ -6259,35 +6527,60 @@ export function SubtaskDetailView({
                             <Popover.Portal>
                               <Popover.Content className="z-[100000] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-100 w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                                 <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                                  {orderedStatuses.map((s: string) => (
-                                    <div
-                                      key={s}
-                                      onClick={() => {
-                                        handleStatusChangeAction(s);
-                                        setIsStatusOpen(false);
-                                      }}
-                                      className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
-                                    >
-                                      {(() => {
-                                        const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                                        if (customObj?.color) {
-                                          if ((s || '').toUpperCase() === 'KYC') {
-                                            return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                                          }
-                                          return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                                        }
-                                        const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
-                                        const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
-                                        
-                                        if ((s || '').toUpperCase() === 'KYC') {
-                                          return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
-                                        }
-                                        return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
-                                      })()}
-                                      {s}
-                                      {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
-                                    </div>
-                                  ))}
+                                  {(() => {
+                                    const openStatuses = orderedStatuses.filter((s: string) => !isClosedStatus(s));
+                                    const closedStatuses = orderedStatuses.filter((s: string) => isClosedStatus(s));
+
+                                    const renderItem = (s: string) => {
+                                      const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                                      const isClosed = isClosedStatus(s);
+                                      const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+                                      const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
+
+                                      return (
+                                        <div
+                                          key={s}
+                                          onClick={() => {
+                                            handleStatusChangeAction(s);
+                                            setIsStatusOpen(false);
+                                          }}
+                                          className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${localStatus === s ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                                        >
+                                          {(() => {
+                                            if (isClosed) {
+                                              return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: getHexColor(customObj.color) } : statusIconStyle} />;
+                                            }
+                                            if (customObj?.color) {
+                                              if ((s || '').toUpperCase() === 'KYC') {
+                                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                                              }
+                                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                                            }
+                                            if ((s || '').toUpperCase() === 'KYC') {
+                                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                                            }
+                                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                                          })()}
+                                          <span className="uppercase">{s}</span>
+                                          {s === localStatus && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                                        </div>
+                                      );
+                                    };
+
+                                    return (
+                                      <>
+                                        {openStatuses.map(renderItem)}
+                                        {closedStatuses.length > 0 && (
+                                          <>
+                                            <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                                              Closed
+                                            </div>
+                                            {closedStatuses.map(renderItem)}
+                                          </>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               </Popover.Content>
                             </Popover.Portal>
@@ -7384,16 +7677,57 @@ export function SubtaskDetailView({
           <div className="p-4 bg-card border-t border-zinc-800/60 shrink-0">
             <div className="relative">
               {stagedFiles.length > 0 && (
-                <div className="flex items-center gap-2 mb-2 flex-wrap">
-                  {stagedFiles.map((file, i) => (
-                    <div key={i} className="flex items-center gap-1.5 px-2 py-1 rounded bg-muted border border-border text-xs text-foreground">
-                      <Paperclip className="w-3 h-3 text-muted-foreground" />
-                      <span className="max-w-[150px] truncate">{file.name}</span>
-                      <button title="Remove" onClick={() => setStagedFiles(prev => prev.filter((_, idx) => idx !== i))} className="p-0.5 hover:bg-card rounded-sm ml-1 text-muted-foreground hover:text-foreground cursor-pointer">
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
+                <div className="flex flex-wrap gap-2.5 mb-2">
+                  {stagedFiles.map((file, i) => {
+                    const isImage = file.type.startsWith('image/');
+                    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+                    const ext = getFileExtension(file.name);
+                    const isSoftWarning = isImage ? file.size > IMAGE_SOFT_MAX_BYTES : file.size > ATTACHMENT_SOFT_MAX_BYTES;
+                    const softLimitLabel = isImage ? '>3MB' : '>10MB';
+                    const sizeFormatted = formatFileSize(file.size);
+                    return (
+                      <div key={i} className={`relative group flex items-center justify-center bg-zinc-900 rounded-lg border ${isSoftWarning ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-indigo-500/40 ring-1 ring-indigo-500/20'} w-16 h-16 shrink-0 overflow-hidden shadow-sm`}>
+                        {isImage && previewUrl ? (
+                          <>
+                            <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
+                            <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                              {sizeFormatted}
+                            </span>
+                            {isSoftWarning && (
+                              <span className="absolute top-1 left-1 bg-amber-500 text-black text-[7px] font-bold px-1 rounded shadow" title={`Large image: ${sizeFormatted} (soft limit >3MB)`}>
+                                {softLimitLabel}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center p-1 text-center w-full">
+                            <FileText className={`w-4 h-4 ${isSoftWarning ? 'text-amber-400' : 'text-indigo-400'} mb-0.5`} />
+                            <span className={`text-[8px] font-bold tracking-wider uppercase px-1 py-0.2 rounded ${isSoftWarning ? 'bg-amber-500/15 text-amber-400' : 'bg-indigo-500/15 text-indigo-400'}`}>
+                              {ext}
+                            </span>
+                            <span className="text-[9px] text-zinc-300 font-medium truncate max-w-[50px] mt-0.5" title={file.name}>
+                              {file.name}
+                            </span>
+                            <span className="text-[7px] text-zinc-500 font-mono mt-0.2">
+                              {sizeFormatted}
+                            </span>
+                            {isSoftWarning && (
+                              <span className="absolute top-1 left-1 bg-amber-500 text-black text-[7px] font-bold px-1 rounded shadow" title={`Large attachment: ${sizeFormatted} (soft limit >10MB)`}>
+                                {softLimitLabel}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <button
+                          onClick={() => setStagedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                          title="Remove"
+                          className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {(() => {
@@ -7507,7 +7841,8 @@ export function SubtaskDetailView({
                         return false;
                       }}
                       onSubmit={handleAddComment}
-                      onPasteFiles={(files) => setStagedFiles(prev => [...prev, ...files])}
+                      onPasteFiles={addStagedFiles}
+                      onDropFiles={addStagedFiles}
                       onUploadImage={uploadCommentImage}
                       onUploadImageUrl={copyCommentImage}
                       onUploadingChange={setIsUploadingInline}
@@ -7642,15 +7977,17 @@ export function TaskDetailModal(props: Props) {
           if (res?.task) {
             setFullTask(prev => {
               if (!prev) return res.task;
-              // The DB copy wins: the seeded prop may be a stale/partial cache (e.g. an old status
-              // from a doc mention or dashboard). Only fill in fields the response didn't include,
-              // and keep fields the user edited after the request was sent.
+              const canonicalStatus = props.task?.status || prev.status;
               const merged: any = { ...prev, ...res.task };
               locallyEditedKeysRef.current.forEach((key) => { merged[key] = (prev as any)[key]; });
-              // If the task was opened with a specific status (e.g. from KanbanBoard drag-and-drop),
-              // and the background getTask returned a stale or cached status, keep the canonical status
-              if (prev.status && res.task.status !== prev.status && ((res as any).cached || !res.task.status)) {
-                merged.status = prev.status;
+              // The Kanban board status (props.task.status / prev.status) is canonical when the modal opens.
+              // Background getTask is used only to enrich secondary details (comments, checklists, attachments, etc.)
+              // and must not revert the live status unless the user explicitly changed it in this session.
+              if (canonicalStatus && !locallyEditedKeysRef.current.has('status')) {
+                const matchInList = props.listStatuses?.find(
+                  (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === canonicalStatus.trim().toUpperCase()
+                );
+                merged.status = matchInList ? (matchInList.name || matchInList.title || matchInList.status) : canonicalStatus;
               }
               return merged;
             });
@@ -7695,7 +8032,29 @@ export function TaskDetailModal(props: Props) {
     if (!props.socket || !fullTask?.id) return;
     const handleSocketTaskUpdated = (incoming: any) => {
       if (incoming && incoming.id === fullTask.id) {
-        setFullTask(prev => prev ? { ...prev, ...incoming } : prev);
+        setFullTask(prev => {
+          if (!prev) return prev;
+          let status = incoming.status !== undefined ? incoming.status : prev.status;
+          if (status && props.listStatuses) {
+            const matchInList = props.listStatuses.find(
+              (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === status.trim().toUpperCase()
+            );
+            if (matchInList) status = matchInList.name || matchInList.title || matchInList.status;
+          }
+          return { ...prev, ...incoming, ...(status ? { status } : {}) };
+        });
+      }
+    };
+    const handleSocketTaskMovePreview = (data: { taskId: string; status: string }) => {
+      if (data && data.taskId === fullTask.id && data.status) {
+        let status = data.status;
+        if (props.listStatuses) {
+          const matchInList = props.listStatuses.find(
+            (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === status.trim().toUpperCase()
+          );
+          if (matchInList) status = matchInList.name || matchInList.title || matchInList.status;
+        }
+        setFullTask(prev => prev ? { ...prev, status } : prev);
       }
     };
     const handleSocketChecklistUpdated = (payload: any) => {
@@ -7739,15 +8098,17 @@ export function TaskDetailModal(props: Props) {
     };
 
     props.socket.on('task:updated', handleSocketTaskUpdated);
+    props.socket.on('task_move_preview', handleSocketTaskMovePreview);
     props.socket.on('task:checklist_item_updated', handleSocketChecklistUpdated);
     props.socket.on('task:checklist_item_created', handleSocketChecklistUpdated);
 
     return () => {
       props.socket.off('task:updated', handleSocketTaskUpdated);
+      props.socket.off('task_move_preview', handleSocketTaskMovePreview);
       props.socket.off('task:checklist_item_updated', handleSocketChecklistUpdated);
       props.socket.off('task:checklist_item_created', handleSocketChecklistUpdated);
     };
-  }, [props.socket, fullTask?.id]);
+  }, [props.socket, fullTask?.id, props.listStatuses]);
 
   useEffect(() => {
     if (!props.isOpen) return;

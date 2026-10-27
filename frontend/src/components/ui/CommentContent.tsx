@@ -13,6 +13,7 @@ import { UserMentionChip } from './UserMentionChip';
 import { TaskMentionChip } from './TaskMentionChip';
 import { BlurUpImage } from './BlurUpImage';
 import { LinkWithPreview } from './LinkHoverPreview';
+import { CommentAttachmentCard, isAttachmentUrl } from './CommentAttachmentCard';
 
 // Shared across instances so a feed of many comments requests the user list only once
 let usersRequested = false;
@@ -145,6 +146,14 @@ function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
         taskId={nexus.taskId}
         mentionType={nexus.isSubtask ? 'subtask' : 'task'}
         initialLabel={typeof children === 'string' && !children.startsWith('http') ? children : undefined}
+      />
+    );
+  }
+  if (isAttachmentUrl(target, typeof children === 'string' ? children : undefined)) {
+    return (
+      <CommentAttachmentCard
+        href={target}
+        fileName={typeof children === 'string' ? children : undefined}
       />
     );
   }

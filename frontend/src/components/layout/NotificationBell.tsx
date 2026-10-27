@@ -144,6 +144,7 @@ export function NotificationBell() {
         setNotifications((prev) =>
           prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
         );
+        useAppStore.getState().decrementUnreadNotifications();
       }
     };
 
@@ -339,12 +340,28 @@ export function NotificationBell() {
     },
   };
 
-  const handleToggleOpen = () => {
+  const handleToggleOpen = async () => {
     const nextOpen = !isOpen;
-    if (nextOpen) {
-      loadNotifications(1, activeTab);
-    }
     setIsOpen(nextOpen);
+
+    if (nextOpen) {
+      const hasUnread = unreadCount > 0 || notifications.some((n) => !n.isRead);
+      if (hasUnread) {
+        setUnreadCount(0);
+        setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+        try {
+          await notificationsApi.markAllAsRead();
+        } catch (error) {
+          console.error("Failed to mark all as read", error);
+        }
+      }
+
+      const targetTab = activeTab === "unread" ? "all" : activeTab;
+      if (activeTab === "unread") {
+        setActiveTab("all");
+      }
+      loadNotifications(1, targetTab);
+    }
   };
 
   return (

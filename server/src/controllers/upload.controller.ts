@@ -29,7 +29,7 @@ const s3 = new S3Client({
 
 // The bucket is public and the browser-supplied type is untrusted. Only these types are served for viewing in
 // place; anything else is a download, so an uploaded HTML or SVG file can't run as a web page on the bucket's domain.
-const INLINE_TYPES = /^(image\/(png|jpeg|gif|webp|avif|bmp)|application\/pdf|video\/(mp4|webm|quicktime)|audio\/(mpeg|wav|ogg|webm|mp4)|text\/plain)$/;
+const INLINE_TYPES = /^(image\/(png|jpeg|gif|webp|avif|bmp)|application\/pdf|audio\/(mpeg|wav|ogg|webm|mp4)|text\/plain)$/;
 // Types a browser can execute aren't kept even for downloads (SVG keeps its type so <img> previews still work)
 const ACTIVE_TYPES = /^(text\/html|application\/xhtml\+xml|text\/xml|application\/xml|text\/javascript|application\/javascript)$/;
 
@@ -79,6 +79,12 @@ export const uploadFile = async (req: Request, res: Response) => {
     }
 
     const { originalname, buffer, mimetype } = req.file;
+
+    // Hard limit: 10MB for images, 25MB for other attachments
+    if (mimetype.startsWith('image/') && buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Image exceeds the maximum allowed size of 10MB' });
+    }
+
     const fileUrl = await putFile(folderOf(req.body.folder), originalname, buffer, mimetype);
     res.status(200).json({ url: fileUrl, name: originalname });
   } catch (error: any) {
@@ -94,7 +100,7 @@ export const uploadFile = async (req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 
 const FETCH_IMAGE_TYPES = /^image\/(png|jpeg|gif|webp|avif|bmp)$/;
-const FETCH_MAX_BYTES = 20 * 1024 * 1024;
+const FETCH_MAX_BYTES = 10 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
 const FETCH_MAX_REDIRECTS = 3;
 

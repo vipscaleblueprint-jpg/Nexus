@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, getAssigneeAvatarColor, prefetchTaskActivities } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus } from '@/components/modals/TaskDetailModal';
 import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -609,15 +609,15 @@ const CardContent = memo(({
               const statusHexColor = statusObj?.color ? getHexColor(statusObj.color) : undefined;
 
               const STATUS_COLORS: Record<string, string> = {
-                PENDING: 'text-[#D29A2A]',
-                'IN PROGRESS': 'text-[#D04A7C]',
+                PENDING: 'text-[#8A8F98]',
+                'IN PROGRESS': 'text-[#8A8F98]',
                 CLOSED: 'text-[#2FA37A]',
-                'KYC': 'text-[#3A8F55]',
-                'PIN BOARD': 'text-[#1F8A6E]',
-                'DAILY': 'text-[#2F7BD0]',
-                'WEEKLY': 'text-[#2F7BD0]',
-                'MONTHLY': 'text-[#2F7BD0]',
-                'REVISION': 'text-[#5B6BD6]',
+                'KYC': 'text-[#8A8F98]',
+                'PIN BOARD': 'text-[#8A8F98]',
+                'DAILY': 'text-[#8A8F98]',
+                'WEEKLY': 'text-[#8A8F98]',
+                'MONTHLY': 'text-[#8A8F98]',
+                'REVISION': 'text-[#8A8F98]',
                 'WAITING': 'text-[#D9534F]',
                 'IN REVIEW': 'text-[#D97B3A]',
                 'CHECKING': 'text-[#A35DB8]',
@@ -642,45 +642,54 @@ const CardContent = memo(({
             <PortalDropdown triggerRef={statusTriggerRef} onClose={closeDropdown}>
               <div className="w-48 max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pb-1.5 px-1.5 bg-background border border-zinc-800 rounded-md shadow-xl">
                 <div className="px-2 pt-2 pb-1 text-[10px] text-zinc-500 dark:text-zinc-500 font-bold tracking-wider uppercase sticky top-0 bg-background z-10 mb-0.5">Change Status</div>
-                {orderedListStatuses.length > 0 ? (
-                  orderedListStatuses.map(s => {
-                    const statusName = s.name || s.status || s.title;
-                    const customObj = s;
-                    const getHexColor = (color: string) => {
-                      const colors: Record<string, string> = {
-                        slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
-                        red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
-                        green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
-                        blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
-                        pink: '#ec4899', rose: '#f43f5e'
-                      };
-                      return colors[color] || color;
+                {(() => {
+                  const statusesToRender = orderedListStatuses.length > 0 ? orderedListStatuses : ALL_STATUSES;
+                  const openStatuses = statusesToRender.filter(s => !isClosedStatus(s));
+                  const closedStatuses = statusesToRender.filter(s => isClosedStatus(s));
+
+                  const getHexColor = (color: string) => {
+                    const colors: Record<string, string> = {
+                      slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+                      red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+                      green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+                      blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+                      pink: '#ec4899', rose: '#f43f5e'
                     };
-                    
-                    const STATUS_COLORS: Record<string, string> = {
-                      PENDING: 'text-[#D29A2A]',
-                      'IN PROGRESS': 'text-[#D04A7C]',
-                      CLOSED: 'text-[#2FA37A]',
-                      'KYC': 'text-[#3A8F55]',
-                      'PIN BOARD': 'text-[#1F8A6E]',
-                      'DAILY': 'text-[#2F7BD0]',
-                      'WEEKLY': 'text-[#2F7BD0]',
-                      'MONTHLY': 'text-[#2F7BD0]',
-                      'REVISION': 'text-[#5B6BD6]',
-                      'WAITING': 'text-[#D9534F]',
-                      'IN REVIEW': 'text-[#D97B3A]',
-                      'CHECKING': 'text-[#A35DB8]',
-                      'CRM': 'text-[#22A3AE]',
-                      'ON-HOLD': 'text-[#8A8F98]',
-                    };
+                    return colors[color] || color;
+                  };
+                  
+                  const STATUS_COLORS: Record<string, string> = {
+                    PENDING: 'text-[#8A8F98]',
+                    'IN PROGRESS': 'text-[#8A8F98]',
+                    CLOSED: 'text-[#2FA37A]',
+                    'KYC': 'text-[#8A8F98]',
+                    'PIN BOARD': 'text-[#8A8F98]',
+                    'DAILY': 'text-[#8A8F98]',
+                    'WEEKLY': 'text-[#8A8F98]',
+                    'MONTHLY': 'text-[#8A8F98]',
+                    'REVISION': 'text-[#8A8F98]',
+                    'WAITING': 'text-[#D9534F]',
+                    'IN REVIEW': 'text-[#D97B3A]',
+                    'CHECKING': 'text-[#A35DB8]',
+                    'CRM': 'text-[#22A3AE]',
+                    'ON-HOLD': 'text-[#8A8F98]',
+                  };
+
+                  const renderItem = (s: any) => {
+                    const statusName = typeof s === 'string' ? s : (s.name || s.status || s.title);
+                    const customObj = typeof s === 'object' ? s : undefined;
+                    const isClosed = isClosedStatus(s);
 
                     return (
                       <div
-                        key={s.id || statusName}
+                        key={(customObj && customObj.id) || statusName}
                         onClick={() => handleStatusChange(statusName)}
                         className={`flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${statusStr === statusName ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
                       >
                         {(() => {
+                          if (isClosed) {
+                            return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: getHexColor(customObj.color) } : undefined} />;
+                          }
                           if (customObj?.color) {
                             if ((statusName || '').toUpperCase() === 'KYC') {
                               return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
@@ -697,14 +706,22 @@ const CardContent = memo(({
                         {statusName === statusStr && <Check className="w-3 h-3 ml-auto opacity-70" />}
                       </div>
                     );
-                  })
-                ) : (
-                  ALL_STATUSES.map(s => (
-                    <div key={s} className="px-2 py-1.5 text-xs text-zinc-300 hover:bg-black/5 dark:hover:bg-zinc-700/50 rounded cursor-pointer transition-colors font-medium uppercase" onClick={() => handleStatusChange(s)}>
-                      {s}
-                    </div>
-                  ))
-                )}
+                  };
+
+                  return (
+                    <>
+                      {openStatuses.map(renderItem)}
+                      {closedStatuses.length > 0 && (
+                        <>
+                          <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                            Closed
+                          </div>
+                          {closedStatuses.map(renderItem)}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </PortalDropdown>
           )}

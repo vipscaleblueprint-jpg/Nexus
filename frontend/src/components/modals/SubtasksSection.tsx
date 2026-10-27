@@ -14,7 +14,7 @@ import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 import { useAppStore } from '@/lib/store';
-import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, prefetchSubtaskActivities } from './TaskDetailModal';
+import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, prefetchSubtaskActivities, isClosedStatus } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -956,52 +956,66 @@ function SubtaskRow({
                 <Popover.Portal>
                   <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                     <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                      {sortStatusesWithClosedAtEnd(((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES)).map((s: string) => (
-                        <div
-                          key={s}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!canEditTask) return;
-                            const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
-                            onUpdate(subtask.id, { status: s, completed: isFinal });
-                            setStatusOpen(false);
-                          }}
-                          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-300' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
-                        >
-                          {(() => {
-                            const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                            const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
-                            const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
-                            
-                            const getHexColor = (color: string) => {
-                              const tailwindColors: Record<string, string> = {
-                                slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
-                                red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
-                                green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
-                                blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
-                                pink: '#ec4899', rose: '#f43f5e'
-                              };
-                              if (color.startsWith('#')) return color;
-                              if (tailwindColors[color]) return tailwindColors[color];
-                              return undefined;
-                            };
+                      {(() => {
+                        const rawStatuses = (listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES;
+                        const sorted = sortStatusesWithClosedAtEnd(rawStatuses);
+                        const openStatuses = sorted.filter((s: string) => !isClosedStatus(s));
+                        const closedStatuses = sorted.filter((s: string) => isClosedStatus(s));
 
-                            if (customObj?.color) {
-                              if ((s || '').toUpperCase() === 'KYC') {
-                                return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                              }
-                              return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                            }
-                            
-                            if ((s || '').toUpperCase() === 'KYC') {
-                              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
-                            }
-                            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
-                          })()}
-                          {s}
-                          {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
-                        </div>
-                      ))}
+                        const renderItem = (s: string) => {
+                          const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                          const isClosed = isClosedStatus(s);
+                          const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+                          const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
+
+                          return (
+                            <div
+                              key={s}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!canEditTask) return;
+                                const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
+                                onUpdate(subtask.id, { status: s, completed: isFinal });
+                                setStatusOpen(false);
+                              }}
+                              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-300' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                            >
+                              {(() => {
+                                if (isClosed) {
+                                  return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: getHexColor(customObj.color) } : statusIconStyle} />;
+                                }
+                                if (customObj?.color) {
+                                  if ((s || '').toUpperCase() === 'KYC') {
+                                    return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                                  }
+                                  return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
+                                }
+                                
+                                if ((s || '').toUpperCase() === 'KYC') {
+                                  return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                                }
+                                return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
+                              })()}
+                              <span className="uppercase">{s}</span>
+                              {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                            </div>
+                          );
+                        };
+
+                        return (
+                          <>
+                            {openStatuses.map(renderItem)}
+                            {closedStatuses.length > 0 && (
+                              <>
+                                <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                                  Closed
+                                </div>
+                                {closedStatuses.map(renderItem)}
+                              </>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </Popover.Content>
                 </Popover.Portal>
@@ -1269,33 +1283,61 @@ function SubtaskRow({
               <Popover.Portal>
                 <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
                   <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                    {sortStatusesWithClosedAtEnd(((listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES)).map((s: string) => (
-                      <div
-                        key={s}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!canEditTask) return;
-                          const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
-                          onUpdate(subtask.id, { status: s, completed: isFinal });
-                          setStatusRowOpen(false);
-                        }}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-300' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
-                      >
-                        {(() => {
-                          const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                          const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
-                          const iconStyle = customObj?.color
-                            ? { color: getHexColor(customObj.color) }
-                            : statusColorHex ? { color: statusColorHex } : {};
-                          if ((s || '').toUpperCase() === 'KYC') {
-                            return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${!customObj?.color && !statusColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
-                          }
-                          return <CustomCircleDot className={`w-3 h-3 shrink-0 ${!customObj?.color && !statusColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
-                        })()}
-                        {s}
-                        {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
-                      </div>
-                    ))}
+                    {(() => {
+                      const rawStatuses = (listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES;
+                      const sorted = sortStatusesWithClosedAtEnd(rawStatuses);
+                      const openStatuses = sorted.filter((s: string) => !isClosedStatus(s));
+                      const closedStatuses = sorted.filter((s: string) => isClosedStatus(s));
+
+                      const renderItem = (s: string) => {
+                        const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+                        const isClosed = isClosedStatus(s);
+                        const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+                        const iconStyle = customObj?.color
+                          ? { color: getHexColor(customObj.color) }
+                          : statusColorHex ? { color: statusColorHex } : {};
+
+                        return (
+                          <div
+                            key={s}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!canEditTask) return;
+                              const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
+                              onUpdate(subtask.id, { status: s, completed: isFinal });
+                              setStatusRowOpen(false);
+                            }}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-300' : 'text-zinc-500 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'}`}
+                          >
+                            {(() => {
+                              if (isClosed) {
+                                return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: getHexColor(customObj.color) } : (statusColorHex ? { color: statusColorHex } : undefined)} />;
+                              }
+                              if ((s || '').toUpperCase() === 'KYC') {
+                                return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${!customObj?.color && !statusColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
+                              }
+                              return <CustomCircleDot className={`w-3 h-3 shrink-0 ${!customObj?.color && !statusColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
+                            })()}
+                            <span className="uppercase">{s}</span>
+                            {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70" />}
+                          </div>
+                        );
+                      };
+
+                      return (
+                        <>
+                          {openStatuses.map(renderItem)}
+                          {closedStatuses.length > 0 && (
+                            <>
+                              <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                                Closed
+                              </div>
+                              {closedStatuses.map(renderItem)}
+                            </>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </Popover.Content>
               </Popover.Portal>

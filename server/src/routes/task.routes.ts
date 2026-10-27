@@ -40,6 +40,7 @@ import {
   updateTaskSchema,
 } from '../validation/schemas';
 import { optionalAuthenticateToken } from '../middleware/auth.middleware';
+import { commentRateLimiter } from '../middleware/security.middleware';
 
 export const taskRouter = Router();
 
@@ -58,7 +59,7 @@ taskRouter.post(
 );
 taskRouter.post('/:id/attachments', optionalAuthenticateToken, validate({ params: idParams }), createTaskAttachment);
 taskRouter.delete('/:id/attachments/:attachmentId', optionalAuthenticateToken, validate({ params: idParams }), deleteTaskAttachment);
-taskRouter.post('/:id/comments', validate({ params: idParams }), createTaskComment);
+taskRouter.post('/:id/comments', commentRateLimiter, validate({ params: idParams }), createTaskComment);
 taskRouter.get('/:id/comments', validate({ params: idParams }), getTaskComments);
 taskRouter.patch('/:id/comments/:commentId', validate({ params: idAndCommentIdParams }), updateTaskComment);
 taskRouter.delete('/:id/comments/:commentId', validate({ params: idAndCommentIdParams }), deleteTaskComment);

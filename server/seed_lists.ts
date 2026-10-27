@@ -4,14 +4,14 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const defaultGroupedStatuses = [
-  { name: 'PIN BOARD', color: 'blue', groupName: 'CLIENT DETAILS', order: 1 },
-  { name: 'DAILY', color: 'purple', groupName: 'RECURRING', order: 0 },
-  { name: 'WEEKLY', color: 'blue', groupName: 'RECURRING', order: 1 },
-  { name: 'MONTHLY', color: 'purple', groupName: 'RECURRING', order: 2 },
-  { name: 'PENDING', color: 'orange', groupName: 'WORKFLOW & PROGRESS', order: 0 },
-  { name: 'IN PROGRESS', color: 'blue', groupName: 'WORKFLOW & PROGRESS', order: 1 },
-  { name: 'REVISION', color: 'rose', groupName: 'WORKFLOW & PROGRESS', order: 2 },
-  { name: 'ON-HOLD', color: 'zinc', groupName: 'WORKFLOW & PROGRESS', order: 3 },
+  { name: 'PIN BOARD', color: '#8A8F98', groupName: 'CLIENT DETAILS', order: 1 },
+  { name: 'DAILY', color: '#8A8F98', groupName: 'RECURRING', order: 0 },
+  { name: 'WEEKLY', color: '#8A8F98', groupName: 'RECURRING', order: 1 },
+  { name: 'MONTHLY', color: '#8A8F98', groupName: 'RECURRING', order: 2 },
+  { name: 'PENDING', color: '#8A8F98', groupName: 'WORKFLOW & PROGRESS', order: 0 },
+  { name: 'IN PROGRESS', color: '#8A8F98', groupName: 'WORKFLOW & PROGRESS', order: 1 },
+  { name: 'REVISION', color: '#8A8F98', groupName: 'WORKFLOW & PROGRESS', order: 2 },
+  { name: 'ON-HOLD', color: '#8A8F98', groupName: 'WORKFLOW & PROGRESS', order: 3 },
   { name: 'CLOSED', color: 'emerald', groupName: 'WORKFLOW & PROGRESS', order: 4 },
   { name: 'WAITING', color: 'orange', groupName: 'MANAGEMENT', order: 0 },
   { name: 'IN REVIEW', color: 'purple', groupName: 'MANAGEMENT', order: 1 },
@@ -30,7 +30,7 @@ async function main() {
 
     // Create the dynamic client details status
     const dynamicStatusName = (list.name || 'CLIENT').toUpperCase();
-    const dynamicStatus = { name: dynamicStatusName, color: 'teal', groupName: 'CLIENT DETAILS', order: 0 };
+    const dynamicStatus = { name: dynamicStatusName, color: '#8A8F98', groupName: 'CLIENT DETAILS', order: 0 };
     
     const allStatusesToSeed = [dynamicStatus, ...defaultGroupedStatuses];
 

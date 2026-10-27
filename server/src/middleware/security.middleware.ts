@@ -68,6 +68,57 @@ export function rateLimiter(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+/** Rate limiter factory for targeted routes (uploads, comments) to mitigate DDoS and spam. */
+function createRouteRateLimiter(options: {
+  windowMs: number;
+  max: number;
+  message: string;
+  name: string;
+}) {
+  const map = new Map<string, { count: number; expiresAt: number }>();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, record] of map) {
+      if (now > record.expiresAt) map.delete(key);
+    }
+  }, options.windowMs).unref();
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    const userOrIp = (req as any).user?.id || req.ip || req.socket.remoteAddress || '127.0.0.1';
+    const now = Date.now();
+    const record = map.get(userOrIp);
+
+    if (!record || now > record.expiresAt) {
+      map.set(userOrIp, { count: 1, expiresAt: now + options.windowMs });
+      return next();
+    }
+
+    if (record.count >= options.max) {
+      log.warn({ userOrIp, limiter: options.name }, `${options.name} rate limit exceeded`);
+      return res.status(429).json({ error: options.message });
+    }
+
+    record.count += 1;
+    return next();
+  };
+}
+
+/** Dedicated upload rate limiter: max 25 uploads per minute per user/IP (prevents bandwidth/storage DDoS). */
+export const uploadRateLimiter = createRouteRateLimiter({
+  windowMs: 60 * 1000,
+  max: 25,
+  message: 'Upload rate limit exceeded. Please wait a minute before uploading more files.',
+  name: 'upload',
+});
+
+/** Dedicated comment rate limiter: max 35 comments per minute per user/IP (prevents comment flood DDoS). */
+export const commentRateLimiter = createRouteRateLimiter({
+  windowMs: 60 * 1000,
+  max: 35,
+  message: 'Too many comments posted in a short time. Please slow down.',
+  name: 'comment',
+});
+
 // Bot & Automated Scanner Blocker (Active when NODE_ENV !== 'development')
 export function botBlocker(req: Request, res: Response, next: NextFunction) {
   const isDevelopment = process.env.NODE_ENV === 'development';

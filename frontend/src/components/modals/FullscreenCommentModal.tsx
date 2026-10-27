@@ -19,6 +19,7 @@ import { EditCommentForm } from './EditCommentForm';
 import { UserMentionChip } from '../ui/UserMentionChip';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
 import { LinkWithPreview } from '../ui/LinkHoverPreview';
+import { CommentAttachmentCard, isAttachmentUrl } from '../ui/CommentAttachmentCard';
 import {
   commentHtmlForMarkdown,
   normalizeHref,
@@ -211,6 +212,14 @@ export function FullscreenCommentModal({
           />
         );
       }
+      if (isAttachmentUrl(href, typeof rest.children === 'string' ? rest.children : undefined)) {
+        return (
+          <CommentAttachmentCard
+            href={href}
+            fileName={typeof rest.children === 'string' ? rest.children : undefined}
+          />
+        );
+      }
       return (
         <LinkWithPreview
           {...rest}
@@ -340,8 +349,8 @@ export function FullscreenCommentModal({
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
             className="relative z-10 w-full h-full flex flex-col bg-background text-foreground overflow-hidden"
           >
-            {/* Floating Top-Right Controls - Only shown when hovering its location */}
-            <div className="absolute top-4 right-6 z-50 flex items-center gap-2 opacity-0 hover:opacity-100 transition-opacity duration-150 pointer-events-auto">
+            {/* Floating Top-Right Controls */}
+            <div className="absolute top-4 right-6 z-50 flex items-center gap-2 pointer-events-auto">
               {isAuthor && onEdit && !isEditing && (
                 <button
                   type="button"
@@ -372,8 +381,9 @@ export function FullscreenCommentModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="p-2 rounded-lg text-muted-foreground hover:text-foreground bg-card/90 hover:bg-card border border-border shadow-lg backdrop-blur-md cursor-pointer transition-all active:scale-95"
+                className="p-2 rounded-lg text-foreground/80 hover:text-foreground bg-card/90 hover:bg-card border border-border shadow-lg backdrop-blur-md cursor-pointer transition-all active:scale-95"
                 title="Close (Esc)"
+                aria-label="Close"
               >
                 <X className="w-5 h-5" />
               </button>

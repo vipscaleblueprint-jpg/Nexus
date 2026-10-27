@@ -22,7 +22,8 @@ import { Indent } from '@/components/editor/extensions/Indent';
 import { ListKeymap, handleListEnter } from '@/components/editor/extensions/ListKeymap';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
-import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2, IndentDecrease, IndentIncrease, CheckSquare } from 'lucide-react';
+import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2, IndentDecrease, IndentIncrease, CheckSquare, ImageIcon, Paperclip, ShieldAlert } from 'lucide-react';
+import { validateUploadFile, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 
 const colors = [
   '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1', '#d946ef', '#22c55e', '#14b8a6', '#52525b', 'transparent'
@@ -37,6 +38,8 @@ interface CommentEditorProps {
   disabled?: boolean;
   onSubmit?: () => void;
   onPasteFiles?: (files: File[]) => void;
+  /** Callback when files are dropped onto the editor. Defaults to calling onPasteFiles for attachments if not provided. */
+  onDropFiles?: (files: File[]) => void;
   /** When set, images are placed inline at the cursor (like ClickUp) and uploaded in the background. */
   onUploadImage?: (file: File) => Promise<string>;
   /** Copies an image from a link server-side, for pasted images whose host the browser can't read from. */
@@ -169,9 +172,15 @@ const fileNameFromSrc = (src: string, type: string) => {
   return `pasted-image-${Date.now()}.${ext}`;
 };
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onDropFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown }, ref) => {
   const pendingUploads = React.useRef(0);
   const wrapperRef = React.useRef<HTMLDivElement>(null);
+  const [isDraggingOver, setIsDraggingOver] = React.useState(false);
+  const dragCounterRef = React.useRef(0);
+  const onPasteFilesRef = React.useRef(onPasteFiles);
+  onPasteFilesRef.current = onPasteFiles;
+  const onDropFilesRef = React.useRef(onDropFiles);
+  onDropFilesRef.current = onDropFiles;
   // Drag handle beside the hovered line/image: its top within the wrapper and the block's doc position
   const [dragHandle, setDragHandle] = React.useState<{ top: number; pos: number } | null>(null);
   // While dragging: the purple drop line's top within the wrapper
@@ -281,12 +290,26 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         return false;
       },
       handleDrop: (view, event, _slice, moved) => {
-        if (moved || !onUploadImage) return false;
-        const images = Array.from(event.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'));
-        if (images.length === 0) return false;
+        if (moved || disabled) return false;
+        const files = Array.from(event.dataTransfer?.files || []);
+        if (files.length === 0) return false;
         event.preventDefault();
-        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
-        insertImagesRef.current(images, pos);
+        event.stopPropagation();
+        (event as any)._commentDropHandled = true;
+        setIsDraggingOver(false);
+        dragCounterRef.current = 0;
+        const { images, attachments } = processCandidateFiles(files);
+        if (images.length > 0 && onUploadImage) {
+          const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+          insertImagesRef.current(images, pos);
+        }
+        if (attachments.length > 0) {
+          if (onDropFilesRef.current) {
+            onDropFilesRef.current(attachments);
+          } else if (onPasteFilesRef.current) {
+            onPasteFilesRef.current(attachments);
+          }
+        }
         return true;
       },
       transformPastedHTML: cleanPastedHtml,
@@ -419,6 +442,32 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
   };
   insertImagesRef.current = insertImages;
 
+  const processCandidateFiles = (rawFiles: File[]): { images: File[]; attachments: File[] } => {
+    if (rawFiles.length > MAX_FILES_PER_BATCH) {
+      toast.error(`Too many files at once. Only the first ${MAX_FILES_PER_BATCH} files will be processed.`);
+    }
+    const toProcess = rawFiles.slice(0, MAX_FILES_PER_BATCH);
+    const images: File[] = [];
+    const attachments: File[] = [];
+
+    for (const file of toProcess) {
+      const check = validateUploadFile(file);
+      if (!check.valid) {
+        toast.error(check.error || `File ${file.name} is not allowed`);
+        continue;
+      }
+      if (check.isSoftWarning && check.softWarning) {
+        toast.warning(check.softWarning);
+      }
+      if (check.isImage) {
+        images.push(file);
+      } else {
+        attachments.push(file);
+      }
+    }
+    return { images, attachments };
+  };
+
   // Pasted images go inline at the cursor when the parent uploads them; other files go to the
   // parent's staged attachments. Runs in the capture phase so it sees the paste before ProseMirror does.
   const handlePasteCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -440,10 +489,60 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     event.preventDefault();
     event.stopPropagation();
     const named = nameClipboardFiles(files);
-    const images = onUploadImage ? named.filter(f => f.type.startsWith('image/')) : [];
-    const others = named.filter(f => !images.includes(f));
-    insertImages(images);
-    if (others.length > 0) onPasteFiles?.(others);
+    const { images, attachments } = processCandidateFiles(named);
+    if (images.length > 0 && onUploadImage) insertImages(images);
+    if (attachments.length > 0) onPasteFiles?.(attachments);
+  };
+
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+      dragCounterRef.current += 1;
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+      dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+      if (dragCounterRef.current === 0) {
+        setIsDraggingOver(false);
+      }
+    }
+  };
+
+  const handleWrapperDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    dragCounterRef.current = 0;
+    setIsDraggingOver(false);
+    if ((e.nativeEvent as any)._commentDropHandled) return;
+    (e.nativeEvent as any)._commentDropHandled = true;
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { images, attachments } = processCandidateFiles(files);
+    if (images.length > 0 && onUploadImage) {
+      insertImages(images);
+    }
+    if (attachments.length > 0) {
+      if (onDropFilesRef.current) {
+        onDropFilesRef.current(attachments);
+      } else if (onPasteFilesRef.current) {
+        onPasteFilesRef.current(attachments);
+      }
+    }
   };
 
   // Positioned from the wrapper's own rect (not the viewport) so it stays put inside the
@@ -596,8 +695,33 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       onMouseDown={handleWrapperMouseDown}
       onMouseLeave={() => { if (!isDraggingRef.current) setDragHandle(null); }}
       onScrollCapture={() => { if (!isDraggingRef.current) setDragHandle(null); }}
-      className="group/composer relative w-full rounded-xl border border-zinc-700/50 bg-zinc-900/60 py-3 pr-3 pl-7 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all duration-200 hover:border-zinc-600/60 focus-within:border-indigo-500/50 focus-within:bg-zinc-900/90 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.12),0_8px_24px_-12px_rgba(0,0,0,0.6)] custom-scrollbar"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleWrapperDrop}
+      className={`group/composer relative w-full rounded-xl border ${isDraggingOver ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700/50 hover:border-zinc-600/60'} bg-zinc-900/60 py-3 pr-3 pl-7 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all duration-200 focus-within:border-indigo-500/50 focus-within:bg-zinc-900/90 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.12),0_8px_24px_-12px_rgba(0,0,0,0.6)] custom-scrollbar`}
     >
+      {isDraggingOver && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl bg-zinc-950/90 backdrop-blur-sm border-2 border-dashed border-indigo-500 shadow-[0_0_24px_rgba(99,102,241,0.35)] transition-all pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+          <div className="flex items-center gap-2.5 mb-2">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 text-indigo-400">
+              <ImageIcon className="w-4 h-4" />
+            </div>
+            <span className="text-zinc-500 font-bold text-xs">+</span>
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 text-indigo-400">
+              <Paperclip className="w-4 h-4" />
+            </div>
+          </div>
+          <p className="text-sm font-semibold text-zinc-100">Drop files here</p>
+          <p className="text-xs text-zinc-400 mt-0.5">
+            Images placed inline &bull; Files added as attachments
+          </p>
+          <div className="flex items-center gap-1.5 mt-2 text-[10px] text-zinc-400 bg-zinc-900/80 px-2.5 py-0.5 rounded-full border border-zinc-800">
+            <ShieldAlert className="w-3 h-3 text-amber-400 shrink-0" />
+            <span>Max image: 10MB &bull; Max file: 25MB &bull; No executables or videos</span>
+          </div>
+        </div>
+      )}
       {dragHandle && dropLineTop === null && (
         <div
           data-comment-drag-handle

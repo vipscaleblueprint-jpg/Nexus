@@ -1675,8 +1675,7 @@ export async function getTaskComments(req: Request, res: Response) {
     const { subtaskId } = req.query;
 
     // Redis List key — one list per task (or per subtask).
-    // New comments are lpush'd so index 0 = newest; we reverse before sending
-    // so the client always receives oldest-first (matches prior contract).
+    // Stored oldest-first via rpush, so lrange 0 -1 is always in chronological order.
     const redisKey = `comments:list:${taskId}${subtaskId ? `:sub:${subtaskId}` : ''}`;
 
     const cachedItems = await redis.lrange(redisKey, 0, -1);
@@ -1684,7 +1683,7 @@ export async function getTaskComments(req: Request, res: Response) {
       if (cachedItems.length === 1 && cachedItems[0] === '__EMPTY__') {
         return res.json({ comments: [], cached: true });
       }
-      const comments = cachedItems.filter((c: string) => c !== '__EMPTY__').map((c: string) => JSON.parse(c)).reverse();
+      const comments = cachedItems.filter((c: string) => c !== '__EMPTY__').map((c: string) => JSON.parse(c));
       return res.json({ comments, cached: true });
     }
 

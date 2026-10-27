@@ -52,18 +52,18 @@ interface Props {
 
 const GROUP_STYLES: Record<string, { badgeClass: string; borderColor: string; icon: string }> = {
   'Client Details': {
-    badgeClass: 'bg-cyan-500/15 text-cyan-300',
-    borderColor: 'rgba(6, 182, 212, 0.5)',
+    badgeClass: 'bg-zinc-500/15 text-zinc-300',
+    borderColor: 'rgba(113, 113, 122, 0.5)',
     icon: '👤',
   },
   'Recurring': {
-    badgeClass: 'bg-purple-500/15 text-purple-300',
-    borderColor: 'rgba(168, 85, 247, 0.5)',
+    badgeClass: 'bg-zinc-500/15 text-zinc-300',
+    borderColor: 'rgba(113, 113, 122, 0.5)',
     icon: '🔁',
   },
   'Workflow & Progress': {
-    badgeClass: 'bg-indigo-500/15 text-indigo-300',
-    borderColor: 'rgba(99, 102, 241, 0.5)',
+    badgeClass: 'bg-zinc-500/15 text-zinc-300',
+    borderColor: 'rgba(113, 113, 122, 0.5)',
     icon: '⚡',
   },
   'Closed Task': {

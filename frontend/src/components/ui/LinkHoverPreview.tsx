@@ -324,7 +324,7 @@ function LinkPreviewCard({ metadata, triggerRect, onMouseEnter, onMouseLeave, on
           />
         )}
         <span
-          className="text-[11px] font-mono truncate group-hover/url:underline group-hover/url:text-blue-600 dark:group-hover/url:text-blue-400 transition-colors max-w-[310px]"
+          className="text-[11px] font-mono truncate group-hover/url:text-blue-600 dark:group-hover/url:text-blue-400 transition-colors max-w-[310px]"
           style={{ color: 'var(--muted)' }}
         >
           {metadata.displayUrl}

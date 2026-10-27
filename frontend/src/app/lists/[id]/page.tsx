@@ -714,10 +714,18 @@ export default function BoardPage() {
           onUpdateTask={async (updatedTask) => {
             // Sync board and modal state
             localTaskEditsRef.current.set(updatedTask.id, Date.now());
-            setSelectedTask(updatedTask);
+            setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
             setList((prev: any) => ({
               ...prev,
-              tasks: prev?.tasks ? prev.tasks.map((t: any) => t.id === updatedTask.id ? { ...t, ...updatedTask } : t) : []
+              tasks: prev?.tasks ? prev.tasks.map((t: any) => {
+                if (t.id === updatedTask.id) {
+                  // Keep canonical board status so that non-status updates (checklists, subtasks, description blur)
+                  // never accidentally revert the live board column. Explicit status changes go through onStatusChange.
+                  const effectiveStatus = t.status || updatedTask.status;
+                  return { ...t, ...updatedTask, status: effectiveStatus };
+                }
+                return t;
+              }) : []
             }));
           }}
         />

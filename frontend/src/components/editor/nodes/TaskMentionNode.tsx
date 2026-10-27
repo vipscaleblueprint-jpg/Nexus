@@ -1,4 +1,4 @@
-import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/components/modals/TaskDetailModal';
 import { canTransitionTaskStatus } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
@@ -16,10 +16,10 @@ import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { sanitizeHtml } from '@/components/docs/docTransfer';
 
 const STATUS_HEX_MAP: Record<string, string> = {
-  PENDING: '#D4A02A',
-  'IN PROGRESS': '#D04A7C',
+  PENDING: '#8A8F98',
+  'IN PROGRESS': '#8A8F98',
   DONE: '#22c55e', 
-  REVISION: '#5B6BD6',
+  REVISION: '#8A8F98',
   CHECKING: '#A35DB8',
   CLOSED: '#2FA37A',
 };
@@ -721,28 +721,51 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           <div className="z-[9999] w-48 p-1.5 bg-popover border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl outline-none flex flex-col gap-0.5">
             <div className="px-2.5 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider shrink-0">Change Status</div>
             <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-              {orderedListStatuses.map((statusName: string) => {
-                const isActive = statusName === parsedStatusName;
-                const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
-                const colorHex = customObj?.color || getStatusColor(statusName);
+              {(() => {
+                const openStatuses = orderedListStatuses.filter((s: string) => !isClosedStatus(s));
+                const closedStatuses = orderedListStatuses.filter((s: string) => isClosedStatus(s));
+
+                const renderItem = (statusName: string) => {
+                  const isActive = statusName === parsedStatusName;
+                  const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
+                  const isClosed = isClosedStatus(statusName);
+                  const colorHex = customObj?.color || (isClosed ? '#2FA37A' : getStatusColor(statusName));
+
+                  return (
+                    <button
+                      key={statusName}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(statusName); }}
+                      className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg cursor-pointer transition-colors ${
+                        isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'
+                      }`}
+                    >
+                      {isClosed ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: colorHex } : undefined} />
+                      ) : (statusName || '').toUpperCase() === 'KYC' ? (
+                        <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
+                      ) : (
+                        <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
+                      )}
+                      <span className="uppercase">{statusName}</span>
+                      {isActive && <Check className="w-4 h-4 ml-auto text-blue-500 opacity-70" />}
+                    </button>
+                  );
+                };
+
                 return (
-                  <button
-                    key={statusName}
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleStatusChange(statusName); }}
-                    className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg cursor-pointer transition-colors ${
-                      isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-600 dark:text-zinc-300 hover:bg-accent hover:text-accent-foreground'
-                    }`}
-                  >
-                    {(statusName || '').toUpperCase() === 'KYC' ? (
-                      <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
-                    ) : (
-                      <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: colorHex }} />
+                  <>
+                    {openStatuses.map(renderItem)}
+                    {closedStatuses.length > 0 && (
+                      <>
+                        <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                          Closed
+                        </div>
+                        {closedStatuses.map(renderItem)}
+                      </>
                     )}
-                    <span>{statusName}</span>
-                    {isActive && <Check className="w-4 h-4 ml-auto text-blue-500 opacity-70" />}
-                  </button>
+                  </>
                 );
-              })}
+              })()}
             </div>
           </div>
         </PortalDropdown>

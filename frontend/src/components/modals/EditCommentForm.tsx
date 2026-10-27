@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Paperclip, X, FileText, Check, Loader2, SmilePlus, IndentDecrease, IndentIncrease, CheckSquare } from 'lucide-react';
+import { Paperclip, X, FileText, Check, Loader2, SmilePlus, IndentDecrease, IndentIncrease, CheckSquare, ShieldAlert } from 'lucide-react';
 import { CommentEditor, CommentEditorRef, ComposerToolButton } from '../ui/CommentEditor';
 import { EmojiPicker } from '../ui/EmojiPicker';
 import { uploadApi } from '@/api/upload';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { isBlankCommentHtml, trimCommentHtml } from '@/lib/links';
+import { getFileExtension } from '../ui/CommentAttachmentCard';
+import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 
 export interface ParsedCommentAttachment {
   id: string;
@@ -200,15 +202,46 @@ export function EditCommentForm({
 
   // Images go inline at the cursor; other files are staged as attachments
   const addFiles = (newFiles: File[]) => {
-    const images = newFiles.filter(f => f.type.startsWith('image/'));
-    const others = newFiles.filter(f => !f.type.startsWith('image/'));
-    if (images.length > 0) commentEditorRef.current?.insertImages(images);
-    if (others.length > 0) setStagedFiles(prev => [...prev, ...others]);
+    const validImages: File[] = [];
+    const validOthers: File[] = [];
+
+    for (const f of newFiles) {
+      const check = validateUploadFile(f);
+      if (!check.valid) {
+        toast.error(check.error || `File ${f.name} is not allowed`);
+        continue;
+      }
+      if (check.isSoftWarning && check.softWarning) {
+        toast.warning(check.softWarning);
+      }
+      if (check.isImage) {
+        validImages.push(f);
+      } else {
+        validOthers.push(f);
+      }
+    }
+
+    if (validImages.length > 0) commentEditorRef.current?.insertImages(validImages);
+    if (validOthers.length > 0) {
+      setStagedFiles(prev => {
+        const next = [...prev];
+        for (const f of validOthers) {
+          if (next.length >= MAX_FILES_PER_BATCH) {
+            toast.error(`Maximum of ${MAX_FILES_PER_BATCH} staged files reached.`);
+            break;
+          }
+          if (!next.some(existing => existing.name === f.name && existing.size === f.size && existing.lastModified === f.lastModified)) {
+            next.push(f);
+          }
+        }
+        return next;
+      });
+    }
   };
 
   // Handle files pasted from clipboard
   const handlePasteFiles = (newFiles: File[]) => {
-    setStagedFiles(prev => [...prev, ...newFiles]);
+    addFiles(newFiles);
   };
 
   const uploadImage = useCallback((file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url), []);
@@ -245,6 +278,50 @@ export function EditCommentForm({
       addFiles(Array.from(e.target.files));
       e.target.value = '';
     }
+  };
+
+  const [isDraggingOverForm, setIsDraggingOverForm] = useState(false);
+  const formDragCounterRef = useRef(0);
+
+  const handleFormDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    if (isSaving) return;
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+      formDragCounterRef.current += 1;
+      setIsDraggingOverForm(true);
+    }
+  };
+
+  const handleFormDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (isSaving) return;
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleFormDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (isSaving) return;
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+      formDragCounterRef.current = Math.max(0, formDragCounterRef.current - 1);
+      if (formDragCounterRef.current === 0) {
+        setIsDraggingOverForm(false);
+      }
+    }
+  };
+
+  const handleFormDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (isSaving) return;
+    formDragCounterRef.current = 0;
+    setIsDraggingOverForm(false);
+    if ((e.nativeEvent as any)._commentDropHandled) return;
+    (e.nativeEvent as any)._commentDropHandled = true;
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    addFiles(files);
   };
 
   const hasText = !isBlankCommentHtml(text);
@@ -355,68 +432,121 @@ export function EditCommentForm({
   return (
     <div
       onPasteCapture={handleOuterPasteCapture}
-      className="flex flex-col gap-2.5 w-full bg-zinc-900/40 p-3 rounded-xl border border-zinc-700/60 focus-within:border-indigo-500/70 transition-colors"
+      onDragEnter={handleFormDragEnter}
+      onDragOver={handleFormDragOver}
+      onDragLeave={handleFormDragLeave}
+      onDrop={handleFormDrop}
+      className={`relative flex flex-col gap-2.5 w-full bg-zinc-900/40 p-3 rounded-xl border ${isDraggingOverForm ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700/60 focus-within:border-indigo-500/70'} transition-all`}
     >
+      {isDraggingOverForm && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl bg-zinc-950/90 backdrop-blur-sm border-2 border-dashed border-indigo-500 shadow-[0_0_24px_rgba(99,102,241,0.35)] transition-all pointer-events-none animate-in fade-in zoom-in-95 duration-150 p-4 text-center">
+          <p className="text-sm font-semibold text-zinc-100">Drop files to add</p>
+          <p className="text-xs text-zinc-400 mt-0.5">Images placed inline &bull; Files attached</p>
+          <div className="flex items-center gap-1.5 mt-2 text-[10px] text-zinc-400 bg-zinc-900/80 px-2.5 py-0.5 rounded-full border border-zinc-800">
+            <ShieldAlert className="w-3 h-3 text-amber-400 shrink-0" />
+            <span>Max image: 10MB &bull; Max file: 25MB &bull; No executables or videos</span>
+          </div>
+        </div>
+      )}
+
       {/* Existing and Staged Attachments Strip */}
       {totalAttachmentsCount > 0 && (
         <div className="flex flex-wrap gap-2.5 pb-2 border-b border-zinc-800/60">
           {/* Existing Attachments */}
-          {existingAttachments.map((att) => (
-            <div
-              key={att.id}
-              className="relative group flex items-center justify-center bg-zinc-900 rounded-lg border border-zinc-700/60 w-16 h-16 shrink-0 overflow-hidden shadow-sm"
-            >
-              {att.type === 'image' ? (
-                <img
-                  src={att.url}
-                  alt={att.name}
-                  className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                  onClick={() => onPreviewImage?.(att.url)}
-                  title="Click to preview"
-                />
-              ) : att.type === 'video' ? (
-                <video src={att.url} className="w-full h-full object-cover" />
-              ) : (
-                <div className="flex flex-col items-center justify-center p-1 text-center">
-                  <FileText className="w-5 h-5 text-zinc-400 mb-0.5" />
-                  <span className="text-[9px] text-zinc-400 font-mono truncate max-w-[50px]">{att.name}</span>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => setExistingAttachments(prev => prev.filter(a => a.id !== att.id))}
-                title="Remove attachment"
-                className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+          {existingAttachments.map((att) => {
+            const ext = getFileExtension(att.name || att.url);
+            return (
+              <div
+                key={att.id}
+                className="relative group flex items-center justify-center bg-zinc-900 rounded-lg border border-zinc-700/60 w-16 h-16 shrink-0 overflow-hidden shadow-sm"
               >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
+                {att.type === 'image' ? (
+                  <>
+                    <img
+                      src={att.url}
+                      alt={att.name}
+                      className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => onPreviewImage?.(att.url)}
+                      title="Click to preview"
+                    />
+                    <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                      Image
+                    </span>
+                  </>
+                ) : att.type === 'video' ? (
+                  <>
+                    <video src={att.url} className="w-full h-full object-cover" />
+                    <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                      Video
+                    </span>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-1 text-center w-full">
+                    <FileText className="w-4.5 h-4.5 text-zinc-400 mb-0.5" />
+                    <span className="text-[8px] font-bold tracking-wider uppercase px-1 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                      {ext}
+                    </span>
+                    <span className="text-[9px] text-zinc-400 font-mono truncate max-w-[50px] mt-0.5" title={att.name}>{att.name}</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setExistingAttachments(prev => prev.filter(a => a.id !== att.id))}
+                  title="Remove attachment"
+                  className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
 
           {/* Newly Staged Files */}
           {stagedFiles.map((file, idx) => {
             const isImage = file.type.startsWith('image/');
-            const isVideo = file.type.startsWith('video/');
-            const previewUrl = (isImage || isVideo) ? URL.createObjectURL(file) : null;
+            const previewUrl = isImage ? URL.createObjectURL(file) : null;
+            const ext = getFileExtension(file.name);
+            const isSoftWarning = isImage ? file.size > IMAGE_SOFT_MAX_BYTES : file.size > ATTACHMENT_SOFT_MAX_BYTES;
+            const softLimitLabel = isImage ? '>3MB' : '>10MB';
+            const sizeFormatted = formatFileSize(file.size);
             return (
               <div
                 key={idx}
-                className="relative group flex items-center justify-center bg-zinc-900 rounded-lg border border-indigo-500/50 w-16 h-16 shrink-0 overflow-hidden shadow-sm ring-1 ring-indigo-500/20"
+                className={`relative group flex items-center justify-center bg-zinc-900 rounded-lg border ${isSoftWarning ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-indigo-500/50 ring-1 ring-indigo-500/20'} w-16 h-16 shrink-0 overflow-hidden shadow-sm`}
               >
                 {isImage && previewUrl ? (
-                  <img
-                    src={previewUrl}
-                    alt={file.name}
-                    className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                    onClick={() => onPreviewImage?.(previewUrl)}
-                    title="Click to preview"
-                  />
-                ) : isVideo && previewUrl ? (
-                  <video src={previewUrl} className="w-full h-full object-cover" />
+                  <>
+                    <img
+                      src={previewUrl}
+                      alt={file.name}
+                      className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => onPreviewImage?.(previewUrl)}
+                      title="Click to preview"
+                    />
+                    <span className="absolute bottom-0 inset-x-0 bg-indigo-600/90 text-[8px] text-white font-medium text-center py-0.5">
+                      {sizeFormatted}
+                    </span>
+                    {isSoftWarning && (
+                      <span className="absolute top-1 left-1 bg-amber-500 text-black text-[7px] font-bold px-1 rounded shadow" title={`Large image: ${sizeFormatted} (soft limit >3MB)`}>
+                        {softLimitLabel}
+                      </span>
+                    )}
+                  </>
                 ) : (
-                  <div className="flex flex-col items-center justify-center p-1 text-center">
-                    <FileText className="w-5 h-5 text-indigo-400 mb-0.5" />
-                    <span className="text-[9px] text-zinc-400 font-mono truncate max-w-[50px]">{file.name}</span>
+                  <div className="flex flex-col items-center justify-center p-1 text-center w-full">
+                    <FileText className={`w-4 h-4 ${isSoftWarning ? 'text-amber-400' : 'text-indigo-400'} mb-0.5`} />
+                    <span className={`text-[8px] font-bold tracking-wider uppercase px-1 py-0.2 rounded ${isSoftWarning ? 'bg-amber-500/15 text-amber-400' : 'bg-indigo-500/15 text-indigo-400'}`}>
+                      {ext}
+                    </span>
+                    <span className="text-[9px] text-zinc-300 font-medium truncate max-w-[50px] mt-0.5" title={file.name}>{file.name}</span>
+                    <span className="text-[7px] text-zinc-500 font-mono mt-0.2">
+                      {sizeFormatted}
+                    </span>
+                    {isSoftWarning && (
+                      <span className="absolute top-1 left-1 bg-amber-500 text-black text-[7px] font-bold px-1 rounded shadow" title={`Large attachment: ${sizeFormatted} (soft limit >10MB)`}>
+                        {softLimitLabel}
+                      </span>
+                    )}
                   </div>
                 )}
                 <button
@@ -427,9 +557,6 @@ export function EditCommentForm({
                 >
                   <X className="w-3 h-3" />
                 </button>
-                <span className="absolute bottom-0 inset-x-0 bg-indigo-600/90 text-[8px] text-white font-medium text-center py-0.5 pointer-events-none">
-                  New
-                </span>
               </div>
             );
           })}
@@ -467,6 +594,7 @@ export function EditCommentForm({
             }
           }}
           onPasteFiles={handlePasteFiles}
+          onDropFiles={addFiles}
           onUploadImage={uploadImage}
           onUploadImageUrl={copyImage}
           onUploadingChange={setIsUploadingInline}

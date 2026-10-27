@@ -1,4 +1,5 @@
-import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted, sortStatusesWithClosedAndKycAtEnd } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/components/modals/TaskDetailModal';
+import { CheckCircle2 } from 'lucide-react';
 import { canTransitionTaskStatus } from '@/lib/permissions';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import React, { useEffect, useState, useRef } from 'react';
@@ -285,29 +286,52 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
         <PortalDropdown triggerRef={statusRef} onClose={() => setOpenDropdown(null)}>
           <div className="w-48 py-1">
             <div className="px-2 py-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Change Status</div>
-            {orderedListStatuses.map((statusName: string) => {
-              const isActive = statusName === parsedStatusName;
-              const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
-              const colorHex = customObj?.color || null;
-              const textColorClass = STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[1] : 'text-zinc-500';
+            {(() => {
+              const openStatuses = orderedListStatuses.filter((s: string) => !isClosedStatus(s));
+              const closedStatuses = orderedListStatuses.filter((s: string) => isClosedStatus(s));
+
+              const renderItem = (statusName: string) => {
+                const isActive = statusName === parsedStatusName;
+                const customObj = listStatuses.find((s: any) => (s.name || s.status || s.title) === statusName);
+                const colorHex = customObj?.color || null;
+                const textColorClass = STATUS_COLORS[statusName] ? STATUS_COLORS[statusName].split(' ')[1] : 'text-zinc-500';
+                const isClosed = isClosedStatus(statusName);
+
+                return (
+                  <button
+                    key={statusName}
+                    onClick={(e) => { e.stopPropagation(); handleStatusChange(statusName); }}
+                    className={`w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${
+                      isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'
+                    }`}
+                  >
+                    {isClosed ? (
+                      <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={colorHex ? { color: colorHex } : undefined} />
+                    ) : (statusName || '').toUpperCase() === 'KYC' ? (
+                      <CustomCircleDotted className="w-3 h-3 shrink-0" style={colorHex ? { color: colorHex } : undefined} />
+                    ) : (
+                      <CustomCircleDot className={`w-3 h-3 shrink-0 ${!colorHex ? textColorClass : ''}`} style={colorHex ? { color: colorHex } : undefined} />
+                    )}
+                    <span className="uppercase">{statusName}</span>
+                    {isActive && <svg className="w-3 h-3 ml-auto opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>}
+                  </button>
+                );
+              };
+
               return (
-                <button
-                  key={statusName}
-                  onClick={(e) => { e.stopPropagation(); handleStatusChange(statusName); }}
-                  className={`w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-md cursor-pointer transition-colors ${
-                    isActive ? 'bg-blue-500/10 text-blue-400' : 'text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100'
-                  }`}
-                >
-                  {(statusName || '').toUpperCase() === 'KYC' ? (
-                    <CustomCircleDotted className="w-3 h-3 shrink-0" style={colorHex ? { color: colorHex } : undefined} />
-                  ) : (
-                    <CustomCircleDot className={`w-3 h-3 shrink-0 ${!colorHex ? textColorClass : ''}`} style={colorHex ? { color: colorHex } : undefined} />
+                <>
+                  {openStatuses.map(renderItem)}
+                  {closedStatuses.length > 0 && (
+                    <>
+                      <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-2 pb-1 select-none">
+                        Closed
+                      </div>
+                      {closedStatuses.map(renderItem)}
+                    </>
                   )}
-                  <span>{statusName}</span>
-                  {isActive && <svg className="w-3 h-3 ml-auto opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>}
-                </button>
+                </>
               );
-            })}
+            })()}
           </div>
         </PortalDropdown>
       )}

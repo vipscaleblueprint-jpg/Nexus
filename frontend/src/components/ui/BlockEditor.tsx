@@ -106,7 +106,6 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
-  const { renderCard } = useDomLinkPreview(editorContainerRef);
 
   let initialContent: any = content || '';
   if (typeof initialContent === 'string' && initialContent.startsWith('{"type":"doc"')) {
@@ -333,6 +332,8 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
       }
     }
   });
+
+  const { renderCard } = useDomLinkPreview(editorContainerRef, editor);
 
   useEffect(() => {
     if (editor && autoFocus && !editor.isFocused) {

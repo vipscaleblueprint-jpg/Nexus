@@ -452,7 +452,7 @@ export function LinkWithPreview({
 /**
  * Hook to attach hover preview to raw HTML <a> links inside any container (e.g. TipTap BlockEditor).
  */
-export function useDomLinkPreview(containerRef: React.RefObject<HTMLElement | null>) {
+export function useDomLinkPreview(containerRef: React.RefObject<HTMLElement | null>, activeDependency?: any) {
   const [activeLink, setActiveLink] = useState<{
     rect: DOMRect;
     metadata: LinkMetadata;
@@ -460,6 +460,7 @@ export function useDomLinkPreview(containerRef: React.RefObject<HTMLElement | nu
 
   const openTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const activeTargetRef = useRef<HTMLElement | null>(null);
 
   const closeImmediately = useCallback(() => {
     if (openTimeoutRef.current) {
@@ -470,59 +471,112 @@ export function useDomLinkPreview(containerRef: React.RefObject<HTMLElement | nu
       clearTimeout(closeTimeoutRef.current);
       closeTimeoutRef.current = null;
     }
+    activeTargetRef.current = null;
     setActiveLink(null);
   }, []);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    let cleanup: (() => void) | undefined;
+    let cancelled = false;
 
-    const handleMouseOver = (e: MouseEvent) => {
-      const target = (e.target as HTMLElement | null)?.closest?.('a[href]');
-      if (!target || !container.contains(target)) return;
+    const attach = (container: HTMLElement) => {
+      const handleMouseOver = (e: MouseEvent) => {
+        const target = (e.target as HTMLElement | null)?.closest?.('a[href]');
+        if (!target || !container.contains(target)) return;
+        if (target.closest('[data-node-view-wrapper]') || target.closest('[data-type="mention"]')) return;
 
-      const href = target.getAttribute('href');
-      if (!href || href.startsWith('#') || href.startsWith('mention:')) return;
+        const href = target.getAttribute('href');
+        if (!href || href.startsWith('#') || href.startsWith('mention:')) return;
 
-      if (closeTimeoutRef.current) {
-        clearTimeout(closeTimeoutRef.current);
-        closeTimeoutRef.current = null;
-      }
-      if (openTimeoutRef.current) clearTimeout(openTimeoutRef.current);
+        if (activeTargetRef.current === target) {
+          if (closeTimeoutRef.current) {
+            clearTimeout(closeTimeoutRef.current);
+            closeTimeoutRef.current = null;
+          }
+          return;
+        }
 
-      openTimeoutRef.current = setTimeout(() => {
-        const rect = target.getBoundingClientRect();
-        const text = target.textContent || '';
-        const meta = parseLinkMetadata(href, text);
-        setActiveLink({ rect, metadata: meta });
-      }, 120);
+        if (closeTimeoutRef.current) {
+          clearTimeout(closeTimeoutRef.current);
+          closeTimeoutRef.current = null;
+        }
+        if (openTimeoutRef.current) clearTimeout(openTimeoutRef.current);
+
+        openTimeoutRef.current = setTimeout(() => {
+          activeTargetRef.current = target as HTMLElement;
+          const rect = target.getBoundingClientRect();
+          const text = target.textContent || '';
+          const meta = parseLinkMetadata(href, text);
+          setActiveLink({ rect, metadata: meta });
+        }, 120);
+      };
+
+      const handleMouseOut = (e: MouseEvent) => {
+        const target = (e.target as HTMLElement | null)?.closest?.('a[href]');
+        if (!target || !container.contains(target)) return;
+
+        const related = e.relatedTarget as Node | null;
+        if (related && target.contains(related)) return;
+
+        if (openTimeoutRef.current) {
+          clearTimeout(openTimeoutRef.current);
+          openTimeoutRef.current = null;
+        }
+        if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+
+        closeTimeoutRef.current = setTimeout(() => {
+          activeTargetRef.current = null;
+          setActiveLink(null);
+        }, 100);
+      };
+
+      const handleClick = (e: MouseEvent) => {
+        const target = (e.target as HTMLElement | null)?.closest?.('a[href]');
+        if (target && container.contains(target)) {
+          closeImmediately();
+        }
+      };
+
+      container.addEventListener('mouseover', handleMouseOver);
+      container.addEventListener('mouseout', handleMouseOut);
+      container.addEventListener('click', handleClick);
+
+      return () => {
+        container.removeEventListener('mouseover', handleMouseOver);
+        container.removeEventListener('mouseout', handleMouseOut);
+        container.removeEventListener('click', handleClick);
+        if (openTimeoutRef.current) clearTimeout(openTimeoutRef.current);
+        if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+      };
     };
 
-    const handleMouseOut = (e: MouseEvent) => {
-      const target = (e.target as HTMLElement | null)?.closest?.('a[href]');
-      if (!target || !container.contains(target)) return;
-
-      if (openTimeoutRef.current) {
-        clearTimeout(openTimeoutRef.current);
-        openTimeoutRef.current = null;
-      }
-      if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
-
-      closeTimeoutRef.current = setTimeout(() => {
-        setActiveLink(null);
-      }, 100);
-    };
-
-    container.addEventListener('mouseover', handleMouseOver);
-    container.addEventListener('mouseout', handleMouseOut);
+    if (containerRef.current) {
+      cleanup = attach(containerRef.current);
+    } else {
+      let frameId: number;
+      let attempts = 0;
+      const poll = () => {
+        if (cancelled) return;
+        if (containerRef.current) {
+          cleanup = attach(containerRef.current);
+        } else if (attempts < 50) {
+          attempts++;
+          frameId = requestAnimationFrame(poll);
+        }
+      };
+      frameId = requestAnimationFrame(poll);
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(frameId);
+        if (cleanup) cleanup();
+      };
+    }
 
     return () => {
-      container.removeEventListener('mouseover', handleMouseOver);
-      container.removeEventListener('mouseout', handleMouseOut);
-      if (openTimeoutRef.current) clearTimeout(openTimeoutRef.current);
-      if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+      cancelled = true;
+      if (cleanup) cleanup();
     };
-  }, [containerRef]);
+  }, [containerRef, activeDependency, closeImmediately]);
 
   const handleCardMouseEnter = useCallback(() => {
     if (closeTimeoutRef.current) {
@@ -534,6 +588,7 @@ export function useDomLinkPreview(containerRef: React.RefObject<HTMLElement | nu
   const handleCardMouseLeave = useCallback(() => {
     if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
     closeTimeoutRef.current = setTimeout(() => {
+      activeTargetRef.current = null;
       setActiveLink(null);
     }, 100);
   }, []);

@@ -210,6 +210,11 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task:deleted', { detail: { id } }));
     });
 
+    s.on('spaces:reordered', () => {
+      useAppStore.getState().loadSpaces();
+      window.dispatchEvent(new CustomEvent('spaces:reordered'));
+    });
+
     return () => {
       s.disconnect();
     };
@@ -246,7 +251,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col h-screen overflow-hidden bg-background">
         <Header />
         <div className="flex-1 relative overflow-hidden">
-          <main id="main-scroll-container" className="w-full h-full overflow-y-auto bg-background">
+          <main
+            id="main-scroll-container"
+            className={`w-full h-full ${pathname?.startsWith('/lists') ? 'overflow-hidden' : 'overflow-y-auto'} bg-background`}
+          >
             {children}
           </main>
           <div id="nexus-task-modal-portal" />

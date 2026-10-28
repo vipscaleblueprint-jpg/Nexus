@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { spacesApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -33,6 +33,7 @@ import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
 import { toast } from '@/lib/toast';
 import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { findMatchingTasksSorted } from '@/lib/searchUtils';
 // getRoles removed — workspaceRoles now read from Zustand store (avoids a fresh HTTP call per board visit)
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -132,8 +133,70 @@ export default function BoardPage() {
   const search = searchState.listId === id ? searchState.text : '';
   const setSearch = (text: string) => setSearchState({ listId: id, text });
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchCycleRef = useRef<{ query: string; index: number }>({ query: '', index: 0 });
 
+  const handleSearchSubmit = useCallback(() => {
+    const q = search.trim();
+    if (!q) return;
 
+    const allTasks = list?.tasks || [];
+    if (allTasks.length === 0) return;
+
+    const matches = findMatchingTasksSorted(q, allTasks);
+    if (matches.length === 0) {
+      toast.info('No matching tasks found');
+      return;
+    }
+
+    // Switch to board view if on list view so the user can see the card highlight and scroll
+    if (activeTab !== 'board') {
+      setActiveTab('board');
+    }
+
+    // Cycle through matches on repeated Enter
+    let matchIndex = 0;
+    if (searchCycleRef.current.query === q.toLowerCase()) {
+      matchIndex = (searchCycleRef.current.index + 1) % matches.length;
+    }
+    searchCycleRef.current = {
+      query: q.toLowerCase(),
+      index: matchIndex,
+    };
+
+    const targetMatch = matches[matchIndex];
+    const targetTask = targetMatch.task;
+
+    const mainEl = document.getElementById('main-scroll-container');
+    if (mainEl && mainEl.scrollTop !== 0) {
+      mainEl.scrollTop = 0;
+    }
+
+    // Fire the custom event that KanbanBoard and KanbanCard listen to
+    window.dispatchEvent(
+      new CustomEvent('nexus:kanban-highlight-task', {
+        detail: {
+          taskId: targetTask.id,
+          subtaskId: targetMatch.subtaskId,
+          status: targetTask.status,
+        },
+      })
+    );
+  }, [search, list?.tasks, activeTab]);
+
+  // Guard: lock main-scroll-container strictly to 0 so board headers are never cut off
+  useEffect(() => {
+    const mainEl = document.getElementById('main-scroll-container');
+    if (mainEl) {
+      mainEl.scrollTop = 0;
+      const onMainScroll = () => {
+        if (mainEl.scrollTop !== 0) {
+          mainEl.scrollTop = 0;
+        }
+      };
+      mainEl.addEventListener('scroll', onMainScroll, { passive: true });
+      return () => mainEl.removeEventListener('scroll', onMainScroll);
+    }
+  }, []);
 
   // "/" focuses the search, like ClickUp, unless typing somewhere already
   useEffect(() => {
@@ -152,11 +215,19 @@ export default function BoardPage() {
   const visibleTasks = useMemo(() => {
     const tasks = list?.tasks || [];
     if (searchTerms.length === 0) return tasks;
-    return tasks.filter((t: any) => {
+    const directMatches = tasks.filter((t: any) => {
       const text = searchTextOf(t);
       return searchTerms.every((term) => text.includes(term));
     });
-  }, [list?.tasks, searchTerms]);
+    if (directMatches.length > 0) return directMatches;
+    // Fallback to nearest fuzzy matches so typos or similar words still show on the board
+    const fuzzy = findMatchingTasksSorted(search, tasks);
+    if (fuzzy.length > 0) {
+      const topIds = new Set(fuzzy.slice(0, 10).map((m) => m.task.id));
+      return tasks.filter((t: any) => topIds.has(t.id));
+    }
+    return [];
+  }, [list?.tasks, searchTerms, search]);
   const isSearching = searchTerms.length > 0;
 
   // Ensure workspace roles are loaded — uses store cache so no extra HTTP call if already fetched
@@ -455,6 +526,68 @@ export default function BoardPage() {
               }
               return c;
             });
+            return { ...t, checklists: updatedChecklists };
+          }
+          return t;
+        });
+        return { ...prev, tasks: newTasks };
+      });
+    });
+
+    s.on('task:checklist_item_deleted', (payload: { taskId: string; checklistId: string; itemId: string; subtaskId?: string }) => {
+      setList((prev: any) => {
+        if (!prev || !prev.tasks) return prev;
+        const newTasks = prev.tasks.map((t: any) => {
+          if (payload.subtaskId) {
+            if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
+              const updatedSubtasks = t.subtasks.map((st: any) => {
+                if (st.id === payload.subtaskId && st.checklists) {
+                  const updatedChecklists = st.checklists.map((c: any) => {
+                    if (c.id === payload.checklistId) {
+                      const updatedItems = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+                      return { ...c, items: updatedItems };
+                    }
+                    return c;
+                  });
+                  return { ...st, checklists: updatedChecklists };
+                }
+                return st;
+              });
+              return { ...t, subtasks: updatedSubtasks };
+            }
+          } else if (t.id === payload.taskId && t.checklists) {
+            const updatedChecklists = t.checklists.map((c: any) => {
+              if (c.id === payload.checklistId) {
+                const updatedItems = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+                return { ...c, items: updatedItems };
+              }
+              return c;
+            });
+            return { ...t, checklists: updatedChecklists };
+          }
+          return t;
+        });
+        return { ...prev, tasks: newTasks };
+      });
+    });
+
+    s.on('task:checklist_deleted', (payload: { taskId: string; checklistId: string; subtaskId?: string }) => {
+      setList((prev: any) => {
+        if (!prev || !prev.tasks) return prev;
+        const newTasks = prev.tasks.map((t: any) => {
+          if (payload.subtaskId) {
+            if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
+              const updatedSubtasks = t.subtasks.map((st: any) => {
+                if (st.id === payload.subtaskId && st.checklists) {
+                  const updatedChecklists = st.checklists.filter((c: any) => c.id !== payload.checklistId);
+                  return { ...st, checklists: updatedChecklists };
+                }
+                return st;
+              });
+              return { ...t, subtasks: updatedSubtasks };
+            }
+          } else if (t.id === payload.taskId && t.checklists) {
+            const updatedChecklists = t.checklists.filter((c: any) => c.id !== payload.checklistId);
             return { ...t, checklists: updatedChecklists };
           }
           return t;
@@ -850,7 +983,11 @@ export default function BoardPage() {
                   onKeyDown={(e) => {
                     if (e.key === 'Escape') {
                       setSearch('');
+                      searchCycleRef.current = { query: '', index: 0 };
                       e.currentTarget.blur();
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSearchSubmit();
                     }
                   }}
                   placeholder={`Search ${list?.name ?? 'this list'}'s tasks…`}

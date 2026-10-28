@@ -508,6 +508,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
   const handleWheelScroll = (e: React.WheelEvent<HTMLDivElement>) => {
     if (boardContainerRef.current && e.deltaY !== 0 && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.stopPropagation();
       boardContainerRef.current.scrollLeft += e.deltaY * 2.5;
     }
   };
@@ -762,6 +763,91 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const sortableColumnIds = useMemo(() => {
     return categorizedColumns.filter(c => !c.isCatchAll).map(c => c.id);
   }, [categorizedColumns]);
+
+  // When a search match is targeted, ensure its column and category are uncollapsed so the card is rendered
+  useEffect(() => {
+    const handleSearchTarget = (e: any) => {
+      const { taskId } = e.detail || {};
+      if (!taskId) return;
+      const targetTask = (tasks || []).find((t: any) => t.id === taskId) || (localTasks || []).find((t: any) => t.id === taskId);
+      if (!targetTask) return;
+      const targetStatus = targetTask.status;
+
+      let wasCollapsed = false;
+
+      setCollapsedColumns((prev) => {
+        if (prev[targetStatus]) {
+          wasCollapsed = true;
+          const next = { ...prev };
+          delete next[targetStatus];
+          return next;
+        }
+        return prev;
+      });
+
+      setCollapsedCategories((prev) => {
+        const cat = categorizedColumns.find((c: any) => c.statuses?.includes(targetStatus));
+        if (cat && prev[cat.title]) {
+          wasCollapsed = true;
+          const next = { ...prev };
+          delete next[cat.title];
+          return next;
+        }
+        return prev;
+      });
+
+      // Smoothly center the column / card horizontally without EVER scrolling the board vertically
+      const scrollBoardToCard = () => {
+        const container = boardContainerRef.current;
+        if (!container) return;
+        container.scrollTop = 0; // Strictly ensure board container never scrolls down vertically
+
+        // Also ensure main-scroll-container and window stay strictly at scrollTop 0
+        const mainEl = document.getElementById('main-scroll-container');
+        if (mainEl && mainEl.scrollTop !== 0) {
+          mainEl.scrollTop = 0;
+        }
+        if (typeof window !== 'undefined' && window.scrollY !== 0) {
+          window.scrollTo(0, 0);
+        }
+
+        const cardEl = document.getElementById(`kanban-card-${taskId}`);
+        if (cardEl) {
+          const cardRect = cardEl.getBoundingClientRect();
+          const containerRect = container.getBoundingClientRect();
+          const targetScrollLeft = container.scrollLeft + (cardRect.left - containerRect.left) - (containerRect.width / 2) + (cardRect.width / 2);
+          container.scrollTo({
+            left: Math.max(0, targetScrollLeft),
+            behavior: 'smooth'
+          });
+        }
+      };
+
+      // If it was collapsed, re-emit the event after mount so the card can scroll and animate
+      if (wasCollapsed) {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('nexus:kanban-highlight-task', { detail: e.detail }));
+          scrollBoardToCard();
+        }, 120);
+      } else {
+        setTimeout(scrollBoardToCard, 60);
+      }
+    };
+
+    window.addEventListener('nexus:kanban-highlight-task', handleSearchTarget);
+    return () => window.removeEventListener('nexus:kanban-highlight-task', handleSearchTarget);
+  }, [tasks, localTasks, categorizedColumns]);
+
+  // Guard: ensure boardContainerRef is never scrolled vertically so headers are never cut off
+  useEffect(() => {
+    if (boardContainerRef.current && boardContainerRef.current.scrollTop !== 0) {
+      boardContainerRef.current.scrollTop = 0;
+    }
+    const mainEl = document.getElementById('main-scroll-container');
+    if (mainEl && mainEl.scrollTop !== 0) {
+      mainEl.scrollTop = 0;
+    }
+  });
 
   const toggleColumnCollapse = (status: string, categoryId: string) => {
     setCollapsedColumns((prev) => {
@@ -1208,6 +1294,11 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
           ref={boardContainerRef}
           onWheel={handleWheelScroll}
           onMouseDown={handleBoardMouseDown}
+          onScroll={(e) => {
+            if (e.currentTarget.scrollTop !== 0) {
+              e.currentTarget.scrollTop = 0;
+            }
+          }}
           className={`flex gap-6 items-start h-full overflow-x-auto overflow-y-hidden pt-8 px-2 pb-5 kanban-board-scroll cursor-grab active:cursor-grabbing`}
         >
           <SortableContext
@@ -1255,6 +1346,11 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                       >
                         {/* Inner container with overflow-hidden to clip contents during animation */}
                         <div
+                          onScroll={(e) => {
+                            if (e.currentTarget.scrollTop !== 0) {
+                              e.currentTarget.scrollTop = 0;
+                            }
+                          }}
                           className={`rounded-2xl h-full p-4 pt-3 overflow-hidden flex flex-col transition-all ${
                             category.isCatchAll 
                               ? 'bg-transparent border-transparent shadow-none' 

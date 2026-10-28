@@ -18,6 +18,7 @@ import {
 } from '../services/clickupService';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
+import { toNotificationPreview } from '../utils/mentionNotification';
 
 
 async function getOrCreateVipScaleUser() {
@@ -934,6 +935,47 @@ export async function deleteComment(req: Request, res: Response) {
     await prisma.taskComment.delete({
       where: { id: commentId }
     });
+
+    // If this was a reply, decrement parent replyCount
+    if (existingComment.parentCommentId) {
+      await prisma.taskComment.update({
+        where: { id: existingComment.parentCommentId },
+        data: { replyCount: { decrement: 1 } },
+      }).catch(() => {});
+    }
+
+    // Clean up associated TaskNotification and AuditLog records
+    try {
+      const preview = toNotificationPreview(existingComment.content);
+      const matchingNotifs = await prisma.taskNotification.findMany({
+        where: {
+          taskId: existingComment.taskId,
+          actorId: existingComment.userId,
+          type: { in: ['MENTION', 'COMMENT'] },
+          content: preview,
+        },
+        select: { id: true, userId: true },
+      });
+
+      if (matchingNotifs.length > 0) {
+        await prisma.taskNotification.deleteMany({
+          where: { id: { in: matchingNotifs.map(n => n.id) } },
+        });
+        matchingNotifs.forEach(n => {
+          io.to(`user:${n.userId}`).emit('notification_received');
+        });
+      }
+
+      await prisma.auditLog.deleteMany({
+        where: {
+          entityId: existingComment.taskId,
+          action: { in: ['COMMENT', 'REPLY'] },
+          details: { path: ['commentId'], equals: commentId },
+        },
+      }).catch(() => {});
+    } catch (cleanErr) {
+      console.error('[external:deleteComment] Cleanup error:', cleanErr);
+    }
 
     io.emit('task:comment_deleted', { taskId: existingComment.taskId, commentId });
 

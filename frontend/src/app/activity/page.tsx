@@ -1268,6 +1268,7 @@ function ActivityFeedContent() {
                       key={item.id}
                       id={item.id}
                       type={item.type}
+                      actorId={item.actorId}
                       actorName={item.actorName}
                       actorAvatar={item.actorAvatar}
                       taskTitle={item.taskTitle}
@@ -1314,6 +1315,7 @@ function ActivityFeedContent() {
                       key={item.id}
                       id={item.id}
                       type={item.type}
+                      actorId={item.actorId}
                       actorName={item.actorName}
                       actorAvatar={item.actorAvatar}
                       taskTitle={item.taskTitle}
@@ -1361,6 +1363,7 @@ function ActivityFeedContent() {
                       key={item.id}
                       id={item.id}
                       type={item.type}
+                      actorId={item.actorId}
                       actorName={item.actorName}
                       actorAvatar={item.actorAvatar}
                       taskTitle={item.taskTitle}

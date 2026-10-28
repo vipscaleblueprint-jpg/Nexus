@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
+import { toNotificationPreview } from '../utils/mentionNotification';
 
 // GET /api/notifications
 export async function getNotifications(req: Request, res: Response) {
@@ -93,10 +94,53 @@ export async function getNotifications(req: Request, res: Response) {
 
     const hasMore = take !== undefined ? (skip || 0) + notifications.length < total : false;
 
+    // Prune orphaned comment and mention notifications whose comment was deleted from TaskComment
+    const commentNotifs = notifications.filter(
+      n => (n.type === 'MENTION' || n.type === 'COMMENT') && n.taskId
+    );
+
+    let activeNotifications = notifications;
+    let activeTotal = total;
+    let activeUnreadCount = unreadCount;
+
+    if (commentNotifs.length > 0) {
+      const taskIds = Array.from(new Set(commentNotifs.map(n => n.taskId!)));
+      const existingComments = await prisma.taskComment.findMany({
+        where: { taskId: { in: taskIds } },
+        select: { id: true, taskId: true, userId: true, content: true },
+      });
+
+      const orphanedNotifIds: string[] = [];
+      commentNotifs.forEach(n => {
+        const preview = n.content?.trim();
+        const hasMatch = existingComments.some(c => {
+          if (c.taskId !== n.taskId) return false;
+          if (n.actorId && c.userId !== n.actorId) return false;
+          if (!preview) return true;
+          const cPreview = toNotificationPreview(c.content);
+          return cPreview === preview || c.content.includes(preview) || preview.includes(cPreview);
+        });
+        if (!hasMatch) {
+          orphanedNotifIds.push(n.id);
+        }
+      });
+
+      if (orphanedNotifIds.length > 0) {
+        prisma.taskNotification.deleteMany({
+          where: { id: { in: orphanedNotifIds } },
+        }).catch(err => console.error('Failed to clean up orphaned notifications:', err));
+
+        activeNotifications = notifications.filter(n => !orphanedNotifIds.includes(n.id));
+        activeTotal = Math.max(0, total - orphanedNotifIds.length);
+        const removedUnread = notifications.filter(n => orphanedNotifIds.includes(n.id) && !n.isRead).length;
+        activeUnreadCount = Math.max(0, unreadCount - removedUnread);
+      }
+    }
+
     return res.json({
-      notifications,
-      total,
-      unreadCount,
+      notifications: activeNotifications,
+      total: activeTotal,
+      unreadCount: activeUnreadCount,
       hasMore,
       page: pageNum,
       limit: take,

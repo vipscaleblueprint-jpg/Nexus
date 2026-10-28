@@ -31,7 +31,7 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { convertCommentHtmlToClickUp, fetchImageBuffer } from '../utils/clickupCommentConverter';
-import { isNexusAuditChecklist, requiresClosedSubtasks, requiresCompletedAudits } from '../utils/auditChecklist';
+import { isNexusAuditChecklist, requiresClosedSubtasks, requiresCompletedAudits, normalizeAuditName } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { canUserSetAssignees, getAssignDeniedMessage } from '../utils/assignPermission';
@@ -700,7 +700,7 @@ export async function updateTask(req: Request, res: Response) {
         const excludedAudits = new Set(
           allItems
             .filter((i: any) => (i.text || '').startsWith('!'))
-            .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
         );
         const activeItems = allItems
           .filter((i: any) => !(i.text || '').startsWith('!'))
@@ -708,14 +708,14 @@ export async function updateTask(req: Request, res: Response) {
         const requiredTaskAudits = Array.from(new Set([
           ...getRequiredAudits(currentTask.title, auditorRoles),
           ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(r.toLowerCase()));
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)));
 
         const completedTexts = new Set(
           allItems
             .filter((i: any) => i.completed && !i.text.startsWith('!'))
-            .map((i: any) => i.text.toLowerCase())
+            .map((i: any) => normalizeAuditName(i.text))
         );
-        const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
+        const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(normalizeAuditName(r)));
         if (unchecked.length > 0) {
           return res.status(400).json({ error: `Cannot move to ${status}: Required audits are not completed (${unchecked.join(', ')}).` });
         }
@@ -1169,7 +1169,7 @@ export async function moveTask(req: Request, res: Response) {
         const excludedAudits = new Set(
           allItems
             .filter((i: any) => (i.text || '').startsWith('!'))
-            .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
         );
         const activeItems = allItems
           .filter((i: any) => !(i.text || '').startsWith('!'))
@@ -1177,14 +1177,14 @@ export async function moveTask(req: Request, res: Response) {
         const requiredTaskAudits = Array.from(new Set([
           ...getRequiredAudits(currentTask.title, auditorRoles),
           ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(r.toLowerCase()));
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)));
 
         const completedTexts = new Set(
           allItems
             .filter((i: any) => i.completed && !i.text.startsWith('!'))
-            .map((i: any) => i.text.toLowerCase())
+            .map((i: any) => normalizeAuditName(i.text))
         );
-        const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
+        const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(normalizeAuditName(r)));
         if (unchecked.length > 0) {
           return res.status(400).json({ error: `Cannot move to ${status}: Required audits are not completed (${unchecked.join(', ')}).` });
         }
@@ -1632,6 +1632,49 @@ export async function deleteTaskComment(req: Request, res: Response) {
     await prisma.taskComment.delete({
       where: { id: commentId },
     });
+
+    // If this was a reply, decrement parent replyCount
+    if (existingComment?.parentCommentId) {
+      await prisma.taskComment.update({
+        where: { id: existingComment.parentCommentId },
+        data: { replyCount: { decrement: 1 } },
+      }).catch(() => {});
+    }
+
+    // Clean up associated TaskNotification and AuditLog records
+    if (existingComment) {
+      try {
+        const preview = toNotificationPreview(existingComment.content);
+        const matchingNotifs = await prisma.taskNotification.findMany({
+          where: {
+            taskId: existingComment.taskId,
+            actorId: existingComment.userId,
+            type: { in: ['MENTION', 'COMMENT'] },
+            content: preview,
+          },
+          select: { id: true, userId: true },
+        });
+
+        if (matchingNotifs.length > 0) {
+          await prisma.taskNotification.deleteMany({
+            where: { id: { in: matchingNotifs.map(n => n.id) } },
+          });
+          matchingNotifs.forEach(n => {
+            io.to(`user:${n.userId}`).emit('notification_received');
+          });
+        }
+
+        await prisma.auditLog.deleteMany({
+          where: {
+            entityId: taskId,
+            action: { in: ['COMMENT', 'REPLY'] },
+            details: { path: ['commentId'], equals: commentId },
+          },
+        }).catch(() => {});
+      } catch (cleanErr) {
+        console.error('[deleteTaskComment] Notification/Audit cleanup error:', cleanErr);
+      }
+    }
 
     // Delete from ClickUp asynchronously
     if (existingComment?.externalId) {
@@ -2252,7 +2295,7 @@ export async function updateSubtask(req: Request, res: Response) {
           const excludedAudits = new Set(
             allItems
               .filter((i: any) => (i.text || '').startsWith('!'))
-              .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+              .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
           );
           const activeItems = allItems
             .filter((i: any) => !(i.text || '').startsWith('!'))
@@ -2260,14 +2303,14 @@ export async function updateSubtask(req: Request, res: Response) {
           const requiredSubtaskAudits = Array.from(new Set([
             ...getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions),
             ...activeItems,
-          ])).filter(r => !r.startsWith('!') && !excludedAudits.has(r.toLowerCase()));
+          ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)));
 
           const completedTexts = new Set(
             allItems
               .filter((i: any) => i.completed && !i.text.startsWith('!'))
-              .map((i: any) => i.text.toLowerCase())
+              .map((i: any) => normalizeAuditName(i.text))
           );
-          const unchecked = requiredSubtaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
+          const unchecked = requiredSubtaskAudits.filter(r => !completedTexts.has(normalizeAuditName(r)));
           if (unchecked.length > 0) {
             return res.status(400).json({ error: `Cannot move to ${status || 'Closed'}: Required audits for subtask are not completed (${unchecked.join(', ')}).` });
           }
@@ -2649,6 +2692,7 @@ export async function createChecklist(req: Request, res: Response) {
     });
 
     io.emit('task:checklist_created', { taskId, subtaskId: subtaskId || null, checklist });
+    invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
 
     // --- ClickUp Sync: create checklist (fire-and-forget) ---
     (async () => {
@@ -2712,6 +2756,11 @@ export async function updateChecklist(req: Request, res: Response) {
       include: { items: true },
     });
 
+    const targetTaskId = req.params.id || (checklist as any).taskId;
+    if (targetTaskId) {
+      invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+    }
+
     // --- ClickUp Sync: rename checklist ---
     (async () => {
       try {
@@ -2738,6 +2787,11 @@ export async function deleteChecklist(req: Request, res: Response) {
     
     await prisma.checklist.delete({ where: { id: checklistId } });
     io.emit('task:checklist_deleted', { taskId: cl?.taskId || req.params.id, subtaskId: cl?.subtaskId || null, checklistId });
+
+    const targetTaskId = cl?.taskId || req.params.id;
+    if (targetTaskId) {
+      invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+    }
 
     // --- ClickUp Sync ---
     (async () => {
@@ -2797,6 +2851,9 @@ export async function createChecklistItem(req: Request, res: Response) {
     const taskId = item.checklist?.taskId || req.params.id;
     const subtaskId = item.checklist?.subtaskId || null;
     io.emit('task:checklist_item_created', { taskId, subtaskId, checklistId, item });
+    if (taskId) {
+      invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+    }
 
     // --- ClickUp Sync: add checklist item ---
     (async () => {
@@ -2888,6 +2945,9 @@ export async function updateChecklistItem(req: Request, res: Response) {
     const taskId = item.checklist?.taskId || req.params.id;
     const subtaskId = item.checklist?.subtaskId || null;
     io.emit('task:checklist_item_updated', { taskId, subtaskId, checklistId: req.params.checklistId, item });
+    if (taskId) {
+      invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+    }
 
     // --- Background Operations: ClickUp Sync, AuditLog & Role Notifications ---
     (async () => {
@@ -3093,10 +3153,24 @@ export async function deleteChecklistItem(req: Request, res: Response) {
         checklist: { select: { externalId: true, taskId: true, subtaskId: true } },
       },
     });
+
+    const targetTaskId = item?.checklist?.taskId || req.params.id;
+
+    if (!item) {
+      if (targetTaskId) {
+        invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+      }
+      return res.json({ success: true, message: 'Item already deleted' });
+    }
+
     await prisma.checklistItem.delete({ where: { id: itemId } });
 
+    if (targetTaskId) {
+      invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+    }
+
     io.emit('task:checklist_item_deleted', {
-      taskId: item?.checklist?.taskId || req.params.id,
+      taskId: targetTaskId,
       subtaskId: item?.checklist?.subtaskId || null,
       checklistId: item?.checklistId || req.params.checklistId,
       itemId,

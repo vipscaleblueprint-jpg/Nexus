@@ -16,10 +16,12 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { CommentContent } from '@/components/ui/CommentContent';
+import { useAppStore } from '@/lib/store';
 
 export interface ActivityCardProps {
   id: string;
   type: string;
+  actorId?: string;
   actorName: string;
   actorAvatar?: string | null;
   taskTitle: string;
@@ -33,6 +35,7 @@ export interface ActivityCardProps {
   details?: any;
   compact?: boolean;
   onClick?: () => void;
+  onMouseEnter?: () => void;
   onClear?: (e: React.MouseEvent) => void;
   onMarkAsRead?: (e: React.MouseEvent) => void;
   onPreviewImage?: (src: string, allImages?: string[]) => void;
@@ -123,6 +126,7 @@ export function StatusPill({
 export function ActivityCard({
   id,
   type,
+  actorId,
   actorName,
   actorAvatar,
   taskTitle,
@@ -136,11 +140,13 @@ export function ActivityCard({
   details,
   compact = false,
   onClick,
+  onMouseEnter,
   onClear,
   onMarkAsRead,
   onPreviewImage,
   customStatusColor,
 }: ActivityCardProps) {
+  const currentUser = useAppStore((state) => state.currentUser);
   const normType = (type || '').toUpperCase();
   const initial = (actorName || 'U').trim().charAt(0).toUpperCase();
   const avatarBg = getAvatarBg(actorName);
@@ -212,6 +218,33 @@ export function ActivityCard({
   const isMention =
     normType === 'MENTION' ||
     title.toLowerCase().includes('mentioned you');
+
+  // Check if current user is the actor
+  const isActorCurrentUser = Boolean(
+    (currentUser?.id &&
+      (actorId === currentUser.id ||
+        details?.userId === currentUser.id ||
+        (actorName && currentUser.name && actorName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()))) ||
+      (actorName && actorName.trim().toLowerCase() === 'you')
+  );
+
+  // Check if content or details mention someone
+  const contentText = `${content || ''} ${details?.text || ''}`;
+  const hasMention =
+    /mention:\/\/[A-Za-z0-9_-]+/i.test(contentText) ||
+    (Array.isArray(details?.mentionedUserIds) && details.mentionedUserIds.length > 0) ||
+    (Array.isArray(details?.mentionedUsers) && details.mentionedUsers.length > 0) ||
+    /(?:^|\s)@([a-zA-Z0-9_\-]+)/i.test(contentText);
+
+  // Check for "You mentioned" - current user commented or replied and mentioned someone
+  const isYouMentioned =
+    !isMention &&
+    isActorCurrentUser &&
+    hasMention &&
+    (normType === 'COMMENT' ||
+      normType === 'REPLY' ||
+      title.toLowerCase().includes('commented') ||
+      title.toLowerCase().includes('replied'));
 
   // Extract display task / subtask title
   const effectiveTaskTitle = subtaskTitle || taskTitle || 'task';
@@ -370,11 +403,15 @@ export function ActivityCard({
           <span className={actionClass}> replied to your comment on </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
-          {isMention && (
+          {isMention ? (
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
               Mentioned you
             </span>
-          )}
+          ) : isYouMentioned ? (
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
+              You mentioned
+            </span>
+          ) : null}
         </span>
       );
     }
@@ -391,11 +428,15 @@ export function ActivityCard({
           <span className={actionClass}> commented on </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
-          {isMention && (
+          {isMention ? (
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
               Mentioned you
             </span>
-          )}
+          ) : isYouMentioned ? (
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
+              You mentioned
+            </span>
+          ) : null}
         </span>
       );
     }
@@ -410,11 +451,15 @@ export function ActivityCard({
       <span className="leading-snug">
         <span className={actorClass}>{actorName}</span>
         <span className={actionClass}> {restOfTitle}</span>
-        {isMention && (
+        {isMention ? (
           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
             Mentioned you
           </span>
-        )}
+        ) : isYouMentioned ? (
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
+            You mentioned
+          </span>
+        ) : null}
       </span>
     );
   };

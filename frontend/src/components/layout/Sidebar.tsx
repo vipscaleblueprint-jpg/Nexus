@@ -202,6 +202,8 @@ function writeTreePref(key: string, id: string, value: unknown) {
 function startSidebarSessionIfNew() {
   if (typeof window === 'undefined') return;
   try {
+    // Clean up any legacy browser-isolated sort overrides so DB ordering is authoritative
+    localStorage.removeItem(TREE_SORT_KEY);
     if (sessionStorage.getItem(SIDEBAR_SESSION_KEY)) return;
     sessionStorage.setItem(SIDEBAR_SESSION_KEY, '1');
     const prefs = readTreePrefs<boolean>(TREE_OPEN_KEY);
@@ -233,26 +235,13 @@ function usePersistedOpen(id: string, defaultOpen: boolean) {
   return [isOpen, setIsOpen] as const;
 }
 
-/** Sort mode for the items inside one folder or space, remembered across reloads. */
-function usePersistedSort(id: string) {
-  const [sort, setSortState] = useState<TreeSort>(() => {
-    const saved = readTreePrefs<TreeSort>(TREE_SORT_KEY)[id];
-    return TREE_SORT_OPTIONS.some((o) => o.value === saved) ? saved : 'manual';
-  });
-  const setSort = (next: TreeSort) => {
-    setSortState(next);
-    writeTreePref(TREE_SORT_KEY, id, next);
-  };
-  return [sort, setSort] as const;
-}
-
-/** 'manual' keeps the drag-and-drop order; the others sort by name or creation date. */
+/** Sort items according to the requested strategy */
 function sortTreeItems<T extends { order?: number; name?: string; title?: string; createdAt?: string }>(
   items: T[],
   sort: TreeSort
 ): T[] {
   const byOrder = (a: T, b: T) => (a.order || 0) - (b.order || 0);
-  const label = (i: T) => i.name ?? i.title ?? '';
+  const label = (i: T) => (i.name ?? i.title ?? '').trim();
   const created = (i: T) => (i.createdAt ? new Date(i.createdAt).getTime() : 0);
   const sorted = [...items];
   if (sort === 'az') {
@@ -261,6 +250,165 @@ function sortTreeItems<T extends { order?: number; name?: string; title?: string
   if (sort === 'oldest') return sorted.sort((a, b) => created(a) - created(b) || byOrder(a, b));
   if (sort === 'newest') return sorted.sort((a, b) => created(b) - created(a) || byOrder(a, b));
   return sorted.sort(byOrder);
+}
+
+/** Dynamically detect if items in a container are currently sorted A-Z, Oldest, or Newest */
+function detectCurrentSort<T extends { name?: string; title?: string; createdAt?: string }>(
+  items: T[]
+): TreeSort {
+  if (!items || items.length <= 1) return 'manual';
+
+  const label = (i: T) => (i.name ?? i.title ?? '').trim();
+  const created = (i: T) => (i.createdAt ? new Date(i.createdAt).getTime() : 0);
+
+  // Check if all adjacent items satisfy A-Z
+  let hasNameDiff = false;
+  let isAz = true;
+  for (let i = 0; i < items.length - 1; i++) {
+    const comp = label(items[i]).localeCompare(label(items[i + 1]), undefined, { numeric: true, sensitivity: 'base' });
+    if (comp > 0) {
+      isAz = false;
+      break;
+    }
+    if (comp < 0) hasNameDiff = true;
+  }
+  if (isAz && hasNameDiff) return 'az';
+
+  // Check if all adjacent items satisfy Oldest first
+  let hasDateDiffOldest = false;
+  let isOldest = true;
+  for (let i = 0; i < items.length - 1; i++) {
+    const diff = created(items[i + 1]) - created(items[i]);
+    if (diff < 0) {
+      isOldest = false;
+      break;
+    }
+    if (diff > 0) hasDateDiffOldest = true;
+  }
+  if (isOldest && hasDateDiffOldest) return 'oldest';
+
+  // Check if all adjacent items satisfy Newest first
+  let hasDateDiffNewest = false;
+  let isNewest = true;
+  for (let i = 0; i < items.length - 1; i++) {
+    const diff = created(items[i]) - created(items[i + 1]);
+    if (diff < 0) {
+      isNewest = false;
+      break;
+    }
+    if (diff > 0) hasDateDiffNewest = true;
+  }
+  if (isNewest && hasDateDiffNewest) return 'newest';
+
+  return 'manual';
+}
+
+/**
+ * Sorts items in a folder or space and immediately persists the new sequential orders to PostgreSQL,
+ * ensuring all users across the workspace share an identical, uniform sidebar order.
+ */
+async function applyTreeSortToContainer({
+  containerType,
+  containerId,
+  spaceId,
+  sort,
+  spaces,
+}: {
+  containerType: 'space' | 'folder';
+  containerId: string;
+  spaceId?: string | null;
+  sort: TreeSort;
+  spaces: Space[];
+}) {
+  if (sort === 'manual') {
+    toast.info('Manual ordering active. Drag items to reorder.');
+    return;
+  }
+
+  const toRealSpaceId = (sId: string | null | undefined) => (!sId || sId === 'root-space' ? null : sId);
+  const newSpaces: Space[] = JSON.parse(JSON.stringify(spaces));
+
+  let container: any = null;
+  if (containerType === 'space') {
+    container = newSpaces.find((s) => s.id === containerId);
+  } else {
+    const walkFolders = (folders: any[] | undefined, fn: (f: any) => void) => {
+      (folders || []).forEach((f) => { fn(f); walkFolders(f.subfolders, fn); });
+    };
+    for (const s of newSpaces) {
+      let found: any = null;
+      walkFolders(s.folders, (f) => { if (!found && f.id === containerId) found = f; });
+      if (found) {
+        container = found;
+        break;
+      }
+    }
+  }
+
+  if (!container) return;
+
+  const rawItems = [
+    ...(container.subfolders?.map((f: any) => ({ ...f, itemType: 'folder' })) || []),
+    ...(container.lists?.filter((l: any) => containerType === 'space' ? !l.folderId : true).map((l: any) => ({ ...l, itemType: 'list' })) || []),
+    ...(container.docs?.filter((d: any) => (containerType === 'space' ? !d.folderId : true) && d.title !== 'Priorities Journal').map((d: any) => ({ ...d, itemType: 'doc' })) || []),
+  ];
+
+  const sorted = sortTreeItems(rawItems, sort);
+  sorted.forEach((item: any, idx: number) => {
+    item.order = idx;
+  });
+
+  container.lists = sorted.filter((s: any) => s.itemType === 'list');
+  container.docs = sorted.filter((s: any) => s.itemType === 'doc');
+  if (container.subfolders) {
+    container.subfolders = sorted.filter((s: any) => s.itemType === 'folder');
+  }
+
+  // Optimistic UI update across all components
+  useAppStore.setState({ spaces: newSpaces });
+
+  const targetSpaceId = containerType === 'space' ? toRealSpaceId(containerId) : toRealSpaceId(spaceId);
+  const targetFolderId = containerType === 'folder' ? containerId : null;
+
+  const foldersToUpdate = sorted
+    .filter((s: any) => s.itemType === 'folder')
+    .map((s: any) => ({
+      id: s.id,
+      order: s.order,
+      spaceId: containerType === 'space' ? (toRealSpaceId(containerId) ?? undefined) : (toRealSpaceId(spaceId) ?? undefined),
+      parentFolderId: containerType === 'folder' ? containerId : undefined,
+    }));
+  const listsToUpdate = sorted
+    .filter((s: any) => s.itemType === 'list')
+    .map((s: any) => ({
+      id: s.id,
+      order: s.order,
+      folderId: targetFolderId,
+      spaceId: targetSpaceId,
+    }));
+  const docsToUpdate = sorted
+    .filter((s: any) => s.itemType === 'doc')
+    .map((s: any) => ({
+      id: s.id,
+      order: s.order,
+      folderId: targetFolderId,
+      spaceId: targetSpaceId,
+    }));
+
+  try {
+    const promises: Promise<any>[] = [];
+    if (foldersToUpdate.length) promises.push(spacesApi.reorderFolders(foldersToUpdate));
+    if (listsToUpdate.length) promises.push(spacesApi.reorderLists(listsToUpdate));
+    if (docsToUpdate.length) promises.push(spacesApi.reorderDocs(docsToUpdate));
+    await Promise.all(promises);
+
+    const label = TREE_SORT_OPTIONS.find((o) => o.value === sort)?.label || sort;
+    toast.success(`Sorted by ${label} for workspace`);
+  } catch (err) {
+    console.error('Failed to persist tree sort', err);
+    toast.error('Failed to save sort order');
+    useAppStore.getState().loadSpaces();
+  }
 }
 
 function TreeSortMenuItems({ sort, onChange }: { sort: TreeSort; onChange: (next: TreeSort) => void }) {
@@ -1673,13 +1821,15 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = usePersistedOpen(`space-${space.id}`, true);
-  const [sort, setSort] = usePersistedSort(`space-${space.id}`);
-  
-  const combinedItems = sortTreeItems([
+  const [selectedSort, setSelectedSort] = useState<TreeSort | null>(null);
+
+  const rawItems = [
     ...(space.folders?.map(f => ({ ...f, itemType: 'folder' })) || []),
     ...(space.lists?.filter(l => !l.folderId).map(l => ({ ...l, itemType: 'list' })) || []),
     ...(space.docs?.filter(d => !d.folderId && d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
-  ], sort);
+  ];
+  const combinedItems = [...rawItems].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const currentSort = selectedSort ?? detectCurrentSort(combinedItems);
   const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`spacedrop-${space.id}`);
   const { activeId, spaces } = useContext(DropIndicatorContext);
   const activeParsed = activeId ? parseSortableId(activeId) : null;
@@ -1710,7 +1860,19 @@ function SpaceTreeItem({ space, onAddFolder, onAddDoc, onAddPage, onAddList, onA
               <button onClick={() => onAction('rename', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
               <button onClick={() => onAction('duplicate', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Copy className="size-3.5 text-zinc-400" />Duplicate</button>
               <button onClick={() => onAction('delete', 'space', space.id, space.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
-              <TreeSortMenuItems sort={sort} onChange={setSort} />
+              <TreeSortMenuItems
+                sort={currentSort}
+                onChange={async (newSort) => {
+                  setSelectedSort(newSort);
+                  await applyTreeSortToContainer({
+                    containerType: 'space',
+                    containerId: space.id,
+                    spaceId: space.id,
+                    sort: newSort,
+                    spaces,
+                  });
+                }}
+              />
             </ActionMenu>
           )}
           <ActionMenu icon={<Plus className="size-3.5" />}>
@@ -1763,7 +1925,7 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
   onAction: (action: 'rename' | 'duplicate' | 'delete', type: 'space' | 'folder' | 'doc' | 'page' | 'list', id: string, name: string) => void;
 }) {
   const [isOpen, setIsOpen] = usePersistedOpen(`folder-${folder.id}`, isClientFolder(folder));
-  const [sort, setSort] = usePersistedSort(`folder-${folder.id}`);
+  const [selectedSort, setSelectedSort] = useState<TreeSort | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [localTitle, setLocalTitle] = useState(folder.name);
   const [localColor, setLocalColor] = useState<string | null>(folder.color || null);
@@ -1774,11 +1936,13 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
 
   const folderColor = localColor || getFolderColor(folder);
   
-  const combinedItems = sortTreeItems([
+  const rawItems = [
     ...(folder.subfolders?.map(f => ({ ...f, itemType: 'folder' })) || []),
     ...(folder.lists?.map(l => ({ ...l, itemType: 'list' })) || []),
     ...(folder.docs?.filter(d => d.title !== 'Priorities Journal').map(d => ({ ...d, itemType: 'doc' })) || [])
-  ], sort);
+  ];
+  const combinedItems = [...rawItems].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const currentSort = selectedSort ?? detectCurrentSort(combinedItems);
   const { setNodeRef: setDropRef, isDropTarget } = useHeaderDropTarget(`folderdrop-${folder.id}`);
   const { activeId, spaces } = useContext(DropIndicatorContext);
   const activeParsed = activeId ? parseSortableId(activeId) : null;
@@ -1847,7 +2011,19 @@ function FolderTreeItem({ folder, spaceId, onAddFolder, onAddDoc, onAddPage, onA
           <ActionMenu icon={<MoreHorizontal className="size-3.5" />} width="w-48">
             <button onClick={() => setIsEditing(true)} className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white flex items-center gap-2 cursor-pointer"><Pencil className="size-3.5 text-zinc-400" />Rename</button>
             <button onClick={() => onAction('delete', 'folder', folder.id, folder.name)} className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/20 hover:text-red-300 flex items-center gap-2 cursor-pointer"><Trash2 className="size-3.5" />Delete</button>
-            <TreeSortMenuItems sort={sort} onChange={setSort} />
+            <TreeSortMenuItems
+              sort={currentSort}
+              onChange={async (newSort) => {
+                setSelectedSort(newSort);
+                await applyTreeSortToContainer({
+                  containerType: 'folder',
+                  containerId: folder.id,
+                  spaceId,
+                  sort: newSort,
+                  spaces,
+                });
+              }}
+            />
 
             <div className="px-3 py-2 border-t border-zinc-700/60 mt-1" onClick={(e) => e.stopPropagation()}>
               <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold mb-2 flex items-center justify-between">

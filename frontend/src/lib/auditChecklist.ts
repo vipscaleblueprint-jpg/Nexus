@@ -17,11 +17,15 @@ export const ALL_AUDIT_OPTIONS: AuditOption[] = [
   { id: 'Funnel Audit', label: 'Funnel Audit', role: 'Funnel/Backend', description: 'Review funnel flow, tracking & backend setup' },
 ];
 
+export const normalizeAuditName = (name: string) => {
+  const clean = (name || '').trim().toLowerCase();
+  return clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+};
+
 const NEXUS_AUDIT_ITEMS = new Set([
   'instructions audit',
   'design audit',
   'ui ux audit',
-  'ui/ux audit',
   'funnel audit',
 ]);
 
@@ -39,9 +43,9 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
   // Empty: Nexus's own unless it came from ClickUp.
   if (items.length === 0) return !c.externalId;
   return items.every((i) => {
-    const raw = (i.text || '').trim().toLowerCase();
+    const raw = (i.text || '').trim();
     const clean = raw.startsWith('!') ? raw.slice(1).trim() : raw;
-    return NEXUS_AUDIT_ITEMS.has(clean);
+    return NEXUS_AUDIT_ITEMS.has(normalizeAuditName(clean));
   });
 }
 
@@ -129,7 +133,7 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
   const excludedAudits = new Set(
     auditChecklists.flatMap((c: any) => c.items || [])
       .filter((i: any) => (i.text || '').startsWith('!'))
-      .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+      .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
   );
 
   const activeAuditItems = auditChecklists.flatMap((c: any) => c.items || [])
@@ -141,14 +145,15 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
       ...getRequiredAudits(task.title || '', auditorRoles),
       ...activeAuditItems,
     ].filter((text, i, all) => {
-      const norm = (text || '').trim().toLowerCase();
+      const norm = normalizeAuditName(text);
       if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
-      return all.findIndex(t => (t || '').trim().toLowerCase() === norm) === i;
+      return all.findIndex(t => normalizeAuditName(t) === norm) === i;
     }))
   );
 
   const getAuditItem = (text: string) => {
-    const matches = auditChecklists.flatMap((c: any) => c.items || []).filter((i: any) => (i.text || '').toLowerCase() === text.toLowerCase());
+    const norm = normalizeAuditName(text);
+    const matches = auditChecklists.flatMap((c: any) => c.items || []).filter((i: any) => normalizeAuditName(i.text) === norm);
     return matches.find((i: any) => i.assigneeId || i.completed) || matches[0];
   };
 

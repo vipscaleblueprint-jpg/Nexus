@@ -545,8 +545,11 @@ const CardContent = memo(({
 
   return (
     <div className="flex flex-col w-full text-left">
-      <div className="flex items-start justify-between gap-2">
-        <h4 className="text-[13px] font-semibold text-foreground leading-tight">
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <h4
+          className={`text-[13px] font-semibold text-foreground leading-tight line-clamp-2 break-words ${!isSubtask ? 'pr-5' : ''}`}
+          title={task.title}
+        >
           {task.title}
         </h4>
       </div>
@@ -1180,7 +1183,10 @@ export const KanbanCard = memo(function KanbanCard({
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
   const [isCardShaking, setIsCardShaking] = useState(false);
+  const [isSearchHighlighted, setIsSearchHighlighted] = useState(false);
   const pointerPosRef = useRef<{ x: number, y: number } | null>(null);
+  const cardRootRef = useRef<HTMLDivElement | null>(null);
+  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const handleShake = (e: any) => {
@@ -1191,6 +1197,33 @@ export const KanbanCard = memo(function KanbanCard({
     };
     window.addEventListener('card:shake', handleShake);
     return () => window.removeEventListener('card:shake', handleShake);
+  }, [task.id]);
+
+  useEffect(() => {
+    const handleSearchHighlight = (e: any) => {
+      if (e.detail?.taskId === task.id) {
+        if (highlightTimeoutRef.current) {
+          clearTimeout(highlightTimeoutRef.current);
+        }
+        setIsSearchHighlighted(true);
+        if (e.detail?.subtaskId) {
+          setIsSubtasksExpanded(true);
+        }
+
+        // Shakes smoothly and slowly until user hovers over it (auto-stops after 8s fallback)
+        highlightTimeoutRef.current = setTimeout(() => {
+          setIsSearchHighlighted(false);
+        }, 8000);
+      }
+    };
+
+    window.addEventListener('nexus:kanban-highlight-task', handleSearchHighlight);
+    return () => {
+      window.removeEventListener('nexus:kanban-highlight-task', handleSearchHighlight);
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current);
+      }
+    };
   }, [task.id]);
 
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
@@ -1315,11 +1348,36 @@ export const KanbanCard = memo(function KanbanCard({
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 
+  const setCardRefs = useCallback((node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    cardRootRef.current = node;
+  }, [setNodeRef]);
+
+  const stopSearchHighlight = useCallback(() => {
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+      highlightTimeoutRef.current = null;
+    }
+    setIsSearchHighlighted(false);
+  }, []);
+
   return (
     // Outer wrapper owns the DnD ref+style so dnd-kit tracks a single stable DOM node.
     // Card visuals and subtasks are children — prevents the infinite loop that occurs
     // when a Fragment is used as the root of a useSortable component.
-    <div ref={setNodeRef} style={style} className="relative" data-kanban-card="true">
+    <div
+      ref={setCardRefs}
+      style={style}
+      id={`kanban-card-${task.id}`}
+      data-task-id={task.id}
+      className={`relative ${isSearchHighlighted ? 'z-50' : ''}`}
+      data-kanban-card="true"
+      onMouseEnter={() => {
+        if (isSearchHighlighted) {
+          stopSearchHighlight();
+        }
+      }}
+    >
       {/* ── Visible card ── */}
       <div
         {...attributes}
@@ -1344,6 +1402,9 @@ export const KanbanCard = memo(function KanbanCard({
           }
         }}
         onMouseEnter={() => {
+          if (isSearchHighlighted) {
+            stopSearchHighlight();
+          }
           // Prefetch activities & comments during the hover → click window (~100–300ms).
           // By the time the user clicks, data is already in the in-memory cache so the
           // modal opens with zero visible loading time.
@@ -1369,7 +1430,7 @@ export const KanbanCard = memo(function KanbanCard({
           : `bg-card hover:bg-card/90 border border-border hover:border-zinc-400 dark:hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
           } ${isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
           } ${isCardShaking ? 'animate-shake' : ''
-          } ${hasOpenDropdown || isMenuOpen ? 'z-50' : 'z-10'}`}
+          } ${isSearchHighlighted ? 'animate-attention-shake z-50 shadow-2xl' : hasOpenDropdown || isMenuOpen ? 'z-50' : 'z-10'}`}
       >
         {!isOverlay && !isDragging && (
           <button
@@ -1448,7 +1509,7 @@ export const KanbanCard = memo(function KanbanCard({
                 />
                 {/* Subtask card */}
                 <div
-                  className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg px-2.5 py-2 hover:border-zinc-600 hover:bg-zinc-800 transition-all cursor-pointer"
+                  className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-lg px-2.5 py-2 transition-all cursor-pointer"
                   onClick={(e) => {
                     e.stopPropagation();
                     const url = new URL(window.location.href);

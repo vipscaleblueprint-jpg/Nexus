@@ -988,6 +988,11 @@ export async function reorderSpaces(req: Request, res: Response) {
         data: { order: item.order } as any
       })
     ));
+    try {
+      getIo()?.emit('spaces:reordered');
+    } catch (e) {
+      console.warn('Failed to emit spaces:reordered', e);
+    }
     await invalidateCache('spaces:all', 'dashboard:all');
     return res.json({ success: true });
   } catch (err: any) {
@@ -1009,6 +1014,11 @@ export async function reorderFolders(req: Request, res: Response) {
         data: updateData
       });
     }));
+    try {
+      getIo()?.emit('spaces:reordered');
+    } catch (e) {
+      console.warn('Failed to emit spaces:reordered', e);
+    }
     await invalidateCache('spaces:all', 'dashboard:all');
     return res.json({ success: true });
   } catch (err: any) {
@@ -1030,6 +1040,11 @@ export async function reorderLists(req: Request, res: Response) {
         data: updateData
       });
     }));
+    try {
+      getIo()?.emit('spaces:reordered');
+    } catch (e) {
+      console.warn('Failed to emit spaces:reordered', e);
+    }
     await invalidateCache('spaces:all', 'dashboard:all', 'lists:all');
     return res.json({ success: true });
   } catch (err: any) {
@@ -1051,6 +1066,11 @@ export async function reorderDocs(req: Request, res: Response) {
         data: updateData
       });
     }));
+    try {
+      getIo()?.emit('spaces:reordered');
+    } catch (e) {
+      console.warn('Failed to emit spaces:reordered', e);
+    }
     await invalidateCache('spaces:all', 'dashboard:all');
     return res.json({ success: true });
   } catch (err: any) {

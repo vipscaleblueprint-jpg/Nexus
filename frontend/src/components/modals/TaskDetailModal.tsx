@@ -2020,11 +2020,71 @@ export function TaskDetailModalContent({
       }
     };
 
+    const handleChecklistItemDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; itemId: string }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask || payload.taskId !== currentTask.id) return;
+
+      if (!payload.subtaskId) {
+        const checklists = (currentTask.checklists || []).map((c: any) => {
+          if (c.id === payload.checklistId) {
+            const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+            return { ...c, items };
+          }
+          return c;
+        });
+        const updatedTask = { ...currentTask, checklists };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      } else {
+        const subtasks = (currentTask.subtasks || []).map((st: any) => {
+          if (st.id === payload.subtaskId) {
+            const checklists = (st.checklists || []).map((c: any) => {
+              if (c.id === payload.checklistId) {
+                const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+                return { ...c, items };
+              }
+              return c;
+            });
+            return { ...st, checklists };
+          }
+          return st;
+        });
+        const updatedTask = { ...currentTask, subtasks };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      }
+    };
+
+    const handleChecklistDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask || payload.taskId !== currentTask.id) return;
+
+      if (!payload.subtaskId) {
+        const checklists = (currentTask.checklists || []).filter((c: any) => c.id !== payload.checklistId);
+        const updatedTask = { ...currentTask, checklists };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      } else {
+        const subtasks = (currentTask.subtasks || []).map((st: any) => {
+          if (st.id === payload.subtaskId) {
+            const checklists = (st.checklists || []).filter((c: any) => c.id !== payload.checklistId);
+            return { ...st, checklists };
+          }
+          return st;
+        });
+        const updatedTask = { ...currentTask, subtasks };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      }
+    };
+
     socket.on('task:comment_added', handleCommentAdded);
     socket.on('task:comment_updated', handleCommentUpdated);
     socket.on('task:comment_deleted', handleCommentDeleted);
     socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
     socket.on('task:checklist_item_created', handleChecklistItemCreated);
+    socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
+    socket.on('task:checklist_deleted', handleChecklistDeleted);
 
     return () => {
       socket.off('task_editing_start', handleEditingStart);
@@ -2036,6 +2096,8 @@ export function TaskDetailModalContent({
       socket.off('task:comment_deleted', handleCommentDeleted);
       socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
       socket.off('task:checklist_item_created', handleChecklistItemCreated);
+      socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
+      socket.off('task:checklist_deleted', handleChecklistDeleted);
     };
   }, [socket, task?.id, currentUser?.name]);
 
@@ -5709,6 +5771,28 @@ export function SubtaskDetailView({
       syncSubtaskToParent({ ...currentSub, checklists });
     };
 
+    const handleChecklistItemDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; itemId: string }) => {
+      const currentSub = subtaskRef.current;
+      if (!currentSub || payload.subtaskId !== currentSub.id) return;
+
+      const checklists = (currentSub.checklists || []).map((c: any) => {
+        if (c.id === payload.checklistId) {
+          const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+          return { ...c, items };
+        }
+        return c;
+      });
+      syncSubtaskToParent({ ...currentSub, checklists });
+    };
+
+    const handleChecklistDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string }) => {
+      const currentSub = subtaskRef.current;
+      if (!currentSub || payload.subtaskId !== currentSub.id) return;
+
+      const checklists = (currentSub.checklists || []).filter((c: any) => c.id !== payload.checklistId);
+      syncSubtaskToParent({ ...currentSub, checklists });
+    };
+
     socket.on('task_editing_start', handleEditingStart);
     socket.on('task_editing_stop', handleEditingStop);
     socket.on('task_editing_content', handleEditingContent);
@@ -5718,6 +5802,8 @@ export function SubtaskDetailView({
     socket.on('task:comment_deleted', handleCommentDeleted);
     socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
     socket.on('task:checklist_item_created', handleChecklistItemCreated);
+    socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
+    socket.on('task:checklist_deleted', handleChecklistDeleted);
 
     return () => {
       socket.off('task_editing_start', handleEditingStart);
@@ -5729,6 +5815,8 @@ export function SubtaskDetailView({
       socket.off('task:comment_deleted', handleCommentDeleted);
       socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
       socket.off('task:checklist_item_created', handleChecklistItemCreated);
+      socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
+      socket.off('task:checklist_deleted', handleChecklistDeleted);
     };
   }, [socket, subtask?.id, currentUser?.name, parentTask.id, syncSubtaskToParent]);
 
@@ -8349,16 +8437,72 @@ export function TaskDetailModal(props: Props) {
       });
     };
 
+    const handleSocketChecklistItemDeleted = (payload: any) => {
+      if (!payload || payload.taskId !== fullTask.id) return;
+      setFullTask(prev => {
+        if (!prev) return prev;
+        if (!payload.subtaskId) {
+          const checklists = (prev.checklists || []).map((c: any) => {
+            if (c.id === payload.checklistId) {
+              const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+              return { ...c, items };
+            }
+            return c;
+          });
+          return { ...prev, checklists };
+        } else {
+          const subtasks = (prev.subtasks || []).map((st: any) => {
+            if (st.id === payload.subtaskId) {
+              const checklists = (st.checklists || []).map((c: any) => {
+                if (c.id === payload.checklistId) {
+                  const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+                  return { ...c, items };
+                }
+                return c;
+              });
+              return { ...st, checklists };
+            }
+            return st;
+          });
+          return { ...prev, subtasks };
+        }
+      });
+    };
+
+    const handleSocketChecklistDeleted = (payload: any) => {
+      if (!payload || payload.taskId !== fullTask.id) return;
+      setFullTask(prev => {
+        if (!prev) return prev;
+        if (!payload.subtaskId) {
+          const checklists = (prev.checklists || []).filter((c: any) => c.id !== payload.checklistId);
+          return { ...prev, checklists };
+        } else {
+          const subtasks = (prev.subtasks || []).map((st: any) => {
+            if (st.id === payload.subtaskId) {
+              const checklists = (st.checklists || []).filter((c: any) => c.id !== payload.checklistId);
+              return { ...st, checklists };
+            }
+            return st;
+          });
+          return { ...prev, subtasks };
+        }
+      });
+    };
+
     props.socket.on('task:updated', handleSocketTaskUpdated);
     props.socket.on('task_move_preview', handleSocketTaskMovePreview);
     props.socket.on('task:checklist_item_updated', handleSocketChecklistUpdated);
     props.socket.on('task:checklist_item_created', handleSocketChecklistUpdated);
+    props.socket.on('task:checklist_item_deleted', handleSocketChecklistItemDeleted);
+    props.socket.on('task:checklist_deleted', handleSocketChecklistDeleted);
 
     return () => {
       props.socket.off('task:updated', handleSocketTaskUpdated);
       props.socket.off('task_move_preview', handleSocketTaskMovePreview);
       props.socket.off('task:checklist_item_updated', handleSocketChecklistUpdated);
       props.socket.off('task:checklist_item_created', handleSocketChecklistUpdated);
+      props.socket.off('task:checklist_item_deleted', handleSocketChecklistItemDeleted);
+      props.socket.off('task:checklist_deleted', handleSocketChecklistDeleted);
     };
   }, [props.socket, fullTask?.id, props.listStatuses]);
 

@@ -709,4 +709,22 @@ span[data-badge] {
   animation: shake 0.5s ease-in-out both;
 }
 
+@keyframes stationary-attention-shake {
+  0%, 50%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  25% {
+    transform: rotate(-2.2deg) scale(1.015);
+  }
+  75% {
+    transform: rotate(2.2deg) scale(1.015);
+  }
+}
+
+.animate-attention-shake {
+  animation: stationary-attention-shake 2s ease-in-out infinite;
+  will-change: transform;
+}
+
+
 

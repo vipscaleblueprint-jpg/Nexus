@@ -13,6 +13,7 @@ import { notificationsApi, TaskNotification } from "@/api/notifications";
 import { useAppStore } from "@/lib/store";
 import { fetchListStatuses } from "@/lib/listStatusCache";
 import { ActivityCard } from "@/components/ui/ActivityCard";
+import { prefetchTaskActivities } from "@/components/modals/TaskDetailModal";
 
 type TabType = "all" | "mentions" | "unread";
 
@@ -484,6 +485,7 @@ export function NotificationBell() {
                         key={n.id}
                         id={n.id}
                         type={n.type}
+                        actorId={n.actorId || n.actor?.id}
                         actorName={actorName}
                         actorAvatar={n.actor?.imageUrl || n.actor?.avatarUrl}
                         taskTitle={n.task?.title || "task"}
@@ -504,7 +506,10 @@ export function NotificationBell() {
                             handleMarkAsRead(n.id, n.childIds);
                           }
                           if (n.task?.id) {
-                            router.push(`/activity?task=${n.task.id}`);
+                            prefetchTaskActivities(n.task.id);
+                            const isCommentNotif = n.type === 'MENTION' || n.type === 'COMMENT' || (n.title || '').includes('comment');
+                            const commentQuery = isCommentNotif && n.content ? `&commentText=${encodeURIComponent(n.content)}` : '';
+                            router.push(`/activity?task=${n.task.id}${commentQuery}`);
                           } else {
                             router.push("/activity");
                           }

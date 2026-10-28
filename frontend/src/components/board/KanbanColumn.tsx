@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useMemo, useCallback } from 'react';
+import { useState, useEffect, memo, useMemo, useCallback, useRef } from 'react';
 
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -186,6 +186,14 @@ export const KanbanColumn = memo(function KanbanColumn({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [renderLimit, setRenderLimit] = useState(5);
   const [isShaking, setIsShaking] = useState(false);
+  const columnRootRef = useRef<HTMLDivElement | null>(null);
+
+  // Guard: ensure column container is never scrolled vertically so headers are never cut off
+  useEffect(() => {
+    if (columnRootRef.current && columnRootRef.current.scrollTop !== 0) {
+      columnRootRef.current.scrollTop = 0;
+    }
+  });
   const dbStatus = listStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === status.trim().toUpperCase());
   const label = dbStatus?.name || STATUS_LABELS[status] || status;
   const [isEditing, setIsEditing] = useState(false);
@@ -278,6 +286,12 @@ export const KanbanColumn = memo(function KanbanColumn({
 
   return (
     <div 
+      ref={columnRootRef}
+      onScroll={(e) => {
+        if (e.currentTarget.scrollTop !== 0) {
+          e.currentTarget.scrollTop = 0;
+        }
+      }}
       className={`flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out relative hover:z-50 focus-within:z-50 overflow-hidden ${
         isCollapsed 
           ? `w-11 h-full bg-transparent dark:bg-card rounded-2xl border-transparent dark:border-zinc-800/50` 
@@ -326,7 +340,7 @@ export const KanbanColumn = memo(function KanbanColumn({
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div 
           data-column-header="true"
-          className={`flex flex-col px-3 pt-3 pb-2 shrink-0 group/colheader ${isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'}`}
+          className={`flex flex-col px-3 pt-3.5 pb-2 shrink-0 group/colheader ${isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'}`}
           {...(!isEditing ? dragListeners : {})}
           {...(!isEditing ? dragAttributes : {})}
         >
@@ -404,7 +418,8 @@ export const KanbanColumn = memo(function KanbanColumn({
 
         <div
           ref={setColumnDropRef}
-          className={`px-2 pb-2 flex flex-col gap-2 overflow-y-auto transition-colors custom-scrollbar ${colors.scrollThumb} flex-1 min-h-0 ${
+          data-column-drop="true"
+          className={`px-2 pb-2 flex flex-col gap-2 overflow-y-auto overflow-x-hidden transition-colors custom-scrollbar ${colors.scrollThumb} flex-1 min-h-0 ${
             isOver ? 'bg-black/5' : ''
           }`}
           onWheel={(e) => e.stopPropagation()}

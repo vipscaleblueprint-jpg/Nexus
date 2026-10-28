@@ -195,6 +195,7 @@ function ActivityFeedContent() {
     initialCacheValid ? feedCache!.myAuditLogs : []
   );
   const [loading, setLoading] = useState<boolean>(() => !initialCacheValid);
+  const [recentlyReadIds, setRecentlyReadIds] = useState<Set<string>>(() => new Set());
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [targetCommentInfo, setTargetCommentInfo] = useState<{
     id?: string | null;
@@ -447,6 +448,7 @@ function ActivityFeedContent() {
     const onRead = (e: any) => {
       const id = e.detail?.id;
       if (id) {
+        setRecentlyReadIds((prev) => new Set(prev).add(id));
         setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
         if (feedCache) {
           feedCache.notifications = feedCache.notifications.map((n) =>
@@ -457,6 +459,11 @@ function ActivityFeedContent() {
     };
 
     const onAllRead = () => {
+      setRecentlyReadIds((prev) => {
+        const next = new Set(prev);
+        notifications.forEach((n) => next.add(n.id));
+        return next;
+      });
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
       if (feedCache) {
         feedCache.notifications = feedCache.notifications.map((n) => ({ ...n, isRead: true }));
@@ -532,6 +539,11 @@ function ActivityFeedContent() {
 
   const handleMarkAsRead = async (id: string, childIds?: string[]) => {
     const idsToMark = childIds && childIds.length > 0 ? childIds : [id];
+    setRecentlyReadIds((prev) => {
+      const next = new Set(prev);
+      idsToMark.forEach((targetId) => next.add(targetId));
+      return next;
+    });
     for (const targetId of idsToMark) {
       if (!targetId || targetId.startsWith('audit_')) continue;
       try {
@@ -551,6 +563,11 @@ function ActivityFeedContent() {
   const handleMarkAllAsRead = async () => {
     try {
       await notificationsApi.markAllAsRead();
+      setRecentlyReadIds((prev) => {
+        const next = new Set(prev);
+        unreadItems.forEach((item) => next.add(item.id));
+        return next;
+      });
       setNotifications((prev) => {
         const next = prev.map((n) => ({ ...n, isRead: true }));
         if (feedCache) feedCache.notifications = next;
@@ -1012,31 +1029,44 @@ function ActivityFeedContent() {
     return mergeFeedItems(filtered);
   }, [allNormalizedItems, category, matchesTabFilter, mergeFeedItems]);
 
-  // Partition into Unread ("New") vs Read items
-  const { unreadItems, readItemsGrouped } = useMemo(() => {
+  // Partition into:
+  // 1. Unread ("New") -> isRead === false (blue dot, crisp white text)
+  // 2. Recently Seen ("Recently Seen") -> isRead === true and today or recently marked (no blue dot, clean text)
+  // 3. Old Information ("Yesterday", older dates) -> isRead === true (no blue dot, on the greyer side)
+  const { unreadItems, recentlySeenItems, oldItemsGrouped } = useMemo(() => {
     const unread = currentTabItems.filter((item) => !item.isRead);
     const read = currentTabItems.filter((item) => item.isRead);
 
-    const grouped: { [key: string]: FeedItem[] } = {};
+    const recent: FeedItem[] = [];
+    const oldGrouped: { [key: string]: FeedItem[] } = {};
+
     read.forEach((item) => {
       const d = new Date(item.createdAt);
-      let g = '';
-      if (isToday(d)) {
-        g = 'Today';
-      } else if (isYesterday(d)) {
-        g = 'Yesterday';
+      const isRecent =
+        isToday(d) ||
+        recentlyReadIds.has(item.id) ||
+        (item.childIds && item.childIds.some((cid) => recentlyReadIds.has(cid)));
+
+      if (isRecent) {
+        recent.push(item);
       } else {
-        g = format(d, 'EEE, MMM d');
+        let g = '';
+        if (isYesterday(d)) {
+          g = 'Yesterday';
+        } else {
+          g = format(d, 'EEE, MMM d');
+        }
+        if (!oldGrouped[g]) oldGrouped[g] = [];
+        oldGrouped[g].push(item);
       }
-      if (!grouped[g]) grouped[g] = [];
-      grouped[g].push(item);
     });
 
     return {
       unreadItems: unread,
-      readItemsGrouped: grouped,
+      recentlySeenItems: recent,
+      oldItemsGrouped: oldGrouped,
     };
-  }, [currentTabItems]);
+  }, [currentTabItems, recentlyReadIds]);
 
   const handlePreviewImage = useCallback((src: string, commentImages?: string[]) => {
     setLightboxImage(src);
@@ -1223,7 +1253,7 @@ function ActivityFeedContent() {
           </div>
         ) : (
           <div className="space-y-6 pb-10">
-            {/* UNREAD / "NEW" SECTION */}
+            {/* UNREAD / "NEW" SECTION (Image 1 style: blue dot, crisp text) */}
             {unreadItems.length > 0 && (
               <div className="mb-6">
                 <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-3">
@@ -1245,7 +1275,8 @@ function ActivityFeedContent() {
                       subtaskTitle={item.subtaskTitle}
                       title={item.title}
                       content={item.content}
-                      isRead={item.isRead}
+                      isRead={false}
+                      isGreyed={false}
                       createdAt={item.createdAt}
                       details={item.rawItem?.details}
                       onPreviewImage={handlePreviewImage}
@@ -1268,12 +1299,58 @@ function ActivityFeedContent() {
               </div>
             )}
 
-            {/* READ ITEMS GROUPED BY DAY */}
-            {Object.entries(readItemsGrouped).map(([groupName, items]) => (
-              <div key={groupName} className="mb-6">
-                {/* Date Group Heading (Today, Yesterday, Thu, Oct 22) */}
+            {/* RECENTLY SEEN SECTION (No blue dot, fresh high-contrast text) */}
+            {recentlySeenItems.length > 0 && (
+              <div className="mb-6">
                 <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-3">
-                  <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-400 px-1">
+                  <h3 className="text-sm font-medium text-zinc-400 dark:text-zinc-300 px-1">
+                    {viewMode === 'show_all' ? 'Today' : 'Recently Seen'}
+                  </h3>
+                </div>
+
+                <div className="space-y-3">
+                  {recentlySeenItems.map((item) => (
+                    <ActivityCard
+                      key={item.id}
+                      id={item.id}
+                      type={item.type}
+                      actorName={item.actorName}
+                      actorAvatar={item.actorAvatar}
+                      taskTitle={item.taskTitle}
+                      isSubtask={item.isSubtask}
+                      subtaskTitle={item.subtaskTitle}
+                      title={item.title}
+                      content={item.content}
+                      isRead={true}
+                      isGreyed={false}
+                      createdAt={item.createdAt}
+                      details={item.rawItem?.details}
+                      onPreviewImage={handlePreviewImage}
+                      onClick={() => {
+                        if (item.taskId) {
+                          handleOpenTask(item.rawItem, item);
+                        }
+                      }}
+                      onClear={(e) => {
+                        e.stopPropagation();
+                        handleClear(item.id, item.childIds);
+                      }}
+                      onMarkAsRead={(e) => {
+                        e.stopPropagation();
+                        handleMarkAsRead(item.id, item.childIds);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* OLD ITEMS GROUPED BY DAY (Image 2 style: on the greyer side) */}
+            {Object.entries(oldItemsGrouped).map(([groupName, items]) => (
+              <div key={groupName} className="mb-6">
+                {/* Date Group Heading (Yesterday, Thu, Oct 22) */}
+                <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm py-2 mb-3">
+                  <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 px-1">
                     {groupName}
                   </h3>
                 </div>
@@ -1291,7 +1368,8 @@ function ActivityFeedContent() {
                       subtaskTitle={item.subtaskTitle}
                       title={item.title}
                       content={item.content}
-                      isRead={item.isRead}
+                      isRead={true}
+                      isGreyed={true}
                       createdAt={item.createdAt}
                       details={item.rawItem?.details}
                       onPreviewImage={handlePreviewImage}

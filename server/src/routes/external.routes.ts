@@ -26,10 +26,14 @@ import {
   getExternalTeams,
   createExternalTeam,
   createExternalTeamRole,
-  createExternalList
+  createExternalList,
+  getAssistantsLastTasks
 } from '../controllers/external.controller';
 
 const router = Router();
+
+// Assistant Progress Checker (Last 3 tasks per assistant)
+router.get('/assistants/last-tasks', getAssistantsLastTasks);
 
 // Users Management
 router.get('/users', getExternalUsers);

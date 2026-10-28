@@ -28,6 +28,7 @@ export interface ActivityCardProps {
   title: string;
   content?: string | null;
   isRead: boolean;
+  isGreyed?: boolean;
   createdAt: string;
   details?: any;
   compact?: boolean;
@@ -58,7 +59,15 @@ export function getAvatarBg(name: string): string {
   return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
 }
 
-export function StatusPill({ status, color }: { status: string; color?: string }) {
+export function StatusPill({
+  status,
+  color,
+  isGreyed = false,
+}: {
+  status: string;
+  color?: string;
+  isGreyed?: boolean;
+}) {
   if (!status) return null;
   const clean = status.trim().toUpperCase().replace(/_/g, ' ');
 
@@ -85,10 +94,12 @@ export function StatusPill({ status, color }: { status: string; color?: string }
       'bg-orange-500/15 text-orange-500 dark:text-orange-400 border-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-700 [.theme-light_&]:border-orange-200';
   }
 
+  const greyedModifier = isGreyed ? 'opacity-80 saturate-[0.85]' : '';
+
   if (color) {
     return (
       <span
-        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border"
+        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border ${greyedModifier}`}
         style={{
           backgroundColor: `${color}20`,
           color: color,
@@ -102,7 +113,7 @@ export function StatusPill({ status, color }: { status: string; color?: string }
 
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border ${pillClasses}`}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border ${pillClasses} ${greyedModifier}`}
     >
       {clean}
     </span>
@@ -120,6 +131,7 @@ export function ActivityCard({
   title,
   content,
   isRead,
+  isGreyed = false,
   createdAt,
   details,
   compact = false,
@@ -207,6 +219,19 @@ export function ActivityCard({
 
   // Parse title & status details
   const renderTitleContent = () => {
+    const actorClass = isGreyed
+      ? 'font-medium text-zinc-400 dark:text-zinc-400'
+      : 'font-medium text-foreground';
+    const actionClass = isGreyed
+      ? 'text-zinc-500 dark:text-zinc-500 font-normal'
+      : 'text-muted-foreground font-normal';
+    const taskClass = isGreyed
+      ? 'font-medium text-zinc-300 dark:text-zinc-300'
+      : 'font-medium text-foreground';
+    const mentionClass = isGreyed
+      ? 'bg-blue-500/10 text-blue-400/80 border-blue-500/20'
+      : 'bg-blue-500/15 text-blue-400 border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200';
+
     // 1. Status Change
     if (
       normType === 'STATUS_CHANGE' ||
@@ -236,19 +261,19 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-medium text-foreground">{actorName}</span>
-          <span className="text-muted-foreground font-normal"> changed status on </span>
-          {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> changed status on </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
           {newStatus && (
             <span className="inline-flex items-center ml-1.5 align-middle gap-1 flex-wrap">
               {oldStatus && (
                 <>
-                  <StatusPill status={oldStatus} />
-                  <span className="text-muted-foreground/60 font-normal select-none">→</span>
+                  <StatusPill status={oldStatus} isGreyed={isGreyed} />
+                  <span className={`${isGreyed ? 'text-zinc-600' : 'text-muted-foreground/60'} font-normal select-none`}>→</span>
                 </>
               )}
-              <StatusPill status={newStatus} color={customStatusColor} />
+              <StatusPill status={newStatus} color={customStatusColor} isGreyed={isGreyed} />
             </span>
           )}
         </span>
@@ -277,10 +302,10 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-medium text-foreground">{actorName}</span>
-          <span className="text-muted-foreground font-normal"> checked {auditText} auditing on </span>
-          {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> checked {auditText} auditing on </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
         </span>
       );
     }
@@ -304,9 +329,9 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-medium text-foreground">{actorName}</span>
-          <span className="text-muted-foreground font-normal"> completed {countText} in </span>
-          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> completed {countText} in </span>
+          <span className={taskClass}>{effectiveTaskTitle}</span>
         </span>
       );
     }
@@ -323,13 +348,13 @@ export function ActivityCard({
 
       return (
         <span className="leading-snug">
-          <span className="font-medium text-foreground">{actorName}</span>
-          <span className="text-muted-foreground font-normal">
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}>
             {' '}
             {isUnassign ? 'unassigned you from' : 'assigned you to'}{' '}
           </span>
-          {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
         </span>
       );
     }
@@ -341,12 +366,12 @@ export function ActivityCard({
     ) {
       return (
         <span className="leading-snug">
-          <span className="font-medium text-foreground">{actorName}</span>
-          <span className="text-muted-foreground font-normal"> replied to your comment on </span>
-          {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> replied to your comment on </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
           {isMention && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
               Mentioned you
             </span>
           )}
@@ -362,12 +387,12 @@ export function ActivityCard({
     ) {
       return (
         <span className="leading-snug">
-          <span className="font-medium text-foreground">{actorName}</span>
-          <span className="text-muted-foreground font-normal"> commented on </span>
-          {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
-          <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> commented on </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
           {isMention && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
               Mentioned you
             </span>
           )}
@@ -383,10 +408,10 @@ export function ActivityCard({
 
     return (
       <span className="leading-snug">
-        <span className="font-medium text-foreground">{actorName}</span>
-        <span className="text-muted-foreground font-normal"> {restOfTitle}</span>
+        <span className={actorClass}>{actorName}</span>
+        <span className={actionClass}> {restOfTitle}</span>
         {isMention && (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
             Mentioned you
           </span>
         )}
@@ -399,7 +424,11 @@ export function ActivityCard({
       onClick={onClick}
       className={`group/card relative flex items-start cursor-pointer rounded-xl transition-all duration-150 shadow-xs border ${
         compact ? 'p-3 gap-2.5' : 'p-3.5 sm:p-4 gap-3 sm:gap-3.5'
-      } bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border`}
+      } ${
+        isGreyed
+          ? 'bg-card/40 dark:bg-zinc-900/30 border-border/40 hover:bg-card hover:border-border/80 opacity-[0.85] hover:opacity-100'
+          : 'bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border'
+      }`}
     >
       {/* Blue unread dot on far left */}
       {!isRead && (
@@ -412,7 +441,7 @@ export function ActivityCard({
       )}
 
       {/* Avatar with dark/light micro-badge */}
-      <div className="shrink-0 relative">
+      <div className={`shrink-0 relative transition-all duration-150 ${isGreyed ? 'opacity-70 saturate-[0.8]' : ''}`}>
         {actorAvatar ? (
           <img
             src={actorAvatar}
@@ -439,7 +468,9 @@ export function ActivityCard({
         </div>
 
         {/* Micro-badge icon in bottom-right corner of avatar */}
-        <div className="absolute -bottom-0.5 -right-0.5 size-4 rounded-full bg-card border border-border text-muted-foreground flex items-center justify-center shadow-xs">
+        <div className={`absolute -bottom-0.5 -right-0.5 size-4 rounded-full bg-card border border-border text-muted-foreground flex items-center justify-center shadow-xs ${
+          isGreyed ? 'opacity-70' : ''
+        }`}>
           <MicroIcon className="size-2.5 stroke-[2.2]" />
         </div>
       </div>
@@ -454,7 +485,9 @@ export function ActivityCard({
 
           {/* Timestamp right-aligned */}
           {formattedTime && (
-            <div className="shrink-0 text-xs text-muted-foreground font-normal pt-0.5 ml-auto select-none">
+            <div className={`shrink-0 text-xs font-normal pt-0.5 ml-auto select-none ${
+              isGreyed ? 'text-zinc-500 dark:text-zinc-600' : 'text-muted-foreground'
+            }`}>
               {formattedTime}
             </div>
           )}
@@ -466,7 +499,11 @@ export function ActivityCard({
             <div
               ref={contentWrapperRef}
               style={{ maxHeight: !isExpanded && canExpand ? maxHeight : undefined }}
-              className={`relative px-3 py-2.5 rounded-xl bg-background/60 border border-border text-foreground font-normal leading-relaxed transition-all duration-200 ${
+              className={`relative px-3 py-2.5 rounded-xl border font-normal leading-relaxed transition-all duration-200 ${
+                isGreyed
+                  ? 'bg-background/40 dark:bg-black/30 border-border/40 text-zinc-400 dark:text-zinc-400'
+                  : 'bg-background/60 border-border text-foreground'
+              } ${
                 compact ? 'text-xs' : 'text-sm'
               } ${!isExpanded && canExpand ? 'overflow-hidden' : ''}`}
             >
@@ -474,13 +511,19 @@ export function ActivityCard({
                 content={content}
                 className={`${
                   compact ? 'text-xs' : 'text-sm'
-                } text-foreground max-w-full prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline`}
+                } ${
+                  isGreyed ? 'text-zinc-400 dark:text-zinc-400' : 'text-foreground'
+                } max-w-full prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline`}
                 onPreviewImage={onPreviewImage}
               />
 
               {/* Bottom gradient fade when truncated */}
               {!isExpanded && canExpand && (
-                <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-background/95 via-background/60 to-transparent pointer-events-none rounded-b-xl" />
+                <div className={`absolute bottom-0 left-0 right-0 h-10 ${
+                  isGreyed
+                    ? 'bg-gradient-to-t from-background/95 dark:from-zinc-950/95 via-background/60 dark:via-zinc-950/60 to-transparent'
+                    : 'bg-gradient-to-t from-background/95 via-background/60 to-transparent'
+                } pointer-events-none rounded-b-xl`} />
               )}
             </div>
 

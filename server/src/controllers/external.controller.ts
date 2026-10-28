@@ -1451,3 +1451,199 @@ export async function createExternalTeamRole(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/external/assistants/last-tasks
+// Returns last 3 tasks per MA assistant with client, task title, link, status, and clean update
+// ---------------------------------------------------------------------------
+const NEXUS_STATUS_HEX: Record<string, string> = {
+  'KYC': '#3A8F55',
+  'PIN BOARD': '#1F8A6E',
+  'DAILY': '#2F7BD0',
+  'WEEKLY': '#2F7BD0',
+  'MONTHLY': '#2F7BD0',
+  'PENDING': '#D29A2A',
+  'IN PROGRESS': '#D04A7C',
+  'REVISION': '#5B6BD6',
+  'WAITING': '#D9534F',
+  'IN REVIEW': '#D97B3A',
+  'CHECKING': '#A35DB8',
+  'CRM': '#22A3AE',
+  'CLOSED': '#2FA37A',
+  'ON-HOLD': '#8A8F98',
+};
+
+function parseCommentProgress(html: string) {
+  const text = (html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+
+  let actionDone = '';
+  let nextSteps = '';
+  let statusText = '';
+
+  const actionMatch = text.match(/✅\s*Action Done:\s*([\s\S]*?)(?=(🔄\s*Status:|📋\s*To Do|\n\n\n|$))/i);
+  if (actionMatch) {
+    actionDone = actionMatch[1].trim();
+  }
+
+  const statusMatch = text.match(/🔄\s*Status:\s*([\s\S]*?)(?=(📋\s*To Do|\n\n|$))/i);
+  if (statusMatch) {
+    statusText = statusMatch[1].trim();
+  }
+
+  const nextStepsMatch = text.match(/📋\s*(?:To Do\s*\/?\s*Next Steps|Next Steps):\s*([\s\S]*?)$/i);
+  if (nextStepsMatch) {
+    nextSteps = nextStepsMatch[1].trim();
+  }
+
+  return {
+    rawText: text,
+    actionDone: actionDone || text,
+    statusText,
+    nextSteps
+  };
+}
+
+export async function getAssistantsLastTasks(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const users = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        NOT: {
+          email: { endsWith: '@system.local' }
+        }
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatarUrl: true,
+      },
+      orderBy: { name: 'asc' }
+    });
+
+    const frontendBaseUrl = (process.env.FRONTEND_URL || 'https://nexus.vipscaleph.com').replace(/\/+$/, '');
+
+    const assistants = await Promise.all(
+      users.map(async (u) => {
+        const recentComments = await prisma.taskComment.findMany({
+          where: { userId: u.id },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          include: {
+            task: {
+              include: {
+                list: {
+                  include: {
+                    space: { select: { name: true } },
+                    statuses: true
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        const seenTaskIds = new Set<string>();
+        const tasks: any[] = [];
+
+        for (const c of recentComments) {
+          if (!c.task || seenTaskIds.has(c.task.id)) continue;
+          seenTaskIds.add(c.task.id);
+
+          const clientName = c.task.list?.space?.name || c.task.list?.name || 'Unknown Client';
+          const statusName = c.task.status || 'PENDING';
+          const listStatus = c.task.list?.statuses?.find((s: any) => s.name.toUpperCase() === statusName.toUpperCase());
+          const statusColor = listStatus?.color || NEXUS_STATUS_HEX[statusName.toUpperCase()] || '#8A8F98';
+
+          const parsed = parseCommentProgress(c.content);
+
+          tasks.push({
+            taskId: c.task.id,
+            taskName: c.task.title,
+            clientName,
+            status: statusName,
+            statusColor,
+            nexusLink: `${frontendBaseUrl}/lists/${c.task.listId}?task=${c.task.id}`,
+            actionDone: parsed.actionDone,
+            nextSteps: parsed.nextSteps || null,
+            commentStatus: parsed.statusText || null,
+            updatedAt: c.createdAt
+          });
+
+          if (tasks.length >= 3) break;
+        }
+
+        if (tasks.length < 3) {
+          const assignedTasks = await prisma.task.findMany({
+            where: {
+              OR: [
+                { assigneeId: u.id },
+                { assignees: { some: { id: u.id } } }
+              ],
+              id: { notIn: Array.from(seenTaskIds) }
+            },
+            orderBy: { updatedAt: 'desc' },
+            take: 3 - tasks.length,
+            include: {
+              list: {
+                include: {
+                  space: { select: { name: true } },
+                  statuses: true
+                }
+              }
+            }
+          });
+
+          for (const t of assignedTasks) {
+            seenTaskIds.add(t.id);
+            const clientName = t.list?.space?.name || t.list?.name || 'Unknown Client';
+            const statusName = t.status || 'PENDING';
+            const listStatus = t.list?.statuses?.find((s: any) => s.name.toUpperCase() === statusName.toUpperCase());
+            const statusColor = listStatus?.color || NEXUS_STATUS_HEX[statusName.toUpperCase()] || '#8A8F98';
+
+            tasks.push({
+              taskId: t.id,
+              taskName: t.title,
+              clientName,
+              status: statusName,
+              statusColor,
+              nexusLink: `${frontendBaseUrl}/lists/${t.listId}?task=${t.id}`,
+              actionDone: t.description ? parseCommentProgress(t.description).actionDone : '',
+              nextSteps: null,
+              commentStatus: null,
+              updatedAt: t.updatedAt
+            });
+          }
+        }
+
+        return {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          avatarUrl: u.avatarUrl,
+          tasks
+        };
+      })
+    );
+
+    const activeAssistants = assistants.filter((a) => a.tasks.length > 0);
+
+    return res.json({
+      source: 'NEXUS_DATABASE',
+      verified: true,
+      timestamp: new Date().toISOString(),
+      assistants: activeAssistants
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+

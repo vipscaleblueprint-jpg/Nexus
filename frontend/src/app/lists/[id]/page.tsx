@@ -593,6 +593,8 @@ export default function BoardPage() {
     // Optimistically update UI, and remember it so an older in-flight list fetch can't undo it
     localTaskEditsRef.current.set(taskId, Date.now());
     const nowIso = new Date().toISOString();
+    const optimisticTask = task ? { ...task, status: newStatus, updatedAt: nowIso } : { id: taskId, status: newStatus, updatedAt: nowIso };
+
     setList((prev: any) => ({
       ...prev,
       tasks: prev.tasks.map((t: any) =>
@@ -600,6 +602,8 @@ export default function BoardPage() {
       ),
     }));
     setSelectedTask((prev: any) => (prev?.id === taskId ? { ...prev, status: newStatus } : prev));
+    useAppStore.getState().updateTask(optimisticTask as any);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: optimisticTask } }));
 
     try {
       await tasksApi.moveTask(taskId, newStatus, id as string, currentUser?.id);
@@ -715,14 +719,12 @@ export default function BoardPage() {
             // Sync board and modal state
             localTaskEditsRef.current.set(updatedTask.id, Date.now());
             setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
+            useAppStore.getState().updateTask(updatedTask);
             setList((prev: any) => ({
               ...prev,
               tasks: prev?.tasks ? prev.tasks.map((t: any) => {
                 if (t.id === updatedTask.id) {
-                  // Keep canonical board status so that non-status updates (checklists, subtasks, description blur)
-                  // never accidentally revert the live board column. Explicit status changes go through onStatusChange.
-                  const effectiveStatus = t.status || updatedTask.status;
-                  return { ...t, ...updatedTask, status: effectiveStatus };
+                  return { ...t, ...updatedTask };
                 }
                 return t;
               }) : []

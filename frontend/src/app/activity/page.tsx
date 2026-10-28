@@ -32,7 +32,7 @@ import { extractImagesFromContent } from '@/lib/commentImages';
 import { ActivityCard } from '@/components/ui/ActivityCard';
 
 type ViewMode = 'for_me' | 'show_all';
-type Category = 'all' | 'status' | 'checklists' | 'audits' | 'assigned' | 'comments';
+type Category = 'all' | 'assigned' | 'status' | 'checklists' | 'audits' | 'comments';
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = [
   { value: 'for_me', label: 'For Me', description: 'All your notifications' },
@@ -41,10 +41,10 @@ const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = 
 
 const CATEGORIES: { value: Category; label: string; icon: any }[] = [
   { value: 'all', label: 'All', icon: Activity },
+  { value: 'assigned', label: 'Assigned to Me', icon: Users },
   { value: 'status', label: 'Status Updates', icon: Clock },
   { value: 'checklists', label: 'Checklists', icon: CheckSquare },
   { value: 'audits', label: 'Auditor', icon: ShieldCheck },
-  { value: 'assigned', label: 'Assigned to Me', icon: Users },
   { value: 'comments', label: 'Comments', icon: MessageSquare },
 ];
 
@@ -563,17 +563,6 @@ function ActivityFeedContent() {
     }
   };
 
-  const handleClearAll = async () => {
-    try {
-      await notificationsApi.clearAll();
-      setNotifications([]);
-      if (feedCache) feedCache.notifications = [];
-      useAppStore.getState().setUnreadNotifications(0);
-      toast.success('All notifications cleared.');
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
   /**
    * Helper to check if a task or subtask is assigned to the current user
@@ -1162,22 +1151,13 @@ function ActivityFeedContent() {
           </div>
 
           {viewMode === 'for_me' && (
-            <>
-              <button
-                onClick={handleMarkAllAsRead}
-                className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <Check className="size-3.5" />
-                Mark all as read
-              </button>
-              <button
-                onClick={handleClearAll}
-                className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-md shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Check className="size-3.5" />
-                Clear all
-              </button>
-            </>
+            <button
+              onClick={handleMarkAllAsRead}
+              className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Check className="size-3.5" />
+              Mark all as read
+            </button>
           )}
 
           <button

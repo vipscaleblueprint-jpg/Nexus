@@ -695,10 +695,25 @@ export async function updateTask(req: Request, res: Response) {
             .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
             .flatMap((s: any) => (s as any).assigneeRoleRestrictions || []),
         ];
-        const requiredTaskAudits = getRequiredAudits(currentTask.title, auditorRoles);
         const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+        const allItems = auditChecklists.flatMap((c: any) => c.items || []);
+        const excludedAudits = new Set(
+          allItems
+            .filter((i: any) => (i.text || '').startsWith('!'))
+            .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+        );
+        const activeItems = allItems
+          .filter((i: any) => !(i.text || '').startsWith('!'))
+          .map((i: any) => i.text);
+        const requiredTaskAudits = Array.from(new Set([
+          ...getRequiredAudits(currentTask.title, auditorRoles),
+          ...activeItems,
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(r.toLowerCase()));
+
         const completedTexts = new Set(
-          auditChecklists.flatMap((c: any) => (c.items || []).filter((i: any) => i.completed).map((i: any) => i.text.toLowerCase()))
+          allItems
+            .filter((i: any) => i.completed && !i.text.startsWith('!'))
+            .map((i: any) => i.text.toLowerCase())
         );
         const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
         if (unchecked.length > 0) {
@@ -1149,10 +1164,25 @@ export async function moveTask(req: Request, res: Response) {
             .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
             .flatMap((s: any) => (s as any).assigneeRoleRestrictions || []),
         ];
-        const requiredTaskAudits = getRequiredAudits(currentTask.title, auditorRoles);
         const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+        const allItems = auditChecklists.flatMap((c: any) => c.items || []);
+        const excludedAudits = new Set(
+          allItems
+            .filter((i: any) => (i.text || '').startsWith('!'))
+            .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+        );
+        const activeItems = allItems
+          .filter((i: any) => !(i.text || '').startsWith('!'))
+          .map((i: any) => i.text);
+        const requiredTaskAudits = Array.from(new Set([
+          ...getRequiredAudits(currentTask.title, auditorRoles),
+          ...activeItems,
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(r.toLowerCase()));
+
         const completedTexts = new Set(
-          auditChecklists.flatMap((c: any) => (c.items || []).filter((i: any) => i.completed).map((i: any) => i.text.toLowerCase()))
+          allItems
+            .filter((i: any) => i.completed && !i.text.startsWith('!'))
+            .map((i: any) => i.text.toLowerCase())
         );
         const unchecked = requiredTaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
         if (unchecked.length > 0) {
@@ -1789,15 +1819,19 @@ export async function getTaskActivities(req: Request, res: Response) {
     const activities = logs.map((log: any) => {
       const details = (log.details as any) || {};
       if (log.action === 'STATUS_CHANGE') {
+        const rawName = log.user?.name;
+        const authorName = (rawName && (rawName.toUpperCase() === 'VIPSCALE' || rawName.toUpperCase() === 'VIP SCALE'))
+          ? 'VIPScale'
+          : (rawName || 'Someone');
         return {
           id: log.id,
           type: 'status_change',
-          author: log.user?.name || 'Someone',
+          author: authorName,
           oldStatus: details.oldStatus,
           newStatus: details.newStatus,
           subtaskTitle: details.subtaskTitle,
           date: log.createdAt,
-          user: log.user,
+          user: log.user ? { ...log.user, name: authorName } : log.user,
         };
       }
       if (log.action === 'COMMENT') {
@@ -2213,10 +2247,25 @@ export async function updateSubtask(req: Request, res: Response) {
           include: { checklists: { include: { items: true } } }
         });
         if (currentSubtask) {
-          const requiredSubtaskAudits = getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions);
           const auditChecklists = (currentSubtask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+          const allItems = auditChecklists.flatMap((c: any) => c.items || []);
+          const excludedAudits = new Set(
+            allItems
+              .filter((i: any) => (i.text || '').startsWith('!'))
+              .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+          );
+          const activeItems = allItems
+            .filter((i: any) => !(i.text || '').startsWith('!'))
+            .map((i: any) => i.text);
+          const requiredSubtaskAudits = Array.from(new Set([
+            ...getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions),
+            ...activeItems,
+          ])).filter(r => !r.startsWith('!') && !excludedAudits.has(r.toLowerCase()));
+
           const completedTexts = new Set(
-            auditChecklists.flatMap((c: any) => (c.items || []).filter((i: any) => i.completed).map((i: any) => i.text.toLowerCase()))
+            allItems
+              .filter((i: any) => i.completed && !i.text.startsWith('!'))
+              .map((i: any) => i.text.toLowerCase())
           );
           const unchecked = requiredSubtaskAudits.filter(r => !completedTexts.has(r.toLowerCase()));
           if (unchecked.length > 0) {
@@ -2752,6 +2801,7 @@ export async function createChecklistItem(req: Request, res: Response) {
     // --- ClickUp Sync: add checklist item ---
     (async () => {
       try {
+        if (text && text.startsWith('!')) return; // Internal Nexus exclusion marker
         const cl = await prisma.checklist.findUnique({
           where: { id: checklistId },
           select: { name: true, taskId: true, subtaskId: true, externalId: true },

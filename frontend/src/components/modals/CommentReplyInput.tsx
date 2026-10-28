@@ -107,6 +107,26 @@ export function CommentReplyInput({
     }
   }, [showMentionMenu, updateMenuPosition]);
 
+  const mentionListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMentionMenu || !mentionListRef.current) return;
+    const container = mentionListRef.current;
+    const selectedEl = container.children[selectedIndex] as HTMLElement | undefined;
+    if (!selectedEl) return;
+
+    const containerTop = container.scrollTop;
+    const containerBottom = containerTop + container.clientHeight;
+    const elTop = selectedEl.offsetTop;
+    const elBottom = elTop + selectedEl.offsetHeight;
+
+    if (elTop < containerTop) {
+      container.scrollTop = elTop;
+    } else if (elBottom > containerBottom) {
+      container.scrollTop = elBottom - container.clientHeight;
+    }
+  }, [selectedIndex, showMentionMenu]);
+
   // Close mention menu when clicking outside
   useEffect(() => {
     if (!showMentionMenu) return;
@@ -544,13 +564,13 @@ export function CommentReplyInput({
             zIndex: 999999,
           }}
           onMouseDown={(e) => e.preventDefault()}
-          className="bg-card border border-zinc-700/60 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+          className="bg-popover border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
         >
-          <div className="p-2 border-b border-zinc-800/60 text-xs font-semibold text-zinc-400 bg-zinc-900/60 flex items-center justify-between">
+          <div className="p-2 border-b border-border text-xs font-semibold text-muted-foreground bg-accent/40 flex items-center justify-between">
             <span>People</span>
-            <span className="text-[10px] text-zinc-500 font-normal">↑↓ navigate, Enter/Tab select</span>
+            <span className="text-[10px] text-muted-foreground font-normal">↑↓ navigate, Enter/Tab select</span>
           </div>
-          <div className="max-h-52 overflow-y-auto custom-scrollbar">
+          <div ref={mentionListRef} className="max-h-52 overflow-y-auto custom-scrollbar relative">
             {filteredUsers.map((u, idx) => {
               const isSelected = idx === selectedIndex;
               return (

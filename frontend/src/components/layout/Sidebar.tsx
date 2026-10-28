@@ -701,13 +701,14 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
   const toggleTheme = () => {
     const nextMode: ThemeMode = isLightMode ? 'dark' : 'light';
-    const stored = getStoredTheme();
+    const user = useAppStore.getState().currentUser;
+    const stored = getStoredTheme(user?.id);
     const newConfig = { ...stored, mode: nextMode };
 
     const executeApply = () => {
       setIsLightMode(nextMode === 'light');
       applyTheme(newConfig);
-      saveStoredTheme(newConfig);
+      saveStoredTheme(newConfig, user?.id);
     };
 
     const hasViewTransition = typeof document !== 'undefined' && 'startViewTransition' in document;
@@ -1539,6 +1540,7 @@ function AllTasksDropdownItem() {
   const searchParams = useSearchParams();
   const filterParam = searchParams?.get('filter');
   const activeDashboardTab = useAppStore((s) => s.activeDashboardTab);
+  const setActiveDashboardTab = useAppStore((s) => s.setActiveDashboardTab);
 
   const isDashboardRoute = pathname === '/' || pathname === '/tasks';
   const effectiveTab = activeDashboardTab || (isDashboardRoute ? (filterParam || 'all') : null);
@@ -1552,22 +1554,40 @@ function AllTasksDropdownItem() {
   // Closed by default, per user instruction: "in default its always close"
   const [isOpen, setIsOpen] = useState(false);
 
+  const isMainActive = isAllActive || (!isOpen && isAnyDashboardActive);
+
+  const handleItemClick = (e: React.MouseEvent) => {
+    if (!isAllActive) {
+      setActiveDashboardTab('all');
+      setIsOpen(true);
+    } else {
+      // If already on All Tasks, clicking the row toggles the dropdown
+      e.preventDefault();
+      setIsOpen(!isOpen);
+    }
+  };
+
+  const handleChevronClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsOpen(!isOpen);
+  };
+
   return (
     <div className="space-y-px mb-1">
-      <div
+      <Link
+        href="/"
+        onClick={handleItemClick}
         className={`group flex items-center justify-between rounded-md px-2 py-1.5 font-medium text-xs transition-colors cursor-pointer select-none ${
-          isAnyDashboardActive && !isOpen
+          isMainActive
             ? 'bg-accent text-accent-foreground font-semibold'
             : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
         }`}
-        onClick={() => setIsOpen(!isOpen)}
       >
         <div className="flex items-center gap-2 truncate flex-1 min-w-0">
           <div
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsOpen(!isOpen);
-            }}
+            role="button"
+            onClick={handleChevronClick}
             className="relative size-3.5 flex items-center justify-center shrink-0 cursor-pointer"
           >
             {/* Hover-revealed Chevron arrow, similar to the other sidebar tree items */}
@@ -1582,18 +1602,9 @@ function AllTasksDropdownItem() {
             </div>
           </div>
 
-          <Link
-            href="/"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!isOpen) setIsOpen(true);
-            }}
-            className="truncate flex-1 min-w-0 hover:text-white"
-          >
-            <span className="truncate block">All Tasks</span>
-          </Link>
+          <span className="truncate block flex-1 min-w-0">All Tasks</span>
         </div>
-      </div>
+      </Link>
 
       <AnimatePresence initial={false}>
         {isOpen && (
@@ -1604,22 +1615,10 @@ function AllTasksDropdownItem() {
             transition={{ duration: 0.2, ease: 'easeInOut' }}
             className="ml-3 pl-2.5 border-l border-zinc-800 space-y-0.5 mt-0.5 overflow-hidden"
           >
-            {/* 1. All Tasks */}
-            <Link
-              href="/"
-              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
-                isAllActive
-                  ? 'bg-accent text-accent-foreground font-semibold'
-                  : 'text-zinc-300 hover:bg-accent hover:text-accent-foreground hover:text-white'
-              }`}
-            >
-              <Sparkles className="size-3.5 text-cyan-400 shrink-0" />
-              <span className="truncate flex-1">All Tasks</span>
-            </Link>
-
-            {/* 2. My Tasks */}
+            {/* 1. My Tasks */}
             <Link
               href="/?filter=my"
+              onClick={() => setActiveDashboardTab('my')}
               className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
                 isMyActive
                   ? 'bg-accent text-accent-foreground font-semibold'
@@ -1630,9 +1629,10 @@ function AllTasksDropdownItem() {
               <span className="truncate flex-1">My Tasks</span>
             </Link>
 
-            {/* 3. Clients */}
+            {/* 2. Clients */}
             <Link
               href="/?filter=clients"
+              onClick={() => setActiveDashboardTab('clients')}
               className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
                 isClientsActive
                   ? 'bg-accent text-accent-foreground font-semibold'
@@ -1643,9 +1643,10 @@ function AllTasksDropdownItem() {
               <span className="truncate flex-1">Clients</span>
             </Link>
 
-            {/* 4. Priorities */}
+            {/* 3. Priorities */}
             <Link
               href="/?filter=priorities"
+              onClick={() => setActiveDashboardTab('priorities')}
               className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors group cursor-pointer ${
                 isPrioritiesActive
                   ? 'bg-accent text-accent-foreground font-semibold'

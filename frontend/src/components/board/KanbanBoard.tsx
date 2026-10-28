@@ -413,6 +413,28 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       }
     }
   }, [tasks, listStatuses]);
+
+  // Real-time synchronization: listen for task:updated events from modals, socket, or other views
+  useEffect(() => {
+    const handleWindowTaskUpdated = (e: any) => {
+      const incoming = e.detail?.task;
+      if (!incoming?.id) return;
+      setLocalTasks((prev) => {
+        let matched = false;
+        const next = prev.map((t) => {
+          if (t.id === incoming.id) {
+            matched = true;
+            return { ...t, ...incoming };
+          }
+          return t;
+        });
+        return matched ? next : prev;
+      });
+    };
+
+    window.addEventListener('task:updated', handleWindowTaskUpdated);
+    return () => window.removeEventListener('task:updated', handleWindowTaskUpdated);
+  }, []);
   // Keyed by group name / status name (group ids are regenerated on every mount).
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>({});

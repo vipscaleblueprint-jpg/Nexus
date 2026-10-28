@@ -423,6 +423,21 @@ const getHexColor = (color: string) => {
   return colors[color] || color;
 };
 
+// Checks whether an activity has a supported visual renderer in the timeline
+const isActivityVisible = (act: any): boolean => {
+  if (!act) return false;
+  const t = act.type;
+  if (t === 'status_change') return true;
+  if (t === 'assignment' || t === 'unassignment' || t === 'add_follower' || t === 'remove_follower' || t === 'followers_change') return true;
+  if (t === 'title_change') return true;
+  if (t === 'priority_change') return true;
+  if (t === 'create_subtask') return true;
+  if (t === 'team_role_change') return true;
+  if (t === 'attachment') return true;
+  if (t === 'audit_item_checked' || t === 'checklist_item_checked') return true;
+  return false;
+};
+
 // Builds the text after the actor's name for assignee/follower activity entries, e.g. "removed assignee: Jen".
 const describeAssigneeActivity = (act: any, currentUserName?: string) => {
   const isActorMe = act.author === currentUserName;
@@ -437,8 +452,14 @@ const describeAssigneeActivity = (act: any, currentUserName?: string) => {
   };
 
   if (act.type === 'unassignment') return `removed assignee: ${toYou(act.assigneeName)}`;
-  if (act.type === 'add_follower') return `added follower: ${toYou(act.assigneeName)}`;
-  if (act.type === 'remove_follower') return `removed follower: ${toYou(act.assigneeName)}`;
+  if (act.type === 'add_follower' || (act.type === 'followers_change' && (act.details?.type === 'add_follower' || act.added || act.details?.added))) {
+    const followerName = act.assigneeName || act.details?.added || act.added || 'Someone';
+    return `added follower: ${toYou(followerName)}`;
+  }
+  if (act.type === 'remove_follower' || (act.type === 'followers_change' && (act.details?.type === 'remove_follower' || act.removed || act.details?.removed))) {
+    const followerName = act.assigneeName || act.details?.removed || act.removed || 'Someone';
+    return `removed follower: ${toYou(followerName)}`;
+  }
 
   // Newer assignment entries carry an explicit added/removed diff
   if (Array.isArray(act.added) || Array.isArray(act.removed)) {
@@ -566,6 +587,26 @@ export function TaskDetailModalContent({
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+
+  // Auto-scroll the bottom of the comment being edited into view so the user doesn't have to scroll down manually
+  useEffect(() => {
+    if (!editingCommentId) return;
+    const scrollTarget = () => {
+      const el = document.getElementById(`comment-${editingCommentId}`);
+      if (el) {
+        const bottom = el.querySelector('[data-edit-bottom="true"]') || el;
+        bottom.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    };
+    const t1 = setTimeout(scrollTarget, 80);
+    const t2 = setTimeout(scrollTarget, 220);
+    const t3 = setTimeout(scrollTarget, 450);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [editingCommentId]);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
   const [editCommentText, setEditCommentText] = useState('');
@@ -577,41 +618,103 @@ export function TaskDetailModalContent({
   const commentFileInputRef = useRef<HTMLInputElement>(null);
   const commentEditorRef = useRef<any>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [activeSubtask, setActiveSubtask] = useState<any>(() => {
+  const initialSubtaskIdRef = useRef<string | null>(
+    typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('subtask') : null
+  );
+  const userClosedSubtaskRef = useRef(false);
+  const hadActiveSubtaskRef = useRef(false);
+
+  // Sync initialSubtaskIdRef if URL contains subtask on task change
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlSubtask = new URL(window.location.href).searchParams.get('subtask');
+      if (urlSubtask) {
+        initialSubtaskIdRef.current = urlSubtask;
+        userClosedSubtaskRef.current = false;
+      }
+    }
+  }, [task?.id]);
+
+  const [activeSubtask, setActiveSubtaskState] = useState<any>(() => {
     if (typeof window !== 'undefined' && task?.subtasks) {
       const url = new URL(window.location.href);
       const subtaskId = url.searchParams.get('subtask');
       if (subtaskId) {
-        return task.subtasks.find((s: any) => s.id === subtaskId) || null;
+        const found = task.subtasks.find((s: any) => s.id === subtaskId);
+        if (found) {
+          hadActiveSubtaskRef.current = true;
+          initialSubtaskIdRef.current = null;
+          return found;
+        }
       }
     }
     return null;
   });
 
+  const setActiveSubtask = useCallback((st: any) => {
+    if (!st) {
+      userClosedSubtaskRef.current = true;
+      initialSubtaskIdRef.current = null;
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('subtask')) {
+          url.searchParams.delete('subtask');
+          window.history.replaceState(null, '', url.pathname + url.search);
+        }
+      }
+    } else {
+      userClosedSubtaskRef.current = false;
+      hadActiveSubtaskRef.current = true;
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('subtask') !== st.id) {
+          url.searchParams.set('subtask', st.id);
+          window.history.replaceState(null, '', url.pathname + url.search);
+        }
+      }
+    }
+    setActiveSubtaskState(st);
+  }, []);
+
+  // Keep activeSubtask synced with task.subtasks, or resolve target subtask from URL on mount/refresh
+  useEffect(() => {
+    if (!task?.subtasks || task.subtasks.length === 0) return;
+
+    if (activeSubtask) {
+      const found = task.subtasks.find((s: any) => s.id === activeSubtask.id);
+      if (found && found !== activeSubtask) {
+        setActiveSubtaskState(found);
+      }
+    } else if (!userClosedSubtaskRef.current && initialSubtaskIdRef.current) {
+      const targetSubtaskId = initialSubtaskIdRef.current;
+      const found = task.subtasks.find((s: any) => s.id === targetSubtaskId);
+      if (found) {
+        hadActiveSubtaskRef.current = true;
+        initialSubtaskIdRef.current = null;
+        setActiveSubtaskState(found);
+      }
+    }
+  }, [task?.subtasks, activeSubtask]);
+
+  // Keep URL query param in sync with activeSubtask
   useEffect(() => {
     if (typeof window === 'undefined' || !task) return;
     const url = new URL(window.location.href);
     if (activeSubtask) {
+      hadActiveSubtaskRef.current = true;
       if (url.searchParams.get('subtask') !== activeSubtask.id) {
         url.searchParams.set('subtask', activeSubtask.id);
         window.history.replaceState(null, '', url.pathname + url.search);
       }
-    } else {
+    } else if (hadActiveSubtaskRef.current) {
+      // ONLY clear ?subtask= when user explicitly closes an active subtask!
+      initialSubtaskIdRef.current = null;
       if (url.searchParams.has('subtask')) {
         url.searchParams.delete('subtask');
         window.history.replaceState(null, '', url.pathname + url.search);
       }
     }
   }, [activeSubtask, task]);
-
-  useEffect(() => {
-    if (activeSubtask && task?.subtasks) {
-      const found = task.subtasks.find((s: any) => s.id === activeSubtask.id);
-      if (found && found !== activeSubtask) {
-        setActiveSubtask(found);
-      }
-    }
-  }, [task?.subtasks, activeSubtask]);
 
   const setModalTitle = useAppStore(state => state.setModalTitle);
   useEffect(() => {
@@ -804,6 +907,25 @@ export function TaskDetailModalContent({
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: string; name: string }[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const mentionListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMentionMenu || !mentionListRef.current) return;
+    const container = mentionListRef.current;
+    const selectedEl = container.children[mentionSelectedIndex] as HTMLElement | undefined;
+    if (!selectedEl) return;
+
+    const containerTop = container.scrollTop;
+    const containerBottom = containerTop + container.clientHeight;
+    const elTop = selectedEl.offsetTop;
+    const elBottom = elTop + selectedEl.offsetHeight;
+
+    if (elTop < containerTop) {
+      container.scrollTop = elTop;
+    } else if (elBottom > containerBottom) {
+      container.scrollTop = elBottom - container.clientHeight;
+    }
+  }, [mentionSelectedIndex, showMentionMenu]);
 
   // Comments with reactions + replies
   const [richComments, setRichComments] = useState<any[]>([]);
@@ -844,11 +966,11 @@ export function TaskDetailModalContent({
     setFullscreenCommentId(null);
   }
 
-  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment'), [activities]);
+  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment' && isActivityVisible(a)), [activities]);
   const combined = useMemo(() => [
-    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
-    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
-  ].sort((a, b) => a.sortDate - b.sortDate), [otherActivities, richComments]);
+    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date || Date.now()).getTime() })),
+    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt || Date.now()).getTime() }))
+  ].sort((a, b) => (a.sortDate || 0) - (b.sortDate || 0)), [otherActivities, richComments]);
 
   const hasOlderActivities = combined.length > visibleActivityCount;
   const olderActivitiesCount = Math.max(0, combined.length - visibleActivityCount);
@@ -2121,13 +2243,17 @@ export function TaskDetailModalContent({
     };
     setActivities(prev => [...prev, optimisticActivity]);
 
+    const updatedTask = { ...task, status: newStatus };
+    useAppStore.getState().updateTask(updatedTask);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+
     if (onStatusChange) {
       onStatusChange(newStatus);
       return;
     }
     
     // Let the caller (dashboard, doc, activity page) reflect the new status right away
-    if (onUpdateTask) onUpdateTask({ ...task, status: newStatus });
+    if (onUpdateTask) onUpdateTask(updatedTask);
     else task.status = newStatus;
 
     try {
@@ -3835,6 +3961,7 @@ export function TaskDetailModalContent({
                       cGroups[r.emoji].users.push(r.user?.name || '?');
                       if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
                     });
+                    const isEditing = editingCommentId === comment.id;
                     return (
                       <div
                         key={comment.id}
@@ -3846,14 +3973,23 @@ export function TaskDetailModalContent({
                             ? 'mt-2 border'
                             : 'bg-card border border-zinc-800/60'
                         }`}
-                        style={
-                          isReply
+                        style={{
+                          ...(isReply
                             ? {
                                 backgroundColor: 'color-mix(in srgb, var(--accent) 6%, var(--surface, #18181c))',
-                                borderColor: 'color-mix(in srgb, var(--accent) 25%, var(--border, #242429))',
+                                borderColor: isEditing
+                                  ? 'color-mix(in srgb, var(--accent) 55%, var(--border, #242429))'
+                                  : 'color-mix(in srgb, var(--accent) 25%, var(--border, #242429))',
                               }
-                            : undefined
-                        }
+                            : isEditing
+                              ? {
+                                  borderColor: 'color-mix(in srgb, var(--accent) 55%, var(--border, #242429))',
+                                }
+                              : {}),
+                          boxShadow: isEditing
+                            ? '0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), 0 4px 14px color-mix(in srgb, var(--accent) 12%, transparent)'
+                            : undefined,
+                        }}
                       >
                         <div className="flex items-center gap-3 w-full">
                           {comment.user?.avatarUrl ? (
@@ -3885,11 +4021,11 @@ export function TaskDetailModalContent({
                                     </button>
                                   </Popover.Trigger>
                                   <Popover.Portal>
-                                    <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
-                                      <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                    <Popover.Content className="w-32 bg-popover border border-border rounded-lg shadow-xl overflow-hidden z-[100000] p-1" align="end">
+                                      <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2">
                                         <Pencil className="w-3.5 h-3.5" /> Edit
                                       </button>
-                                      <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                      <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 hover:text-red-300 rounded-md transition-colors flex items-center gap-2">
                                         <Trash2 className="w-3.5 h-3.5" /> Delete
                                       </button>
                                     </Popover.Content>
@@ -4160,7 +4296,7 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
-                              if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower') {
+                              if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower' || act.type === 'followers_change') {
                                 const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
 
                                 return (
@@ -4331,17 +4467,32 @@ export function TaskDetailModalContent({
                                   }
                                 });
 
+                                const visibleItems = dayGroup.items.filter(item => {
+                                  if (item.isCreationEvent) return true;
+                                  if (item.isActivityType) return isActivityVisible(item);
+                                  return true; // rich comment
+                                });
+                                if (visibleItems.length === 0) return null;
+
+                                const hasLogUpdateOrComment = dayGroup.items.some(item => {
+                                  if (item.isCreationEvent) return false;
+                                  if (item.isActivityType) return isActivityVisible(item);
+                                  return true; // rich comment
+                                });
+
                                 return (
                                   <div key={`day-section-${dayGroup.dayKey}`} className="w-full">
-                                    <ActivityDayDivider
-                                      date={dayGroup.date}
-                                      isNew={dayGroup.isNew}
-                                      isCollapsed={isCollapsed}
-                                      itemCount={dayGroup.items.length}
-                                      onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
-                                    />
+                                    {hasLogUpdateOrComment && (
+                                      <ActivityDayDivider
+                                        date={dayGroup.date}
+                                        isNew={dayGroup.isNew}
+                                        isCollapsed={isCollapsed}
+                                        itemCount={visibleItems.length}
+                                        onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
+                                      />
+                                    )}
                                     <AnimatePresence initial={false}>
-                                      {!isCollapsed && (
+                                      {(!isCollapsed || !hasLogUpdateOrComment) && (
                                         <motion.div
                                           key={`day-content-${dayGroup.dayKey}`}
                                           initial={{ height: 0, opacity: 0 }}
@@ -4443,12 +4594,12 @@ export function TaskDetailModalContent({
                   return (
                     <>
                       {showMentionMenu && (
-                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-card border border-zinc-700/60 rounded-xl shadow-2xl overflow-hidden z-[100000] animate-in fade-in zoom-in-95 duration-100">
-                          <div className="p-2 border-b border-zinc-800/60 text-xs font-semibold text-zinc-400 bg-zinc-900/60 flex items-center justify-between">
+                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border border-border rounded-xl shadow-2xl overflow-hidden z-[100000] animate-in fade-in zoom-in-95 duration-100">
+                          <div className="p-2 border-b border-border text-xs font-semibold text-muted-foreground bg-accent/40 flex items-center justify-between">
                             <span>People</span>
-                            <span className="text-[10px] text-zinc-500 font-normal">↑↓ navigate, Enter/Tab select</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">↑↓ navigate, Enter/Tab select</span>
                           </div>
-                          <div className="max-h-52 overflow-y-auto custom-scrollbar">
+                          <div ref={mentionListRef} className="max-h-52 overflow-y-auto custom-scrollbar relative">
                             {filteredMentionUsers.map((u, idx) => {
                               const isSelected = idx === mentionSelectedIndex;
                               const targetUrl = u.confettiUrl || u.avatarUrl;
@@ -4460,26 +4611,39 @@ export function TaskDetailModalContent({
                                   key={u.id}
                                   onMouseEnter={() => setMentionSelectedIndex(idx)}
                                   onClick={() => handleSelectMentionUser(u)}
+                                  style={
+                                    isSelected
+                                      ? {
+                                          backgroundColor: 'color-mix(in srgb, var(--accent) 25%, transparent)',
+                                        }
+                                      : undefined
+                                  }
                                   className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${
-                                    isSelected ? 'bg-indigo-600/30 text-white' : 'text-zinc-200 hover:bg-zinc-800/60'
+                                    isSelected ? 'text-foreground font-medium' : 'text-foreground/80 hover:bg-accent/50'
                                   }`}
                                 >
                                   {u.avatarUrl ? (
                                     <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
                                   ) : (
-                                    <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                    <div
+                                      style={{
+                                        backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+                                        color: 'var(--accent)',
+                                      }}
+                                      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                                    >
                                       {(u.name || '?').substring(0, 2).toUpperCase()}
                                     </div>
                                   )}
                                   <div className="flex flex-col min-w-0">
                                     <span className="text-xs font-medium truncate">{u.name}</span>
-                                    {u.email && <span className="text-[10px] text-zinc-500 truncate">{u.email}</span>}
+                                    {u.email && <span className="text-[10px] text-muted-foreground truncate">{u.email}</span>}
                                   </div>
                                 </div>
                               );
                             })}
                             {filteredMentionUsers.length === 0 && (
-                              <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
+                              <div className="p-3 text-sm text-muted-foreground text-center">No users found</div>
                             )}
                           </div>
                         </div>
@@ -4793,6 +4957,25 @@ export function SubtaskDetailView({
   const [mentionStartIndex, setMentionStartIndex] = useState(0);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: string, name: string }[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const subtaskMentionListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMentionMenu || !subtaskMentionListRef.current) return;
+    const container = subtaskMentionListRef.current;
+    const selectedEl = container.children[mentionSelectedIndex] as HTMLElement | undefined;
+    if (!selectedEl) return;
+
+    const containerTop = container.scrollTop;
+    const containerBottom = containerTop + container.clientHeight;
+    const elTop = selectedEl.offsetTop;
+    const elBottom = elTop + selectedEl.offsetHeight;
+
+    if (elTop < containerTop) {
+      container.scrollTop = elTop;
+    } else if (elBottom > containerBottom) {
+      container.scrollTop = elBottom - container.clientHeight;
+    }
+  }, [mentionSelectedIndex, showMentionMenu]);
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
@@ -4847,11 +5030,11 @@ export function SubtaskDetailView({
     setCollapsedDays({});
   }
 
-  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment'), [activities]);
+  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment' && isActivityVisible(a)), [activities]);
   const combined = useMemo(() => [
-    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date).getTime() })),
-    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt).getTime() }))
-  ].sort((a, b) => a.sortDate - b.sortDate), [otherActivities, richComments]);
+    ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date || Date.now()).getTime() })),
+    ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt || Date.now()).getTime() }))
+  ].sort((a, b) => (a.sortDate || 0) - (b.sortDate || 0)), [otherActivities, richComments]);
 
   const hasOlderActivities = combined.length > visibleActivityCount;
   const olderActivitiesCount = Math.max(0, combined.length - visibleActivityCount);
@@ -6286,7 +6469,13 @@ export function SubtaskDetailView({
       <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card shrink-0">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setActiveSubtask && setActiveSubtask(null)}
+            onClick={() => {
+              if (setActiveSubtask) {
+                setActiveSubtask(null);
+              } else {
+                onClose();
+              }
+            }}
             className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
             title="Go Back"
           >
@@ -7206,6 +7395,7 @@ export function SubtaskDetailView({
                     if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
                   });
 
+                  const isEditing = editingCommentId === c.id;
                   return (
                     <div
                       key={c.id}
@@ -7217,14 +7407,23 @@ export function SubtaskDetailView({
                           ? 'mt-2 border'
                           : 'bg-card border border-zinc-800/60 mt-2'
                       }`}
-                      style={
-                        isReply
+                      style={{
+                        ...(isReply
                           ? {
                               backgroundColor: 'color-mix(in srgb, var(--accent) 6%, var(--surface, #18181c))',
-                              borderColor: 'color-mix(in srgb, var(--accent) 25%, var(--border, #242429))',
+                              borderColor: isEditing
+                                ? 'color-mix(in srgb, var(--accent) 55%, var(--border, #242429))'
+                                : 'color-mix(in srgb, var(--accent) 25%, var(--border, #242429))',
                             }
-                          : undefined
-                      }
+                          : isEditing
+                            ? {
+                                borderColor: 'color-mix(in srgb, var(--accent) 55%, var(--border, #242429))',
+                              }
+                            : {}),
+                        boxShadow: isEditing
+                          ? '0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), 0 4px 14px color-mix(in srgb, var(--accent) 12%, transparent)'
+                            : undefined,
+                      }}
                     >
                       <div className="flex items-center gap-3 w-full">
                         {c.user?.avatarUrl ? (
@@ -7256,11 +7455,11 @@ export function SubtaskDetailView({
                                   </button>
                                 </Popover.Trigger>
                                 <Popover.Portal>
-                                  <Popover.Content className="w-32 bg-muted border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-[100000]" align="end">
-                                    <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2">
+                                  <Popover.Content className="w-32 bg-popover border border-border rounded-lg shadow-xl overflow-hidden z-[100000] p-1" align="end">
+                                    <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2">
                                       <Pencil className="w-3.5 h-3.5" /> Edit
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); setCommentToDelete(c.id) }} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors flex items-center gap-2 border-t border-zinc-800">
+                                    <button onClick={(e) => { e.stopPropagation(); setCommentToDelete(c.id) }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 hover:text-red-300 rounded-md transition-colors flex items-center gap-2">
                                       <Trash2 className="w-3.5 h-3.5" /> Delete
                                     </button>
                                   </Popover.Content>
@@ -7519,7 +7718,7 @@ export function SubtaskDetailView({
                                 </div>
                               );
                             }
-                            if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower') {
+                            if (act.type === 'assignment' || act.type === 'unassignment' || act.type === 'add_follower' || act.type === 'remove_follower' || act.type === 'followers_change') {
                               const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
 
                               return (
@@ -7536,6 +7735,9 @@ export function SubtaskDetailView({
                                 </div>
                               );
                             }
+                            if (act.type === 'title_change') {
+                              return renderTitleChangeActivity(act, currentUser?.name);
+                            }
                             if (act.type === 'priority_change') {
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
@@ -7548,6 +7750,20 @@ export function SubtaskDetailView({
                                     )}
                                     to{' '}
                                     <span className={`font-medium ${getPriorityConfig(act.newPriority).color}`}>{getPriorityConfig(act.newPriority).label}</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            if (act.type === 'create_subtask') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                    created subtask <span className="text-zinc-200 font-medium px-1">{act.subtaskTitle}</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -7646,31 +7862,46 @@ export function SubtaskDetailView({
                                 }
                               });
 
-                              return (
-                                <div key={`day-section-${dayGroup.dayKey}`} className="w-full">
-                                  <ActivityDayDivider
-                                    date={dayGroup.date}
-                                    isNew={dayGroup.isNew}
-                                    isCollapsed={isCollapsed}
-                                    itemCount={dayGroup.items.length}
-                                    onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
-                                  />
-                                  <AnimatePresence initial={false}>
-                                    {!isCollapsed && (
-                                      <motion.div
-                                        key={`day-content-${dayGroup.dayKey}`}
-                                        initial={{ height: 0, opacity: 0 }}
-                                        animate={{ height: 'auto', opacity: 1 }}
-                                        exit={{ height: 0, opacity: 0 }}
-                                        transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
-                                        className="overflow-hidden space-y-4 pt-1"
-                                      >
-                                        {dayTimelineItems.map((item) => renderTimelineItem(item))}
-                                      </motion.div>
+                                const visibleItems = dayGroup.items.filter(item => {
+                                  if (item.isCreationEvent) return true;
+                                  if (item.isActivityType) return isActivityVisible(item);
+                                  return true; // rich comment
+                                });
+                                if (visibleItems.length === 0) return null;
+
+                                const hasLogUpdateOrComment = dayGroup.items.some(item => {
+                                  if (item.isCreationEvent) return false;
+                                  if (item.isActivityType) return isActivityVisible(item);
+                                  return true; // rich comment
+                                });
+
+                                return (
+                                  <div key={`day-section-${dayGroup.dayKey}`} className="w-full">
+                                    {hasLogUpdateOrComment && (
+                                      <ActivityDayDivider
+                                        date={dayGroup.date}
+                                        isNew={dayGroup.isNew}
+                                        isCollapsed={isCollapsed}
+                                        itemCount={visibleItems.length}
+                                        onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
+                                      />
                                     )}
-                                  </AnimatePresence>
-                                </div>
-                              );
+                                    <AnimatePresence initial={false}>
+                                      {(!isCollapsed || !hasLogUpdateOrComment) && (
+                                        <motion.div
+                                          key={`day-content-${dayGroup.dayKey}`}
+                                          initial={{ height: 0, opacity: 0 }}
+                                          animate={{ height: 'auto', opacity: 1 }}
+                                          exit={{ height: 0, opacity: 0 }}
+                                          transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
+                                          className="overflow-hidden space-y-4 pt-1"
+                                        >
+                                          {dayTimelineItems.map((item) => renderTimelineItem(item))}
+                                        </motion.div>
+                                      )}
+                                    </AnimatePresence>
+                                  </div>
+                                );
                             })}
                           </>
                         );
@@ -7757,12 +7988,12 @@ export function SubtaskDetailView({
                 return (
                   <>
                     {showMentionMenu && (
-                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-card border border-zinc-700/60 rounded-xl shadow-2xl overflow-hidden z-[100000] animate-in fade-in zoom-in-95 duration-100">
-                        <div className="p-2 border-b border-zinc-800/60 text-xs font-semibold text-zinc-400 bg-zinc-900/60 flex items-center justify-between">
+                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border border-border rounded-xl shadow-2xl overflow-hidden z-[100000] animate-in fade-in zoom-in-95 duration-100">
+                        <div className="p-2 border-b border-border text-xs font-semibold text-muted-foreground bg-accent/40 flex items-center justify-between">
                           <span>People</span>
-                          <span className="text-[10px] text-zinc-500 font-normal">↑↓ navigate, Enter/Tab select</span>
+                          <span className="text-[10px] text-muted-foreground font-normal">↑↓ navigate, Enter/Tab select</span>
                         </div>
-                        <div className="max-h-52 overflow-y-auto custom-scrollbar">
+                        <div ref={subtaskMentionListRef} className="max-h-52 overflow-y-auto custom-scrollbar relative">
                           {filteredMentionUsers.map((u, idx) => {
                             const isSelected = idx === mentionSelectedIndex;
                             const targetUrl = u.confettiUrl || u.avatarUrl;
@@ -7774,26 +8005,39 @@ export function SubtaskDetailView({
                                 key={u.id}
                                 onMouseEnter={() => setMentionSelectedIndex(idx)}
                                 onClick={() => handleSelectMentionUser(u)}
+                                style={
+                                  isSelected
+                                    ? {
+                                        backgroundColor: 'color-mix(in srgb, var(--accent) 25%, transparent)',
+                                      }
+                                    : undefined
+                                }
                                 className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${
-                                  isSelected ? 'bg-indigo-600/30 text-white' : 'text-zinc-200 hover:bg-zinc-800/60'
+                                  isSelected ? 'text-foreground font-medium' : 'text-foreground/80 hover:bg-accent/50'
                                 }`}
                               >
                                 {u.avatarUrl ? (
                                   <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
                                 ) : (
-                                  <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                  <div
+                                    style={{
+                                      backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+                                      color: 'var(--accent)',
+                                    }}
+                                    className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                                  >
                                     {(u.name || '?').substring(0, 2).toUpperCase()}
                                   </div>
                                 )}
                                 <div className="flex flex-col min-w-0">
                                   <span className="text-xs font-medium truncate">{u.name}</span>
-                                  {u.email && <span className="text-[10px] text-zinc-500 truncate">{u.email}</span>}
+                                  {u.email && <span className="text-[10px] text-muted-foreground truncate">{u.email}</span>}
                                 </div>
                               </div>
                             );
                           })}
                           {filteredMentionUsers.length === 0 && (
-                            <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
+                            <div className="p-3 text-sm text-muted-foreground text-center">No users found</div>
                           )}
                         </div>
                       </div>

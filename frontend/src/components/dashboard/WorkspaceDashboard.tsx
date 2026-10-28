@@ -748,11 +748,11 @@ function WorkspaceDashboardContent({
   }, [tasks]);
 
   // Subtask rows open their parent task with the subtask panel showing (TaskDetailModal reads ?subtask=)
-  const openRow = (row: Task) => {
+  const openRow = (row: Task, explicitSubtaskId?: string | null) => {
     const isSub = Boolean((row as any).isSubtask);
     const parent = isSub ? ((row as any).parentTask as Task) : null;
     const taskToOpen = parent || row;
-    const subtaskId = isSub ? row.id : null;
+    const subtaskId = explicitSubtaskId !== undefined ? explicitSubtaskId : (isSub ? row.id : null);
 
     if (typeof window !== "undefined") {
       const container = document.getElementById("main-scroll-container");
@@ -796,11 +796,11 @@ function WorkspaceDashboardContent({
       lastOpenedUrlTaskId.current = actualTaskId;
       const found = tasks.find((t) => t.id === actualTaskId);
       if (found) {
-        openRow(found);
+        openRow(found, subtaskIdParam);
       } else {
         tasksApi.getTask(actualTaskId).then((res) => {
           if (res?.task) {
-            openRow(res.task);
+            openRow(res.task, subtaskIdParam);
           }
         }).catch(() => {});
       }
@@ -813,7 +813,7 @@ function WorkspaceDashboardContent({
             ...foundSub,
             parentTask: t,
             isSubtask: true,
-          } as any);
+          } as any, subtaskIdParam);
           break;
         }
       }

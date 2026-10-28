@@ -179,6 +179,26 @@ export function EditCommentForm({
     }
   }, [showMentionMenu, updateMenuPosition]);
 
+  const mentionListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMentionMenu || !mentionListRef.current) return;
+    const container = mentionListRef.current;
+    const selectedEl = container.children[selectedIndex] as HTMLElement | undefined;
+    if (!selectedEl) return;
+
+    const containerTop = container.scrollTop;
+    const containerBottom = containerTop + container.clientHeight;
+    const elTop = selectedEl.offsetTop;
+    const elBottom = elTop + selectedEl.offsetHeight;
+
+    if (elTop < containerTop) {
+      container.scrollTop = elTop;
+    } else if (elBottom > containerBottom) {
+      container.scrollTop = elBottom - container.clientHeight;
+    }
+  }, [selectedIndex, showMentionMenu]);
+
   // Close mention menu when clicking outside
   useEffect(() => {
     if (!showMentionMenu) return;
@@ -428,6 +448,45 @@ export function EditCommentForm({
   };
 
   const totalAttachmentsCount = existingAttachments.length + stagedFiles.length;
+  const bottomAnchorRef = useRef<HTMLDivElement>(null);
+  const prevAttachmentsCount = useRef(totalAttachmentsCount);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    if (bottomAnchorRef.current) {
+      bottomAnchorRef.current.scrollIntoView({
+        behavior,
+        block: 'nearest',
+      });
+    }
+  }, []);
+
+  // When form mounts (user clicks Edit), automatically scroll bottom of edit form into view
+  useEffect(() => {
+    const frameId = requestAnimationFrame(() => {
+      scrollToBottom('smooth');
+    });
+    const t1 = setTimeout(() => scrollToBottom('smooth'), 80);
+    const t2 = setTimeout(() => scrollToBottom('smooth'), 220);
+    const t3 = setTimeout(() => scrollToBottom('smooth'), 450);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [scrollToBottom]);
+
+  // Scroll into view whenever attachments/images change
+  useEffect(() => {
+    if (totalAttachmentsCount !== prevAttachmentsCount.current) {
+      prevAttachmentsCount.current = totalAttachmentsCount;
+      const timer = setTimeout(() => scrollToBottom('smooth'), 60);
+      return () => clearTimeout(timer);
+    }
+  }, [totalAttachmentsCount, scrollToBottom]);
+
+  const canSave = !isSaving && !isUploadingInline && hasAnyContent && hasChanged;
 
   return (
     <div
@@ -436,10 +495,25 @@ export function EditCommentForm({
       onDragOver={handleFormDragOver}
       onDragLeave={handleFormDragLeave}
       onDrop={handleFormDrop}
-      className={`relative flex flex-col gap-2.5 w-full bg-zinc-900/40 p-3 rounded-xl border ${isDraggingOverForm ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700/60 focus-within:border-indigo-500/70'} transition-all`}
+      style={{
+        borderColor: isDraggingOverForm
+          ? 'var(--accent)'
+          : 'color-mix(in srgb, var(--accent) 40%, var(--border, #3f3f46))',
+        backgroundColor: 'color-mix(in srgb, var(--accent) 3.5%, var(--surface, #18181b))',
+        boxShadow: isDraggingOverForm
+          ? '0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)'
+          : '0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent)',
+      }}
+      className="relative flex flex-col gap-2.5 w-full p-3 rounded-xl border transition-all"
     >
       {isDraggingOverForm && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl bg-zinc-950/90 backdrop-blur-sm border-2 border-dashed border-indigo-500 shadow-[0_0_24px_rgba(99,102,241,0.35)] transition-all pointer-events-none animate-in fade-in zoom-in-95 duration-150 p-4 text-center">
+        <div
+          style={{
+            borderColor: 'var(--accent)',
+            boxShadow: '0 0 24px color-mix(in srgb, var(--accent) 35%, transparent)',
+          }}
+          className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl bg-zinc-950/90 backdrop-blur-sm border-2 border-dashed pointer-events-none animate-in fade-in zoom-in-95 duration-150 p-4 text-center"
+        >
           <p className="text-sm font-semibold text-zinc-100">Drop files to add</p>
           <p className="text-xs text-zinc-400 mt-0.5">Images placed inline &bull; Files attached</p>
           <div className="flex items-center gap-1.5 mt-2 text-[10px] text-zinc-400 bg-zinc-900/80 px-2.5 py-0.5 rounded-full border border-zinc-800">
@@ -449,9 +523,117 @@ export function EditCommentForm({
         </div>
       )}
 
-      {/* Existing and Staged Attachments Strip */}
+      {/* Editor Container with Mention Detection */}
+      <div
+        ref={editorWrapperRef}
+        onKeyDownCapture={handleEditorKeyDownCapture}
+        className="relative w-full"
+      >
+        <CommentEditor
+          ref={commentEditorRef}
+          id={`edit-${commentId}`}
+          value={text}
+          onChange={(html, textContent, cursorPosition, textBefore) => {
+            setText(html);
+            const textStr = textContent || '';
+            const textBeforeCursor = textBefore !== undefined
+              ? textBefore
+              : (cursorPosition !== undefined && cursorPosition >= 0)
+                ? textStr.substring(0, Math.min(textStr.length, cursorPosition))
+                : textStr;
+
+            // Trigger mention dropdown when '@' follows start of text or whitespace
+            const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
+            if (match) {
+              updateMenuPosition();
+              setShowMentionMenu(true);
+              setMentionSearch(match[1]);
+              setSelectedIndex(0);
+            } else {
+              setShowMentionMenu(false);
+            }
+          }}
+          onPasteFiles={handlePasteFiles}
+          onDropFiles={addFiles}
+          onUploadImage={uploadImage}
+          onUploadImageUrl={copyImage}
+          onUploadingChange={setIsUploadingInline}
+          onSubmit={handleEditorSubmit}
+          autoFocus
+          disabled={isSaving}
+          placeholder="Edit comment or type @ to mention..."
+        />
+      </div>
+
+      {/* Portaled Mention Dropdown (immune to overflow-y-auto clipping) */}
+      {showMentionMenu && menuPosition && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={mentionMenuRef}
+          style={{
+            position: 'fixed',
+            top: menuPosition.top,
+            left: menuPosition.left,
+            width: menuPosition.width,
+            zIndex: 999999,
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          className="bg-popover border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+        >
+          <div className="p-2 border-b border-border text-xs font-semibold text-muted-foreground bg-accent/40 flex items-center justify-between">
+            <span>People</span>
+            <span className="text-[10px] text-muted-foreground font-normal">↑↓ navigate, Enter/Tab select</span>
+          </div>
+          <div ref={mentionListRef} className="max-h-48 overflow-y-auto custom-scrollbar relative">
+            {filteredUsers.map((u: any, idx: number) => {
+              const isSelected = idx === selectedIndex;
+              return (
+                <div
+                  key={u.id}
+                  onMouseEnter={() => setSelectedIndex(idx)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => insertSelectedMention(u)}
+                  style={
+                    isSelected
+                      ? {
+                          backgroundColor: 'color-mix(in srgb, var(--accent) 25%, transparent)',
+                        }
+                      : undefined
+                  }
+                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${
+                    isSelected ? 'text-foreground font-medium' : 'text-foreground/80 hover:bg-accent/50'
+                  }`}
+                >
+                  {u.avatarUrl ? (
+                    <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div
+                      style={{
+                        backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+                        color: 'var(--accent)',
+                      }}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                    >
+                      {(u.name || '?').substring(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-xs font-medium truncate">{u.name || 'Unknown User'}</span>
+                    {u.email && <span className="text-[10px] text-muted-foreground truncate">{u.email}</span>}
+                  </div>
+                </div>
+              );
+            })}
+            {filteredUsers.length === 0 && (
+              <div className="p-3 text-sm text-muted-foreground text-center">No users found</div>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Existing and Staged Attachments Strip (positioned below editor, above toolbar) */}
       {totalAttachmentsCount > 0 && (
-        <div className="flex flex-wrap gap-2.5 pb-2 border-b border-zinc-800/60">
+        <div className="flex flex-wrap gap-2.5 pt-2 pb-1 border-t border-zinc-800/60">
           {/* Existing Attachments */}
           {existingAttachments.map((att) => {
             const ext = getFileExtension(att.name || att.url);
@@ -512,7 +694,11 @@ export function EditCommentForm({
             return (
               <div
                 key={idx}
-                className={`relative group flex items-center justify-center bg-zinc-900 rounded-lg border ${isSoftWarning ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-indigo-500/50 ring-1 ring-indigo-500/20'} w-16 h-16 shrink-0 overflow-hidden shadow-sm`}
+                style={!isSoftWarning ? {
+                  borderColor: 'color-mix(in srgb, var(--accent) 50%, var(--border, #3f3f46))',
+                  boxShadow: '0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent)',
+                } : undefined}
+                className={`relative group flex items-center justify-center bg-zinc-900 rounded-lg border ${isSoftWarning ? 'border-amber-500/60 ring-1 ring-amber-500/30' : ''} w-16 h-16 shrink-0 overflow-hidden shadow-sm`}
               >
                 {isImage && previewUrl ? (
                   <>
@@ -523,7 +709,10 @@ export function EditCommentForm({
                       onClick={() => onPreviewImage?.(previewUrl)}
                       title="Click to preview"
                     />
-                    <span className="absolute bottom-0 inset-x-0 bg-indigo-600/90 text-[8px] text-white font-medium text-center py-0.5">
+                    <span
+                      style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 85%, black)' }}
+                      className="absolute bottom-0 inset-x-0 text-[8px] text-white font-medium text-center py-0.5"
+                    >
                       {sizeFormatted}
                     </span>
                     {isSoftWarning && (
@@ -534,8 +723,17 @@ export function EditCommentForm({
                   </>
                 ) : (
                   <div className="flex flex-col items-center justify-center p-1 text-center w-full">
-                    <FileText className={`w-4 h-4 ${isSoftWarning ? 'text-amber-400' : 'text-indigo-400'} mb-0.5`} />
-                    <span className={`text-[8px] font-bold tracking-wider uppercase px-1 py-0.2 rounded ${isSoftWarning ? 'bg-amber-500/15 text-amber-400' : 'bg-indigo-500/15 text-indigo-400'}`}>
+                    <FileText
+                      style={!isSoftWarning ? { color: 'var(--accent)' } : undefined}
+                      className={`w-4 h-4 ${isSoftWarning ? 'text-amber-400' : ''} mb-0.5`}
+                    />
+                    <span
+                      style={!isSoftWarning ? {
+                        backgroundColor: 'color-mix(in srgb, var(--accent) 15%, transparent)',
+                        color: 'var(--accent)',
+                      } : undefined}
+                      className={`text-[8px] font-bold tracking-wider uppercase px-1 py-0.2 rounded ${isSoftWarning ? 'bg-amber-500/15 text-amber-400' : ''}`}
+                    >
                       {ext}
                     </span>
                     <span className="text-[9px] text-zinc-300 font-medium truncate max-w-[50px] mt-0.5" title={file.name}>{file.name}</span>
@@ -561,101 +759,6 @@ export function EditCommentForm({
             );
           })}
         </div>
-      )}
-
-      {/* Editor Container with Mention Detection */}
-      <div
-        ref={editorWrapperRef}
-        onKeyDownCapture={handleEditorKeyDownCapture}
-        className="relative w-full"
-      >
-        <CommentEditor
-          ref={commentEditorRef}
-          id={`edit-${commentId}`}
-          value={text}
-          onChange={(html, textContent, cursorPosition, textBefore) => {
-            setText(html);
-            const textStr = textContent || '';
-            const textBeforeCursor = textBefore !== undefined
-              ? textBefore
-              : (cursorPosition !== undefined && cursorPosition >= 0)
-                ? textStr.substring(0, Math.min(textStr.length, cursorPosition))
-                : textStr;
-
-            // Trigger mention dropdown when '@' follows start of text or whitespace
-            const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
-            if (match) {
-              updateMenuPosition();
-              setShowMentionMenu(true);
-              setMentionSearch(match[1]);
-              setSelectedIndex(0);
-            } else {
-              setShowMentionMenu(false);
-            }
-          }}
-          onPasteFiles={handlePasteFiles}
-          onDropFiles={addFiles}
-          onUploadImage={uploadImage}
-          onUploadImageUrl={copyImage}
-          onUploadingChange={setIsUploadingInline}
-          onSubmit={handleEditorSubmit}
-          autoFocus
-          disabled={isSaving}
-          placeholder="Edit comment or type @ to mention..."
-        />
-      </div>
-
-      {/* Portaled Mention Dropdown (immune to overflow-y-auto clipping) */}
-      {showMentionMenu && menuPosition && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={mentionMenuRef}
-          style={{
-            position: 'fixed',
-            top: menuPosition.top,
-            left: menuPosition.left,
-            width: menuPosition.width,
-            zIndex: 999999,
-          }}
-          onMouseDown={(e) => e.preventDefault()}
-          className="bg-card border border-zinc-700/60 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
-        >
-          <div className="p-2 border-b border-zinc-800/60 text-xs font-semibold text-zinc-400 bg-zinc-900/60 flex items-center justify-between">
-            <span>People</span>
-            <span className="text-[10px] text-zinc-500 font-normal">↑↓ navigate, Enter/Tab select</span>
-          </div>
-          <div className="max-h-48 overflow-y-auto custom-scrollbar">
-            {filteredUsers.map((u: any, idx: number) => {
-              const isSelected = idx === selectedIndex;
-              return (
-                <div
-                  key={u.id}
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => insertSelectedMention(u)}
-                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${
-                    isSelected ? 'bg-indigo-600/30 text-white' : 'text-zinc-200 hover:bg-zinc-800/60'
-                  }`}
-                >
-                  {u.avatarUrl ? (
-                    <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
-                      {(u.name || '?').substring(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-medium truncate">{u.name || 'Unknown User'}</span>
-                    {u.email && <span className="text-[10px] text-zinc-500 truncate">{u.email}</span>}
-                  </div>
-                </div>
-              );
-            })}
-            {filteredUsers.length === 0 && (
-              <div className="p-3 text-sm text-zinc-500 text-center">No users found</div>
-            )}
-          </div>
-        </div>,
-        document.body
       )}
 
       {/* Action Toolbar */}
@@ -740,8 +843,20 @@ export function EditCommentForm({
             <button
               type="button"
               onClick={handleSave}
-              disabled={isSaving || isUploadingInline || !hasAnyContent || !hasChanged}
-              className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-xs font-semibold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed shrink-0"
+              disabled={!canSave}
+              style={
+                canSave
+                  ? {
+                      backgroundColor: 'var(--accent)',
+                      color: 'var(--on-accent, #ffffff)',
+                    }
+                  : undefined
+              }
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-md transition-all flex items-center gap-1.5 shrink-0 ${
+                canSave
+                  ? 'hover:opacity-90 active:scale-95 cursor-pointer text-white shadow-[0_2px_8px_color-mix(in_srgb,var(--accent)_30%,transparent)]'
+                  : 'bg-zinc-800/80 text-zinc-500 border border-zinc-700/40 cursor-not-allowed'
+              }`}
             >
               {isSaving ? (
                 <>
@@ -758,13 +873,24 @@ export function EditCommentForm({
           </div>
         </div>
 
-        {/* Micro instructions line: clean, readable, and never squished into narrow columns */}
+        {/* Micro instructions line */}
         <div className="flex items-center gap-2 text-[11px] text-zinc-500 flex-wrap select-none px-0.5">
           <span>• Type <span className="text-zinc-400 font-medium">@</span> to mention</span>
           <span>• Indent <span className="text-zinc-400 font-mono text-[10px]">(Ctrl+[ / Ctrl+])</span></span>
-          <span>• Paste images <span className="text-zinc-400 font-mono text-[10px]">(Ctrl+V)</span></span>
+          <span className="inline-flex items-center gap-1">
+            • Paste images <span className="text-zinc-400 font-mono text-[10px]">(Ctrl+V)</span>
+          </span>
         </div>
       </div>
+
+      {/* Invisible bottom anchor for auto-scrolling the bottom into view on edit */}
+      <div
+        ref={bottomAnchorRef}
+        data-edit-bottom="true"
+        style={{ scrollMarginBottom: '32px' }}
+        className="h-px w-full pointer-events-none opacity-0"
+        aria-hidden="true"
+      />
     </div>
   );
 }

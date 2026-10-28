@@ -3,7 +3,13 @@
  * checklist that happens to be named "Audit". They share a name, so the items decide:
  * Nexus's only ever holds the four audit items. Mirrors frontend/src/lib/auditChecklist.ts.
  */
-const NEXUS_AUDIT_ITEMS = new Set(['instructions audit', 'design audit', 'ui ux audit', 'funnel audit']);
+const NEXUS_AUDIT_ITEMS = new Set([
+  'instructions audit',
+  'design audit',
+  'ui ux audit',
+  'ui/ux audit',
+  'funnel audit',
+]);
 
 export function isNexusAuditChecklist(c: {
   name: string;
@@ -14,7 +20,11 @@ export function isNexusAuditChecklist(c: {
   const items = c.items ?? [];
   // Empty: Nexus's own unless it came from ClickUp.
   if (items.length === 0) return !c.externalId;
-  return items.every((i) => NEXUS_AUDIT_ITEMS.has(i.text.trim().toLowerCase()));
+  return items.every((i) => {
+    const raw = (i.text || '').trim().toLowerCase();
+    const clean = raw.startsWith('!') ? raw.slice(1).trim() : raw;
+    return NEXUS_AUDIT_ITEMS.has(clean);
+  });
 }
 
 /**

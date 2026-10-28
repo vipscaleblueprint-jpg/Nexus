@@ -17,6 +17,40 @@ export async function getNotifications(req: Request, res: Response) {
     const take = limit ? Math.min(100, Math.max(1, parseInt(limit as string, 10))) : undefined;
     const skip = take ? (pageNum - 1) * take : undefined;
 
+    // The cowbell is strictly "For Me Only" (workspace activities are viewed in Activity Page > Show All).
+    // A notification belongs in the personal cowbell if:
+    // 1. Direct mention
+    // 2. Direct assignment / unassignment to the user
+    // 3. Direct reply to the user's comment
+    // 4. Update on a task or subtask where the user is an active assignee
+    // 5. System notification not linked to any task
+    const forMeCondition: any[] = [
+      { type: { equals: 'MENTION', mode: 'insensitive' } },
+      { title: { contains: 'mentioned you', mode: 'insensitive' } },
+      { title: { contains: 'assigned you', mode: 'insensitive' } },
+      { title: { contains: 'unassigned you', mode: 'insensitive' } },
+      { title: { contains: 'replied to your comment', mode: 'insensitive' } },
+      {
+        task: {
+          OR: [
+            { assigneeId: authReq.user.id },
+            { assignees: { some: { id: authReq.user.id } } },
+            {
+              subtasks: {
+                some: {
+                  OR: [
+                    { assigneeId: authReq.user.id },
+                    { assignees: { some: { id: authReq.user.id } } },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+      { taskId: null },
+    ];
+
     const whereClause: any = {
       userId: authReq.user.id,
       isCleared,
@@ -24,12 +58,14 @@ export async function getNotifications(req: Request, res: Response) {
 
     if (filter === 'unread') {
       whereClause.isRead = false;
+      whereClause.OR = forMeCondition;
     } else if (filter === 'mentions') {
       whereClause.OR = [
-        { type: 'MENTION' },
-        { title: { contains: 'mentioned', mode: 'insensitive' } },
-        { content: { contains: '@' } },
+        { type: { equals: 'MENTION', mode: 'insensitive' } },
+        { title: { contains: 'mentioned you', mode: 'insensitive' } },
       ];
+    } else {
+      whereClause.OR = forMeCondition;
     }
 
     const [notifications, total, unreadCount] = await Promise.all([
@@ -50,6 +86,7 @@ export async function getNotifications(req: Request, res: Response) {
           userId: authReq.user.id,
           isCleared: false,
           isRead: false,
+          OR: forMeCondition,
         },
       }),
     ]);

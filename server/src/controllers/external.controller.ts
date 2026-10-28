@@ -16,6 +16,8 @@ import {
   safeCreateClickUpChecklist,
   safeCreateClickUpChecklistItem,
 } from '../services/clickupService';
+import { getStatusChangeRecipients } from '../utils/roleNotification';
+import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 
 
 async function getOrCreateVipScaleUser() {
@@ -588,8 +590,84 @@ export async function updateTask(req: Request, res: Response) {
         ...(status !== undefined && { status }),
         ...(priority !== undefined && { priority }),
         ...(assigneeId !== undefined && { assigneeId }),
+      },
+      include: {
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
       }
     });
+
+    // Realtime websocket broadcast so KanbanBoard, TaskDetailModal, and Dashboards update immediately
+    io.emit('task:updated', task);
+    if (task.listId) {
+      io.to(`list:${task.listId}`).emit('task:updated', task);
+    }
+
+    // Invalidate Redis caches so fetch/refresh queries reflect the updated task
+    invalidateCache(
+      `task:${task.id}`,
+      `task:activities:${task.id}`,
+      'tasks:all',
+      'lists:all',
+      'dashboard:all',
+      'spaces:all'
+    ).catch(() => {});
+
+    // Audit log & activity feed broadcast when status changed
+    if (status !== undefined && status !== existingTask.status) {
+      try {
+        const actor = apiKey.user || await getOrCreateVipScaleUser();
+        const authorName = 'VIPScale';
+        const log = await prisma.auditLog.create({
+          data: {
+            action: 'STATUS_CHANGE',
+            entity: 'TASK',
+            entityId: task.id,
+            userId: actor.id,
+            details: { oldStatus: existingTask.status, newStatus: status, source: 'external' },
+          }
+        });
+        const activity = {
+          id: log.id,
+          type: 'status_change',
+          author: authorName,
+          oldStatus: existingTask.status,
+          newStatus: status,
+          date: log.createdAt,
+          user: { ...actor, name: authorName },
+        };
+        io.emit('task_activity', { listId: task.listId, taskId: task.id, activity });
+        if (task.listId) {
+          io.to(`list:${task.listId}`).emit('task_activity', { listId: task.listId, taskId: task.id, activity });
+        }
+
+        // Send task notifications to relevant workspace users (assignees, auditors, PMs)
+        const rawUsersToNotify = await getStatusChangeRecipients(
+          status,
+          { ...task, teamId: task.teamId },
+          actor.id
+        );
+        const usersToNotify = await filterUsersByNotificationPreference(rawUsersToNotify, 'status');
+        if (usersToNotify.length > 0) {
+          await prisma.taskNotification.createMany({
+            data: usersToNotify.map((id: any) => ({
+              userId: id,
+              actorId: actor.id,
+              taskId: task.id,
+              type: 'STATUS_CHANGE',
+              title: `${authorName} changed status from ${existingTask.status} to ${status} on task ${task.title}`,
+            })),
+          });
+          usersToNotify.forEach((id: any) => {
+            io.to(`user:${id}`).emit('notification_received');
+          });
+        }
+
+        await invalidateCache(`task:activities:${task.id}`);
+      } catch (activityErr) {
+        console.error('[external.updateTask] activity log error:', activityErr);
+      }
+    }
 
     if (status && status !== existingTask.status && status.toLowerCase() !== 'closed') {
       try {

@@ -36,7 +36,7 @@ export function AppearanceSettings() {
   const hexInputId = useId();
   const colorPickerId = useId();
 
-  const [mode, setMode] = useState<ThemeMode>('system');
+  const [mode, setMode] = useState<ThemeMode>('dark');
   const [palette, setPalette] = useState<ThemePalette>('nexus');
   const [customAccent, setCustomAccent] = useState<string | null>(null);
   const [hexInput, setHexInput] = useState<string>('');

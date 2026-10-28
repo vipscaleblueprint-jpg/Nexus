@@ -196,12 +196,10 @@ export function ActivityCard({
     formattedTime = '';
   }
 
-  // Check for Mention
+  // Check for Mention - only true if this notification is an actual mention for the recipient
   const isMention =
     normType === 'MENTION' ||
-    title.toLowerCase().includes('mentioned you') ||
-    title.toLowerCase().includes('mentioned') ||
-    Boolean(content && (content.includes('mention://') || content.includes('@')));
+    title.toLowerCase().includes('mentioned you');
 
   // Extract display task / subtask title
   const effectiveTaskTitle = subtaskTitle || taskTitle || 'task';
@@ -347,6 +345,11 @@ export function ActivityCard({
           <span className="text-muted-foreground font-normal"> replied to your comment on </span>
           {effectiveIsSubtask && <span className="text-muted-foreground font-normal">subtask </span>}
           <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
+          {isMention && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
+              Mentioned you
+            </span>
+          )}
         </span>
       );
     }
@@ -365,7 +368,7 @@ export function ActivityCard({
           <span className="font-medium text-foreground">{effectiveTaskTitle}</span>
           {isMention && (
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
-              @mention
+              Mentioned you
             </span>
           )}
         </span>
@@ -384,7 +387,7 @@ export function ActivityCard({
         <span className="text-muted-foreground font-normal"> {restOfTitle}</span>
         {isMention && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200 ml-1.5 align-middle select-none">
-            @mention
+            Mentioned you
           </span>
         )}
       </span>

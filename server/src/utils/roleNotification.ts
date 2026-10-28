@@ -42,7 +42,7 @@ export async function findUsersByRoleCategory(
     includeAdmins?: boolean;
   } = {}
 ): Promise<string[]> {
-  const { teamId, excludeUserId, includeAdmins = true } = options;
+  const { teamId, excludeUserId, includeAdmins = false } = options;
   if (!category && !includeAdmins) return [];
 
   // Patterns for matching user roles
@@ -120,7 +120,7 @@ export async function getStatusChangeRecipients(
     const roleUsers = await findUsersByRoleCategory(category, {
       teamId: task.teamId,
       excludeUserId: actingUserId,
-      includeAdmins: true,
+      includeAdmins: false,
     });
     roleUsers.forEach((id) => recipientIds.add(id));
   }

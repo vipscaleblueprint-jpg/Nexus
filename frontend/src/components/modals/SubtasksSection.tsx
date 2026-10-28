@@ -1619,10 +1619,19 @@ function SubtaskRow({
                     <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Audit Items</div>
                     {(() => {
                       const auditChecklist = subtask.checklists?.find((c: any) => isNexusAuditChecklist(c));
+                      const excludedAudits = new Set(
+                        (auditChecklist?.items || [])
+                          .filter((i: any) => (i.text || '').startsWith('!'))
+                          .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+                      );
+                      const activeItems = (auditChecklist?.items || [])
+                        .filter((i: any) => !(i.text || '').startsWith('!'))
+                        .map((i: any) => i.text);
+
                       const requiredAudits = Array.from(new Set([
                         ...getRequiredAudits(subtask.title, subtask.assigneeRoleRestrictions),
-                        ...(auditChecklist?.items?.map((i: any) => i.text) || [])
-                      ]));
+                        ...activeItems
+                      ].filter((text) => !text.startsWith('!') && !excludedAudits.has(text.toLowerCase()))));
                       
                       return requiredAudits.map((text, idx) => {
                         const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());

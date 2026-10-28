@@ -29,6 +29,8 @@ import { io } from '../server';
 import { invalidateCache, redis } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
+import { getStatusChangeRecipients } from '../utils/roleNotification';
+import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 
 interface LinkedTarget {
   taskId: string;
@@ -156,6 +158,22 @@ export const handleSheetUpdate = async (req: Request, res: Response) => {
   }
 };
 
+function isProtectedStatus(status: string | null | undefined): boolean {
+  if (!status) return false;
+  const s = status.toUpperCase().replace(/[^A-Z]/g, '');
+  if (s.includes('REVIEW')) return true;
+  const protectedStatuses = [
+    'INPROGRESS',
+    'CLOSED', 'COMPLETE', 'DONE',
+    'WAITING',
+    'CRM',
+    'CHECKING', 'INCHECKING',
+    'DAILY', 'WEEKLY', 'MONTHLY',
+    'KYC', 'PINBOARD'
+  ];
+  return protectedStatuses.includes(s);
+}
+
 async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Response) {
   const wanted = str(newStatus);
   if (!wanted) return res.status(400).json({ error: 'new_status is required' });
@@ -165,14 +183,28 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
     const status = wanted.toUpperCase();
     const beforeSub = await prisma.subtask.findUnique({
       where: { id: target.subtaskId },
-      select: { status: true, title: true },
+      select: { id: true, status: true, title: true },
     });
+    if (!beforeSub) return res.status(404).json({ error: 'Subtask not found' });
+
+    // Guard: never downgrade a subtask that is in review, waiting, closed, etc. back to IN PROGRESS
+    if (status === 'IN PROGRESS' && isProtectedStatus(beforeSub.status)) {
+      return res.status(200).json({
+        success: true,
+        updated: false,
+        reason: `Subtask is already ${beforeSub.status}; skipped auto-start to IN PROGRESS`,
+        subtask: beforeSub,
+        clickup_link: target.clickUpLink,
+      });
+    }
+
     const updatedSub = await prisma.subtask.update({
       where: { id: target.subtaskId },
       data: { status, completed: status === 'CLOSED' },
     });
     if (beforeSub?.status !== updatedSub.status) {
       const actor = await getOrCreateVipScaleUser();
+      const authorName = 'VIPScale';
       const log = await prisma.auditLog.create({
         data: {
           action: 'STATUS_CHANGE',
@@ -185,14 +217,18 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
       const activity = {
         id: log.id,
         type: 'status_change',
-        author: actor.name || 'VIP Scale',
+        author: authorName,
         oldStatus: beforeSub?.status,
         newStatus: updatedSub.status,
         subtaskTitle: updatedSub.title,
+        subtaskId: target.subtaskId,
         date: log.createdAt,
-        user: actor,
+        user: { ...actor, name: authorName },
       };
       io.emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
+      if (target.listId) {
+        io.to(`list:${target.listId}`).emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
+      }
     }
     const fullParent = await prisma.task.findUnique({
       where: { id: target.taskId },
@@ -216,7 +252,20 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
       where: { listId: target.listId, name: { equals: wanted, mode: 'insensitive' } },
       select: { name: true },
     });
-    const before = await prisma.task.findUnique({ where: { id: target.taskId }, select: { status: true } });
+    const before = await prisma.task.findUnique({ where: { id: target.taskId }, select: { id: true, status: true, title: true, teamId: true, assigneeId: true } });
+    if (!before) return res.status(404).json({ error: 'Task not found' });
+
+    // Guard: never downgrade a task that is in review, waiting, closed, etc. back to IN PROGRESS
+    if (wanted.toUpperCase() === 'IN PROGRESS' && isProtectedStatus(before.status)) {
+      return res.status(200).json({
+        success: true,
+        updated: false,
+        reason: `Task is already ${before.status}; skipped auto-start to IN PROGRESS`,
+        task: before,
+        clickup_link: target.clickUpLink,
+      });
+    }
+
     const updated = await prisma.task.update({
       where: { id: target.taskId },
       data: { status: listStatus?.name ?? wanted },
@@ -224,6 +273,7 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
     });
     if (before?.status !== updated.status) {
       const actor = await getOrCreateVipScaleUser();
+      const authorName = 'VIPScale';
       const log = await prisma.auditLog.create({
         data: {
           action: 'STATUS_CHANGE',
@@ -236,19 +286,47 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
       const activity = {
         id: log.id,
         type: 'status_change',
-        author: actor.name || 'VIP Scale',
+        author: authorName,
         oldStatus: before?.status,
         newStatus: updated.status,
         date: log.createdAt,
-        user: actor,
+        user: { ...actor, name: authorName },
       };
       io.emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
+      if (target.listId) {
+        io.to(`list:${target.listId}`).emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
+      }
+
+      try {
+        const rawUsersToNotify = await getStatusChangeRecipients(
+          updated.status,
+          { id: updated.id, teamId: (before as any).teamId, assigneeId: updated.assigneeId },
+          actor.id
+        );
+        const usersToNotify = await filterUsersByNotificationPreference(rawUsersToNotify, 'status');
+        if (usersToNotify.length > 0) {
+          await prisma.taskNotification.createMany({
+            data: usersToNotify.map((id: any) => ({
+              userId: id,
+              actorId: actor.id,
+              taskId: target.taskId,
+              type: 'STATUS_CHANGE',
+              title: `${authorName} changed status from ${before?.status} to ${updated.status} on task ${updated.title}`,
+            })),
+          });
+          usersToNotify.forEach((id: any) => {
+            io.to(`user:${id}`).emit('notification_received');
+          });
+        }
+      } catch (notifErr) {
+        console.error('[sheets.applyStatus] notification error:', notifErr);
+      }
     }
     io.emit('task:updated', updated);
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
-  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all');
+  await invalidateCache(`task:${target.taskId}`, `task:activities:${target.taskId}`, 'tasks:all', 'lists:all', 'spaces:all', 'dashboard:all');
   return res.status(200).json({ success: true, clickup_link: target.clickUpLink });
 }
 

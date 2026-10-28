@@ -3,7 +3,27 @@
  * Audit section) vs. a ClickUp checklist that happens to be named "Audit". The two
  * share a name, so the items decide: Nexus's only ever holds the four audit items.
  */
-const NEXUS_AUDIT_ITEMS = new Set(['instructions audit', 'design audit', 'ui ux audit', 'funnel audit']);
+export interface AuditOption {
+  id: string;
+  label: string;
+  role: string | null;
+  description: string;
+}
+
+export const ALL_AUDIT_OPTIONS: AuditOption[] = [
+  { id: 'Instructions Audit', label: 'Instructions Audit', role: null, description: 'Review against task briefing & instructions' },
+  { id: 'UI UX Audit', label: 'UI/UX Audit', role: 'UI/UX', description: 'Review user experience & interaction design' },
+  { id: 'Design Audit', label: 'Design Audit', role: 'Designer', description: 'Review visual aesthetics, assets & layouts' },
+  { id: 'Funnel Audit', label: 'Funnel Audit', role: 'Funnel/Backend', description: 'Review funnel flow, tracking & backend setup' },
+];
+
+const NEXUS_AUDIT_ITEMS = new Set([
+  'instructions audit',
+  'design audit',
+  'ui ux audit',
+  'ui/ux audit',
+  'funnel audit',
+]);
 
 export interface ChecklistLike {
   name: string;
@@ -18,7 +38,11 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
   const items = c.items ?? [];
   // Empty: Nexus's own unless it came from ClickUp.
   if (items.length === 0) return !c.externalId;
-  return items.every((i) => NEXUS_AUDIT_ITEMS.has((i.text || '').trim().toLowerCase()));
+  return items.every((i) => {
+    const raw = (i.text || '').trim().toLowerCase();
+    const clean = raw.startsWith('!') ? raw.slice(1).trim() : raw;
+    return NEXUS_AUDIT_ITEMS.has(clean);
+  });
 }
 
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): string[] => {
@@ -102,11 +126,25 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
       .flatMap((s: any) => s.assigneeRoleRestrictions || []),
   ];
 
+  const excludedAudits = new Set(
+    auditChecklists.flatMap((c: any) => c.items || [])
+      .filter((i: any) => (i.text || '').startsWith('!'))
+      .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
+  );
+
+  const activeAuditItems = auditChecklists.flatMap((c: any) => c.items || [])
+    .filter((i: any) => !(i.text || '').startsWith('!'))
+    .map((i: any) => i.text);
+
   const requiredAuditItems = Array.from(
     new Set([
       ...getRequiredAudits(task.title || '', auditorRoles),
-      ...auditChecklists.flatMap((c: any) => c.items?.map((i: any) => i.text) || []),
-    ].filter((text, i, all) => all.findIndex(t => t.toLowerCase() === text.toLowerCase()) === i))
+      ...activeAuditItems,
+    ].filter((text, i, all) => {
+      const norm = (text || '').trim().toLowerCase();
+      if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
+      return all.findIndex(t => (t || '').trim().toLowerCase() === norm) === i;
+    }))
   );
 
   const getAuditItem = (text: string) => {

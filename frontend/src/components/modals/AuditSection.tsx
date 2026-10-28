@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
-import { ChevronDown, ChevronRight, User, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, User, Check, Plus, Trash2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
-import { isNexusAuditChecklist, getRequiredAudits } from '@/lib/auditChecklist';
+import { isNexusAuditChecklist, getRequiredAudits, ALL_AUDIT_OPTIONS } from '@/lib/auditChecklist';
+import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor } from './TaskDetailModal';
 
-export { getRequiredAudits };
+export { getRequiredAudits, ALL_AUDIT_OPTIONS };
 
 interface AuditSectionProps {
   task: Task;
@@ -22,8 +23,11 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
   const [isExpanded, setIsExpanded] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isShaking, setIsShaking] = useState(false);
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [highlightedAudits, setHighlightedAudits] = useState<string[] | null>(null);
   const highlightTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const canManageAudits = isProjectManagerOrAdmin(currentUser);
 
   useEffect(() => {
     const handleHighlight = (e: any) => {
@@ -66,7 +70,6 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
     };
   }, [subtaskId, task.id]);
 
-
   // A task can end up with more than one Audit checklist (e.g. two clicks racing to create it).
   // Read items from all of them so an assignee or check saved on either one still shows.
   const auditChecklists = checklists.filter(c => {
@@ -91,10 +94,24 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
           .flatMap((s: any) => s.assigneeRoleRestrictions || []),
       ];
 
+  const excludedAudits = new Set(
+    auditChecklists.flatMap(c => c.items || [])
+      .filter(i => (i.text || '').startsWith('!'))
+      .map(i => (i.text || '').slice(1).trim().toLowerCase())
+  );
+
+  const activeChecklistItems = auditChecklists.flatMap(c => c.items || [])
+    .filter(i => !(i.text || '').startsWith('!'))
+    .map(i => i.text);
+
   const requiredAuditItems = Array.from(new Set([
     ...getRequiredAudits(title, auditorRoles),
-    ...auditChecklists.flatMap(c => c.items?.map(i => i.text) || [])
-  ].filter((text, i, all) => all.findIndex(t => t.toLowerCase() === text.toLowerCase()) === i)));
+    ...activeChecklistItems
+  ].filter((text, i, all) => {
+    const norm = (text || '').trim().toLowerCase();
+    if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
+    return all.findIndex(t => (t || '').trim().toLowerCase() === norm) === i;
+  })));
 
   // Prefer the copy that carries state (assigned or checked) when duplicates exist.
   const getAuditItem = (text: string) => {
@@ -315,14 +332,235 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
     }
   };
 
-  // Tasks with nothing to audit (e.g. onboarding tasks created with skipAutoAudit) show no Audit section.
-  if (requiredAuditItems.length === 0) return null;
+  const handleAddAudit = async (auditId: string) => {
+    if (!canManageAudits || isProcessing) return;
+    setIsProcessing(true);
+
+    const normAudit = auditId.trim().toLowerCase();
+
+    // Check if there is an exclusion marker for this audit (e.g. !UI UX Audit)
+    const existingExclusionItem = auditChecklists
+      .flatMap(c => c.items || [])
+      .find(i => (i.text || '').trim().toLowerCase() === `!${normAudit}`);
+
+    let targetChecklistId = existingExclusionItem?.checklistId || auditChecklist?.id;
+    const tempChecklistCreated = !targetChecklistId;
+    if (!targetChecklistId) {
+      targetChecklistId = `temp-cl-${Date.now()}`;
+    }
+
+    // Check if an active item already exists
+    const existingActiveItem = auditChecklists
+      .flatMap(c => c.items || [])
+      .find(i => (i.text || '').trim().toLowerCase() === normAudit);
+
+    let optimisticItemId = existingActiveItem?.id;
+    const tempItemCreated = !optimisticItemId;
+    if (!optimisticItemId) {
+      optimisticItemId = `temp-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    }
+
+    let optimisticChecklists = [...checklists];
+
+    if (tempChecklistCreated) {
+      optimisticChecklists.push({
+        id: targetChecklistId,
+        taskId: task.id,
+        subtaskId: subtaskId || undefined,
+        name: 'Audit',
+        createdAt: new Date().toISOString(),
+        items: [],
+      });
+    }
+
+    optimisticChecklists = optimisticChecklists.map(c => {
+      if (c.id === targetChecklistId) {
+        // Remove the exclusion marker if it existed
+        const itemsWithoutExclusion = (c.items || []).filter(
+          i => (i.text || '').trim().toLowerCase() !== `!${normAudit}`
+        );
+        // Add active item if not already in items
+        const alreadyHasActive = itemsWithoutExclusion.some(
+          i => (i.text || '').trim().toLowerCase() === normAudit
+        );
+        const nextItems = alreadyHasActive
+          ? itemsWithoutExclusion
+          : [
+              ...itemsWithoutExclusion,
+              {
+                id: optimisticItemId!,
+                checklistId: targetChecklistId,
+                text: auditId,
+                completed: false,
+                createdAt: new Date().toISOString(),
+              },
+            ];
+        return { ...c, items: nextItems };
+      }
+      return c;
+    });
+
+    onUpdateChecklists(optimisticChecklists);
+
+    try {
+      let realChecklistId = targetChecklistId;
+      if (tempChecklistCreated) {
+        const res = await tasksApi.createChecklist(task.id, {
+          name: 'Audit',
+          subtaskId,
+        });
+        realChecklistId = res.checklist.id;
+      }
+
+      // If there was an exclusion marker in DB, delete it
+      if (existingExclusionItem && !existingExclusionItem.id.startsWith('temp-')) {
+        await tasksApi.deleteChecklistItem(task.id, existingExclusionItem.checklistId, existingExclusionItem.id);
+      }
+
+      // If active item did not exist in DB, create it
+      if (tempItemCreated) {
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { text: auditId });
+        const realItemId = res.item.id;
+        const reconciled = optimisticChecklists.map(c => {
+          if (c.id === targetChecklistId || c.id === realChecklistId) {
+            return {
+              ...c,
+              id: realChecklistId,
+              items: (c.items || []).map(i => (i.id === optimisticItemId ? res.item : i)),
+            };
+          }
+          return c;
+        });
+        onUpdateChecklists(reconciled);
+      }
+    } catch (e) {
+      console.error('[AuditSection] Failed to add audit:', e);
+      onUpdateChecklists(checklists);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRemoveAudit = async (auditText: string) => {
+    if (!canManageAudits || isProcessing) return;
+    setIsProcessing(true);
+
+    const normAudit = auditText.trim().toLowerCase();
+
+    if (highlightedAudits) {
+      const remaining = highlightedAudits.filter(t => t.toLowerCase() !== normAudit);
+      setHighlightedAudits(remaining.length === 0 ? null : remaining);
+    }
+
+    // Check if an active item currently exists in DB/state
+    const existingActiveItem = auditChecklists
+      .flatMap(c => c.items || [])
+      .find(i => (i.text || '').trim().toLowerCase() === normAudit);
+
+    let targetChecklistId = existingActiveItem?.checklistId || auditChecklist?.id;
+    const tempChecklistCreated = !targetChecklistId;
+    if (!targetChecklistId) {
+      targetChecklistId = `temp-cl-${Date.now()}`;
+    }
+
+    // Check if this audit is naturally generated by getRequiredAudits for this task title/roles
+    const isNaturallyRequired = getRequiredAudits(title, auditorRoles).some(
+      a => a.toLowerCase() === normAudit
+    );
+
+    const tempExclusionItemId = `temp-ex-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    let optimisticChecklists = [...checklists];
+
+    if (tempChecklistCreated) {
+      optimisticChecklists.push({
+        id: targetChecklistId,
+        taskId: task.id,
+        subtaskId: subtaskId || undefined,
+        name: 'Audit',
+        createdAt: new Date().toISOString(),
+        items: [],
+      });
+    }
+
+    optimisticChecklists = optimisticChecklists.map(c => {
+      if (c.id === targetChecklistId) {
+        // Remove the active item
+        const nextItems = (c.items || []).filter(
+          i => (i.text || '').trim().toLowerCase() !== normAudit
+        );
+        // If naturally required by getRequiredAudits, add the exclusion marker
+        if (isNaturallyRequired && !nextItems.some(i => (i.text || '').trim().toLowerCase() === `!${normAudit}`)) {
+          nextItems.push({
+            id: tempExclusionItemId,
+            checklistId: targetChecklistId,
+            text: `!${auditText}`,
+            completed: false,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        return { ...c, items: nextItems };
+      }
+      return c;
+    });
+
+    onUpdateChecklists(optimisticChecklists);
+
+    try {
+      let realChecklistId = targetChecklistId;
+      if (tempChecklistCreated) {
+        const res = await tasksApi.createChecklist(task.id, {
+          name: 'Audit',
+          subtaskId,
+        });
+        realChecklistId = res.checklist.id;
+      }
+
+      // If active item existed in DB, delete it
+      if (existingActiveItem && !existingActiveItem.id.startsWith('temp-')) {
+        await tasksApi.deleteChecklistItem(task.id, existingActiveItem.checklistId, existingActiveItem.id);
+      }
+
+      // If naturally required, create exclusion item in DB so it stays excluded across sessions
+      if (isNaturallyRequired) {
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { text: `!${auditText}` });
+        const reconciled = optimisticChecklists.map(c => {
+          if (c.id === targetChecklistId || c.id === realChecklistId) {
+            return {
+              ...c,
+              id: realChecklistId,
+              items: (c.items || []).map(i => (i.id === tempExclusionItemId ? res.item : i)),
+            };
+          }
+          return c;
+        });
+        onUpdateChecklists(reconciled);
+      }
+    } catch (e) {
+      console.error('[AuditSection] Failed to remove audit:', e);
+      onUpdateChecklists(checklists);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Determine which standard audit types are not currently added
+  const availableAuditsToAdd = ALL_AUDIT_OPTIONS.filter(
+    option => !requiredAuditItems.some(
+      t => t.toLowerCase() === option.id.toLowerCase() || (option.id === 'UI UX Audit' && t.toLowerCase() === 'ui/ux audit')
+    )
+  );
+
+  // If no audits are required and user cannot manage audits, hide section entirely
+  if (requiredAuditItems.length === 0 && !canManageAudits) return null;
 
   return (
     <div className={`w-full ${isExpanded ? 'mb-4' : 'mb-1'}`}>
       {/* Header */}
-      <div className={`flex items-center justify-between group cursor-pointer select-none ${isExpanded ? 'mb-3' : 'mb-0'}`} onClick={() => setIsExpanded(!isExpanded)}>
-        <div className="flex items-center gap-2">
+      <div className={`flex items-center justify-between select-none ${isExpanded ? 'mb-3' : 'mb-0'}`}>
+        <div 
+          className="flex items-center gap-2 group cursor-pointer" 
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
           {isExpanded ? (
             <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0" />
           ) : (
@@ -333,6 +571,74 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
             {completedCount} of {requiredAuditItems.length} complete
           </span>
         </div>
+
+        {/* PM Action: Add Audit Popover */}
+        {canManageAudits && (
+          <Popover.Root open={isAddMenuOpen} onOpenChange={setIsAddMenuOpen}>
+            <Popover.Trigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800/60 hover:bg-zinc-700/80 border border-zinc-700/60 rounded-md transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                disabled={isProcessing}
+                title="Add audit (Project Managers and Admins only)"
+              >
+                <Plus className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Add Audit</span>
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                className="z-[100] w-64 rounded-xl bg-zinc-900 border border-zinc-800 p-2 shadow-2xl outline-none"
+                align="end"
+                sideOffset={6}
+              >
+                <div className="flex items-center justify-between px-2 py-1.5 mb-1.5 border-b border-zinc-800/80">
+                  <span className="text-xs font-semibold text-zinc-200">Add Audit</span>
+                  <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider">PM Action</span>
+                </div>
+
+                {availableAuditsToAdd.length === 0 ? (
+                  <div className="px-3 py-4 text-center">
+                    <p className="text-xs text-zinc-400 font-medium">All Audits Added</p>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">All 4 standard audit types are active on this task.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {availableAuditsToAdd.map(option => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => {
+                          handleAddAudit(option.id);
+                          setIsAddMenuOpen(false);
+                        }}
+                        className="w-full text-left px-2.5 py-2 rounded-lg text-xs text-zinc-200 hover:text-white hover:bg-zinc-800/80 transition-all flex items-center justify-between group cursor-pointer"
+                      >
+                        <div className="flex flex-col min-w-0 pr-2">
+                          <span className="font-medium text-zinc-200 group-hover:text-zinc-100 truncate">
+                            {option.label}
+                          </span>
+                          <span className="text-[11px] text-zinc-500 truncate">
+                            {option.description}
+                          </span>
+                        </div>
+                        {option.role ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/60 text-zinc-400 shrink-0 font-normal">
+                            {option.role}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40 text-zinc-500 shrink-0 font-normal">
+                            General
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+        )}
       </div>
 
       {/* Checklists List */}
@@ -356,144 +662,182 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
               </div>
             </div>
 
-            {/* Items */}
-            <div className="p-2 flex flex-col gap-0.5">
-              {requiredAuditItems.map((text, idx) => {
-                const item = getAuditItem(text);
-                const isCompleted = !!item?.completed;
-                const assigneeId = item?.assigneeId;
-                const assignee = assigneeId ? users.find(u => u.id === assigneeId) : undefined;
-
-                const isItemNeeded = Boolean(
-                  highlightedAudits &&
-                  !isCompleted &&
-                  (highlightedAudits.length === 0 || highlightedAudits.some(a => a.toLowerCase() === text.toLowerCase()))
-                );
-
-                const roles = (currentUser?.roles || []).map(r => r?.toLowerCase() || '');
-                const isAdmin = currentUser?.systemRole === 'ADMIN';
-
-                let canCheck = isAdmin;
-                let requiredRole = "";
-                if (!canCheck) {
-                  if (text === 'UI UX Audit') {
-                    canCheck = roles.some(r => r.includes('ui/ux') || r.includes('ui ux') || r.includes('ui-ux'));
-                    requiredRole = "UI/UX";
-                  } else if (text === 'Design Audit') {
-                    canCheck = roles.some(r => r.includes('design'));
-                    requiredRole = "Designer";
-                  } else if (text === 'Funnel Audit') {
-                    canCheck = roles.some(r => r.includes('funnel') || r.includes('backend'));
-                    requiredRole = "Funnel/Backend";
-                  } else if (text === 'Instructions Audit') {
-                    canCheck = true;
-                  }
-                }
-
-                return (
-                  <div 
-                    key={idx} 
-                    className={`flex items-center justify-between py-1.5 px-2 group/item rounded-lg transition-colors ${
-                      isItemNeeded
-                        ? 'bg-zinc-800/40 border border-emerald-500/30 shadow-sm my-0.5'
-                        : 'hover:bg-accent/30'
-                    }`}
+            {/* Empty state when all audits are removed by a PM */}
+            {requiredAuditItems.length === 0 ? (
+              <div className="p-5 flex flex-col items-center justify-center text-center gap-2">
+                <div className="text-xs text-zinc-300 font-medium">No Audits Configured</div>
+                <p className="text-[11px] text-zinc-500 max-w-[300px]">
+                  No audits are currently required for this task. Project Managers can add audits at any time.
+                </p>
+                {canManageAudits && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddMenuOpen(true)}
+                    className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg transition-colors cursor-pointer"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <button 
-                        className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${!canCheck || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Audit</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* Items */
+              <div className="p-2 flex flex-col gap-0.5">
+                {requiredAuditItems.map((text, idx) => {
+                  const item = getAuditItem(text);
+                  const isCompleted = !!item?.completed;
+                  const assigneeId = item?.assigneeId;
+                  const assignee = assigneeId ? users.find(u => u.id === assigneeId) : undefined;
+
+                  const isItemNeeded = Boolean(
+                    highlightedAudits &&
+                    !isCompleted &&
+                    (highlightedAudits.length === 0 || highlightedAudits.some(a => a.toLowerCase() === text.toLowerCase()))
+                  );
+
+                  const roles = (currentUser?.roles || []).map(r => r?.toLowerCase() || '');
+                  const isAdmin = currentUser?.systemRole === 'ADMIN';
+
+                  let canCheck = isAdmin;
+                  let requiredRole = "";
+                  if (!canCheck) {
+                    if (text === 'UI UX Audit' || text === 'UI/UX Audit') {
+                      canCheck = roles.some(r => r.includes('ui/ux') || r.includes('ui ux') || r.includes('ui-ux'));
+                      requiredRole = "UI/UX";
+                    } else if (text === 'Design Audit') {
+                      canCheck = roles.some(r => r.includes('design'));
+                      requiredRole = "Designer";
+                    } else if (text === 'Funnel Audit') {
+                      canCheck = roles.some(r => r.includes('funnel') || r.includes('backend'));
+                      requiredRole = "Funnel/Backend";
+                    } else if (text === 'Instructions Audit') {
+                      canCheck = true;
+                    }
+                  }
+
+                  const displayLabel = text === 'UI UX Audit' ? 'UI/UX Audit' : text;
+
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`flex items-center justify-between py-1.5 px-2 group/item rounded-lg transition-colors ${
+                        isItemNeeded
+                          ? 'bg-zinc-800/40 border border-emerald-500/30 shadow-sm my-0.5'
+                          : 'hover:bg-accent/30'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <button 
+                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${!canCheck || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${
+                            isCompleted
+                              ? 'bg-emerald-500 border-emerald-500 text-white'
+                              : isItemNeeded
+                              ? 'border-emerald-500 bg-emerald-500/20'
+                              : 'border-zinc-600 bg-zinc-800/40 hover:border-zinc-400 hover:bg-zinc-800'
+                          }`}
+                          onClick={() => {
+                            if (canCheck) {
+                              handleToggleItem(text, item);
+                            }
+                          }}
+                          title={!canCheck ? `Only ${requiredRole || 'Admins'} can check this item` : "Click to check audit"}
+                          disabled={isProcessing || !canCheck}
+                        >
+                          {isCompleted && <Check className="w-2.5 h-2.5" />}
+                        </button>
+                        <span className={`text-sm truncate ${
                           isCompleted
-                            ? 'bg-emerald-500 border-emerald-500 text-white'
+                            ? 'text-muted-foreground line-through'
                             : isItemNeeded
-                            ? 'border-emerald-500 bg-emerald-500/20'
-                            : 'border-zinc-600 bg-zinc-800/40 hover:border-zinc-400 hover:bg-zinc-800'
-                        }`}
-                        onClick={() => {
-                          if (canCheck) {
-                            handleToggleItem(text, item);
-                          }
-                        }}
-                        title={!canCheck ? `Only ${requiredRole || 'Admins'} can check this item` : "Click to check audit"}
-                        disabled={isProcessing || !canCheck}
-                      >
-                        {isCompleted && <Check className="w-2.5 h-2.5" />}
-                      </button>
-                      <span className={`text-sm truncate ${
-                        isCompleted
-                          ? 'text-muted-foreground line-through'
-                          : isItemNeeded
-                          ? 'font-medium text-zinc-100'
-                          : 'text-foreground'
-                      }`}>
-                        {text}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {isItemNeeded && (
-                        <span className="text-[10px] uppercase font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 tracking-wider shrink-0">
-                          Required
+                            ? 'font-medium text-zinc-100'
+                            : 'text-foreground'
+                        }`}>
+                          {displayLabel}
                         </span>
-                      )}
+                      </div>
 
-                      {/* Assignee */}
-                      <Popover.Root>
-                        <Popover.Trigger asChild>
-                          <button className="w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover cursor-pointer" disabled={isProcessing}>
-                            {assignee?.avatarUrl ? (
-                              <img src={assignee.avatarUrl} alt={assignee.name} title={assignee.name} className="w-full h-full rounded-full object-cover" />
-                            ) : assigneeId ? (
-                              <div title={assignee?.name} className={`w-full h-full rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(assignee?.name || assigneeId)}`}>
-                                {assignee?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
-                              </div>
-                            ) : (
-                              <User className="w-3 h-3" />
-                            )}
-                          </button>
-                        </Popover.Trigger>
-                        <Popover.Portal>
-                          <Popover.Content className="z-[100] w-56 rounded-lg bg-popover border border-border p-2 shadow-xl outline-none" align="end" sideOffset={5}>
-                            <div className="text-xs font-medium text-muted-foreground mb-2 px-1">Assign to</div>
-                            <div className="max-h-60 overflow-y-auto">
-                              <button 
-                                className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 mb-1 cursor-pointer"
-                                onClick={() => handleUpdateAssignee(text, item, '')}
-                              >
-                                <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center"><User className="w-3 h-3 text-muted-foreground" /></div>
-                                Unassigned
-                              </button>
-                              {users.filter(u => {
-                                const uRoles = (u.roles || []).map(r => r?.toLowerCase() || '');
-                                if (text === 'UI UX Audit') return uRoles.some(r => r.includes('ui/ux') || r.includes('ui ux') || r.includes('ui-ux'));
-                                if (text === 'Design Audit') return uRoles.some(r => r.includes('design'));
-                                if (text === 'Funnel Audit') return uRoles.some(r => r.includes('funnel') || r.includes('backend'));
-                                return true;
-                              }).map(u => (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isItemNeeded && (
+                          <span className="text-[10px] uppercase font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 tracking-wider shrink-0">
+                            Required
+                          </span>
+                        )}
+
+                        {/* Assignee */}
+                        <Popover.Root>
+                          <Popover.Trigger asChild>
+                            <button className="w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover cursor-pointer" disabled={isProcessing}>
+                              {assignee?.avatarUrl ? (
+                                <img src={assignee.avatarUrl} alt={assignee.name} title={assignee.name} className="w-full h-full rounded-full object-cover" />
+                              ) : assigneeId ? (
+                                <div title={assignee?.name} className={`w-full h-full rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(assignee?.name || assigneeId)}`}>
+                                  {assignee?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
+                                </div>
+                              ) : (
+                                <User className="w-3 h-3" />
+                              )}
+                            </button>
+                          </Popover.Trigger>
+                          <Popover.Portal>
+                            <Popover.Content className="z-[100] w-56 rounded-lg bg-popover border border-border p-2 shadow-xl outline-none" align="end" sideOffset={5}>
+                              <div className="text-xs font-medium text-muted-foreground mb-2 px-1">Assign to</div>
+                              <div className="max-h-60 overflow-y-auto">
                                 <button 
-                                  key={u.id}
-                                  className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 cursor-pointer"
-                                  onClick={() => handleUpdateAssignee(text, item, u.id)}
+                                  className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 mb-1 cursor-pointer"
+                                  onClick={() => handleUpdateAssignee(text, item, '')}
                                 >
-                                  {u.avatarUrl ? (
-                                    <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
-                                  ) : (
-                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(u.name || u.id)}`}>
-                                      {u.name?.substring(0, 2).toUpperCase()}
-                                    </div>
-                                  )}
-                                  <span className="flex-1 truncate">{u.name}</span>
-                                  {u.id === assigneeId && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                                  <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center"><User className="w-3 h-3 text-muted-foreground" /></div>
+                                  Unassigned
                                 </button>
-                              ))}
-                            </div>
-                          </Popover.Content>
-                        </Popover.Portal>
-                      </Popover.Root>
+                                {users.filter(u => {
+                                  const uRoles = (u.roles || []).map(r => r?.toLowerCase() || '');
+                                  if (text === 'UI UX Audit' || text === 'UI/UX Audit') return uRoles.some(r => r.includes('ui/ux') || r.includes('ui ux') || r.includes('ui-ux'));
+                                  if (text === 'Design Audit') return uRoles.some(r => r.includes('design'));
+                                  if (text === 'Funnel Audit') return uRoles.some(r => r.includes('funnel') || r.includes('backend'));
+                                  return true;
+                                }).map(u => (
+                                  <button 
+                                    key={u.id}
+                                    className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 cursor-pointer"
+                                    onClick={() => handleUpdateAssignee(text, item, u.id)}
+                                  >
+                                    {u.avatarUrl ? (
+                                      <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
+                                    ) : (
+                                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(u.name || u.id)}`}>
+                                        {u.name?.substring(0, 2).toUpperCase()}
+                                      </div>
+                                    )}
+                                    <span className="flex-1 truncate">{u.name}</span>
+                                    {u.id === assigneeId && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                                  </button>
+                                ))}
+                              </div>
+                            </Popover.Content>
+                          </Popover.Portal>
+                        </Popover.Root>
+
+                        {/* PM Action: Remove Audit Button */}
+                        {canManageAudits && (
+                          <button
+                            type="button"
+                            className="w-6 h-6 rounded-md flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0 opacity-0 group-hover/item:opacity-100 focus:opacity-100"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveAudit(text);
+                            }}
+                            title={`Remove ${displayLabel}`}
+                            disabled={isProcessing}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

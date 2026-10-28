@@ -568,8 +568,8 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     // Send ASSIGNMENT notifications so the task appears in each assignee's Activity feed
     const notifyUserIds = new Set<string>(finalAssigneeIds);
 
-    // Also notify all members of the resolved team
-    if (resolvedTeamId) {
+    // Only notify all members of the resolved team if no individual assignees were assigned
+    if (resolvedTeamId && finalAssigneeIds.length === 0) {
       const teamMembers = await prisma.user.findMany({
         where: { teamId: resolvedTeamId },
         select: { id: true }

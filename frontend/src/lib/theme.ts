@@ -357,6 +357,13 @@ export function saveStoredTheme(config: ThemeConfig, userId?: string): void {
     if (userId) {
       localStorage.setItem(`${STORAGE_USER_PREFIX}${userId}`, payload);
     }
+    // Synchronize all existing nexus-theme-user-* keys so they never retain a stale conflicting theme
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(STORAGE_USER_PREFIX)) {
+        localStorage.setItem(key, payload);
+      }
+    }
     if (config.mode === 'light' || config.mode === 'dark') {
       localStorage.setItem('nexus-theme', config.mode);
     }
@@ -373,6 +380,15 @@ export const PRE_PAINT_THEME_SCRIPT = `
 (function() {
   try {
     var raw = localStorage.getItem('nexus-theme-config');
+    if (!raw) {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf('nexus-theme-user-') === 0) {
+          raw = localStorage.getItem(k);
+          break;
+        }
+      }
+    }
     var cfg = raw ? JSON.parse(raw) : null;
     var legacy = localStorage.getItem('nexus-theme');
     var mode = (cfg && cfg.mode) ? cfg.mode : (legacy === 'light' ? 'light' : 'dark');

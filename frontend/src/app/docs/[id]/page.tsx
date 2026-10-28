@@ -1118,11 +1118,12 @@ export default function DocPage({ docId }: { docId?: string }) {
       let parentId: string | null = taskObj?.taskId && taskObj.taskId !== taskObj.id ? taskObj.taskId : null;
 
       if (!parentId) {
+        const urlSubtask = typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('subtask') : null;
         const known = (taskObj?.id === taskId ? taskObj : null) || index[taskId] || allTasks.find(t => t.id === taskId);
-        if (known) return open(known, null);
+        if (known) return open(known, urlSubtask);
         const res = await tasksApi.getTask(taskId);
         if (!res.task) return;
-        if (!res.subtask) return open(res.task, null);
+        if (!res.subtask) return open(res.task, urlSubtask);
         // The requested id was a subtask: the server answered with its parent task
         if (hasSubtask(res.task)) return open(res.task, taskId);
         parentId = res.task.id;

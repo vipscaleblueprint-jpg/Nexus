@@ -192,7 +192,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
 
   const style = {
     transform: CSS.Transform.toString(sortable.transform),
-    transition: sortable.transition ? `${sortable.transition}, opacity 300ms, width 300ms` : 'opacity 300ms, width 300ms',
+    transition: sortable.transition,
     opacity: isGhost ? 0.3 : 1,
   };
 
@@ -261,6 +261,27 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const [activeGroup, setActiveGroup] = useState<any | null>(null);
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
+
+  const handleTaskClick = useCallback((task: Task) => {
+    isDraggingRef.current = false;
+    setActiveTask(null);
+    setActiveColumn(null);
+    setActiveGroup(null);
+    if (onTaskClick) {
+      onTaskClick(task);
+    }
+  }, [onTaskClick]);
+
+  useEffect(() => {
+    const handleOpenTask = () => {
+      isDraggingRef.current = false;
+      setActiveTask(null);
+      setActiveColumn(null);
+      setActiveGroup(null);
+    };
+    window.addEventListener('open-task-detail', handleOpenTask);
+    return () => window.removeEventListener('open-task-detail', handleOpenTask);
+  }, []);
 
   // Global preference: Latest closed tasks on top across all clients (defaults to true)
   const SORT_CLOSED_STORAGE_KEY = 'nexus_kanban_sort_latest_closed';
@@ -1318,46 +1339,41 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                   {(sortable: any) => (
                     <>
                       {/* ── COLLAPSED: slim vertical pill ── */}
-                      <button
-                        onClick={() => toggleCategory(category.id)}
-                        title={`Expand ${category.title}`}
-                        className={`relative flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-500 ease-in-out overflow-hidden select-none whitespace-nowrap rounded-xl border ${category.badgeClass} ${isCollapsed
-                            ? 'max-w-[48px] w-12 opacity-80 hover:opacity-100 hover:brightness-110'
-                            : 'max-w-0 w-0 opacity-0 border-transparent p-0 mx-0'
-                          }`}
-                      >
-                        <div className="flex flex-col items-center justify-center w-12 min-h-[200px] h-full shrink-0">
-                          <ChevronRight className="w-4 h-4 shrink-0 mb-2" />
-                          <span
-                            className="text-[11px] font-bold uppercase tracking-widest"
-                            style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}
-                          >
-                            {totalCategoryTasks} task{totalCategoryTasks !== 1 ? 's' : ''} · {category.statuses.length} cols
-                          </span>
-                        </div>
-                      </button>
-
-                      {/* ── EXPANDED: bordered group box ── */}
-                      <div
-                        className={`relative flex flex-col h-full min-h-[200px] transition-all duration-500 ease-in-out ${isCollapsed
-                            ? 'max-w-0 opacity-0 mx-0'
-                            : 'max-w-[5000px] opacity-100'
-                          }`}
-                      >
-                        {/* Inner container with overflow-hidden to clip contents during animation */}
-                        <div
-                          onScroll={(e) => {
-                            if (e.currentTarget.scrollTop !== 0) {
-                              e.currentTarget.scrollTop = 0;
-                            }
-                          }}
-                          className={`rounded-2xl h-full p-4 pt-3 overflow-hidden flex flex-col transition-all ${
-                            category.isCatchAll 
-                              ? 'bg-transparent border-transparent shadow-none' 
-                              : 'border bg-card shadow-sm shadow-black/5 dark:shadow-black/20'
-                          }`}
-                          style={{ borderColor: category.isCatchAll ? 'transparent' : category.borderColor }}
+                      {isCollapsed ? (
+                        <button
+                          onClick={() => toggleCategory(category.id)}
+                          title={`Expand ${category.title}`}
+                          className={`relative flex flex-col items-center justify-center gap-2 cursor-pointer select-none whitespace-nowrap rounded-xl border ${category.badgeClass} max-w-[48px] w-12 opacity-80 hover:opacity-100 hover:brightness-110`}
                         >
+                          <div className="flex flex-col items-center justify-center w-12 min-h-[200px] h-full shrink-0">
+                            <ChevronRight className="w-4 h-4 shrink-0 mb-2" />
+                            <span
+                              className="text-[11px] font-bold uppercase tracking-widest"
+                              style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}
+                            >
+                              {totalCategoryTasks} task{totalCategoryTasks !== 1 ? 's' : ''} · {category.statuses.length} cols
+                            </span>
+                          </div>
+                        </button>
+                      ) : (
+                        /* ── EXPANDED: bordered group box ── */
+                        <div
+                          className="relative flex flex-col h-full min-h-[200px]"
+                        >
+                          {/* Inner container */}
+                          <div
+                            onScroll={(e) => {
+                              if (e.currentTarget.scrollTop !== 0) {
+                                e.currentTarget.scrollTop = 0;
+                              }
+                            }}
+                            className={`rounded-2xl h-full p-4 pt-3 overflow-hidden flex flex-col ${
+                              category.isCatchAll 
+                                ? 'bg-transparent border-transparent shadow-none' 
+                                : 'border bg-card shadow-sm shadow-black/5 dark:shadow-black/20'
+                            }`}
+                            style={{ borderColor: category.isCatchAll ? 'transparent' : category.borderColor }}
+                          >
                           {/* Group Header */}
                           {!category.isCatchAll && (
                             <div
@@ -1566,7 +1582,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                     onStatusChange={onStatusChange}
                                     onStatusDelete={onStatusDelete}
                                     onAddTaskClick={onAddTaskClick}
-                                    onTaskClick={onTaskClick}
+                                    onTaskClick={handleTaskClick}
                                     hasMarginRight={hasMarginRight}
                                     groupRunCount={groupRunCount}
                                     isCollapsedGroupLeader={isCollapsedGroupLeader}
@@ -1629,7 +1645,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                           </div>
                         </div>
                       </div>
-                    </>
+                    )}
+                  </>
                   )}
                 </SortableGroupWrapper>
               );
@@ -1672,7 +1689,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
           </div>
         </div>
 
-      <DragOverlay>
+      <DragOverlay zIndex={40}>
         {activeTask ? <KanbanCard task={activeTask} isOverlay listStatuses={listStatuses} /> : null}
         {activeColumn ? (() => {
           const dbStatus = listStatuses.find((s: any) => s.name === activeColumn);
@@ -1781,8 +1798,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
         uncheckedAudits={blockedAuditAlert.uncheckedAudits}
         openSubtasks={blockedAuditAlert.openSubtasks}
         onReviewAudits={() => {
-          if (blockedAuditAlert.task && onTaskClick) {
-            onTaskClick(blockedAuditAlert.task);
+          if (blockedAuditAlert.task) {
+            handleTaskClick(blockedAuditAlert.task);
             const pendingHighlight = {
               taskId: blockedAuditAlert.task.id,
               targetStatus: blockedAuditAlert.targetStatus,

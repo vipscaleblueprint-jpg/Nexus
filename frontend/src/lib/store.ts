@@ -211,6 +211,7 @@ interface AppState {
   // UI State
   isSidebarCollapsed: boolean;
   toggleSidebar: () => void;
+  setSidebarCollapsed: (isSidebarCollapsed: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -473,6 +474,31 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeDashboardTab: null,
   setActiveDashboardTab: (activeDashboardTab) => set({ activeDashboardTab }),
 
-  isSidebarCollapsed: true,
-  toggleSidebar: () => set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
+  isSidebarCollapsed: typeof window !== 'undefined'
+    ? (() => {
+        try {
+          const val = localStorage.getItem('nexus-sidebar-collapsed');
+          return val !== null ? val === 'true' : true;
+        } catch {
+          return true;
+        }
+      })()
+    : true,
+  toggleSidebar: () => set((state) => {
+    const next = !state.isSidebarCollapsed;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('nexus-sidebar-collapsed', String(next));
+      } catch {}
+    }
+    return { isSidebarCollapsed: next };
+  }),
+  setSidebarCollapsed: (isSidebarCollapsed) => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('nexus-sidebar-collapsed', String(isSidebarCollapsed));
+      } catch {}
+    }
+    set({ isSidebarCollapsed });
+  },
 }));

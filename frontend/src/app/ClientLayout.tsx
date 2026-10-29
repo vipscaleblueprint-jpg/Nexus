@@ -253,11 +253,11 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1 relative overflow-hidden">
           <main
             id="main-scroll-container"
-            className={`w-full h-full ${pathname?.startsWith('/lists') ? 'overflow-hidden' : 'overflow-y-auto'} bg-background`}
+            className={`w-full h-full ${pathname?.startsWith('/lists') ? 'overflow-hidden' : 'overflow-y-auto'} bg-background relative z-0 isolate`}
           >
             {children}
           </main>
-          <div id="nexus-task-modal-portal" />
+          <div id="nexus-task-modal-portal" className="absolute inset-0 z-[80] pointer-events-none [&>*]:pointer-events-auto" />
         </div>
       </div>
       <ToastContainer />

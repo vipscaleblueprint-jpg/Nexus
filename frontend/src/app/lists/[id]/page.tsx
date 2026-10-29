@@ -28,12 +28,14 @@ import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { arrayMove } from '@dnd-kit/sortable';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
-import { TaskDetailModal, STATUS_COLORS } from '@/components/modals/TaskDetailModal';
+import { TaskDetailModal, STATUS_COLORS, isClosedStatus } from '@/components/modals/TaskDetailModal';
+import { motion } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
 import { toast } from '@/lib/toast';
 import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { findMatchingTasksSorted } from '@/lib/searchUtils';
+import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist';
 // getRoles removed — workspaceRoles now read from Zustand store (avoids a fresh HTTP call per board visit)
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -229,6 +231,24 @@ export default function BoardPage() {
     return [];
   }, [list?.tasks, searchTerms, search]);
   const isSearching = searchTerms.length > 0;
+
+  // Closed tasks check: true if status is CLOSED/DONE/COMPLETED/etc, completed boolean is true, or in 'Closed Task' group
+  const isTaskClosed = useCallback((t: any): boolean => {
+    if (!t) return false;
+    if (t.completed) return true;
+    const statusName = (t.status || '').trim().toUpperCase();
+    if (isClosedStatus(statusName)) return true;
+    const listStatuses = list?.statuses || [];
+    const dbStatus = listStatuses.find((s: any) => (s.name || '').trim().toUpperCase() === statusName);
+    if (dbStatus && (dbStatus.groupName || '').trim().toLowerCase() === 'closed task') return true;
+    return false;
+  }, [list?.statuses]);
+
+  // Total active tasks (all non-closed tasks, excluding all closed tasks even if unchecked)
+  const activeTasksCount = useMemo(() => {
+    const tasks = list?.tasks || [];
+    return tasks.filter((t: any) => !isTaskClosed(t)).length;
+  }, [list?.tasks, isTaskClosed]);
 
   // Ensure workspace roles are loaded — uses store cache so no extra HTTP call if already fetched
   useEffect(() => {
@@ -440,22 +460,54 @@ export default function BoardPage() {
       });
     });
 
+    s.on('task:checklist_created', (payload: { taskId: string; checklist: any; subtaskId?: string }) => {
+      setList((prev: any) => {
+        if (!prev || !prev.tasks || !payload.checklist) return prev;
+        const newTasks = prev.tasks.map((t: any) => {
+          if (payload.subtaskId) {
+            if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
+              const updatedSubtasks = t.subtasks.map((st: any) => {
+                if (st.id === payload.subtaskId) {
+                  const existingChecklists = st.checklists || [];
+                  if (existingChecklists.some((c: any) => c.id === payload.checklist.id)) return st;
+                  return { ...st, checklists: [...existingChecklists, payload.checklist] };
+                }
+                return st;
+              });
+              return { ...t, subtasks: updatedSubtasks };
+            }
+          } else if (t.id === payload.taskId) {
+            const existingChecklists = t.checklists || [];
+            if (existingChecklists.some((c: any) => c.id === payload.checklist.id)) return t;
+            return { ...t, checklists: [...existingChecklists, payload.checklist] };
+          }
+          return t;
+        });
+        return { ...prev, tasks: newTasks };
+      });
+    });
+
     s.on('task:checklist_item_updated', (payload: { taskId: string; checklistId: string; item: any; subtaskId?: string }) => {
       setList((prev: any) => {
-        if (!prev || !prev.tasks) return prev;
+        if (!prev || !prev.tasks || !payload.item) return prev;
         const newTasks = prev.tasks.map((t: any) => {
           if (payload.subtaskId) {
             if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
               const updatedSubtasks = t.subtasks.map((st: any) => {
                 if (st.id === payload.subtaskId && st.checklists) {
                   const updatedChecklists = st.checklists.map((c: any) => {
-                    if (c.id === payload.checklistId) {
-                      const updatedItems = (c.items || []).map((i: any) =>
-                        (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                          ? { ...i, ...payload.item }
-                          : i
-                      );
-                      return { ...c, items: updatedItems };
+                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                      const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+                      if (hasItem) {
+                        const updatedItems = (c.items || []).map((i: any) =>
+                          (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                            ? { ...i, ...payload.item }
+                            : i
+                        );
+                        return { ...c, items: updatedItems };
+                      } else {
+                        return { ...c, items: [...(c.items || []), payload.item] };
+                      }
                     }
                     return c;
                   });
@@ -467,13 +519,18 @@ export default function BoardPage() {
             }
           } else if (t.id === payload.taskId && t.checklists) {
             const updatedChecklists = t.checklists.map((c: any) => {
-              if (c.id === payload.checklistId) {
-                const updatedItems = (c.items || []).map((i: any) =>
-                  (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                    ? { ...i, ...payload.item }
-                    : i
-                );
-                return { ...c, items: updatedItems };
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+                if (hasItem) {
+                  const updatedItems = (c.items || []).map((i: any) =>
+                    (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                      ? { ...i, ...payload.item }
+                      : i
+                  );
+                  return { ...c, items: updatedItems };
+                } else {
+                  return { ...c, items: [...(c.items || []), payload.item] };
+                }
               }
               return c;
             });
@@ -487,14 +544,16 @@ export default function BoardPage() {
 
     s.on('task:checklist_item_created', (payload: { taskId: string; checklistId: string; item: any; subtaskId?: string }) => {
       setList((prev: any) => {
-        if (!prev || !prev.tasks) return prev;
+        if (!prev || !prev.tasks || !payload.item) return prev;
         const newTasks = prev.tasks.map((t: any) => {
           if (payload.subtaskId) {
             if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
               const updatedSubtasks = t.subtasks.map((st: any) => {
-                if (st.id === payload.subtaskId && st.checklists) {
-                  const updatedChecklists = st.checklists.map((c: any) => {
-                    if (c.id === payload.checklistId) {
+                if (st.id === payload.subtaskId) {
+                  let found = false;
+                  const updatedChecklists = (st.checklists || []).map((c: any) => {
+                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                      found = true;
                       if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                       const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
                       if (tempIdx !== -1) {
@@ -506,15 +565,29 @@ export default function BoardPage() {
                     }
                     return c;
                   });
+                  if (!found) {
+                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+                    const newChecklist = {
+                      id: payload.checklistId,
+                      taskId: t.id,
+                      subtaskId: payload.subtaskId,
+                      name: isAudit ? 'Audit' : 'Checklist',
+                      createdAt: new Date().toISOString(),
+                      items: [payload.item],
+                    };
+                    return { ...st, checklists: [...(st.checklists || []), newChecklist] };
+                  }
                   return { ...st, checklists: updatedChecklists };
                 }
                 return st;
               });
               return { ...t, subtasks: updatedSubtasks };
             }
-          } else if (t.id === payload.taskId && t.checklists) {
-            const updatedChecklists = t.checklists.map((c: any) => {
-              if (c.id === payload.checklistId) {
+          } else if (t.id === payload.taskId) {
+            let found = false;
+            const updatedChecklists = (t.checklists || []).map((c: any) => {
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                found = true;
                 if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                 const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
                 if (tempIdx !== -1) {
@@ -526,6 +599,17 @@ export default function BoardPage() {
               }
               return c;
             });
+            if (!found) {
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const newChecklist = {
+                id: payload.checklistId,
+                taskId: t.id,
+                name: isAudit ? 'Audit' : 'Checklist',
+                createdAt: new Date().toISOString(),
+                items: [payload.item],
+              };
+              return { ...t, checklists: [...(t.checklists || []), newChecklist] };
+            }
             return { ...t, checklists: updatedChecklists };
           }
           return t;
@@ -534,7 +618,7 @@ export default function BoardPage() {
       });
     });
 
-    s.on('task:checklist_item_deleted', (payload: { taskId: string; checklistId: string; itemId: string; subtaskId?: string }) => {
+    s.on('task:checklist_item_deleted', (payload: { taskId: string; checklistId: string; itemId: string; subtaskId?: string; text?: string }) => {
       setList((prev: any) => {
         if (!prev || !prev.tasks) return prev;
         const newTasks = prev.tasks.map((t: any) => {
@@ -543,8 +627,12 @@ export default function BoardPage() {
               const updatedSubtasks = t.subtasks.map((st: any) => {
                 if (st.id === payload.subtaskId && st.checklists) {
                   const updatedChecklists = st.checklists.map((c: any) => {
-                    if (c.id === payload.checklistId) {
-                      const updatedItems = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+                    if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
+                      const updatedItems = (c.items || []).filter((i: any) => {
+                        if (i.id === payload.itemId) return false;
+                        if (payload.text && i.text === payload.text) return false;
+                        return true;
+                      });
                       return { ...c, items: updatedItems };
                     }
                     return c;
@@ -557,8 +645,12 @@ export default function BoardPage() {
             }
           } else if (t.id === payload.taskId && t.checklists) {
             const updatedChecklists = t.checklists.map((c: any) => {
-              if (c.id === payload.checklistId) {
-                const updatedItems = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+              if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
+                const updatedItems = (c.items || []).filter((i: any) => {
+                  if (i.id === payload.itemId) return false;
+                  if (payload.text && i.text === payload.text) return false;
+                  return true;
+                });
                 return { ...c, items: updatedItems };
               }
               return c;
@@ -901,56 +993,86 @@ export default function BoardPage() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/15">
+              <motion.div layout transition={{ type: 'spring', stiffness: 350, damping: 28 }} className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-blue-500/15 shrink-0">
                   <ListIcon className="w-5 h-5 text-blue-400" />
                 </div>
-                {isEditingName ? (
-                  <input
-                    type="text"
-                    value={editingNameValue}
-                    onChange={(e) => setEditingNameValue(e.target.value)}
-                    onBlur={async () => {
-                      setIsEditingName(false);
-                      if (editingNameValue.trim() && editingNameValue !== list?.name) {
-                        try {
-                          await spacesApi.updateList(id as string, { name: editingNameValue.trim() });
-                          setList((prev: any) => ({ ...prev, name: editingNameValue.trim() }));
-                          toast.success('List name updated');
-                        } catch (err: any) {
-                          toast.error(err.message || 'Failed to update list name');
-                        }
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.currentTarget.blur();
-                      }
-                      if (e.key === 'Escape') {
-                        setIsEditingName(false);
-                      }
-                    }}
-                    autoFocus
-                    className="text-xl font-semibold text-zinc-100 bg-secondary border border-zinc-700 rounded px-2 py-0.5 outline-none focus:border-indigo-500"
-                  />
-                ) : (
-                  <div className="group flex items-center gap-2">
-                    <h1 className="text-xl font-semibold text-zinc-100">{list?.name}</h1>
+                <div className="group flex items-center gap-2 min-w-0">
+                  {isEditingName ? (
+                    <motion.div
+                      layout
+                      initial={{ opacity: 0, scale: 0.98 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.98 }}
+                      transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+                      className="flex items-center"
+                    >
+                      <input
+                        type="text"
+                        value={editingNameValue}
+                        onChange={(e) => setEditingNameValue(e.target.value)}
+                        onBlur={async () => {
+                          setIsEditingName(false);
+                          if (editingNameValue.trim() && editingNameValue !== list?.name) {
+                            try {
+                              await spacesApi.updateList(id as string, { name: editingNameValue.trim() });
+                              setList((prev: any) => ({ ...prev, name: editingNameValue.trim() }));
+                              toast.success('List name updated');
+                            } catch (err: any) {
+                              toast.error(err.message || 'Failed to update list name');
+                            }
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.currentTarget.blur();
+                          }
+                          if (e.key === 'Escape') {
+                            setIsEditingName(false);
+                          }
+                        }}
+                        autoFocus
+                        style={{ width: `${Math.max(120, (editingNameValue.length + 1) * 12)}px` }}
+                        className="text-xl font-semibold text-zinc-100 bg-secondary border border-zinc-700 rounded px-2 py-0.5 outline-none focus:border-indigo-500 transition-all duration-200"
+                      />
+                    </motion.div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <h1
+                        onClick={() => {
+                          setEditingNameValue(list?.name || '');
+                          setIsEditingName(true);
+                        }}
+                        className="text-xl font-semibold text-zinc-100 cursor-pointer hover:text-white transition-colors truncate"
+                        title="Click to rename"
+                      >
+                        {list?.name}
+                      </h1>
+                    </div>
+                  )}
+
+                  <motion.span
+                    layout
+                    transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+                    className="text-[11px] text-zinc-500 px-2 py-0.5 bg-zinc-800 rounded-full shrink-0 select-none whitespace-nowrap"
+                  >
+                    {activeTasksCount} task{activeTasksCount !== 1 ? 's' : ''}
+                  </motion.span>
+
+                  {!isEditingName && (
                     <button
                       onClick={() => {
                         setEditingNameValue(list?.name || '');
                         setIsEditingName(true);
                       }}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-all cursor-pointer"
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
+                      title="Rename list"
                     >
                       <Pencil className="w-4 h-4" />
                     </button>
-                  </div>
-                )}
-                <span className="text-[11px] text-zinc-500 px-2 py-0.5 bg-zinc-800 rounded-full">
-                  {list?.tasks?.length ?? 0} tasks
-                </span>
-              </div>
+                  )}
+                </div>
+              </motion.div>
             </div>
           </div>
 
@@ -970,7 +1092,7 @@ export default function BoardPage() {
             <div className="ml-auto mb-2 flex items-center gap-2">
               {isSearching && (
                 <span className={`text-[11px] ${visibleTasks.length ? 'text-zinc-500' : 'text-amber-400'}`}>
-                  {visibleTasks.length ? `${visibleTasks.length} of ${list?.tasks?.length ?? 0}` : 'No matching tasks'}
+                  {visibleTasks.length ? `${visibleTasks.length} of ${activeTasksCount}` : 'No matching tasks'}
                 </span>
               )}
               <div className={`relative flex items-center w-64 rounded-md border bg-secondary/60 transition-colors ${isSearching ? 'border-indigo-500/60' : 'border-zinc-800 focus-within:border-zinc-600'}`}>

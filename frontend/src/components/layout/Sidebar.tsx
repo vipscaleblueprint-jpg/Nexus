@@ -196,23 +196,18 @@ function writeTreePref(key: string, id: string, value: unknown) {
 }
 
 /**
- * Once per login / new tab: forget the remembered folder open states, so folders start collapsed
- * (Client Dashboard open, see FolderItem). Within the session a reload keeps what the user opened.
+ * Clean up legacy sort overrides while preserving all persisted section and folder open states.
  */
 function startSidebarSessionIfNew() {
   if (typeof window === 'undefined') return;
   try {
     // Clean up any legacy browser-isolated sort overrides so DB ordering is authoritative
     localStorage.removeItem(TREE_SORT_KEY);
-    if (sessionStorage.getItem(SIDEBAR_SESSION_KEY)) return;
-    sessionStorage.setItem(SIDEBAR_SESSION_KEY, '1');
-    const prefs = readTreePrefs<boolean>(TREE_OPEN_KEY);
-    Object.keys(prefs).forEach((id) => {
-      if (id.startsWith('folder-')) delete prefs[id];
-    });
-    localStorage.setItem(TREE_OPEN_KEY, JSON.stringify(prefs));
+    if (!sessionStorage.getItem(SIDEBAR_SESSION_KEY)) {
+      sessionStorage.setItem(SIDEBAR_SESSION_KEY, '1');
+    }
   } catch {
-    // Storage unavailable: folders just use their defaults.
+    // Storage unavailable
   }
 }
 
@@ -724,7 +719,7 @@ function ActiveDragItem({ id, spaces }: { id: string; spaces: Space[] }) {
 function VipRow({ icon: Icon, iconClass, label, labelClass, children, collapsed }: {
   icon: LucideIcon; iconClass: string; label: string; labelClass?: string; children: React.ReactNode; collapsed: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = usePersistedOpen(`vip-${label.toLowerCase().replace(/\s+/g, '-')}`, false);
   return (
     <li className="list-none">
       <button
@@ -959,6 +954,19 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     const stored = parseInt(localStorage.getItem(widthStorageKey) || '', 10);
     setNexusWidth(!isNaN(stored) ? Math.min(NEXUS_MAX_WIDTH, Math.max(NEXUS_MIN_WIDTH, stored)) : NEXUS_DEFAULT_WIDTH);
   }, [widthStorageKey]);
+
+  // Sync collapsed state from localStorage on mount so state is identical after reload
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('nexus-sidebar-collapsed');
+      if (stored !== null) {
+        const isCollapsed = stored === 'true';
+        if (isCollapsed !== collapsed) {
+          useAppStore.getState().setSidebarCollapsed(isCollapsed);
+        }
+      }
+    } catch {}
+  }, []);
 
   const startNexusResize = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -1699,8 +1707,8 @@ function AllTasksDropdownItem() {
   const isPrioritiesActive = effectiveTab === 'priorities';
   const isAnyDashboardActive = Boolean(effectiveTab);
 
-  // Closed by default, per user instruction: "in default its always close"
-  const [isOpen, setIsOpen] = useState(false);
+  // Persisted open/closed state across sessions and reloads
+  const [isOpen, setIsOpen] = usePersistedOpen('all-tasks', false);
 
   const isMainActive = isAllActive || (!isOpen && isAnyDashboardActive);
 

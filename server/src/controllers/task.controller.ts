@@ -3148,6 +3148,7 @@ export async function deleteChecklistItem(req: Request, res: Response) {
     const item = await prisma.checklistItem.findUnique({
       where: { id: itemId },
       select: {
+        text: true,
         externalId: true,
         checklistId: true,
         checklist: { select: { externalId: true, taskId: true, subtaskId: true } },
@@ -3174,6 +3175,7 @@ export async function deleteChecklistItem(req: Request, res: Response) {
       subtaskId: item?.checklist?.subtaskId || null,
       checklistId: item?.checklistId || req.params.checklistId,
       itemId,
+      text: item?.text,
     });
 
     // --- ClickUp Sync ---

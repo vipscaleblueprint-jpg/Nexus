@@ -40,8 +40,8 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
   if (!c || !c.name) return false;
   if (c.name.trim().toLowerCase() !== 'audit') return false;
   const items = c.items ?? [];
-  // Empty: Nexus's own unless it came from ClickUp.
-  if (items.length === 0) return !c.externalId;
+  // Empty: Nexus's own Audit checklist (even if synced with ClickUp externalId).
+  if (items.length === 0) return true;
   return items.every((i) => {
     const raw = (i.text || '').trim();
     const clean = raw.startsWith('!') ? raw.slice(1).trim() : raw;

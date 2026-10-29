@@ -19,7 +19,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
-import { isNexusAuditChecklist } from '@/lib/auditChecklist';
+import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist';
 
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
@@ -477,6 +477,72 @@ const describeAssigneeActivity = (act: any, currentUserName?: string) => {
   return `assigned to: ${toYou(act.assigneeName)}`;
 };
 
+/** "Leo, Aaron" vs "Aaron, Leo": same people regardless of order. */
+function sameNameSet(a?: string, b?: string): boolean {
+  const split = (s?: string) => (s || '').split(', ').map(n => n.trim()).filter(Boolean).sort().join('|');
+  return split(a) === split(b);
+}
+
+/** Merges incoming socket/window real-time activity into activities state, replacing optimistic placeholders and deduplicating */
+const mergeIncomingActivity = (prev: any[], incoming: any) => {
+  if (!incoming) return prev;
+
+  // 1. If already present by id, clean up any lingering matching optimistic placeholder and return
+  const existingIdx = prev.findIndex(a => a.id === incoming.id);
+  if (existingIdx !== -1) {
+    return prev.filter(a => {
+      if (a.id === incoming.id) return true;
+      if (typeof a.id === 'string' && a.id.startsWith('optimistic-') && a.type === incoming.type) {
+        if (incoming.type === 'status_change' && a.newStatus === incoming.newStatus && (a.subtaskTitle || '') === (incoming.subtaskTitle || '')) return false;
+        if (incoming.type === 'priority_change' && a.newPriority === incoming.newPriority) return false;
+        if (incoming.type === 'assignment' && sameNameSet(a.assigneeName, incoming.assigneeName)) return false;
+        if (incoming.type === 'title_change' && a.newTitle === incoming.newTitle) return false;
+      }
+      return true;
+    });
+  }
+
+  // 2. If an optimistic entry of the same type exists, swap it for the server's real entry
+  const typePrefix = incoming.type === 'status_change' ? 'optimistic-status'
+    : incoming.type === 'assignment' ? 'optimistic-assign'
+    : incoming.type === 'priority_change' ? 'optimistic-priority'
+    : incoming.type === 'title_change' ? 'optimistic-title'
+    : null;
+
+  if (typePrefix) {
+    const optimisticIdx = prev.findIndex(a => {
+      if (typeof a.id !== 'string' || !a.id.startsWith(typePrefix)) return false;
+      if (incoming.type === 'title_change') return a.newTitle === incoming.newTitle;
+      if (incoming.type === 'assignment') return sameNameSet(a.assigneeName, incoming.assigneeName);
+      if (incoming.type === 'status_change') return a.newStatus === incoming.newStatus && (a.subtaskTitle || '') === (incoming.subtaskTitle || '');
+      if (incoming.type === 'priority_change') return a.newPriority === incoming.newPriority;
+      return true;
+    });
+
+    if (optimisticIdx !== -1) {
+      const updated = [...prev];
+      updated[optimisticIdx] = incoming;
+      return updated;
+    }
+  }
+
+  // 3. Deduplicate real status_change activities that have identical transitions within 15 seconds
+  if (incoming.type === 'status_change') {
+    const incomingTime = new Date(incoming.date || incoming.createdAt || Date.now()).getTime();
+    const isDuplicate = prev.some(a =>
+      a.id !== incoming.id &&
+      a.type === 'status_change' &&
+      a.newStatus === incoming.newStatus &&
+      a.oldStatus === incoming.oldStatus &&
+      (a.subtaskTitle || '') === (incoming.subtaskTitle || '') &&
+      Math.abs(new Date(a.date || a.createdAt || Date.now()).getTime() - incomingTime) < 15000
+    );
+    if (isDuplicate) return prev;
+  }
+
+  return [...prev, incoming];
+};
+
 // Renders a rename as an inline diff: shared prefix/suffix plain, removed text struck through, added text bold.
 // e.g. "Testing" -> "TestingUpdate" renders "Testing**Update**".
 const TitleChangeDiff = ({ oldTitle = '', newTitle = '' }: { oldTitle?: string; newTitle?: string }) => {
@@ -792,10 +858,7 @@ export function TaskDetailModalContent({
       const data = e.detail;
       if (!data || !task || data.taskId !== task.id) return;
       if (data.activity) {
-        setActivities((prev) => {
-          if (prev.some((a) => a.id === data.activity.id)) return prev;
-          return [...prev, data.activity];
-        });
+        setActivities((prev) => mergeIncomingActivity(prev, data.activity));
       }
     };
     window.addEventListener('task_activity', handleWindowTaskActivity);
@@ -966,7 +1029,24 @@ export function TaskDetailModalContent({
     setFullscreenCommentId(null);
   }
 
-  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment' && isActivityVisible(a)), [activities]);
+  const otherActivities = useMemo(() => {
+    const visible = activities.filter(a => a.type !== 'comment' && isActivityVisible(a));
+    const seenStatusKeys = new Set<string>();
+    return visible.filter(a => {
+      if (a.type === 'status_change') {
+        const sub = a.subtaskTitle || '';
+        const isOptimistic = typeof a.id === 'string' && a.id.startsWith('optimistic-');
+        if (isOptimistic && visible.some(other => typeof other.id === 'string' && !other.id.startsWith('optimistic-') && other.type === 'status_change' && (other.subtaskTitle || '') === sub && other.newStatus === a.newStatus)) {
+          return false;
+        }
+        const time = new Date(a.date || a.createdAt || 0).getTime();
+        const duplicateKey = `${sub}|${a.oldStatus || ''}->${a.newStatus || ''}|${Math.floor(time / 15000)}`;
+        if (seenStatusKeys.has(duplicateKey)) return false;
+        seenStatusKeys.add(duplicateKey);
+      }
+      return true;
+    });
+  }, [activities]);
   const combined = useMemo(() => [
     ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date || Date.now()).getTime() })),
     ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt || Date.now()).getTime() }))
@@ -1345,10 +1425,29 @@ export function TaskDetailModalContent({
       if (actRes?.activities) {
         setActivities((prev) => {
           if (taskRef.current?.id !== currentTaskId) return prev;
-          const optimistic = prev.filter(
-            (a) => typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))
-          );
           const fetchedIds = new Set(fetchedActivities.map((a: any) => a.id));
+          const optimistic = prev.filter((a) => {
+            if (typeof a.id !== 'string' || (!a.id.startsWith('optimistic-') && !a.id.startsWith('temp-'))) return false;
+            if (a.type === 'status_change') {
+              return !fetchedActivities.some((f: any) =>
+                f.type === 'status_change' &&
+                f.newStatus === a.newStatus &&
+                (f.subtaskTitle || '') === (a.subtaskTitle || '')
+              );
+            }
+            if (a.type === 'priority_change') {
+              return !fetchedActivities.some((f: any) => f.type === 'priority_change' && f.newPriority === a.newPriority);
+            }
+            if (a.type === 'assignment') {
+              return !fetchedActivities.some((f: any) => f.type === 'assignment' && sameNameSet(f.assigneeName, a.assigneeName));
+            }
+            if (a.type === 'title_change') {
+              return !fetchedActivities.some((f: any) => f.type === 'title_change' && f.newTitle === a.newTitle);
+            }
+            const optTime = new Date(a.date || 0).getTime();
+            if (optTime && Date.now() - optTime > 30000) return false;
+            return true;
+          });
           const recentReal = prev.filter(
             (a) =>
               !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) &&
@@ -1779,45 +1878,7 @@ export function TaskDetailModalContent({
         const isSubtask = !!(currentTask as any).parentTaskId;
         if (isSubtask && data.activity.subtaskTitle && data.activity.subtaskTitle !== currentTask.title) return;
 
-        setActivities(prev => {
-          // If real ID already exists, skip
-          if (prev.some(a => a.id === data.activity.id)) return prev;
-          // If an optimistic entry of the same type exists, replace it with the real one
-          // (this happens on the acting client who already has an optimistic placeholder)
-          const typePrefix = data.activity.type === 'status_change' ? 'optimistic-status'
-            : data.activity.type === 'assignment' ? 'optimistic-assign'
-              : data.activity.type === 'priority_change' ? 'optimistic-priority'
-                : data.activity.type === 'title_change' ? 'optimistic-title'
-                  : null;
-          if (typePrefix) {
-            const optimisticIdx = prev.findIndex(
-              a => {
-                if (typeof a.id !== 'string' || !a.id.startsWith(typePrefix)) return false;
-
-                if (data.activity.type === 'title_change') {
-                  return a.newTitle === data.activity.newTitle;
-                }
-                // Match specific fields to avoid race conditions overriding the wrong optimistic item
-                if (data.activity.type === 'assignment') {
-                  return a.assigneeName === data.activity.assigneeName;
-                }
-                if (data.activity.type === 'status_change') {
-                  return a.newStatus === data.activity.newStatus;
-                }
-                if (data.activity.type === 'priority_change') {
-                  return a.newPriority === data.activity.newPriority;
-                }
-                return true;
-              }
-            );
-            if (optimisticIdx !== -1) {
-              const updated = [...prev];
-              updated[optimisticIdx] = data.activity;
-              return updated;
-            }
-          }
-          return [...prev, data.activity];
-        });
+        setActivities(prev => mergeIncomingActivity(prev, data.activity));
 
 
       }
@@ -1930,19 +1991,48 @@ export function TaskDetailModalContent({
       }
     };
 
+    const handleChecklistCreated = (payload: { taskId: string; subtaskId?: string | null; checklist: any }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask || payload.taskId !== currentTask.id || !payload.checklist) return;
+
+      if (!payload.subtaskId) {
+        if ((currentTask.checklists || []).some((c: any) => c.id === payload.checklist.id)) return;
+        const checklists = [...(currentTask.checklists || []), payload.checklist];
+        const updatedTask = { ...currentTask, checklists };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      } else {
+        const subtasks = (currentTask.subtasks || []).map((st: any) => {
+          if (st.id === payload.subtaskId) {
+            if ((st.checklists || []).some((c: any) => c.id === payload.checklist.id)) return st;
+            return { ...st, checklists: [...(st.checklists || []), payload.checklist] };
+          }
+          return st;
+        });
+        const updatedTask = { ...currentTask, subtasks };
+        taskRef.current = updatedTask;
+        if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
+      }
+    };
+
     const handleChecklistItemUpdated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
       const currentTask = taskRef.current;
-      if (!currentTask || payload.taskId !== currentTask.id) return;
+      if (!currentTask || payload.taskId !== currentTask.id || !payload.item) return;
 
       if (!payload.subtaskId) {
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          if (c.id === payload.checklistId) {
-            const items = (c.items || []).map((i: any) =>
-              (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                ? { ...i, ...payload.item }
-                : i
-            );
-            return { ...c, items };
+          if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+            const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+            if (hasItem) {
+              const items = (c.items || []).map((i: any) =>
+                (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                  ? { ...i, ...payload.item }
+                  : i
+              );
+              return { ...c, items };
+            } else {
+              return { ...c, items: [...(c.items || []), payload.item] };
+            }
           }
           return c;
         });
@@ -1953,13 +2043,18 @@ export function TaskDetailModalContent({
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
             const checklists = (st.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId) {
-                const items = (c.items || []).map((i: any) =>
-                  (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                    ? { ...i, ...payload.item }
-                    : i
-                );
-                return { ...c, items };
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+                if (hasItem) {
+                  const items = (c.items || []).map((i: any) =>
+                    (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                      ? { ...i, ...payload.item }
+                      : i
+                  );
+                  return { ...c, items };
+                } else {
+                  return { ...c, items: [...(c.items || []), payload.item] };
+                }
               }
               return c;
             });
@@ -1975,11 +2070,13 @@ export function TaskDetailModalContent({
 
     const handleChecklistItemCreated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
       const currentTask = taskRef.current;
-      if (!currentTask || payload.taskId !== currentTask.id) return;
+      if (!currentTask || payload.taskId !== currentTask.id || !payload.item) return;
 
       if (!payload.subtaskId) {
+        let found = false;
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          if (c.id === payload.checklistId) {
+          if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+            found = true;
             if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
             const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
             if (tempIdx !== -1) {
@@ -1991,14 +2088,27 @@ export function TaskDetailModalContent({
           }
           return c;
         });
-        const updatedTask = { ...currentTask, checklists };
+        const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+        const finalChecklists = found ? checklists : [
+          ...(currentTask.checklists || []),
+          {
+            id: payload.checklistId,
+            taskId: currentTask.id,
+            name: isAudit ? 'Audit' : 'Checklist',
+            createdAt: new Date().toISOString(),
+            items: [payload.item],
+          }
+        ];
+        const updatedTask = { ...currentTask, checklists: finalChecklists };
         taskRef.current = updatedTask;
         if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
       } else {
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
+            let found = false;
             const checklists = (st.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId) {
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                found = true;
                 if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                 const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
                 if (tempIdx !== -1) {
@@ -2010,7 +2120,19 @@ export function TaskDetailModalContent({
               }
               return c;
             });
-            return { ...st, checklists };
+            const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+            const finalChecklists = found ? checklists : [
+              ...(st.checklists || []),
+              {
+                id: payload.checklistId,
+                taskId: currentTask.id,
+                subtaskId: payload.subtaskId,
+                name: isAudit ? 'Audit' : 'Checklist',
+                createdAt: new Date().toISOString(),
+                items: [payload.item],
+              }
+            ];
+            return { ...st, checklists: finalChecklists };
           }
           return st;
         });
@@ -2020,14 +2142,18 @@ export function TaskDetailModalContent({
       }
     };
 
-    const handleChecklistItemDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; itemId: string }) => {
+    const handleChecklistItemDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; itemId: string; text?: string }) => {
       const currentTask = taskRef.current;
       if (!currentTask || payload.taskId !== currentTask.id) return;
 
       if (!payload.subtaskId) {
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          if (c.id === payload.checklistId) {
-            const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+          if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
+            const items = (c.items || []).filter((i: any) => {
+              if (i.id === payload.itemId) return false;
+              if (payload.text && i.text === payload.text) return false;
+              return true;
+            });
             return { ...c, items };
           }
           return c;
@@ -2039,8 +2165,12 @@ export function TaskDetailModalContent({
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
             const checklists = (st.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId) {
-                const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+              if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
+                const items = (c.items || []).filter((i: any) => {
+                  if (i.id === payload.itemId) return false;
+                  if (payload.text && i.text === payload.text) return false;
+                  return true;
+                });
                 return { ...c, items };
               }
               return c;
@@ -2081,6 +2211,7 @@ export function TaskDetailModalContent({
     socket.on('task:comment_added', handleCommentAdded);
     socket.on('task:comment_updated', handleCommentUpdated);
     socket.on('task:comment_deleted', handleCommentDeleted);
+    socket.on('task:checklist_created', handleChecklistCreated);
     socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
     socket.on('task:checklist_item_created', handleChecklistItemCreated);
     socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
@@ -2094,6 +2225,7 @@ export function TaskDetailModalContent({
       socket.off('task:comment_added', handleCommentAdded);
       socket.off('task:comment_updated', handleCommentUpdated);
       socket.off('task:comment_deleted', handleCommentDeleted);
+      socket.off('task:checklist_created', handleChecklistCreated);
       socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
       socket.off('task:checklist_item_created', handleChecklistItemCreated);
       socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
@@ -4083,13 +4215,23 @@ export function TaskDetailModalContent({
                                     </button>
                                   </Popover.Trigger>
                                   <Popover.Portal>
-                                    <Popover.Content className="w-32 bg-popover border border-border rounded-lg shadow-xl overflow-hidden z-[100000] p-1" align="end">
-                                      <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2">
-                                        <Pencil className="w-3.5 h-3.5" /> Edit
-                                      </button>
-                                      <button onClick={() => { setCommentToDelete(comment.id) }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 hover:text-red-300 rounded-md transition-colors flex items-center gap-2">
-                                        <Trash2 className="w-3.5 h-3.5" /> Delete
-                                      </button>
+                                    <Popover.Content
+                                      className="w-32 bg-popover border border-border rounded-lg shadow-xl overflow-hidden z-[100000] p-1"
+                                      align="end"
+                                      onCloseAutoFocus={(e) => {
+                                        e.preventDefault();
+                                      }}
+                                    >
+                                      <Popover.Close asChild>
+                                        <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                          <Pencil className="w-3.5 h-3.5" /> Edit
+                                        </button>
+                                      </Popover.Close>
+                                      <Popover.Close asChild>
+                                        <button onClick={() => { setCommentToDelete(comment.id); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 hover:text-red-300 rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                          <Trash2 className="w-3.5 h-3.5" /> Delete
+                                        </button>
+                                      </Popover.Close>
                                     </Popover.Content>
                                   </Popover.Portal>
                                 </Popover.Root>
@@ -4500,7 +4642,7 @@ export function TaskDetailModalContent({
                                 const blocks: any[][] = [];
 
                                 dayGroup.items.forEach(item => {
-                                  const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? 'activity' : 'comment');
+                                  const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? (item.type || 'activity') : 'comment');
                                   if (currentGroupKey === null) {
                                     currentGroupKey = key;
                                     currentBlock.push(item);
@@ -4863,11 +5005,7 @@ export function TaskDetailModalContent({
 /** Assignee clicks within this window are saved together as one change. */
 const ASSIGNEE_BATCH_MS = 600;
 
-/** "Leo, Aaron" vs "Aaron, Leo": same people regardless of order. */
-function sameNameSet(a?: string, b?: string): boolean {
-  const split = (s?: string) => (s || '').split(', ').map(n => n.trim()).filter(Boolean).sort().join('|');
-  return split(a) === split(b);
-}
+
 
 // ─── Subtask Detail View (Replaces Parent View) ─────────────────────────────
 export function SubtaskDetailView({
@@ -5092,7 +5230,24 @@ export function SubtaskDetailView({
     setCollapsedDays({});
   }
 
-  const otherActivities = useMemo(() => activities.filter(a => a.type !== 'comment' && isActivityVisible(a)), [activities]);
+  const otherActivities = useMemo(() => {
+    const visible = activities.filter(a => a.type !== 'comment' && isActivityVisible(a));
+    const seenStatusKeys = new Set<string>();
+    return visible.filter(a => {
+      if (a.type === 'status_change') {
+        const sub = a.subtaskTitle || '';
+        const isOptimistic = typeof a.id === 'string' && a.id.startsWith('optimistic-');
+        if (isOptimistic && visible.some(other => typeof other.id === 'string' && !other.id.startsWith('optimistic-') && other.type === 'status_change' && (other.subtaskTitle || '') === sub && other.newStatus === a.newStatus)) {
+          return false;
+        }
+        const time = new Date(a.date || a.createdAt || 0).getTime();
+        const duplicateKey = `${sub}|${a.oldStatus || ''}->${a.newStatus || ''}|${Math.floor(time / 15000)}`;
+        if (seenStatusKeys.has(duplicateKey)) return false;
+        seenStatusKeys.add(duplicateKey);
+      }
+      return true;
+    });
+  }, [activities]);
   const combined = useMemo(() => [
     ...otherActivities.map(a => ({ ...a, isActivityType: true, sortDate: new Date(a.date || Date.now()).getTime() })),
     ...richComments.map(c => ({ ...c, isActivityType: false, sortDate: new Date(c.createdAt || Date.now()).getTime() }))
@@ -5583,34 +5738,7 @@ export function SubtaskDetailView({
             data.activity.subtaskTitle.toLowerCase() === currentSubtask.title.toLowerCase()));
 
       if (isForThisSubtask) {
-        setActivities(prev => {
-          if (prev.some(a => a.id === data.activity.id)) return prev;
-          // The acting client already shows an optimistic entry for its own assignment —
-          // swap it for the server's instead of listing the change twice.
-          if (data.activity.type === 'assignment') {
-            const idx = prev.findIndex(
-              a => typeof a.id === 'string' && a.id.startsWith('optimistic-assign') &&
-                sameNameSet(a.assigneeName, data.activity.assigneeName)
-            );
-            if (idx !== -1) {
-              const updated = [...prev];
-              updated[idx] = data.activity;
-              return updated;
-            }
-          }
-          if (data.activity.type === 'status_change') {
-            const idx = prev.findIndex(
-              a => typeof a.id === 'string' && a.id.startsWith('optimistic-status-') &&
-                a.newStatus === data.activity.newStatus
-            );
-            if (idx !== -1) {
-              const updated = [...prev];
-              updated[idx] = data.activity;
-              return updated;
-            }
-          }
-          return [...prev, data.activity];
-        });
+        setActivities(prev => mergeIncomingActivity(prev, data.activity));
 
         if (data.activity.type === 'status_change' && data.activity.newStatus) {
           if (Date.now() - lastStatusUpdateTimestampRef.current > 1500) {
@@ -5733,18 +5861,31 @@ export function SubtaskDetailView({
       }
     };
 
+    const handleChecklistCreated = (payload: { taskId: string; subtaskId?: string | null; checklist: any }) => {
+      const currentSub = subtaskRef.current;
+      if (!currentSub || payload.subtaskId !== currentSub.id || !payload.checklist) return;
+      if ((currentSub.checklists || []).some((c: any) => c.id === payload.checklist.id)) return;
+      const checklists = [...(currentSub.checklists || []), payload.checklist];
+      syncSubtaskToParent({ ...currentSub, checklists });
+    };
+
     const handleChecklistItemUpdated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
       const currentSub = subtaskRef.current;
-      if (!currentSub || payload.subtaskId !== currentSub.id) return;
+      if (!currentSub || payload.subtaskId !== currentSub.id || !payload.item) return;
 
       const checklists = (currentSub.checklists || []).map((c: any) => {
-        if (c.id === payload.checklistId) {
-          const items = (c.items || []).map((i: any) =>
-            (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-              ? { ...i, ...payload.item }
-              : i
-          );
-          return { ...c, items };
+        if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+          const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+          if (hasItem) {
+            const items = (c.items || []).map((i: any) =>
+              (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                ? { ...i, ...payload.item }
+                : i
+            );
+            return { ...c, items };
+          } else {
+            return { ...c, items: [...(c.items || []), payload.item] };
+          }
         }
         return c;
       });
@@ -5753,10 +5894,12 @@ export function SubtaskDetailView({
 
     const handleChecklistItemCreated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
       const currentSub = subtaskRef.current;
-      if (!currentSub || payload.subtaskId !== currentSub.id) return;
+      if (!currentSub || payload.subtaskId !== currentSub.id || !payload.item) return;
 
+      let found = false;
       const checklists = (currentSub.checklists || []).map((c: any) => {
-        if (c.id === payload.checklistId) {
+        if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+          found = true;
           if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
           const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
           if (tempIdx !== -1) {
@@ -5768,16 +5911,32 @@ export function SubtaskDetailView({
         }
         return c;
       });
-      syncSubtaskToParent({ ...currentSub, checklists });
+      const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+      const finalChecklists = found ? checklists : [
+        ...(currentSub.checklists || []),
+        {
+          id: payload.checklistId,
+          taskId: parentTask.id,
+          subtaskId: currentSub.id,
+          name: isAudit ? 'Audit' : 'Checklist',
+          createdAt: new Date().toISOString(),
+          items: [payload.item],
+        }
+      ];
+      syncSubtaskToParent({ ...currentSub, checklists: finalChecklists });
     };
 
-    const handleChecklistItemDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; itemId: string }) => {
+    const handleChecklistItemDeleted = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; itemId: string; text?: string }) => {
       const currentSub = subtaskRef.current;
       if (!currentSub || payload.subtaskId !== currentSub.id) return;
 
       const checklists = (currentSub.checklists || []).map((c: any) => {
-        if (c.id === payload.checklistId) {
-          const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+        if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
+          const items = (c.items || []).filter((i: any) => {
+            if (i.id === payload.itemId) return false;
+            if (payload.text && i.text === payload.text) return false;
+            return true;
+          });
           return { ...c, items };
         }
         return c;
@@ -5800,6 +5959,7 @@ export function SubtaskDetailView({
     socket.on('task:comment_added', handleCommentAdded);
     socket.on('task:comment_updated', handleCommentUpdated);
     socket.on('task:comment_deleted', handleCommentDeleted);
+    socket.on('task:checklist_created', handleChecklistCreated);
     socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
     socket.on('task:checklist_item_created', handleChecklistItemCreated);
     socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
@@ -5813,6 +5973,7 @@ export function SubtaskDetailView({
       socket.off('task:comment_added', handleCommentAdded);
       socket.off('task:comment_updated', handleCommentUpdated);
       socket.off('task:comment_deleted', handleCommentDeleted);
+      socket.off('task:checklist_created', handleChecklistCreated);
       socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
       socket.off('task:checklist_item_created', handleChecklistItemCreated);
       socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
@@ -6163,10 +6324,29 @@ export function SubtaskDetailView({
       // Merge activities preserving optimistic entries
       setActivities(prev => {
         if (subtaskRef.current?.id !== currentSubtaskId) return prev;
-        const optimistic = prev.filter(
-          a => typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))
-        );
         const fetchedIds = new Set(fetchedActivities.map((a: any) => a.id));
+        const optimistic = prev.filter(a => {
+          if (typeof a.id !== 'string' || (!a.id.startsWith('optimistic-') && !a.id.startsWith('temp-'))) return false;
+          if (a.type === 'status_change') {
+            return !fetchedActivities.some((f: any) =>
+              f.type === 'status_change' &&
+              f.newStatus === a.newStatus &&
+              (f.subtaskTitle || '') === (a.subtaskTitle || '')
+            );
+          }
+          if (a.type === 'priority_change') {
+            return !fetchedActivities.some((f: any) => f.type === 'priority_change' && f.newPriority === a.newPriority);
+          }
+          if (a.type === 'assignment') {
+            return !fetchedActivities.some((f: any) => f.type === 'assignment' && sameNameSet(f.assigneeName, a.assigneeName));
+          }
+          if (a.type === 'title_change') {
+            return !fetchedActivities.some((f: any) => f.type === 'title_change' && f.newTitle === a.newTitle);
+          }
+          const optTime = new Date(a.date || 0).getTime();
+          if (optTime && Date.now() - optTime > 30000) return false;
+          return true;
+        });
         const recentReal = prev.filter(
           a =>
             !(typeof a.id === 'string' && (a.id.startsWith('optimistic-') || a.id.startsWith('temp-'))) &&
@@ -7543,13 +7723,23 @@ export function SubtaskDetailView({
                                   </button>
                                 </Popover.Trigger>
                                 <Popover.Portal>
-                                  <Popover.Content className="w-32 bg-popover border border-border rounded-lg shadow-xl overflow-hidden z-[100000] p-1" align="end">
-                                    <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2">
-                                      <Pencil className="w-3.5 h-3.5" /> Edit
-                                    </button>
-                                    <button onClick={(e) => { e.stopPropagation(); setCommentToDelete(c.id) }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 hover:text-red-300 rounded-md transition-colors flex items-center gap-2">
-                                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                                    </button>
+                                  <Popover.Content
+                                    className="w-32 bg-popover border border-border rounded-lg shadow-xl overflow-hidden z-[100000] p-1"
+                                    align="end"
+                                    onCloseAutoFocus={(e) => {
+                                      e.preventDefault();
+                                    }}
+                                  >
+                                    <Popover.Close asChild>
+                                      <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                        <Pencil className="w-3.5 h-3.5" /> Edit
+                                      </button>
+                                    </Popover.Close>
+                                    <Popover.Close asChild>
+                                      <button onClick={(e) => { e.stopPropagation(); setCommentToDelete(c.id); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 hover:text-red-300 rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                                      </button>
+                                    </Popover.Close>
                                   </Popover.Content>
                                 </Popover.Portal>
                               </Popover.Root>
@@ -7921,7 +8111,7 @@ export function SubtaskDetailView({
                               const blocks: any[][] = [];
 
                               dayGroup.items.forEach(item => {
-                                const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? 'activity' : 'comment');
+                                const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? (item.type || 'activity') : 'comment');
                                 if (currentGroupKey === null) {
                                   currentGroupKey = key;
                                   currentBlock.push(item);
@@ -8397,34 +8587,145 @@ export function TaskDetailModal(props: Props) {
         setFullTask(prev => prev ? { ...prev, status } : prev);
       }
     };
-    const handleSocketChecklistUpdated = (payload: any) => {
-      if (!payload || payload.taskId !== fullTask.id) return;
+    const handleSocketChecklistCreated = (payload: any) => {
+      if (!payload || payload.taskId !== fullTask.id || !payload.checklist) return;
       setFullTask(prev => {
         if (!prev) return prev;
+        let updated: any;
         if (!payload.subtaskId) {
+          const exists = (prev.checklists || []).some(c => c.id === payload.checklist.id);
+          if (exists) return prev;
+          const checklists = [...(prev.checklists || []), payload.checklist];
+          updated = { ...prev, checklists };
+        } else {
+          const subtasks = (prev.subtasks || []).map((st: any) => {
+            if (st.id === payload.subtaskId) {
+              const exists = (st.checklists || []).some((c: any) => c.id === payload.checklist.id);
+              if (exists) return st;
+              return { ...st, checklists: [...(st.checklists || []), payload.checklist] };
+            }
+            return st;
+          });
+          updated = { ...prev, subtasks };
+        }
+        if (props.onUpdateTask) props.onUpdateTask(updated);
+        return updated;
+      });
+    };
+
+    const handleSocketChecklistItemCreated = (payload: any) => {
+      if (!payload || payload.taskId !== fullTask.id || !payload.item) return;
+      setFullTask(prev => {
+        if (!prev) return prev;
+        let updated: any;
+        if (!payload.subtaskId) {
+          let found = false;
           const checklists = (prev.checklists || []).map(c => {
-            if (c.id === payload.checklistId) {
-              const items = (c.items || []).map(i =>
-                (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                  ? { ...i, ...payload.item }
-                  : i
-              );
-              return { ...c, items };
+            if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              found = true;
+              if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
+              const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
+              if (tempIdx !== -1) {
+                const newItems = [...c.items];
+                newItems[tempIdx] = payload.item;
+                return { ...c, items: newItems };
+              }
+              return { ...c, items: [...(c.items || []), payload.item] };
             }
             return c;
           });
-          return { ...prev, checklists };
+          const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+          const finalChecklists = found ? checklists : [
+            ...(prev.checklists || []),
+            {
+              id: payload.checklistId,
+              taskId: fullTask.id,
+              name: isAudit ? 'Audit' : 'Checklist',
+              createdAt: new Date().toISOString(),
+              items: [payload.item],
+            }
+          ];
+          updated = { ...prev, checklists: finalChecklists };
+        } else {
+          const subtasks = (prev.subtasks || []).map((st: any) => {
+            if (st.id === payload.subtaskId) {
+              let found = false;
+              const checklists = (st.checklists || []).map((c: any) => {
+                if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                  found = true;
+                  if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
+                  const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
+                  if (tempIdx !== -1) {
+                    const newItems = [...c.items];
+                    newItems[tempIdx] = payload.item;
+                    return { ...c, items: newItems };
+                  }
+                  return { ...c, items: [...(c.items || []), payload.item] };
+                }
+                return c;
+              });
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const finalChecklists = found ? checklists : [
+                ...(st.checklists || []),
+                {
+                  id: payload.checklistId,
+                  taskId: fullTask.id,
+                  subtaskId: payload.subtaskId,
+                  name: isAudit ? 'Audit' : 'Checklist',
+                  createdAt: new Date().toISOString(),
+                  items: [payload.item],
+                }
+              ];
+              return { ...st, checklists: finalChecklists };
+            }
+            return st;
+          });
+          updated = { ...prev, subtasks };
+        }
+        if (props.onUpdateTask) props.onUpdateTask(updated);
+        return updated;
+      });
+    };
+
+    const handleSocketChecklistUpdated = (payload: any) => {
+      if (!payload || payload.taskId !== fullTask.id || !payload.item) return;
+      setFullTask(prev => {
+        if (!prev) return prev;
+        let updated: any;
+        if (!payload.subtaskId) {
+          const checklists = (prev.checklists || []).map(c => {
+            if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+              if (hasItem) {
+                const items = (c.items || []).map(i =>
+                  (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                    ? { ...i, ...payload.item }
+                    : i
+                );
+                return { ...c, items };
+              } else {
+                return { ...c, items: [...(c.items || []), payload.item] };
+              }
+            }
+            return c;
+          });
+          updated = { ...prev, checklists };
         } else {
           const subtasks = (prev.subtasks || []).map((st: any) => {
             if (st.id === payload.subtaskId) {
               const checklists = (st.checklists || []).map((c: any) => {
-                if (c.id === payload.checklistId) {
-                  const items = (c.items || []).map((i: any) =>
-                    (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                      ? { ...i, ...payload.item }
-                      : i
-                  );
-                  return { ...c, items };
+                if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                  const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+                  if (hasItem) {
+                    const items = (c.items || []).map((i: any) =>
+                      (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                        ? { ...i, ...payload.item }
+                        : i
+                    );
+                    return { ...c, items };
+                  } else {
+                    return { ...c, items: [...(c.items || []), payload.item] };
+                  }
                 }
                 return c;
               });
@@ -8432,8 +8733,10 @@ export function TaskDetailModal(props: Props) {
             }
             return st;
           });
-          return { ...prev, subtasks };
+          updated = { ...prev, subtasks };
         }
+        if (props.onUpdateTask) props.onUpdateTask(updated);
+        return updated;
       });
     };
 
@@ -8441,21 +8744,30 @@ export function TaskDetailModal(props: Props) {
       if (!payload || payload.taskId !== fullTask.id) return;
       setFullTask(prev => {
         if (!prev) return prev;
+        let updated: any;
         if (!payload.subtaskId) {
           const checklists = (prev.checklists || []).map((c: any) => {
-            if (c.id === payload.checklistId) {
-              const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+            if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
+              const items = (c.items || []).filter((i: any) => {
+                if (i.id === payload.itemId) return false;
+                if (payload.text && i.text === payload.text) return false;
+                return true;
+              });
               return { ...c, items };
             }
             return c;
           });
-          return { ...prev, checklists };
+          updated = { ...prev, checklists };
         } else {
           const subtasks = (prev.subtasks || []).map((st: any) => {
             if (st.id === payload.subtaskId) {
               const checklists = (st.checklists || []).map((c: any) => {
-                if (c.id === payload.checklistId) {
-                  const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+                if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
+                  const items = (c.items || []).filter((i: any) => {
+                    if (i.id === payload.itemId) return false;
+                    if (payload.text && i.text === payload.text) return false;
+                    return true;
+                  });
                   return { ...c, items };
                 }
                 return c;
@@ -8464,8 +8776,10 @@ export function TaskDetailModal(props: Props) {
             }
             return st;
           });
-          return { ...prev, subtasks };
+          updated = { ...prev, subtasks };
         }
+        if (props.onUpdateTask) props.onUpdateTask(updated);
+        return updated;
       });
     };
 
@@ -8473,9 +8787,10 @@ export function TaskDetailModal(props: Props) {
       if (!payload || payload.taskId !== fullTask.id) return;
       setFullTask(prev => {
         if (!prev) return prev;
+        let updated: any;
         if (!payload.subtaskId) {
           const checklists = (prev.checklists || []).filter((c: any) => c.id !== payload.checklistId);
-          return { ...prev, checklists };
+          updated = { ...prev, checklists };
         } else {
           const subtasks = (prev.subtasks || []).map((st: any) => {
             if (st.id === payload.subtaskId) {
@@ -8484,23 +8799,27 @@ export function TaskDetailModal(props: Props) {
             }
             return st;
           });
-          return { ...prev, subtasks };
+          updated = { ...prev, subtasks };
         }
+        if (props.onUpdateTask) props.onUpdateTask(updated);
+        return updated;
       });
     };
 
     props.socket.on('task:updated', handleSocketTaskUpdated);
     props.socket.on('task_move_preview', handleSocketTaskMovePreview);
+    props.socket.on('task:checklist_created', handleSocketChecklistCreated);
     props.socket.on('task:checklist_item_updated', handleSocketChecklistUpdated);
-    props.socket.on('task:checklist_item_created', handleSocketChecklistUpdated);
+    props.socket.on('task:checklist_item_created', handleSocketChecklistItemCreated);
     props.socket.on('task:checklist_item_deleted', handleSocketChecklistItemDeleted);
     props.socket.on('task:checklist_deleted', handleSocketChecklistDeleted);
 
     return () => {
       props.socket.off('task:updated', handleSocketTaskUpdated);
       props.socket.off('task_move_preview', handleSocketTaskMovePreview);
+      props.socket.off('task:checklist_created', handleSocketChecklistCreated);
       props.socket.off('task:checklist_item_updated', handleSocketChecklistUpdated);
-      props.socket.off('task:checklist_item_created', handleSocketChecklistUpdated);
+      props.socket.off('task:checklist_item_created', handleSocketChecklistItemCreated);
       props.socket.off('task:checklist_item_deleted', handleSocketChecklistItemDeleted);
       props.socket.off('task:checklist_deleted', handleSocketChecklistDeleted);
     };
@@ -8571,7 +8890,7 @@ export function TaskDetailModal(props: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 1 }}
             transition={{ duration: 0 }}
-            className="absolute inset-0 z-50 bg-background flex flex-col cursor-default"
+            className="absolute inset-0 z-[80] bg-background flex flex-col cursor-default"
           >
             <TaskDetailModalContent
               {...props}

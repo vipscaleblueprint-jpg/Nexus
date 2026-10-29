@@ -1,0 +1,1454 @@
+{
+    "nodes": [
+        {
+            "parameters": {
+                "content": "Nexus x Clickup\n\nActive",
+                "height": 2816,
+                "width": 3328
+            },
+            "type": "n8n-nodes-base.stickyNote",
+            "position": [
+                480,
+                3280
+            ],
+            "typeVersion": 1,
+            "id": "3d7a5a5c-bf8c-4a93-bf29-3177b2afd893",
+            "name": "Sticky Note"
+        },
+        {
+            "parameters": {
+                "method": "DELETE",
+                "url": "https://api.clickup.com/api/v2/webhook/9a1e2e9a-168c-409f-be3e-fd03ffc5d96a",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.4,
+            "position": [
+                2128,
+                3376
+            ],
+            "id": "221ef2a2-8ce4-455e-8e47-ba38626013dd",
+            "name": "HTTP Request3",
+            "credentials": {
+                "httpHeaderAuth": {
+                    "id": "OCe8kVakxNC6Apim",
+                    "name": "Header"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "url": "https://api.clickup.com/api/v2/team/9008153890/webhook",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.4,
+            "position": [
+                1744,
+                3360
+            ],
+            "id": "f5f821aa-47a1-4602-aa52-b18b997c595c",
+            "name": "HTTP Request2",
+            "credentials": {
+                "httpHeaderAuth": {
+                    "id": "OCe8kVakxNC6Apim",
+                    "name": "Header"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "team": "9008153890",
+                "events": [
+                    "taskCreated"
+                ],
+                "filters": {}
+            },
+            "type": "n8n-nodes-base.clickUpTrigger",
+            "typeVersion": 1,
+            "position": [
+                2096,
+                5248
+            ],
+            "id": "d63867c5-c5ac-4862-8ed2-85d861dd9f84",
+            "name": "ClickUp Trigger",
+            "webhookId": "7f557885-c0e4-4ace-beed-e93269317a16",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "get",
+                "id": "={{ $('ClickUp Trigger').first().json.task_id }}"
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                2768,
+                5344
+            ],
+            "id": "fcb62706-e023-414d-b5e7-336ee677da82",
+            "name": "Get a task4",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "aggregate": "aggregateAllItemData",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                2544,
+                5344
+            ],
+            "id": "2cb351af-24c2-4999-b68f-12922a7f35c3",
+            "name": "Aggregate3"
+        },
+        {
+            "parameters": {
+                "operation": "getAll",
+                "tableId": "clients",
+                "returnAll": true
+            },
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                2320,
+                5344
+            ],
+            "id": "32088ff5-36d4-4625-8902-3f40d5d18e7d",
+            "name": "Get many rows1",
+            "credentials": {
+                "supabaseApi": {
+                    "id": "mh3ith1Nvr3Qus2M",
+                    "name": "VIPSCALE"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "appendOrUpdate",
+                "documentId": {
+                    "__rl": true,
+                    "value": "15DCkm5fI4zx9mcpxnvh6zIt0I_wjn34YuMAT_G4GTR8",
+                    "mode": "list",
+                    "cachedResultName": "Notes for Today",
+                    "cachedResultUrl": "https://docs.google.com/spreadsheets/d/15DCkm5fI4zx9mcpxnvh6zIt0I_wjn34YuMAT_G4GTR8/edit?usp=drivesdk"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "gid=0",
+                    "mode": "list",
+                    "cachedResultName": "2025",
+                    "cachedResultUrl": "https://docs.google.com/spreadsheets/d/15DCkm5fI4zx9mcpxnvh6zIt0I_wjn34YuMAT_G4GTR8/edit#gid=0"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Clickup Task Link": "={{ $json.url }}",
+                        "Start Date": "={{ $now.format('DDDD') }}",
+                        "Client Name": "={{ $('Aggregate3').item.json.data.find(item => item.clickup_id === $json.list.id)?.name }}",
+                        "Task Name": "={{ $json.name }}",
+                        "Status": "={{ $json.status.status.toTitleCase() }}"
+                    },
+                    "matchingColumns": [
+                        "Clickup Task Link"
+                    ],
+                    "schema": [
+                        {
+                            "id": "Start Date",
+                            "displayName": "Start Date",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "Client Name",
+                            "displayName": "Client Name",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "Task Name",
+                            "displayName": "Task Name",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "Clickup Task Link",
+                            "displayName": "Clickup Task Link",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": false
+                        },
+                        {
+                            "id": "💎",
+                            "displayName": "💎",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Priority",
+                            "displayName": "Priority",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Assigned",
+                            "displayName": "Assigned",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Complexity",
+                            "displayName": "Complexity",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Status",
+                            "displayName": "Status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "Notes",
+                            "displayName": "Notes",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Deliverables Links",
+                            "displayName": "Deliverables Links",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Comments - Paul",
+                            "displayName": "Comments - Paul",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Comments - Jen",
+                            "displayName": "Comments - Jen",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Communication Channels",
+                            "displayName": "Communication Channels",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        },
+                        {
+                            "id": "Collaborators",
+                            "displayName": "Collaborators",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true,
+                            "removed": true
+                        }
+                    ],
+                    "attemptToConvertTypes": false,
+                    "convertFieldsToString": false
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.7,
+            "position": [
+                2992,
+                5344
+            ],
+            "id": "f4cee953-9dd0-47c4-841d-d3bedb300fa2",
+            "name": "Append or update row in sheet",
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "W4zbL8SjgZl0ZMq6",
+                    "name": "Google Sheets account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "c3eab6a2-230d-4655-910a-80cd243d09dd",
+                            "leftValue": "={{ $json.name }}",
+                            "rightValue": "villa",
+                            "operator": {
+                                "type": "string",
+                                "operation": "contains"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.filter",
+            "typeVersion": 2.3,
+            "position": [
+                1696,
+                4144
+            ],
+            "id": "6abb09c1-84d7-45a4-822b-cc9a8c5791c6",
+            "name": "Filter1"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "3a1f4dbf-d8fa-4e1b-8458-6dd6168eb8ee",
+                            "name": "name",
+                            "value": "={{ $json.name }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "eb7bfd2a-5c7d-4347-be35-13bb675c9b85",
+                            "name": "is_bot",
+                            "value": "={{ $json.is_bot }}",
+                            "type": "boolean"
+                        },
+                        {
+                            "id": "e16e4c0b-69be-4664-a6b6-dc9cfd215406",
+                            "name": "real_name",
+                            "value": "={{ $json.real_name }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "ad5ae4aa-a90c-48df-b035-6403dd66d554",
+                            "name": "id",
+                            "value": "={{ $json.id }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                1472,
+                4144
+            ],
+            "id": "e7e1303f-495d-474f-8d56-1066de88edae",
+            "name": "Edit Fields3"
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "resource": "user",
+                "operation": "getAll",
+                "returnAll": true
+            },
+            "type": "n8n-nodes-base.slack",
+            "typeVersion": 2.5,
+            "position": [
+                1248,
+                4144
+            ],
+            "id": "7c439bae-ad51-4272-ad6c-e383bcc1a797",
+            "name": "Get many users1",
+            "webhookId": "aaa11e0a-2b78-4779-a459-b7e52cb854e3",
+            "credentials": {
+                "slackOAuth2Api": {
+                    "id": "DL38oIfxTVZCGHQK",
+                    "name": "Slack account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "const item = $input.item.json;\nconst content = item.description || \"\";\n\n// --- Task Link ---\nconst taskLinkMatch = content.match(/Task Link:\\s*(https?:\\/\\/\\S+)/);\nconst taskLink = taskLinkMatch ? taskLinkMatch[1].trim() : \"\";\n\n// --- Main Description (text between Task Link block and Deliverables:) ---\nconst descMatch = content.match(/Task Link:.*?\\n+([\\s\\S]*?)(?=Deliverables:)/);\nconst description = descMatch ? descMatch[1].trim() : \"\";\n\n// --- Deliverables (comma-separated or newline-separated) ---\nconst deliverablesMatch = content.match(/Deliverables:\\s*([\\s\\S]*?)(?=Notes:)/);\nlet deliverables = [];\nif (deliverablesMatch) {\n  const raw = deliverablesMatch[1].trim();\n  deliverables = raw\n    .split(/,|\\n/)\n    .map(d => d.trim())\n    .filter(Boolean);\n}\n\n// --- Notes (newline-separated) ---\nconst notesMatch = content.match(/Notes:\\s*([\\s\\S]*?)(?=Resources:)/);\nlet notes = \"\";\nif (notesMatch) {\n  notes = notesMatch[1]\n    .trim()\n    .split(\"\\n\")\n    .map(n => n.trim())\n    .filter(Boolean)\n    .join(\"\\n\"); // <-- return as single string\n}\n\n// --- Resources (newline-separated) ---\nconst resourcesMatch = content.match(/Resources:\\s*([\\s\\S]*)$/);\nlet resources = [];\nif (resourcesMatch) {\n  resources = resourcesMatch[1]\n    .trim()\n    .split(\"\\n\")\n    .map(r => r.trim())\n    .filter(Boolean);\n}\n\nreturn {\n  task_id: item.id,\n  task_name: item.name || \"\",\n  clickup_task_link: `https://app.clickup.com/t/${item.id}`,\n  task_link: taskLink,\n  description: description,\n  deliverables: deliverables,   // array\n  notes: notes,                 // string\n  resources: resources,         // array\n  status: item.status?.status || \"\",\n  assignees: (item.assignees || []).map(a => a.username),// array\n  task: $input.item.json\n};"
+            },
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2992,
+                5152
+            ],
+            "id": "d16ecac4-5c16-4c20-948b-66a54dd891de",
+            "name": "Parse Task Content"
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "get",
+                "id": "={{ $('ClickUp Trigger').first().json.task_id }}"
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                2768,
+                5152
+            ],
+            "id": "e146470b-8f31-42f1-bdfe-19b86ee6bb95",
+            "name": "Get a task",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "tableId": "tasks",
+                "fieldsUi": {
+                    "fieldValues": [
+                        {
+                            "fieldId": "clickup_task_link",
+                            "fieldValue": "={{ $json.task.url }}"
+                        },
+                        {
+                            "fieldId": "start_date",
+                            "fieldValue": "={{ $json.task.date_created.toNumber().toDateTime('ms').format('yyyy-MM-dd') }}"
+                        },
+                        {
+                            "fieldId": "client_name",
+                            "fieldValue": "={{ $json.task.list.name === \"Admin - JR Teams\" ? \"Admin | Jenesia Red\" : $json.task.list.name }}"
+                        },
+                        {
+                            "fieldId": "task_name",
+                            "fieldValue": "={{ $json.task_name }}"
+                        },
+                        {
+                            "fieldId": "priority",
+                            "fieldValue": "={{ $json.task.priority.priority }}"
+                        },
+                        {
+                            "fieldId": "status",
+                            "fieldValue": "={{ $json.task.status.status }}"
+                        },
+                        {
+                            "fieldId": "assignee",
+                            "fieldValue": "={{ $json.assignees }}"
+                        },
+                        {
+                            "fieldId": "task_deliverables",
+                            "fieldValue": "={{ $json.deliverables }}"
+                        },
+                        {
+                            "fieldId": "task_description",
+                            "fieldValue": "={{ $json.description }}"
+                        },
+                        {
+                            "fieldId": "task_notes",
+                            "fieldValue": "={{ $json.notes }}"
+                        },
+                        {
+                            "fieldId": "task_resources",
+                            "fieldValue": "={{ $json.resources }}"
+                        }
+                    ]
+                }
+            },
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                3216,
+                5152
+            ],
+            "id": "99fc9b7b-908c-4641-a577-42e945068f45",
+            "name": "Create a row1",
+            "credentials": {
+                "supabaseApi": {
+                    "id": "mh3ith1Nvr3Qus2M",
+                    "name": "VIPSCALE"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0cc258dc-f403-4de2-8047-671fa844e5ee",
+                            "leftValue": "={{ $json.clickup_task_link }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "string",
+                                "operation": "notEmpty",
+                                "singleValue": true
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                2544,
+                5152
+            ],
+            "id": "c700d0f6-af81-4085-9c4e-92f44d770e81",
+            "name": "If4"
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "tableId": "tasks",
+                "filters": {
+                    "conditions": [
+                        {
+                            "keyName": "clickup_task_link",
+                            "keyValue": "=https://app.clickup.com/t/{{ $json.task_id }}"
+                        }
+                    ]
+                }
+            },
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                2320,
+                5152
+            ],
+            "id": "21daffde-3d3a-4152-9369-e475d10db313",
+            "name": "Get a row7",
+            "alwaysOutputData": true,
+            "credentials": {
+                "supabaseApi": {
+                    "id": "mh3ith1Nvr3Qus2M",
+                    "name": "VIPSCALE"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "update",
+                "id": "={{ (($('Save to Nexus (sheet update)').item.json.clickup_link || (String($('Webhook1').item.json.body.task_link || '').includes('app.clickup.com') ? $('Webhook1').item.json.body.task_link : '')).split('/').pop()) }}",
+                "updateFields": {
+                    "removeAssignees": "={{ $json.clickup_id }}"
+                }
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                1760,
+                5408
+            ],
+            "id": "19b34e80-09c3-4790-a615-ef038e93348c",
+            "name": "Update a task11",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "tableId": "assistant",
+                "filters": {
+                    "conditions": [
+                        {
+                            "keyName": "name",
+                            "keyValue": "={{ $('Webhook1').item.json.body.assignee || $('Webhook1').item.json.body.assignee_name }}"
+                        }
+                    ]
+                }
+            },
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                1536,
+                5408
+            ],
+            "id": "143a80fe-efab-4832-8bc5-499a089e2b69",
+            "name": "Get a row6",
+            "credentials": {
+                "supabaseApi": {
+                    "id": "mh3ith1Nvr3Qus2M",
+                    "name": "VIPSCALE"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "update",
+                "id": "={{ (($('Save to Nexus (sheet update)').item.json.clickup_link || (String($('Webhook1').item.json.body.task_link || '').includes('app.clickup.com') ? $('Webhook1').item.json.body.task_link : '')).split('/').pop()) }}",
+                "updateFields": {
+                    "addAssignees": "={{ $json.clickup_id }}"
+                }
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                1760,
+                5216
+            ],
+            "id": "c4f83e55-f0d6-4e06-94f7-c5e8b64ceb72",
+            "name": "Update a task10",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "tableId": "assistant",
+                "filters": {
+                    "conditions": [
+                        {
+                            "keyName": "name",
+                            "keyValue": "={{ $('Webhook1').item.json.body.assignee || $('Webhook1').item.json.body.assignee_name }}"
+                        }
+                    ]
+                }
+            },
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                1536,
+                5216
+            ],
+            "id": "e1a810f0-22dc-43b2-9ae6-52f89099918a",
+            "name": "Get a row5",
+            "credentials": {
+                "supabaseApi": {
+                    "id": "mh3ith1Nvr3Qus2M",
+                    "name": "VIPSCALE"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "update",
+                "id": "={{ (($('Save to Nexus (sheet update)').item.json.clickup_link || (String($('Webhook1').item.json.body.task_link || '').includes('app.clickup.com') ? $('Webhook1').item.json.body.task_link : '')).split('/').pop()) }}",
+                "updateFields": {
+                    "status": "={{ $('Webhook1').item.json.body.new_status }}"
+                }
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                1536,
+                5024
+            ],
+            "id": "36738ec4-1410-48a4-b3dd-f6ca2bff501b",
+            "name": "Update a task9",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "update",
+                "id": "={{ $('Webhook1').item.json.body.task_link.split(\"/\").pop()\n}}",
+                "updateFields": {
+                    "addAssignees": ""
+                }
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                2144,
+                4368
+            ],
+            "id": "cbd4b832-3ca0-4895-bdf6-1b97b0cc4cf5",
+            "name": "Update a task8",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "aggregate": "aggregateAllItemData",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                1920,
+                4368
+            ],
+            "id": "c77c3b96-c115-4172-8712-f9178672ccf5",
+            "name": "Aggregate2"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "6a8507f0-e35d-4d54-87ab-794917ede3f4",
+                            "name": "task_link",
+                            "value": "={{ $json.body.task_link }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "e740cb61-a562-4897-b463-f10582dcb7d9",
+                            "name": "new_assignee",
+                            "value": "={{ $json.body.new_assignee }}",
+                            "type": "array"
+                        },
+                        {
+                            "id": "a96d47c9-84b3-4631-b44b-f855095e89d5",
+                            "name": "what_to_update",
+                            "value": "={{ $json.body.what_to_update }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                1248,
+                4368
+            ],
+            "id": "61d8d4ea-b59b-4e00-aac4-c4d57461a7a3",
+            "name": "Edit Fields2"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "new_assignee",
+                "include": "allOtherFields",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                1472,
+                4368
+            ],
+            "id": "c488a8f3-3cd4-4647-8796-76f1861c072e",
+            "name": "Split Out1"
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "tableId": "assistant",
+                "filters": {
+                    "conditions": [
+                        {
+                            "keyName": "name",
+                            "keyValue": "={{ $json.new_assignee }}"
+                        }
+                    ]
+                }
+            },
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                1696,
+                4368
+            ],
+            "id": "6d80c37a-fb8b-4e99-8ead-d8c5f0ff1c35",
+            "name": "Get a row",
+            "credentials": {
+                "supabaseApi": {
+                    "id": "mh3ith1Nvr3Qus2M",
+                    "name": "VIPSCALE"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "rules": {
+                    "values": [
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict",
+                                    "version": 3
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $('Webhook1').item.json.body.what_to_update }}",
+                                        "rightValue": "status",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        },
+                                        "id": "ff827d28-74d9-42e7-8222-1078ffc3a3d9"
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "status"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict",
+                                    "version": 3
+                                },
+                                "conditions": [
+                                    {
+                                        "id": "00d64783-2be3-42be-90e2-041b5d8c04c9",
+                                        "leftValue": "={{ $('Webhook1').item.json.body.what_to_update }}",
+                                        "rightValue": "assignee",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals",
+                                            "name": "filter.operator.equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "assignee"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict",
+                                    "version": 3
+                                },
+                                "conditions": [
+                                    {
+                                        "id": "2d097d09-927a-4f55-addb-951f81f78109",
+                                        "leftValue": "={{ $('Webhook1').item.json.body.what_to_update }}",
+                                        "rightValue": "add_assignee",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals",
+                                            "name": "filter.operator.equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "add_assignee"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict",
+                                    "version": 3
+                                },
+                                "conditions": [
+                                    {
+                                        "id": "a72a8c50-511b-402c-b4f6-77cd7663d087",
+                                        "leftValue": "={{ $('Webhook1').item.json.body.what_to_update }}",
+                                        "rightValue": "remove_assignee",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals",
+                                            "name": "filter.operator.equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "remove_assignee"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 3.4,
+            "position": [
+                1312,
+                5184
+            ],
+            "id": "6d6de32d-9578-4475-b681-7fffa6d1ea73",
+            "name": "Switch"
+        },
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "update-clickup",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                1088,
+                5216
+            ],
+            "id": "b5eb4daf-0ed3-4a09-98e0-84f530d8d39e",
+            "name": "Webhook1",
+            "webhookId": "0c7bc255-f8e6-4031-8541-f52cd05f18a5",
+            "notes": "Called by the MA Daily Schedule sheets (CLICKUP_UPDATE_WEBHOOK) and by vipscale (galaxy-task.ts). Path was update-clickup2, which neither caller used."
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "resource": "comment",
+                "commentOn": "task",
+                "id": "={{ $json.id }}",
+                "commentText": "={{ $('Webhook4').item.json.body[\"Deliverables Links\"] }}",
+                "additionalFields": {}
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                3568,
+                4624
+            ],
+            "id": "6c6ce7b1-e854-4637-a29d-e587c0f84b71",
+            "name": "Create a comment1",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "update",
+                "id": "={{ $('Webhook4').item.json.body['Clickup Task Link'].split(\"/\")[4] }}",
+                "updateFields": {
+                    "status": "={{ $('Webhook4').item.json.body.Status.toUpperCase() }}"
+                }
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                3344,
+                4816
+            ],
+            "id": "13a4ad1e-2b2b-4be5-8e4a-7a474cf9b98c",
+            "name": "Update a task7",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "c32eb881-3d05-44ba-b8d6-81d3e600a4b5",
+                            "leftValue": "={{ $json.body.isComment }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                3120,
+                4720
+            ],
+            "id": "a4d858e3-c0bd-4a51-9267-9264e021c01b",
+            "name": "If1"
+        },
+        {
+            "parameters": {
+                "authentication": "oAuth2",
+                "operation": "update",
+                "id": "={{ $('Webhook4').item.json.body['Clickup Task Link'].split(\"/\")[4] }}",
+                "updateFields": {
+                    "status": "={{ $('Webhook4').item.json.body.Status.toUpperCase() }}"
+                }
+            },
+            "type": "n8n-nodes-base.clickUp",
+            "typeVersion": 1,
+            "position": [
+                3344,
+                4624
+            ],
+            "id": "b3dabe3d-fa4d-415e-bd0d-b747afcff8d0",
+            "name": "Update a task6",
+            "credentials": {
+                "clickUpOAuth2Api": {
+                    "id": "HcSNzz0UTUd12CXV",
+                    "name": "VIP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "update-clickup-comment2",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                2896,
+                4720
+            ],
+            "id": "454b9bf9-6210-4084-9055-4d5bc1d55e38",
+            "name": "Webhook4",
+            "webhookId": "0c7bc255-f8e6-4031-8541-f52cd05f18a5"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "loose",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "c0000101-0000-4000-8000-000000000101",
+                            "leftValue": "={{ !!(($('Save to Nexus (sheet update)').item.json.clickup_link || (String($('Webhook1').item.json.body.task_link || '').includes('app.clickup.com') ? $('Webhook1').item.json.body.task_link : '')).split('/').pop()) }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true",
+                                "singleValue": true
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                1312,
+                5632
+            ],
+            "id": "f3a24471-2bc6-4bfc-94b0-492dd133cfd0",
+            "name": "Has ClickUp copy?",
+            "notes": "Tasks that only exist in Nexus skip the ClickUp steps."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://nexus.server.vipscaleph.com/api/webhooks/sheets/update",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json.body) }}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1200,
+                5440
+            ],
+            "id": "343908d5-2aed-4c42-8586-e621e403a623",
+            "name": "Save to Nexus (sheet update)",
+            "retryOnFail": true,
+            "maxTries": 3,
+            "waitBetweenTries": 5000,
+            "credentials": {
+                "httpHeaderAuth": {
+                    "id": "BltAQaN1TRI5uOdh",
+                    "name": "Header Auth account 2"
+                }
+            },
+            "onError": "continueRegularOutput",
+            "notes": "Applies the status / assignee change in Nexus first. Returns clickup_link (the task's ClickUp copy) for the ClickUp steps. A Nexus failure never stops ClickUp from updating."
+        }
+    ],
+    "connections": {
+        "ClickUp Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Get many rows1",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Get a row7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get a task4": {
+            "main": [
+                [
+                    {
+                        "node": "Append or update row in sheet",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Aggregate3": {
+            "main": [
+                [
+                    {
+                        "node": "Get a task4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get many rows1": {
+            "main": [
+                [
+                    {
+                        "node": "Aggregate3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Edit Fields3": {
+            "main": [
+                [
+                    {
+                        "node": "Filter1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get many users1": {
+            "main": [
+                [
+                    {
+                        "node": "Edit Fields3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Parse Task Content": {
+            "main": [
+                [
+                    {
+                        "node": "Create a row1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get a task": {
+            "main": [
+                [
+                    {
+                        "node": "Parse Task Content",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If4": {
+            "main": [
+                [],
+                [
+                    {
+                        "node": "Get a task",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get a row7": {
+            "main": [
+                [
+                    {
+                        "node": "If4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get a row6": {
+            "main": [
+                [
+                    {
+                        "node": "Update a task11",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get a row5": {
+            "main": [
+                [
+                    {
+                        "node": "Update a task10",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Aggregate2": {
+            "main": [
+                [
+                    {
+                        "node": "Update a task8",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Edit Fields2": {
+            "main": [
+                [
+                    {
+                        "node": "Split Out1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Split Out1": {
+            "main": [
+                [
+                    {
+                        "node": "Get a row",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get a row": {
+            "main": [
+                [
+                    {
+                        "node": "Aggregate2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Switch": {
+            "main": [
+                [
+                    {
+                        "node": "Update a task9",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [],
+                [
+                    {
+                        "node": "Get a row5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Get a row6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Webhook1": {
+            "main": [
+                [
+                    {
+                        "node": "Save to Nexus (sheet update)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If1": {
+            "main": [
+                [
+                    {
+                        "node": "Update a task6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update a task7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Update a task6": {
+            "main": [
+                [
+                    {
+                        "node": "Create a comment1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Webhook4": {
+            "main": [
+                [
+                    {
+                        "node": "If1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Has ClickUp copy?": {
+            "main": [
+                [
+                    {
+                        "node": "Switch",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Save to Nexus (sheet update)": {
+            "main": [
+                [
+                    {
+                        "node": "Has ClickUp copy?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "pinData": {},
+    "meta": {
+        "instanceId": "4cc403a4c2e950b3504b7bcf03ba4a07b56850f8e3d68f3eaf4db7820d08d8d9"
+    }
+}

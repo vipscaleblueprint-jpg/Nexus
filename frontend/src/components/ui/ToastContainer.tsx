@@ -14,7 +14,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none sm:max-w-md">
+    <div className="fixed bottom-5 right-5 z-[100010] flex flex-col gap-2 max-w-sm w-full pointer-events-none sm:max-w-md">
       {toasts.map((item) => {
         let borderClass = 'border-zinc-800';
         let bgClass = 'bg-card/90 text-zinc-100';

@@ -1491,11 +1491,11 @@ export const KanbanCard = memo(function KanbanCard({
                 key={sub.id}
                 className="relative flex items-start"
                 onClick={(e) => e.stopPropagation()}
-                initial={{ opacity: 0, height: 0, overflow: 'hidden' }}
+                initial={false}
                 animate={{ opacity: 1, height: 'auto', transitionEnd: { overflow: 'visible' } }}
                 // Short delay lets the closed check icon register before the row collapses
                 exit={{ opacity: 0, height: 0, x: 12, overflow: 'hidden', transition: { ...SUBTASK_ROW_TRANSITION, delay: 0.25 } }}
-                transition={SUBTASK_ROW_TRANSITION}
+                transition={{ duration: 0 }}
               >
                 {/* Vertical line — stops at elbow midpoint on last item */}
                 <div

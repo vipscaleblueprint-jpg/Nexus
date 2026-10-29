@@ -838,8 +838,12 @@ function WorkspaceDashboardContent({
   }, [tasksWithSubtasks, currentUser]);
 
   // Closed tasks are hidden from every overview tab unless the user explicitly filters by "Closed"
-  const isClosedTask = (t: Task) => (t.status || "").trim().toUpperCase() === "CLOSED";
-  const showClosed = filterStatus.toUpperCase() === "CLOSED";
+  const isClosedTask = (t: Task) => {
+    if ((t as any).completed) return true;
+    const s = (t.status || "").trim().toUpperCase();
+    return s === "CLOSED" || s === "DONE" || s === "COMPLETED" || s === "RESOLVED" || s === "CANCELLED";
+  };
+  const showClosed = filterStatus.toUpperCase() === "CLOSED" || filterStatus.toUpperCase() === "DONE";
 
   const filteredMyTasks = useMemo(() => {
     let result = showClosed ? [...myTasks] : myTasks.filter((t) => !isClosedTask(t));

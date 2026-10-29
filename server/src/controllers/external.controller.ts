@@ -1526,27 +1526,56 @@ function parseCommentProgress(html: string) {
   let actionDone = '';
   let nextSteps = '';
   let statusText = '';
+  let timeStarted: string | null = null;
+  let timeEnded: string | null = null;
+  let timeRange: string | null = null;
+  let startRaw: string | null = null;
+  let endRaw: string | null = null;
 
-  const actionMatch = text.match(/✅\s*Action Done:\s*([\s\S]*?)(?=(🔄\s*Status:|📋\s*To Do|\n\n\n|$))/i);
+  // Match sentence format: 👤 Name | 📅 Start Time | ✏️ End Time
+  const timeSentenceMatch = text.match(/(?:📅|Date:?)\s*([^|✏️\n]+?)\s*\|\s*(?:✏️|End:?)\s*([^\n\r]+)/i);
+  if (timeSentenceMatch) {
+    startRaw = timeSentenceMatch[1].trim();
+    endRaw = timeSentenceMatch[2].trim();
+    const sMatch = startRaw.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
+    const eMatch = endRaw.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
+    timeStarted = sMatch ? sMatch[1] : startRaw;
+    timeEnded = eMatch ? eMatch[1] : endRaw;
+    if (timeStarted && timeEnded) {
+      timeRange = `${timeStarted} - ${timeEnded}`;
+    } else {
+      timeRange = timeStarted || timeEnded || null;
+    }
+  }
+
+  // Remove header line (👤 ... | 📅 ... | ✏️ ...) from text body if present
+  const textWithoutHeader = text.replace(/^[^\n]*?(?:📅|✏️)[^\n]*?(?:\n+|$)/i, '').trim();
+
+  const actionMatch = textWithoutHeader.match(/(?:✅|📍)?\s*(?:Action(?:[\s/]*s)?\s*done(?:\s*and\s*Updates)?|Action\s*Done):\s*([\s\S]*?)(?=(?:🔄|💻|♡₊˚)?\s*Status:|(?:📋|⏭️|🚧|♡₊˚)?\s*(?:To Do|In progress|Next Steps)|\n\n\n|$)/i);
   if (actionMatch) {
     actionDone = actionMatch[1].trim();
   }
 
-  const statusMatch = text.match(/🔄\s*Status:\s*([\s\S]*?)(?=(📋\s*To Do|\n\n|$))/i);
+  const statusMatch = textWithoutHeader.match(/(?:🔄|💻|♡₊˚)?\s*Status(?:\s*┊➤)?:\s*([\s\S]*?)(?=(?:📋|⏭️|🚧|♡₊˚|📍|✅)?\s*(?:To Do|Action|Next Steps|Resources)|\n\n|$)/i);
   if (statusMatch) {
     statusText = statusMatch[1].trim();
   }
 
-  const nextStepsMatch = text.match(/📋\s*(?:To Do\s*\/?\s*Next Steps|Next Steps):\s*([\s\S]*?)$/i);
+  const nextStepsMatch = textWithoutHeader.match(/(?:📋|⏭️|♡₊˚)?\s*(?:To Do\s*\/?\s*Next Steps|Next Steps|Still To Do)(?:\s*┊➤)?:\s*([\s\S]*?)(?=(?:🎯|📎|♡₊˚)?\s*(?:Assigned|Resources)|\n\n\n|$)/i);
   if (nextStepsMatch) {
     nextSteps = nextStepsMatch[1].trim();
   }
 
   return {
     rawText: text,
-    actionDone: actionDone || text,
+    actionDone: actionDone || textWithoutHeader || text,
     statusText,
-    nextSteps
+    nextSteps,
+    timeStarted,
+    timeEnded,
+    timeRange,
+    startRaw,
+    endRaw,
   };
 }
 
@@ -1617,7 +1646,12 @@ export async function getAssistantsLastTasks(req: Request, res: Response) {
             actionDone: parsed.actionDone,
             nextSteps: parsed.nextSteps || null,
             commentStatus: parsed.statusText || null,
-            updatedAt: c.createdAt
+            updatedAt: c.createdAt,
+            timeStarted: parsed.timeStarted,
+            timeEnded: parsed.timeEnded,
+            timeRange: parsed.timeRange,
+            startRaw: parsed.startRaw,
+            endRaw: parsed.endRaw,
           });
 
           if (tasks.length >= 3) break;
@@ -1661,7 +1695,12 @@ export async function getAssistantsLastTasks(req: Request, res: Response) {
               actionDone: t.description ? parseCommentProgress(t.description).actionDone : '',
               nextSteps: null,
               commentStatus: null,
-              updatedAt: t.updatedAt
+              updatedAt: t.updatedAt,
+              timeStarted: t.description ? parseCommentProgress(t.description).timeStarted : null,
+              timeEnded: t.description ? parseCommentProgress(t.description).timeEnded : null,
+              timeRange: t.description ? parseCommentProgress(t.description).timeRange : null,
+              startRaw: null,
+              endRaw: null,
             });
           }
         }

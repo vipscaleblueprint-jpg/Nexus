@@ -259,9 +259,9 @@ export const KanbanColumn = memo(function KanbanColumn({
   if (isCollapsed && collapsedGroupCount && collapsedGroupCount > 1) {
     if (isCollapsedGroupLeader) {
        return (
-          <div className="flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out relative hover:z-50 focus-within:z-50 overflow-hidden w-11 h-full bg-[#e3e4e4] dark:bg-zinc-800 rounded-2xl border border-zinc-300 dark:border-zinc-700">
+          <div className="flex flex-col flex-shrink-0 relative hover:z-50 focus-within:z-50 overflow-hidden w-11 h-full bg-[#e3e4e4] dark:bg-zinc-800 rounded-2xl border border-zinc-300 dark:border-zinc-700">
              <button 
-                className="absolute inset-0 flex flex-col items-center py-6 gap-3 transition-opacity duration-300 opacity-100 z-10 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 text-zinc-500 dark:text-zinc-400"
+                className="absolute inset-0 flex flex-col items-center py-6 gap-3 opacity-100 z-10 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 text-zinc-500 dark:text-zinc-400"
                 onClick={onToggleCollapse}
                 title={`Expand ${collapsedGroupCount} columns`}
              >
@@ -279,7 +279,7 @@ export const KanbanColumn = memo(function KanbanColumn({
        );
     } else {
        return (
-          <div className="flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden w-0 h-full p-0 m-0 border-none opacity-0 pointer-events-none" />
+          <div className="flex flex-col flex-shrink-0 overflow-hidden w-0 h-full p-0 m-0 border-none opacity-0 pointer-events-none" />
        );
     }
   }
@@ -292,7 +292,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           e.currentTarget.scrollTop = 0;
         }
       }}
-      className={`flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out relative hover:z-50 focus-within:z-50 overflow-hidden ${
+      className={`flex flex-col flex-shrink-0 relative hover:z-50 focus-within:z-50 overflow-hidden ${
         isCollapsed 
           ? `w-11 h-full bg-transparent dark:bg-card rounded-2xl border-transparent dark:border-zinc-800/50` 
           : `w-[350px] ${isOverlay ? 'h-fit max-h-[80vh]' : 'max-h-full'} rounded-2xl ${colors.bg} border-transparent dark:border-zinc-800/50`
@@ -311,7 +311,7 @@ export const KanbanColumn = memo(function KanbanColumn({
       `}</style>
       {/* ── COLLAPSED VIEW ── */}
       <button 
-        className={`absolute inset-0 flex flex-col items-center py-4 gap-4 transition-opacity duration-300 ${isCollapsed ? 'opacity-100 z-10 cursor-pointer hover:brightness-125' : 'opacity-0 pointer-events-none'}`}
+        className={`absolute inset-0 flex flex-col items-center py-4 gap-4 ${isCollapsed ? 'opacity-100 z-10 cursor-pointer hover:brightness-125' : 'opacity-0 pointer-events-none'}`}
         onClick={onToggleCollapse}
         title={`Expand ${label}${displayRoles.length > 0 ? ` (Restricted to: ${displayRoles.join(', ')})` : ''}`}
       >
@@ -337,7 +337,7 @@ export const KanbanColumn = memo(function KanbanColumn({
       </button>
 
       {/* ── EXPANDED VIEW ── */}
-      <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-300 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+      <div className={`flex flex-col flex-1 min-h-0 min-w-[350px] ${isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div 
           data-column-header="true"
           className={`flex flex-col px-3 pt-3.5 pb-2 shrink-0 group/colheader ${isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'}`}

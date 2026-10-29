@@ -78,6 +78,7 @@ export const ComposerSendButton = ({ className = '', children = 'Send', ...props
 );
 
 export interface CommentEditorRef {
+  focus: (position?: 'start' | 'end' | 'all') => void;
   insertMention: (name: string, matchLength: number, userId: string) => void;
   insertImages: (files: File[]) => void;
   insertEmoji: (emoji: string) => void;
@@ -191,6 +192,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
   const rehostImagesRef = React.useRef<(srcs: string[]) => void>(() => {});
   const editor = useEditor({
     immediatelyRender: false,
+    autofocus: autoFocus ? 'end' : false,
     extensions: [
       StarterKit.configure({ dropcursor: { color: '#6366f1', width: 2 } }),
       CommentBlocks,
@@ -629,7 +631,22 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     window.addEventListener('pointercancel', onUp);
   };
 
+  React.useEffect(() => {
+    if (autoFocus && editor && !editor.isDestroyed) {
+      const timer = setTimeout(() => {
+        if (!editor.isDestroyed) {
+          editor.commands.focus('end');
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [autoFocus, editor]);
+
   React.useImperativeHandle(ref, () => ({
+    focus: (position: 'start' | 'end' | 'all' = 'end') => {
+      if (!editor || editor.isDestroyed) return;
+      editor.commands.focus(position);
+    },
     insertMention: (name: string, matchLength: number, userId: string) => {
       if (!editor) return;
       const { from } = editor.state.selection;

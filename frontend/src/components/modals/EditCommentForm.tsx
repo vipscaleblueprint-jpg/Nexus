@@ -137,6 +137,14 @@ export function EditCommentForm({
   const mentionMenuRef = useRef<HTMLDivElement>(null);
   const [emojiAnchor, setEmojiAnchor] = useState<HTMLElement | null>(null);
 
+  // Automatically focus editor and position cursor at end on mount so user can type immediately
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      commentEditorRef.current?.focus('end');
+    }, 60);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Filtered users for mention search
   const filteredUsers = useMemo(() => {
     if (!mentionSearch) return allUsers;

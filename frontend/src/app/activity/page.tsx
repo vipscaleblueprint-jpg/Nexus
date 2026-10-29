@@ -308,9 +308,10 @@ function ActivityFeedContent() {
       const cId =
         n?.details?.commentId ||
         n?.commentId ||
+        item?.rawItem?.commentId ||
         (typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('comment') : null);
       const cText = item?.content || n?.details?.text || n?.content || null;
-      const sId = n?.details?.subtaskId || n?.subtaskId || null;
+      const sId = n?.details?.subtaskId || n?.subtaskId || item?.rawItem?.subtaskId || null;
       setTargetCommentInfo({ id: cId, text: cText, subtaskId: sId });
     } else {
       setTargetCommentInfo(null);
@@ -391,11 +392,12 @@ function ActivityFeedContent() {
   useEffect(() => {
     const taskIdParam = searchParams.get('task');
     const commentParam = searchParams.get('comment');
+    const commentTextParam = searchParams.get('commentText');
     const actualTaskId = taskIdParam ? taskIdParam.split('/')[0].trim() : null;
 
     if (actualTaskId) {
-      if (commentParam && !targetCommentInfo) {
-        setTargetCommentInfo({ id: commentParam });
+      if ((commentParam || commentTextParam) && !targetCommentInfo) {
+        setTargetCommentInfo({ id: commentParam || null, text: commentTextParam || null });
       }
       if (actualTaskId !== lastUrlTaskId.current && actualTaskId !== selectedTask?.id) {
         lastUrlTaskId.current = actualTaskId;

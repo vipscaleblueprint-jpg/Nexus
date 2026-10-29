@@ -726,5 +726,53 @@ span[data-badge] {
   will-change: transform;
 }
 
+/* Traveling Rainbow Border for Search Highlight */
+@keyframes rainbow-border-travel {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+.rainbow-travel-border {
+  position: absolute;
+  inset: -2px;
+  border-radius: 14px;
+  padding: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 25;
+  filter: drop-shadow(0 0 6px rgba(168, 85, 247, 0.45));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+
+.rainbow-travel-border-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(300%, 750px);
+  aspect-ratio: 1 / 1;
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    #ff0055 0%,
+    #ff6b00 12.5%,
+    #facc15 25%,
+    #10b981 37.5%,
+    #06b6d4 50%,
+    #3b82f6 62.5%,
+    #8b5cf6 75%,
+    #ec4899 87.5%,
+    #ff0055 100%
+  );
+  animation: rainbow-border-travel 2.5s linear infinite;
+  will-change: transform;
+}
+
+
 
 

@@ -107,21 +107,25 @@ export async function getNotifications(req: Request, res: Response) {
       const taskIds = Array.from(new Set(commentNotifs.map(n => n.taskId!)));
       const existingComments = await prisma.taskComment.findMany({
         where: { taskId: { in: taskIds } },
-        select: { id: true, taskId: true, userId: true, content: true },
+        select: { id: true, taskId: true, userId: true, content: true, subtaskId: true },
       });
 
       const orphanedNotifIds: string[] = [];
+      const notifMetaMap = new Map<string, { commentId: string; subtaskId?: string | null }>();
+
       commentNotifs.forEach(n => {
         const preview = n.content?.trim();
-        const hasMatch = existingComments.some(c => {
+        const matched = existingComments.find(c => {
           if (c.taskId !== n.taskId) return false;
           if (n.actorId && c.userId !== n.actorId) return false;
           if (!preview) return true;
           const cPreview = toNotificationPreview(c.content);
           return cPreview === preview || c.content.includes(preview) || preview.includes(cPreview);
         });
-        if (!hasMatch) {
+        if (!matched) {
           orphanedNotifIds.push(n.id);
+        } else {
+          notifMetaMap.set(n.id, { commentId: matched.id, subtaskId: matched.subtaskId });
         }
       });
 
@@ -135,6 +139,14 @@ export async function getNotifications(req: Request, res: Response) {
         const removedUnread = notifications.filter(n => orphanedNotifIds.includes(n.id) && !n.isRead).length;
         activeUnreadCount = Math.max(0, unreadCount - removedUnread);
       }
+
+      activeNotifications = activeNotifications.map(n => {
+        const meta = notifMetaMap.get(n.id);
+        if (meta) {
+          return { ...n, commentId: meta.commentId, ...(meta.subtaskId ? { subtaskId: meta.subtaskId } : {}) };
+        }
+        return n;
+      });
     }
 
     return res.json({

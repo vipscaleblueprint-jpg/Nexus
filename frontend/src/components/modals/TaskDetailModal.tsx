@@ -1061,57 +1061,34 @@ export function TaskDetailModalContent({
   }, [combined, visibleActivityCount]);
 
   const isTargetingComment = Boolean(targetCommentId || targetCommentText || scrollToComments);
+  const targetKey = `${targetCommentId || ''}_${targetCommentText ? targetCommentText.slice(0, 30) : ''}_${scrollToComments ? '1' : '0'}`;
+  const lastTargetKeyRef = useRef('');
+  const hasScrolledToTargetRef = useRef(false);
+
+  useEffect(() => {
+    if (targetKey !== lastTargetKeyRef.current) {
+      lastTargetKeyRef.current = targetKey;
+      hasScrolledToTargetRef.current = false;
+    }
+  }, [targetKey]);
 
   // If a target comment is older than visibleActivityCount, expand visibleActivityCount so it is rendered
   useEffect(() => {
-    if (targetCommentId && combined.length > visibleActivityCount) {
-      const idx = combined.findIndex((item) => item.id === targetCommentId || item.commentId === targetCommentId);
+    if ((targetCommentId || targetCommentText) && combined.length > visibleActivityCount) {
+      const idx = combined.findIndex((item) => {
+        if (targetCommentId && (item.id === targetCommentId || item.commentId === targetCommentId)) return true;
+        if (targetCommentText) {
+          const itemText = (item.text || item.content || '').toLowerCase();
+          const cleanSnippet = targetCommentText.trim().toLowerCase().slice(0, 30);
+          if (cleanSnippet && itemText.includes(cleanSnippet)) return true;
+        }
+        return false;
+      });
       if (idx !== -1 && idx < combined.length - visibleActivityCount) {
         setVisibleActivityCount(combined.length);
       }
     }
-  }, [targetCommentId, combined, visibleActivityCount]);
-
-  const scrollToTargetComment = useCallback(() => {
-    const container = activityScrollRef.current;
-    if (!container) return false;
-
-    let targetEl: HTMLElement | null = null;
-    if (targetCommentId) {
-      targetEl =
-        document.getElementById(`comment-${targetCommentId}`) ||
-        (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
-    }
-    if (!targetEl && targetCommentText) {
-      const snippet = targetCommentText.trim().toLowerCase().slice(0, 40);
-      if (snippet) {
-        const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment'));
-        for (const el of commentEls) {
-          if (el.textContent?.toLowerCase().includes(snippet)) {
-            targetEl = el;
-            break;
-          }
-        }
-      }
-    }
-    if (!targetEl && (scrollToComments || targetCommentId)) {
-      targetEl = container.querySelector<HTMLElement>('.group\\/comment');
-    }
-
-    if (targetEl) {
-      const containerRect = container.getBoundingClientRect();
-      const elRect = targetEl.getBoundingClientRect();
-      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
-      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
-
-      targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
-      setTimeout(() => {
-        targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
-      }, 2500);
-      return true;
-    }
-    return false;
-  }, [targetCommentId, targetCommentText, scrollToComments]);
+  }, [targetCommentId, targetCommentText, combined, visibleActivityCount]);
 
   const scrollToLatestComment = useCallback(() => {
     const scroll = () => {
@@ -1125,6 +1102,65 @@ export function TaskDetailModalContent({
     setTimeout(scroll, 150);
   }, []);
 
+  const scrollToTargetComment = useCallback(() => {
+    if (hasScrolledToTargetRef.current) return true;
+    const container = activityScrollRef.current;
+    if (!container) return false;
+
+    let targetEl: HTMLElement | null = null;
+    if (targetCommentId) {
+      targetEl =
+        document.getElementById(`comment-${targetCommentId}`) ||
+        (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
+    }
+    if (!targetEl && targetCommentText) {
+      const lines = targetCommentText
+        .split('\n')
+        .map(l => l.trim().toLowerCase())
+        .filter(l => l.length >= 15 && !l.includes('📅') && !l.includes('🖊') && !l.startsWith('status:') && !l.startsWith('resources:'));
+      
+      const snippet = (lines[0] || targetCommentText.trim().toLowerCase()).slice(0, 50);
+      if (snippet) {
+        const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment')).reverse();
+        for (const el of commentEls) {
+          const txt = el.textContent?.toLowerCase() || '';
+          if (txt.includes(snippet) || (lines.length > 1 && lines.some(line => line.length >= 20 && txt.includes(line.slice(0, 40))))) {
+            targetEl = el;
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetEl) {
+      hasScrolledToTargetRef.current = true;
+      const containerRect = container.getBoundingClientRect();
+      const elRect = targetEl.getBoundingClientRect();
+      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
+      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
+
+      // Clear any existing rings across all comments first so only ONE comment is highlighted
+      container.querySelectorAll('.ring-indigo-500\\/80').forEach(el => {
+        el.classList.remove('ring-2', 'ring-indigo-500/80');
+      });
+
+      targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
+      setTimeout(() => {
+        targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
+      }, 3000);
+      return true;
+    }
+
+    // Only if pure scrollToComments was requested without a specific target, scroll to latest
+    if (!targetCommentId && !targetCommentText && scrollToComments) {
+      hasScrolledToTargetRef.current = true;
+      scrollToLatestComment();
+      return true;
+    }
+
+    return false;
+  }, [targetCommentId, targetCommentText, scrollToComments, scrollToLatestComment]);
+
   const hasScrolledInitiallyRef = useRef(false);
   useEffect(() => {
     hasScrolledInitiallyRef.current = false;
@@ -1132,13 +1168,15 @@ export function TaskDetailModalContent({
 
   useEffect(() => {
     if (isTargetingComment) {
+      if (hasScrolledToTargetRef.current) return;
       if (activities.length > 0 || richComments.length > 0) {
         let attempts = 0;
         const tryScroll = () => {
+          if (hasScrolledToTargetRef.current) return;
           attempts++;
           const found = scrollToTargetComment();
-          if (!found && attempts < 8) {
-            setTimeout(tryScroll, 100);
+          if (!found && attempts < 10) {
+            setTimeout(tryScroll, 120);
           }
         };
         requestAnimationFrame(() => {
@@ -5262,57 +5300,34 @@ export function SubtaskDetailView({
   }, [combined, visibleActivityCount]);
 
   const isTargetingComment = Boolean(targetCommentId || targetCommentText || scrollToComments);
+  const targetKey = `${targetCommentId || ''}_${targetCommentText ? targetCommentText.slice(0, 30) : ''}_${scrollToComments ? '1' : '0'}`;
+  const lastTargetKeyRef = useRef('');
+  const hasScrolledToTargetRef = useRef(false);
+
+  useEffect(() => {
+    if (targetKey !== lastTargetKeyRef.current) {
+      lastTargetKeyRef.current = targetKey;
+      hasScrolledToTargetRef.current = false;
+    }
+  }, [targetKey]);
 
   // If a target comment is older than visibleActivityCount, expand visibleActivityCount so it is rendered
   useEffect(() => {
-    if (targetCommentId && combined.length > visibleActivityCount) {
-      const idx = combined.findIndex((item) => item.id === targetCommentId || item.commentId === targetCommentId);
+    if ((targetCommentId || targetCommentText) && combined.length > visibleActivityCount) {
+      const idx = combined.findIndex((item) => {
+        if (targetCommentId && (item.id === targetCommentId || item.commentId === targetCommentId)) return true;
+        if (targetCommentText) {
+          const itemText = (item.text || item.content || '').toLowerCase();
+          const cleanSnippet = targetCommentText.trim().toLowerCase().slice(0, 30);
+          if (cleanSnippet && itemText.includes(cleanSnippet)) return true;
+        }
+        return false;
+      });
       if (idx !== -1 && idx < combined.length - visibleActivityCount) {
         setVisibleActivityCount(combined.length);
       }
     }
-  }, [targetCommentId, combined, visibleActivityCount]);
-
-  const scrollToTargetComment = useCallback(() => {
-    const container = activityScrollRef.current;
-    if (!container) return false;
-
-    let targetEl: HTMLElement | null = null;
-    if (targetCommentId) {
-      targetEl =
-        document.getElementById(`comment-${targetCommentId}`) ||
-        (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
-    }
-    if (!targetEl && targetCommentText) {
-      const snippet = targetCommentText.trim().toLowerCase().slice(0, 40);
-      if (snippet) {
-        const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment'));
-        for (const el of commentEls) {
-          if (el.textContent?.toLowerCase().includes(snippet)) {
-            targetEl = el;
-            break;
-          }
-        }
-      }
-    }
-    if (!targetEl && (scrollToComments || targetCommentId)) {
-      targetEl = container.querySelector<HTMLElement>('.group\\/comment');
-    }
-
-    if (targetEl) {
-      const containerRect = container.getBoundingClientRect();
-      const elRect = targetEl.getBoundingClientRect();
-      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
-      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
-
-      targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
-      setTimeout(() => {
-        targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
-      }, 2500);
-      return true;
-    }
-    return false;
-  }, [targetCommentId, targetCommentText, scrollToComments]);
+  }, [targetCommentId, targetCommentText, combined, visibleActivityCount]);
 
   const scrollToLatestComment = useCallback(() => {
     const scroll = () => {
@@ -5326,6 +5341,65 @@ export function SubtaskDetailView({
     setTimeout(scroll, 150);
   }, []);
 
+  const scrollToTargetComment = useCallback(() => {
+    if (hasScrolledToTargetRef.current) return true;
+    const container = activityScrollRef.current;
+    if (!container) return false;
+
+    let targetEl: HTMLElement | null = null;
+    if (targetCommentId) {
+      targetEl =
+        document.getElementById(`comment-${targetCommentId}`) ||
+        (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
+    }
+    if (!targetEl && targetCommentText) {
+      const lines = targetCommentText
+        .split('\n')
+        .map(l => l.trim().toLowerCase())
+        .filter(l => l.length >= 15 && !l.includes('📅') && !l.includes('🖊') && !l.startsWith('status:') && !l.startsWith('resources:'));
+      
+      const snippet = (lines[0] || targetCommentText.trim().toLowerCase()).slice(0, 50);
+      if (snippet) {
+        const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment')).reverse();
+        for (const el of commentEls) {
+          const txt = el.textContent?.toLowerCase() || '';
+          if (txt.includes(snippet) || (lines.length > 1 && lines.some(line => line.length >= 20 && txt.includes(line.slice(0, 40))))) {
+            targetEl = el;
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetEl) {
+      hasScrolledToTargetRef.current = true;
+      const containerRect = container.getBoundingClientRect();
+      const elRect = targetEl.getBoundingClientRect();
+      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
+      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
+
+      // Clear any existing rings across all comments first so only ONE comment is highlighted
+      container.querySelectorAll('.ring-indigo-500\\/80').forEach(el => {
+        el.classList.remove('ring-2', 'ring-indigo-500/80');
+      });
+
+      targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
+      setTimeout(() => {
+        targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
+      }, 3000);
+      return true;
+    }
+
+    // Only if pure scrollToComments was requested without a specific target, scroll to latest
+    if (!targetCommentId && !targetCommentText && scrollToComments) {
+      hasScrolledToTargetRef.current = true;
+      scrollToLatestComment();
+      return true;
+    }
+
+    return false;
+  }, [targetCommentId, targetCommentText, scrollToComments, scrollToLatestComment]);
+
   const hasScrolledInitiallyRef = useRef(false);
   useEffect(() => {
     hasScrolledInitiallyRef.current = false;
@@ -5333,13 +5407,15 @@ export function SubtaskDetailView({
 
   useEffect(() => {
     if (isTargetingComment) {
+      if (hasScrolledToTargetRef.current) return;
       if (activities.length > 0 || richComments.length > 0) {
         let attempts = 0;
         const tryScroll = () => {
+          if (hasScrolledToTargetRef.current) return;
           attempts++;
           const found = scrollToTargetComment();
-          if (!found && attempts < 8) {
-            setTimeout(tryScroll, 100);
+          if (!found && attempts < 10) {
+            setTimeout(tryScroll, 120);
           }
         };
         requestAnimationFrame(() => {

@@ -1210,7 +1210,7 @@ export const KanbanCard = memo(function KanbanCard({
           setIsSubtasksExpanded(true);
         }
 
-        // Shakes smoothly and slowly until user hovers over it (auto-stops after 8s fallback)
+        // Rainbow border travels from top until user hovers over it (auto-stops after 8s fallback)
         highlightTimeoutRef.current = setTimeout(() => {
           setIsSearchHighlighted(false);
         }, 8000);
@@ -1427,11 +1427,20 @@ export const KanbanCard = memo(function KanbanCard({
         }}
         className={isDragging
           ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3"
-          : `bg-card hover:bg-card/90 border border-border hover:border-zinc-400 dark:hover:border-zinc-600 rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
+          : `bg-card hover:bg-card/90 border rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
           } ${isOverlay ? 'rotate-2 scale-105 shadow-xl shadow-black/40 cursor-grabbing' : ''
           } ${isCardShaking ? 'animate-shake' : ''
-          } ${isSearchHighlighted ? 'animate-attention-shake z-50 shadow-2xl' : hasOpenDropdown || isMenuOpen ? 'z-50' : 'z-10'}`}
+          } ${isSearchHighlighted
+            ? 'border-transparent shadow-2xl shadow-purple-500/20 z-50'
+            : 'border-border hover:border-zinc-400 dark:hover:border-zinc-600 ' + (hasOpenDropdown || isMenuOpen ? 'z-50' : 'z-10')
+          }`}
       >
+        {/* Animated Traveling Rainbow Border for Search Spotlight */}
+        {isSearchHighlighted && (
+          <div className="rainbow-travel-border" aria-hidden="true">
+            <div className="rainbow-travel-border-glow" />
+          </div>
+        )}
         {!isOverlay && !isDragging && (
           <button
             ref={menuTriggerRef}

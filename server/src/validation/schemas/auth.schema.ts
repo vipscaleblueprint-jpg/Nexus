@@ -29,6 +29,10 @@ export const notificationPreferencesSchema = z.object({
   defaultView: z.enum(['for_me', 'show_all']).optional(),
   confettiEnabled: z.boolean().optional(),
   receiveConfetti: z.boolean().optional(),
+  soundEnabled: z.boolean().optional(),
+  soundPreset: z.enum(['ting', 'chime', 'pop', 'bell', 'glass', 'custom']).optional(),
+  soundVolume: z.number().min(0).max(1).optional(),
+  soundUrl: z.string().nullable().optional(),
 });
 
 export const updateProfileSchema = z.object({

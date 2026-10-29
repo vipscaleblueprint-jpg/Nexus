@@ -43,12 +43,20 @@ const rosterSelect = {
 
 // credits is a BigInt column — JSON.stringify (used by res.json and setCache) can't
 // serialize those, so it has to be converted before it leaves this function.
-// Also decrypt confettiUrl if encrypted at rest.
-function serializeUser<T extends { credits?: bigint | null; confettiUrl?: string | null }>(user: T) {
+// Also decrypt confettiUrl and soundUrl if encrypted at rest.
+function serializeUser<T extends { credits?: bigint | null; confettiUrl?: string | null; notificationPreferences?: any }>(user: T) {
+  let notificationPreferences = user.notificationPreferences;
+  if (notificationPreferences && typeof notificationPreferences === 'object' && notificationPreferences.soundUrl) {
+    notificationPreferences = {
+      ...notificationPreferences,
+      soundUrl: decryptText(notificationPreferences.soundUrl),
+    };
+  }
   return {
     ...user,
     credits: user.credits != null ? Number(user.credits) : null,
     confettiUrl: decryptText(user.confettiUrl),
+    notificationPreferences,
   };
 }
 

@@ -16,6 +16,7 @@ import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
 import { formatTabTitle, resolveRouteTitle, updateFaviconBadge } from '@/lib/tabManager';
 import { applyTheme, getStoredTheme } from '@/lib/theme';
+import { playNotificationSound, preloadCustomSound } from '@/lib/soundNotification';
 
 function TabTitleSync() {
   const pathname = usePathname();
@@ -95,6 +96,13 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     applyTheme(config);
   }, [currentUser?.id]);
 
+  // Preload custom notification sound for instantaneous playback
+  useEffect(() => {
+    if (currentUser?.notificationPreferences?.soundUrl) {
+      preloadCustomSound(currentUser.notificationPreferences.soundUrl);
+    }
+  }, [currentUser?.notificationPreferences?.soundUrl]);
+
   // Auth Gate & Session Verification
   useEffect(() => {
     if (pathname === '/login') {
@@ -166,6 +174,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     s.on('notification_received', () => {
       setUnreadNotifications(useAppStore.getState().unreadNotifications + 1);
       window.dispatchEvent(new CustomEvent('notification_received'));
+      playNotificationSound();
     });
 
     s.on('notification_read', (data: { id: string }) => {

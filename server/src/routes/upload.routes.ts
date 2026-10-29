@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
-import { uploadFile, uploadAvatar, uploadFromUrl, uploadConfetti, deleteConfetti } from '../controllers/upload.controller';
+import { uploadFile, uploadAvatar, uploadFromUrl, uploadConfetti, deleteConfetti, uploadSound, deleteSound } from '../controllers/upload.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { uploadRateLimiter } from '../middleware/security.middleware';
 
@@ -61,6 +61,8 @@ router.post('/', uploadRateLimiter, authenticateToken, handleUpload(upload.singl
 router.post('/avatar', uploadRateLimiter, authenticateToken, handleUpload(upload.single('file')), uploadAvatar);
 router.post('/confetti', uploadRateLimiter, authenticateToken, handleUpload(upload.single('file')), uploadConfetti);
 router.delete('/confetti', authenticateToken, deleteConfetti);
+router.post('/sound', uploadRateLimiter, authenticateToken, handleUpload(upload.single('file')), uploadSound);
+router.delete('/sound', authenticateToken, deleteSound);
 router.post('/from-url', uploadRateLimiter, authenticateToken, uploadFromUrl);
 
 export { router as uploadRouter };

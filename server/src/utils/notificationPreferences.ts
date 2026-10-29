@@ -10,6 +10,10 @@ export interface UserNotificationPreferences {
   defaultView?: 'for_me' | 'show_all';
   confettiEnabled?: boolean;
   receiveConfetti?: boolean;
+  soundEnabled?: boolean;
+  soundPreset?: 'ting' | 'chime' | 'pop' | 'bell' | 'glass' | 'custom';
+  soundVolume?: number;
+  soundUrl?: string | null;
 }
 
 export const DEFAULT_NOTIFICATION_PREFERENCES: Required<UserNotificationPreferences> = {
@@ -22,6 +26,10 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: Required<UserNotificationPreferen
   defaultView: 'for_me',
   confettiEnabled: false,
   receiveConfetti: false,
+  soundEnabled: true,
+  soundPreset: 'ting',
+  soundVolume: 0.8,
+  soundUrl: null as unknown as string,
 };
 
 /**

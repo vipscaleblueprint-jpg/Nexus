@@ -24,10 +24,18 @@ import {
 } from '../services/redisService';
 import { sendOTPEmail, sendPasswordChangeEmail } from '../services/emailService';
 import { AuthRequest } from '../middleware/auth.middleware';
-import { decryptText } from '../utils/encryption';
+import { decryptText, encryptText } from '../utils/encryption';
 import { requireEnv, optionalEnv } from '../config/env';
 import { prisma } from '../config/prisma';
 import { queueUserPush } from '../services/toolsSync';
+
+function formatNotificationPreferences(prefs: any) {
+  if (!prefs || typeof prefs !== 'object') return prefs;
+  return {
+    ...prefs,
+    soundUrl: decryptText(prefs.soundUrl),
+  };
+}
 import { createLogger, errMsg } from '../config/logger';
 
 const log = createLogger('auth');
@@ -201,6 +209,7 @@ export async function login(req: Request, res: Response) {
         dailySheetUrl: user.dailySheetUrl,
         team: user.team,
         confettiUrl: decryptText((user as any).confettiUrl),
+        notificationPreferences: formatNotificationPreferences(user.notificationPreferences),
       },
       rememberMe,
     });
@@ -423,6 +432,7 @@ export async function getMe(req: AuthRequest, res: Response) {
       user: {
         ...user,
         confettiUrl: decryptText((user as any).confettiUrl),
+        notificationPreferences: formatNotificationPreferences(user.notificationPreferences),
       },
     });
   } catch (err: any) {
@@ -433,7 +443,13 @@ export async function getMe(req: AuthRequest, res: Response) {
 export async function updateProfile(req: AuthRequest, res: Response) {
   try {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    const data = req.body as UpdateProfileInput;
+    const data = { ...req.body } as UpdateProfileInput;
+    if (data.notificationPreferences && (data.notificationPreferences as any).soundUrl) {
+      const rawSound = (data.notificationPreferences as any).soundUrl;
+      if (rawSound && !rawSound.startsWith('enc:v1:')) {
+        (data.notificationPreferences as any).soundUrl = encryptText(rawSound);
+      }
+    }
 
     const updatedUser = await (prisma.user as any).update({
       where: { id: req.user.id },
@@ -452,6 +468,7 @@ export async function updateProfile(req: AuthRequest, res: Response) {
       user: {
         ...safeUser,
         confettiUrl: decryptText((safeUser as any).confettiUrl),
+        notificationPreferences: formatNotificationPreferences(safeUser.notificationPreferences),
         credits: safeUser.credits != null ? Number(safeUser.credits) : null,
       },
     });

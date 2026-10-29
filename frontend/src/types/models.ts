@@ -42,6 +42,10 @@ export interface UserNotificationPreferences {
   defaultView?: 'for_me' | 'show_all';
   confettiEnabled?: boolean;
   receiveConfetti?: boolean;
+  soundEnabled?: boolean;
+  soundPreset?: 'ting' | 'chime' | 'pop' | 'bell' | 'glass' | 'custom';
+  soundVolume?: number;
+  soundUrl?: string | null;
 }
 
 export interface User {

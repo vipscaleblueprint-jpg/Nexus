@@ -3,6 +3,7 @@ import dns from 'dns';
 import http from 'http';
 import https from 'https';
 import net from 'net';
+import crypto from 'crypto';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { requireEnv } from '../config/env';
 import { logger, errMsg } from '../config/logger';
@@ -413,4 +414,173 @@ export const deleteConfetti = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message || 'Failed to delete confetti image' });
   }
 };
+
+const SOUND_EXTENSIONS: Record<string, string> = {
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/wave': '.wav',
+  'audio/ogg': '.ogg',
+  'audio/webm': '.webm',
+  'audio/x-m4a': '.m4a',
+  'audio/m4a': '.m4a',
+  'audio/aac': '.aac',
+};
+
+export const uploadSound = async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No notification sound file uploaded' });
+    }
+
+    // Strict 500 KB limit for notification sound to ensure instant 0ms playback and minimal bandwidth
+    if (req.file.size > 500 * 1024) {
+      return res.status(400).json({ error: 'Notification sound file size cannot exceed 500 KB' });
+    }
+
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { buffer, mimetype, originalname } = req.file;
+    const contentType = mimetype.split(';')[0].trim().toLowerCase();
+    
+    // Resolve extension from MIME or filename
+    let ext = SOUND_EXTENSIONS[contentType];
+    if (!ext) {
+      const origExt = (originalname || '').split('.').pop()?.toLowerCase();
+      if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'webm'].includes(origExt || '')) {
+        ext = `.${origExt}`;
+      }
+    }
+
+    if (!ext || (!contentType.startsWith('audio/') && !['.mp3', '.wav', '.ogg', '.m4a'].includes(ext))) {
+      return res.status(400).json({ error: 'Notification sound must be a valid audio file (MP3, WAV, OGG, or M4A)' });
+    }
+
+    // 1. Generate SHA-256 cryptographic hash for R2 key protection (unguessable & tamper-proof)
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const hash = crypto.createHash('sha256').update(`${userId}-${Date.now()}-${buffer.length}-${nonce}`).digest('hex').slice(0, 32);
+    const objectKey = `nexus-sounds/${hash}${ext}`;
+
+    // 2. Upload to R2 with immutable 1-year cache
+    const command = new PutObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+      Body: buffer,
+      ContentType: contentType.startsWith('audio/') ? contentType : 'audio/mpeg',
+      CacheControl: 'public, max-age=31536000, immutable',
+    });
+
+    await s3.send(command);
+    const newSoundUrl = `${publicUrl}/${objectKey}`;
+
+    // 3. Encrypt URL before saving to DB using AES-256-GCM (same encryption protocol as mentions)
+    const encryptedSoundUrl = encryptText(newSoundUrl);
+
+    const currentUser = await (prisma.user as any).findUnique({ where: { id: userId } });
+    const currentPrefs = (currentUser?.notificationPreferences as any) || {};
+    const oldEncryptedUrl = currentPrefs.soundUrl;
+    const oldDecryptedUrl = decryptText(oldEncryptedUrl);
+
+    const updatedPrefs = {
+      ...currentPrefs,
+      soundUrl: encryptedSoundUrl,
+      soundPreset: 'custom',
+      soundEnabled: true,
+    };
+
+    const updatedUser = await (prisma.user as any).update({
+      where: { id: userId },
+      data: { notificationPreferences: updatedPrefs },
+    });
+
+    // Invalidate Redis user roster cache
+    await invalidateCache('users:all');
+
+    logger.info(`Notification sound uploaded successfully to R2 (folder: nexus-sounds): ${newSoundUrl}`);
+
+    // 4. Delete old object from R2 if it was in nexus-sounds
+    if (oldDecryptedUrl && oldDecryptedUrl.startsWith(publicUrl) && oldDecryptedUrl.includes('/nexus-sounds/')) {
+      const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
+      s3.send(new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: oldKey,
+      })).catch(err => {
+        logger.error({ err, oldKey }, `Failed to delete old notification sound from R2: ${errMsg(err)}`);
+      });
+    }
+
+    const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
+    res.status(200).json({
+      url: newSoundUrl,
+      user: {
+        ...safeUser,
+        notificationPreferences: {
+          ...updatedPrefs,
+          soundUrl: newSoundUrl,
+        },
+        credits: safeUser.credits != null ? Number(safeUser.credits) : null,
+      },
+    });
+  } catch (error: any) {
+    logger.error({ err: error }, `Error uploading notification sound to R2: ${error?.name}: ${errMsg(error)}`);
+    res.status(500).json({ error: error.message || 'Failed to upload notification sound' });
+  }
+};
+
+export const deleteSound = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const currentUser = await (prisma.user as any).findUnique({ where: { id: userId } });
+    const currentPrefs = (currentUser?.notificationPreferences as any) || {};
+    const oldEncryptedUrl = currentPrefs.soundUrl;
+    const oldDecryptedUrl = decryptText(oldEncryptedUrl);
+
+    const updatedPrefs = {
+      ...currentPrefs,
+      soundUrl: null,
+      soundPreset: 'ting',
+    };
+
+    const updatedUser = await (prisma.user as any).update({
+      where: { id: userId },
+      data: { notificationPreferences: updatedPrefs },
+    });
+
+    await invalidateCache('users:all');
+
+    if (oldDecryptedUrl && oldDecryptedUrl.startsWith(publicUrl) && oldDecryptedUrl.includes('/nexus-sounds/')) {
+      const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
+      s3.send(new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: oldKey,
+      })).catch(err => {
+        logger.error({ err, oldKey }, `Failed to delete old notification sound from R2: ${errMsg(err)}`);
+      });
+    }
+
+    const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
+    res.status(200).json({
+      user: {
+        ...safeUser,
+        notificationPreferences: {
+          ...updatedPrefs,
+          soundUrl: null,
+        },
+        credits: safeUser.credits != null ? Number(safeUser.credits) : null,
+      },
+    });
+  } catch (error: any) {
+    logger.error({ err: error }, `Error deleting notification sound: ${error?.name}: ${errMsg(error)}`);
+    res.status(500).json({ error: error.message || 'Failed to delete notification sound' });
+  }
+};
+
 

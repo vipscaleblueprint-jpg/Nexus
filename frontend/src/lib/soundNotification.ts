@@ -23,6 +23,40 @@ export const SOUND_PRESETS: SoundPresetOption[] = [
   { id: 'glass', name: 'Glass Clink', description: 'Delicate high-frequency glass chime' },
 ];
 
+export interface SampleCustomSound {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+}
+
+export const SAMPLE_CUSTOM_SOUNDS: SampleCustomSound[] = [
+  {
+    id: 'playzz-fah',
+    name: 'Playzz Fah',
+    description: 'Catchy and energetic voice alert effect',
+    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/playzz-fah.mp3',
+  },
+  {
+    id: 'rene-mama',
+    name: 'Rene Mama',
+    description: 'Expressive vocal audio notification',
+    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/rene-mama.mp3',
+  },
+  {
+    id: 'ungol',
+    name: 'Ungol',
+    description: 'Distinctive custom alert effect',
+    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/ungol.mp3',
+  },
+  {
+    id: 'duterte-brrt',
+    name: 'Duterte Brrt',
+    description: 'Iconic rapid-stutter alert sound',
+    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/duterte-brrt.mp3',
+  },
+];
+
 // Reusable AudioContext singleton (lazily created to adhere to browser autoplay policy)
 let sharedAudioContext: AudioContext | null = null;
 
@@ -53,6 +87,13 @@ export function preloadCustomSound(url?: string | null) {
     audio.src = url;
     customAudioCache.set(url, audio);
   } catch {}
+}
+
+export function preloadSampleSounds() {
+  if (typeof window === 'undefined') return;
+  SAMPLE_CUSTOM_SOUNDS.forEach((sample) => {
+    preloadCustomSound(sample.url);
+  });
 }
 
 /**

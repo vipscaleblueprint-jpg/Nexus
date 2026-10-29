@@ -502,8 +502,13 @@ export const uploadSound = async (req: Request, res: Response) => {
 
     logger.info(`Notification sound uploaded successfully to R2 (folder: nexus-sounds): ${newSoundUrl}`);
 
-    // 4. Delete old object from R2 if it was in nexus-sounds
-    if (oldDecryptedUrl && oldDecryptedUrl.startsWith(publicUrl) && oldDecryptedUrl.includes('/nexus-sounds/')) {
+    // 4. Delete old object from R2 if it was an individual custom upload (never delete shared sample sounds)
+    if (
+      oldDecryptedUrl &&
+      oldDecryptedUrl.startsWith(publicUrl) &&
+      oldDecryptedUrl.includes('/nexus-sounds/') &&
+      !oldDecryptedUrl.includes('/nexus-sounds/samples/')
+    ) {
       const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
       s3.send(new DeleteObjectCommand({
         Bucket: bucketName,
@@ -556,7 +561,12 @@ export const deleteSound = async (req: Request, res: Response) => {
 
     await invalidateCache('users:all');
 
-    if (oldDecryptedUrl && oldDecryptedUrl.startsWith(publicUrl) && oldDecryptedUrl.includes('/nexus-sounds/')) {
+    if (
+      oldDecryptedUrl &&
+      oldDecryptedUrl.startsWith(publicUrl) &&
+      oldDecryptedUrl.includes('/nexus-sounds/') &&
+      !oldDecryptedUrl.includes('/nexus-sounds/samples/')
+    ) {
       const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
       s3.send(new DeleteObjectCommand({
         Bucket: bucketName,

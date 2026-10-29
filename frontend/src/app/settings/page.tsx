@@ -6,7 +6,16 @@ import { authApi, usersApi } from '@/api';
 import { API_BASE_URL } from '@/api/client';
 import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell, Palette, Volume2, Volume1, VolumeX, Music, CheckCircle2 } from 'lucide-react';
 import { UserNotificationPreferences } from '@/types';
-import { playNotificationSound, playPresetTone, convertAudioToNotificationSound, SOUND_PRESETS, SoundPreset } from '@/lib/soundNotification';
+import {
+  playNotificationSound,
+  playPresetTone,
+  convertAudioToNotificationSound,
+  SOUND_PRESETS,
+  SoundPreset,
+  SAMPLE_CUSTOM_SOUNDS,
+  SampleCustomSound,
+  preloadSampleSounds,
+} from '@/lib/soundNotification';
 import { SettingsSkeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/lib/toast';
 import { ApiDocsSection } from '@/components/settings/ApiDocsSection';
@@ -122,6 +131,7 @@ export default function SettingsPage() {
       setPerfProfile(getClientPerfProfile());
       setPerfOverride(getPerfTierOverride());
     }
+    preloadSampleSounds();
   }, []);
 
   // Populate profile fields
@@ -437,6 +447,39 @@ export default function SettingsPage() {
     setTimeout(() => {
       setAuditioningPreset((prev) => (prev === preset ? null : prev));
     }, 600);
+  };
+
+  const handleAuditionSample = (sample: SampleCustomSound, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setAuditioningPreset(sample.id);
+    playNotificationSound(sample.url, notifPrefs.soundVolume ?? 0.8, 'custom');
+    setTimeout(() => {
+      setAuditioningPreset((prev) => (prev === sample.id ? null : prev));
+    }, 1200);
+  };
+
+  const handleSelectSampleSound = async (sample: SampleCustomSound) => {
+    const updated: UserNotificationPreferences = {
+      ...notifPrefs,
+      soundUrl: sample.url,
+      soundPreset: 'custom',
+      soundEnabled: true,
+    };
+    setNotifPrefs(updated);
+    setAuditioningPreset(sample.id);
+    playNotificationSound(sample.url, notifPrefs.soundVolume ?? 0.8, 'custom');
+    setTimeout(() => {
+      setAuditioningPreset((prev) => (prev === sample.id ? null : prev));
+    }, 1200);
+
+    try {
+      const res = await authApi.updateProfile({ notificationPreferences: updated });
+      setCurrentUser(res.user);
+      toast.success(`Notification sound set to "${sample.name}"`);
+    } catch (e: any) {
+      setNotifPrefs(notifPrefs);
+      toast.error(e?.message || 'Failed to select sound');
+    }
   };
 
   const handleChangeSoundPreset = async (preset: SoundPreset) => {
@@ -1299,38 +1342,115 @@ export default function SettingsPage() {
                         })}
 
                         {/* Custom MP3 Option Pill */}
-                        <div
-                          onClick={() => handleChangeSoundPreset('custom')}
-                          className={`group relative p-2.5 rounded-lg border text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${
-                            (notifPrefs.soundPreset || 'ting') === 'custom'
-                              ? 'bg-indigo-600/15 border-indigo-500/50 text-zinc-100 shadow-xs'
-                              : 'bg-zinc-800/40 border-zinc-800 hover:border-zinc-700/80 text-zinc-300'
-                          }`}
-                        >
-                          <div className="min-w-0 pr-1">
-                            <p className="text-xs font-semibold truncate flex items-center gap-1">
-                              <Music className="w-3 h-3 text-indigo-400" />
-                              <span>Custom Audio</span>
-                            </p>
-                            <p className="text-[10px] text-zinc-500 truncate">
-                              {notifPrefs.soundUrl ? 'Custom Active' : 'Upload MP3'}
-                            </p>
-                          </div>
-                          {notifPrefs.soundUrl && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                playNotificationSound(notifPrefs.soundUrl!, notifPrefs.soundVolume ?? 0.8, 'custom');
-                              }}
-                              className="w-6 h-6 rounded-md bg-indigo-500 text-white flex items-center justify-center shrink-0"
-                              title="Audition custom audio"
+                        {(() => {
+                          const activeCustomSample = SAMPLE_CUSTOM_SOUNDS.find((s) => s.url === notifPrefs.soundUrl);
+                          const isCustomSelected = (notifPrefs.soundPreset || 'ting') === 'custom';
+                          return (
+                            <div
+                              onClick={() => handleChangeSoundPreset('custom')}
+                              className={`group relative p-2.5 rounded-lg border text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${
+                                isCustomSelected
+                                  ? 'bg-indigo-600/15 border-indigo-500/50 text-zinc-100 shadow-xs'
+                                  : 'bg-zinc-800/40 border-zinc-800 hover:border-zinc-700/80 text-zinc-300'
+                              }`}
                             >
-                              <Play className="w-3 h-3 fill-current ml-0.5" />
-                            </button>
-                          )}
-                        </div>
+                              <div className="min-w-0 pr-1">
+                                <p className="text-xs font-semibold truncate flex items-center gap-1">
+                                  <Music className="w-3 h-3 text-indigo-400" />
+                                  <span>{activeCustomSample ? activeCustomSample.name : 'Custom Audio'}</span>
+                                </p>
+                                <p className="text-[10px] text-zinc-500 truncate">
+                                  {notifPrefs.soundUrl ? (activeCustomSample ? 'Sample Active' : 'Custom File Active') : 'Upload / Sample'}
+                                </p>
+                              </div>
+                              {notifPrefs.soundUrl && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    playNotificationSound(notifPrefs.soundUrl!, notifPrefs.soundVolume ?? 0.8, 'custom');
+                                  }}
+                                  className="w-6 h-6 rounded-md bg-indigo-500 text-white flex items-center justify-center shrink-0"
+                                  title="Audition active custom sound"
+                                >
+                                  <Play className="w-3 h-3 fill-current ml-0.5" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Sample Custom Sounds (Ready to Use) */}
+                  <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-indigo-400" />
+                        <h4 className="text-xs font-semibold text-zinc-200">Sample Custom Sounds (Ready to Use)</h4>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25 font-medium">
+                          Cloudflare R2
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-zinc-500">Click to select or ▶ to preview</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                      {SAMPLE_CUSTOM_SOUNDS.map((sample) => {
+                        const isSelected = (notifPrefs.soundPreset || 'ting') === 'custom' && notifPrefs.soundUrl === sample.url;
+                        const isAuditioning = auditioningPreset === sample.id;
+
+                        return (
+                          <div
+                            key={sample.id}
+                            onClick={() => handleSelectSampleSound(sample)}
+                            className={`group relative p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between gap-2.5 ${
+                              isSelected
+                                ? 'bg-indigo-600/15 border-indigo-500/60 text-zinc-100 shadow-md shadow-indigo-500/5'
+                                : 'bg-zinc-800/40 border-zinc-800/90 hover:border-zinc-700/80 hover:bg-zinc-800/70 text-zinc-300'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 pr-1">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-semibold truncate text-zinc-100">{sample.name}</p>
+                                  {isSelected && (
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium shrink-0">
+                                      Active
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-zinc-400 mt-0.5 line-clamp-1">{sample.description}</p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={(e) => handleAuditionSample(sample, e)}
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors shadow-xs ${
+                                  isSelected
+                                    ? 'bg-indigo-500 text-white hover:bg-indigo-400'
+                                    : 'bg-zinc-700/80 group-hover:bg-zinc-600 text-zinc-200'
+                                }`}
+                                title={`Audition ${sample.name}`}
+                              >
+                                {isAuditioning ? (
+                                  <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+                                ) : (
+                                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                                )}
+                              </button>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[10px]">
+                              <span className="text-zinc-500 font-mono">0ms delay</span>
+                              <span className={`font-medium ${isSelected ? 'text-indigo-400' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
+                                {isSelected ? '✓ Selected' : 'Click to use'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 

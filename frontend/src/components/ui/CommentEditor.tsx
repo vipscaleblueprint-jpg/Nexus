@@ -19,7 +19,7 @@ import { insertNexusTaskMention, cleanPastedHtml, stripMarksFromSlice } from '@/
 import { TextColorPanel } from '@/components/editor/TextColorPanel';
 import { toast } from '@/lib/toast';
 import { Indent } from '@/components/editor/extensions/Indent';
-import { ListKeymap, handleListEnter } from '@/components/editor/extensions/ListKeymap';
+import { ListKeymap, handleListEnter, handleListBackspace } from '@/components/editor/extensions/ListKeymap';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { AtSign, Send, GripVertical, Palette, Highlighter, Bold, Italic, Underline as UnderlineIcon, Strikethrough, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Link2, IndentDecrease, IndentIncrease, CheckSquare, ImageIcon, Paperclip, ShieldAlert } from 'lucide-react';
@@ -263,6 +263,12 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             editor.commands.indent();
           }
           return true;
+        }
+        if (event.key === 'Backspace') {
+          if (handleListBackspace(editor)) {
+            event.preventDefault();
+            return true;
+          }
         }
         if (event.key === 'Enter') {
           if (handleListEnter(editor)) {

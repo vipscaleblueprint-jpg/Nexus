@@ -148,6 +148,13 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     }
   }, [pathname, currentUser]);
 
+  // Preload custom or sample notification sound for instant zero-lag playback
+  useEffect(() => {
+    if (currentUser?.notificationPreferences?.soundUrl) {
+      preloadCustomSound(currentUser.notificationPreferences.soundUrl);
+    }
+  }, [currentUser?.notificationPreferences?.soundUrl]);
+
   // Global Socket Connection for Real-time Notifications & Force Logout
   useEffect(() => {
     if (!currentUser?.id) return;

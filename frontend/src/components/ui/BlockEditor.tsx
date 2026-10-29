@@ -18,7 +18,7 @@ import { TextColorPanel } from '../editor/TextColorPanel';
 import { LiveKanbanBlock } from '../editor/extensions/LiveKanbanBlock';
 import { Toggle, ToggleSummary, ToggleContent } from '../editor/extensions/Toggle';
 import { Indent } from '../editor/extensions/Indent';
-import { ListKeymap, handleListEnter } from '../editor/extensions/ListKeymap';
+import { ListKeymap, handleListEnter, handleListBackspace } from '../editor/extensions/ListKeymap';
 import { taskSuggestion } from '../editor/suggestions/taskSuggestion';
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
@@ -283,6 +283,10 @@ export const BlockEditor = React.memo(function BlockEditor(props: BlockEditorPro
 
         // Intercept Backspace and Delete at boundaries to merge blocks
         if (event.key === 'Backspace') {
+          if (handleListBackspace(editor)) {
+            event.preventDefault();
+            return true;
+          }
           const { selection, doc } = view.state;
           if (selection.empty) {
             const { $from } = selection;

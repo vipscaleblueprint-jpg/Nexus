@@ -316,6 +316,17 @@ export const Indent = Extension.create<IndentOptions>({
       'Mod-[': () => this.editor.commands.outdent(),
       'Tab': () => this.editor.commands.indent(),
       'Shift-Tab': () => this.editor.commands.outdent(),
+      'Backspace': () => {
+        const { state } = this.editor;
+        if (!state.selection.empty) return false;
+        const { $from } = state.selection;
+        if ($from.parentOffset !== 0) return false;
+        if ($from.parent.isTextblock && ($from.parent.attrs.indent || 0) > 0) {
+          return this.editor.commands.outdent();
+        }
+        return false;
+      },
     };
   },
 });
+

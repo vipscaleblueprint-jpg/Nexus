@@ -1114,7 +1114,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'for_me'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
               }`}
               title="Personal feed: tasks assigned to you or involving you"
             >
@@ -1129,7 +1129,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'show_all'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
               }`}
               title="Workspace-wide feed: all tasks and team activities"
             >
@@ -1149,7 +1149,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'all'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
               }`}
             >
               All time
@@ -1162,7 +1162,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'today'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
               }`}
             >
               Today
@@ -1175,7 +1175,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'last7'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
               }`}
             >
               Last 7 days
@@ -1188,7 +1188,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'last30'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
               }`}
             >
               Last 30 days
@@ -1198,7 +1198,7 @@ function ActivityFeedContent() {
           {viewMode === 'for_me' && (
             <button
               onClick={handleMarkAllAsRead}
-              className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Check className="size-3.5" />
               Mark all as read
@@ -1207,7 +1207,7 @@ function ActivityFeedContent() {
 
           <button
             onClick={() => router.push('/settings#notifications')}
-            className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-medium text-foreground bg-card hover:bg-zinc-800/80 border border-border rounded-md shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
             title="Customize your notification preferences in settings"
           >
             <SlidersHorizontal className="size-3.5 text-muted-foreground" />
@@ -1445,7 +1445,7 @@ function ActivityFeedContent() {
                 if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
               }}
               disabled={page <= 1}
-              className="text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-200/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
+              className="text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
             >
               Prev
             </button>
@@ -1472,7 +1472,7 @@ function ActivityFeedContent() {
                       className={`w-7 h-7 rounded text-xs transition-all flex items-center justify-center cursor-pointer ${
                         page === p
                           ? 'bg-foreground text-background font-bold shadow-xs'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 font-medium'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/80 font-medium'
                       }`}
                     >
                       {p}
@@ -1487,7 +1487,7 @@ function ActivityFeedContent() {
                 if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
               }}
               disabled={page >= totalPages}
-              className="text-xs text-foreground hover:text-foreground hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-200/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
+              className="text-xs text-foreground hover:text-foreground hover:bg-zinc-800/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
             >
               Next
             </button>

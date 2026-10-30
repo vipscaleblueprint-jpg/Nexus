@@ -39,7 +39,7 @@ export function UncheckedAuditsModal({
       }}
     >
       <div
-        className="w-full max-w-lg bg-[#141518] border border-zinc-800 rounded-xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
+        className="w-full max-w-lg bg-card border border-zinc-800 rounded-xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -130,7 +130,7 @@ export function UncheckedAuditsModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2.5 px-5 py-3 border-t border-zinc-800 bg-[#0f1012]">
+        <div className="flex items-center justify-end gap-2.5 px-5 py-3 border-t border-zinc-800 bg-background">
           <button
             type="button"
             onClick={onClose}

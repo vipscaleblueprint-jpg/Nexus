@@ -64,7 +64,7 @@ export function ActionErrorModal({ isOpen, onClose, error }: ActionErrorModalPro
       }}
     >
       <div
-        className="w-full max-w-lg bg-[#141518] border border-red-950/60 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_30px_rgba(239,68,68,0.1)] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
+        className="w-full max-w-lg bg-card border border-red-950/60 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_30px_rgba(239,68,68,0.1)] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

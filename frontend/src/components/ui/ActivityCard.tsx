@@ -562,7 +562,7 @@ export function ActivityCard({
         compact ? 'p-3 gap-2.5' : 'p-3.5 sm:p-4 gap-3 sm:gap-3.5'
       } ${
         !isRead
-          ? 'bg-card/95 dark:bg-[#121626]/90 border-blue-500/40 dark:border-blue-500/40 shadow-[0_0_15px_-2px_rgba(59,130,246,0.25)] ring-1 ring-blue-500/25 hover:border-blue-500/60 hover:shadow-[0_0_20px_-2px_rgba(59,130,246,0.35)]'
+          ? 'bg-card/95 dark:bg-[#121626]/90 [.theme-light_&]:bg-blue-50/70 border-blue-500/40 dark:border-blue-500/40 shadow-[0_0_15px_-2px_rgba(59,130,246,0.25)] ring-1 ring-blue-500/25 hover:border-blue-500/60 hover:shadow-[0_0_20px_-2px_rgba(59,130,246,0.35)]'
           : isGreyed
           ? 'bg-card/40 dark:bg-zinc-900/30 border-border/40 hover:bg-card hover:border-border/80 opacity-[0.85] hover:opacity-100'
           : 'bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border'

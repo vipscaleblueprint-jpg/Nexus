@@ -245,7 +245,7 @@ export function PullModal({ state }: { state: PullState }) {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-[9999] backdrop-blur-sm" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[10000] w-[min(640px,calc(100vw-32px))] max-h-[85vh] flex flex-col bg-[#0f0f0f] border border-zinc-800/60 rounded-xl shadow-2xl outline-none"
+          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[10000] w-[min(640px,calc(100vw-32px))] max-h-[85vh] flex flex-col bg-background border border-zinc-800/60 rounded-xl shadow-2xl outline-none"
           onPointerDownOutside={(e) => busy && e.preventDefault()}
         >
           {/* header */}
@@ -311,7 +311,7 @@ export function PullModal({ state }: { state: PullState }) {
                   { label: "Subtasks", value: summary.subtasks, cls: "text-zinc-200" },
                   { label: "Failed", value: failed, cls: failed > 0 ? "text-rose-400" : "text-zinc-200" },
                 ].map((s) => (
-                  <div key={s.label} className="bg-[#18181b] border border-zinc-800/60 rounded-lg px-2.5 py-2">
+                  <div key={s.label} className="bg-card border border-zinc-800/60 rounded-lg px-2.5 py-2">
                     <div className={`text-base font-semibold ${s.cls}`}>{s.value}</div>
                     <div className="text-[11px] text-zinc-400">{s.label}</div>
                   </div>
@@ -345,7 +345,7 @@ export function PullModal({ state }: { state: PullState }) {
               <div className="text-[11px] font-semibold text-zinc-400 mb-1">Activity</div>
               <div
                 ref={feedRef}
-                className="h-48 overflow-y-auto bg-[#18181b] border border-zinc-800/60 rounded-lg divide-y divide-zinc-800/40"
+                className="h-48 overflow-y-auto bg-card border border-zinc-800/60 rounded-lg divide-y divide-zinc-800/40"
               >
                 {activityCount === 0 ? (
                   <div className="h-full flex items-center justify-center text-[11px] text-zinc-500">
@@ -416,7 +416,7 @@ export function PullModal({ state }: { state: PullState }) {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search clients…"
-                  className="flex-1 min-w-0 bg-[#18181b] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
+                  className="flex-1 min-w-0 bg-card border border-zinc-800 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
                 />
                 <button
                   onClick={() => setSelected(new Set(visibleClients.map((c) => c.nexusListId)))}
@@ -459,7 +459,7 @@ export function PullModal({ state }: { state: PullState }) {
             <button
               onClick={() => setPickerOpen((v) => !v)}
               disabled={busy}
-              className="flex items-center gap-1.5 min-w-0 max-w-full sm:max-w-[260px] bg-[#18181b] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-200 hover:border-zinc-700 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default"
+              className="flex items-center gap-1.5 min-w-0 max-w-full sm:max-w-[260px] bg-card border border-zinc-800 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-200 hover:border-zinc-700 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default"
               title="Choose which clients to pull"
             >
               <Users className="w-3 h-3 shrink-0 text-zinc-400" />

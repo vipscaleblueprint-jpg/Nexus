@@ -18,7 +18,8 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
+  /* --muted is overloaded as the text-gray token below, so bg-muted uses the subtle surface */
+  --color-muted: var(--hover-subtle, #242429);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--hover-subtle, #242429);
   --color-accent-foreground: var(--accent-foreground, var(--foreground));

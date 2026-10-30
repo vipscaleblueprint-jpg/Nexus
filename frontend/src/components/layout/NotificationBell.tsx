@@ -526,7 +526,7 @@ export function NotificationBell() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={handleToggleOpen}
-        className="relative p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50 cursor-pointer"
+        className="relative p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-zinc-800/80 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50 cursor-pointer"
         title="Notifications"
       >
         <motion.div
@@ -568,7 +568,7 @@ export function NotificationBell() {
               </div>
 
               {/* Segmented Pill Tabs */}
-              <div className="flex items-center p-0.5 bg-muted/70 [.theme-light_&]:bg-zinc-200/80 rounded-lg border border-border/40">
+              <div className="flex items-center p-0.5 bg-zinc-800/70 rounded-lg border border-border/40">
                 <button
                   type="button"
                   onClick={() => handleTabChange("all")}
@@ -606,7 +606,7 @@ export function NotificationBell() {
                 </div>
               ) : displayList.length === 0 ? (
                 <div className="p-8 text-center flex flex-col items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-full bg-zinc-800/60 [.theme-light_&]:bg-zinc-200/60 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-zinc-800/60 flex items-center justify-center">
                     <Bell className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <p className="text-xs font-medium text-muted-foreground">
@@ -679,7 +679,7 @@ export function NotificationBell() {
                     <div className="py-1 text-center">
                       <button
                         onClick={loadMore}
-                        className="text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors py-1 px-3 rounded hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-200/60 cursor-pointer"
+                        className="text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors py-1 px-3 rounded hover:bg-zinc-800/60 cursor-pointer"
                       >
                         Load more notifications
                       </button>

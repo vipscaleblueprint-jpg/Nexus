@@ -460,6 +460,59 @@ export const uploadSound = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Notification sound must be a valid audio file (MP3, WAV, OGG, or M4A)' });
     }
 
+    const category = req.body?.category;
+    const validCategories = ['mention', 'reaction', 'comment', 'status'];
+    const isCategory = typeof category === 'string' && validCategories.includes(category);
+
+    const currentUser = await (prisma.user as any).findUnique({ where: { id: userId } });
+    const currentPrefs = (currentUser?.notificationPreferences as any) || {};
+
+    // Enforce 4-sound max limit across custom uploads
+    const SAMPLE_SOUND_URLS = new Set([
+      'https://nexus.xfnite.cloud/nexus-sounds/samples/playzz-fah.mp3',
+      'https://nexus.xfnite.cloud/nexus-sounds/samples/rene-mama.mp3',
+      'https://nexus.xfnite.cloud/nexus-sounds/samples/ungol.mp3',
+      'https://nexus.xfnite.cloud/nexus-sounds/samples/duterte-brrt.mp3',
+    ]);
+
+    // Build existing sounds list (migrating any single uploadedSoundUrl / typeSounds if uploadedSounds is not populated)
+    let existingSounds: Array<{ id: string; name: string; url: string; createdAt?: string }> = [];
+    if (Array.isArray(currentPrefs.uploadedSounds) && currentPrefs.uploadedSounds.length > 0) {
+      existingSounds = [...currentPrefs.uploadedSounds];
+    } else {
+      const seenUrls = new Set<string>();
+      const genDec = decryptText(currentPrefs.uploadedSoundUrl || (currentPrefs.soundPreset === 'custom' ? currentPrefs.soundUrl : null));
+      if (genDec && !SAMPLE_SOUND_URLS.has(genDec) && !genDec.includes('/nexus-sounds/samples/')) {
+        seenUrls.add(genDec);
+        existingSounds.push({
+          id: crypto.randomUUID(),
+          name: 'Custom Sound',
+          url: encryptText(genDec),
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (currentPrefs.typeSounds && typeof currentPrefs.typeSounds === 'object') {
+        for (const cat of validCategories) {
+          const catDec = decryptText(currentPrefs.typeSounds[cat]?.soundUrl);
+          if (catDec && !SAMPLE_SOUND_URLS.has(catDec) && !catDec.includes('/nexus-sounds/samples/') && !seenUrls.has(catDec)) {
+            seenUrls.add(catDec);
+            existingSounds.push({
+              id: crypto.randomUUID(),
+              name: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Alert`,
+              url: encryptText(catDec),
+              createdAt: new Date().toISOString(),
+            });
+          }
+        }
+      }
+    }
+
+    if (existingSounds.length >= 4) {
+      return res.status(400).json({
+        error: 'You have reached the maximum limit of 4 custom notification sounds. Please delete an existing sound before uploading a new one.',
+      });
+    }
+
     // 1. Generate SHA-256 cryptographic hash for R2 key protection (unguessable & tamper-proof)
     const nonce = crypto.randomBytes(8).toString('hex');
     const hash = crypto.createHash('sha256').update(`${userId}-${Date.now()}-${buffer.length}-${nonce}`).digest('hex').slice(0, 32);
@@ -477,20 +530,49 @@ export const uploadSound = async (req: Request, res: Response) => {
     await s3.send(command);
     const newSoundUrl = `${publicUrl}/${objectKey}`;
 
-    // 3. Encrypt URL before saving to DB using AES-256-GCM (same encryption protocol as mentions)
+    // 3. Encrypt URL before saving to DB using AES-256-GCM
     const encryptedSoundUrl = encryptText(newSoundUrl);
 
-    const currentUser = await (prisma.user as any).findUnique({ where: { id: userId } });
-    const currentPrefs = (currentUser?.notificationPreferences as any) || {};
-    const oldEncryptedUrl = currentPrefs.soundUrl;
-    const oldDecryptedUrl = decryptText(oldEncryptedUrl);
+    const cleanName = (originalname || 'Custom Sound')
+      .replace(/\.[^.]+$/, '')
+      .replace(/_ting$/i, '')
+      .replace(/[_-]+/g, ' ')
+      .trim()
+      .slice(0, 32) || 'Custom Audio';
 
-    const updatedPrefs = {
-      ...currentPrefs,
-      soundUrl: encryptedSoundUrl,
-      soundPreset: 'custom',
-      soundEnabled: true,
+    const newSoundItem = {
+      id: crypto.randomUUID(),
+      name: cleanName,
+      url: encryptedSoundUrl,
+      createdAt: new Date().toISOString(),
     };
+    existingSounds.push(newSoundItem);
+    
+    let updatedPrefs: any;
+
+    if (isCategory) {
+      const currentTypeSounds = currentPrefs.typeSounds || {};
+      updatedPrefs = {
+        ...currentPrefs,
+        uploadedSounds: existingSounds,
+        typeSounds: {
+          ...currentTypeSounds,
+          [category]: {
+            preset: 'custom',
+            soundUrl: encryptedSoundUrl,
+          },
+        },
+      };
+    } else {
+      updatedPrefs = {
+        ...currentPrefs,
+        uploadedSounds: existingSounds,
+        soundUrl: encryptedSoundUrl,
+        uploadedSoundUrl: encryptedSoundUrl,
+        soundPreset: 'custom',
+        soundEnabled: true,
+      };
+    }
 
     const updatedUser = await (prisma.user as any).update({
       where: { id: userId },
@@ -500,33 +582,43 @@ export const uploadSound = async (req: Request, res: Response) => {
     // Invalidate Redis user roster cache
     await invalidateCache('users:all');
 
-    logger.info(`Notification sound uploaded successfully to R2 (folder: nexus-sounds): ${newSoundUrl}`);
+    logger.info(`Notification sound uploaded successfully to R2: ${newSoundUrl}`);
 
-    // 4. Delete old object from R2 if it was an individual custom upload (never delete shared sample sounds)
-    if (
-      oldDecryptedUrl &&
-      oldDecryptedUrl.startsWith(publicUrl) &&
-      oldDecryptedUrl.includes('/nexus-sounds/') &&
-      !oldDecryptedUrl.includes('/nexus-sounds/samples/')
-    ) {
-      const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
-      s3.send(new DeleteObjectCommand({
-        Bucket: bucketName,
-        Key: oldKey,
-      })).catch(err => {
-        logger.error({ err, oldKey }, `Failed to delete old notification sound from R2: ${errMsg(err)}`);
-      });
+    // Format response preferences with decrypted URLs
+    const formattedPrefs: any = {
+      ...updatedPrefs,
+      soundUrl: decryptText(updatedPrefs.soundUrl),
+      uploadedSoundUrl: decryptText(updatedPrefs.uploadedSoundUrl),
+    };
+    if (Array.isArray(updatedPrefs.uploadedSounds)) {
+      formattedPrefs.uploadedSounds = updatedPrefs.uploadedSounds.map((s: any) => ({
+        ...s,
+        url: decryptText(s.url),
+      }));
+    }
+    if (updatedPrefs.typeSounds && typeof updatedPrefs.typeSounds === 'object') {
+      formattedPrefs.typeSounds = {};
+      for (const [k, v] of Object.entries(updatedPrefs.typeSounds)) {
+        if (v && typeof v === 'object') {
+          formattedPrefs.typeSounds[k] = {
+            ...v,
+            soundUrl: decryptText((v as any).soundUrl),
+          };
+        } else {
+          formattedPrefs.typeSounds[k] = v;
+        }
+      }
     }
 
     const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
     res.status(200).json({
       url: newSoundUrl,
+      soundId: newSoundItem.id,
+      name: newSoundItem.name,
+      category: isCategory ? category : undefined,
       user: {
         ...safeUser,
-        notificationPreferences: {
-          ...updatedPrefs,
-          soundUrl: newSoundUrl,
-        },
+        notificationPreferences: formattedPrefs,
         credits: safeUser.credits != null ? Number(safeUser.credits) : null,
       },
     });
@@ -543,16 +635,78 @@ export const deleteSound = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    const category = (req.body?.category || req.query?.category) as string | undefined;
+    const soundId = (req.body?.soundId || req.query?.soundId) as string | undefined;
+    const soundUrl = (req.body?.soundUrl || req.query?.soundUrl) as string | undefined;
+    const validCategories = ['mention', 'reaction', 'comment', 'status'];
+    const isCategory = typeof category === 'string' && validCategories.includes(category);
+
     const currentUser = await (prisma.user as any).findUnique({ where: { id: userId } });
     const currentPrefs = (currentUser?.notificationPreferences as any) || {};
-    const oldEncryptedUrl = currentPrefs.soundUrl;
-    const oldDecryptedUrl = decryptText(oldEncryptedUrl);
 
-    const updatedPrefs = {
-      ...currentPrefs,
-      soundUrl: null,
-      soundPreset: 'ting',
-    };
+    let filesToDeleteFromR2: string[] = [];
+    let updatedPrefs = { ...currentPrefs };
+
+    // Case 1: Specific sound deleted from user's custom library (by ID or URL)
+    if (soundId || soundUrl) {
+      let existingSounds: Array<{ id: string; name: string; url: string; createdAt?: string }> = [];
+      if (Array.isArray(currentPrefs.uploadedSounds)) {
+        existingSounds = [...currentPrefs.uploadedSounds];
+      }
+
+      const matchIndex = existingSounds.findIndex((s) => (soundId && s.id === soundId) || (soundUrl && decryptText(s.url) === soundUrl));
+      let deletedDecryptedUrl: string | null = null;
+      if (matchIndex !== -1) {
+        deletedDecryptedUrl = decryptText(existingSounds[matchIndex].url);
+        existingSounds.splice(matchIndex, 1);
+      } else if (soundUrl) {
+        deletedDecryptedUrl = soundUrl;
+      }
+
+      if (deletedDecryptedUrl) {
+        filesToDeleteFromR2.push(deletedDecryptedUrl);
+      }
+
+      updatedPrefs.uploadedSounds = existingSounds;
+
+      // If the deleted sound was active default alert, reset default to ting
+      const activeDefaultDecrypted = decryptText(updatedPrefs.soundUrl);
+      const activeUploadedDecrypted = decryptText(updatedPrefs.uploadedSoundUrl);
+      if (deletedDecryptedUrl && (activeDefaultDecrypted === deletedDecryptedUrl || activeUploadedDecrypted === deletedDecryptedUrl)) {
+        updatedPrefs.soundUrl = null;
+        updatedPrefs.uploadedSoundUrl = existingSounds.length > 0 ? existingSounds[0].url : null;
+        updatedPrefs.soundPreset = 'ting';
+      }
+
+      // If any category used this deleted sound, revert category to inherit
+      if (updatedPrefs.typeSounds && typeof updatedPrefs.typeSounds === 'object') {
+        const nextTypeSounds = { ...updatedPrefs.typeSounds };
+        for (const [k, v] of Object.entries(nextTypeSounds)) {
+          if (v && typeof v === 'object' && deletedDecryptedUrl && decryptText((v as any).soundUrl) === deletedDecryptedUrl) {
+            nextTypeSounds[k] = {
+              preset: 'inherit',
+              soundUrl: null,
+            };
+          }
+        }
+        updatedPrefs.typeSounds = nextTypeSounds;
+      }
+    } else if (isCategory) {
+      // Case 2: Resetting a category back to default (without deleting library sound)
+      const currentTypeSounds = { ...(currentPrefs.typeSounds || {}) };
+      currentTypeSounds[category] = {
+        preset: 'inherit',
+        soundUrl: null,
+      };
+      updatedPrefs.typeSounds = currentTypeSounds;
+    } else {
+      // Case 3: Revert default alert
+      const oldDecryptedUrl = decryptText(currentPrefs.soundUrl);
+      if (oldDecryptedUrl) filesToDeleteFromR2.push(oldDecryptedUrl);
+      updatedPrefs.soundUrl = null;
+      updatedPrefs.uploadedSoundUrl = null;
+      updatedPrefs.soundPreset = 'ting';
+    }
 
     const updatedUser = await (prisma.user as any).update({
       where: { id: userId },
@@ -561,29 +715,54 @@ export const deleteSound = async (req: Request, res: Response) => {
 
     await invalidateCache('users:all');
 
-    if (
-      oldDecryptedUrl &&
-      oldDecryptedUrl.startsWith(publicUrl) &&
-      oldDecryptedUrl.includes('/nexus-sounds/') &&
-      !oldDecryptedUrl.includes('/nexus-sounds/samples/')
-    ) {
-      const oldKey = oldDecryptedUrl.replace(`${publicUrl}/`, '');
-      s3.send(new DeleteObjectCommand({
-        Bucket: bucketName,
-        Key: oldKey,
-      })).catch(err => {
-        logger.error({ err, oldKey }, `Failed to delete old notification sound from R2: ${errMsg(err)}`);
-      });
+    // Clean up files in R2 (never delete samples)
+    for (const urlToDelete of filesToDeleteFromR2) {
+      if (
+        urlToDelete &&
+        urlToDelete.startsWith(publicUrl) &&
+        urlToDelete.includes('/nexus-sounds/') &&
+        !urlToDelete.includes('/nexus-sounds/samples/')
+      ) {
+        const oldKey = urlToDelete.replace(`${publicUrl}/`, '');
+        s3.send(new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key: oldKey,
+        })).catch((err) => {
+          logger.error({ err, oldKey }, `Failed to delete old notification sound from R2: ${errMsg(err)}`);
+        });
+      }
+    }
+
+    const formattedPrefs: any = {
+      ...updatedPrefs,
+      soundUrl: decryptText(updatedPrefs.soundUrl),
+      uploadedSoundUrl: decryptText(updatedPrefs.uploadedSoundUrl),
+    };
+    if (Array.isArray(updatedPrefs.uploadedSounds)) {
+      formattedPrefs.uploadedSounds = updatedPrefs.uploadedSounds.map((s: any) => ({
+        ...s,
+        url: decryptText(s.url),
+      }));
+    }
+    if (updatedPrefs.typeSounds && typeof updatedPrefs.typeSounds === 'object') {
+      formattedPrefs.typeSounds = {};
+      for (const [k, v] of Object.entries(updatedPrefs.typeSounds)) {
+        if (v && typeof v === 'object') {
+          formattedPrefs.typeSounds[k] = {
+            ...v,
+            soundUrl: decryptText((v as any).soundUrl),
+          };
+        } else {
+          formattedPrefs.typeSounds[k] = v;
+        }
+      }
     }
 
     const { password: _password, googleId: _googleId, ...safeUser } = updatedUser;
     res.status(200).json({
       user: {
         ...safeUser,
-        notificationPreferences: {
-          ...updatedPrefs,
-          soundUrl: null,
-        },
+        notificationPreferences: formattedPrefs,
         credits: safeUser.credits != null ? Number(safeUser.credits) : null,
       },
     });

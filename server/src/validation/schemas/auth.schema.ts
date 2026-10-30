@@ -24,6 +24,13 @@ export const categorySoundConfigSchema = z.object({
   soundUrl: z.string().nullable().optional(),
 });
 
+export const uploadedSoundItemSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  url: z.string(),
+  createdAt: z.string().optional(),
+});
+
 export const notificationPreferencesSchema = z.object({
   status: z.boolean().optional(),
   checklists: z.boolean().optional(),
@@ -38,6 +45,8 @@ export const notificationPreferencesSchema = z.object({
   soundPreset: z.enum(['ting', 'chime', 'pop', 'bell', 'glass', 'custom']).optional(),
   soundVolume: z.number().min(0).max(1).optional(),
   soundUrl: z.string().nullable().optional(),
+  uploadedSoundUrl: z.string().nullable().optional(),
+  uploadedSounds: z.array(uploadedSoundItemSchema).optional(),
   typeSounds: z.record(z.enum(['mention', 'reaction', 'comment', 'status']), categorySoundConfigSchema).optional(),
 });
 

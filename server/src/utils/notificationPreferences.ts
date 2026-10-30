@@ -9,6 +9,13 @@ export interface CategorySoundConfig {
 
 export type SoundCategory = 'mention' | 'reaction' | 'comment' | 'status';
 
+export interface UploadedSoundItem {
+  id: string;
+  name: string;
+  url: string;
+  createdAt?: string;
+}
+
 export interface UserNotificationPreferences {
   status?: boolean;
   checklists?: boolean;
@@ -23,6 +30,8 @@ export interface UserNotificationPreferences {
   soundPreset?: 'ting' | 'chime' | 'pop' | 'bell' | 'glass' | 'custom';
   soundVolume?: number;
   soundUrl?: string | null;
+  uploadedSoundUrl?: string | null;
+  uploadedSounds?: UploadedSoundItem[];
   typeSounds?: Partial<Record<SoundCategory, CategorySoundConfig>>;
 }
 
@@ -40,6 +49,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: Required<UserNotificationPreferen
   soundPreset: 'ting',
   soundVolume: 0.8,
   soundUrl: null as unknown as string,
+  uploadedSoundUrl: null as unknown as string,
+  uploadedSounds: [],
   typeSounds: {},
 };
 

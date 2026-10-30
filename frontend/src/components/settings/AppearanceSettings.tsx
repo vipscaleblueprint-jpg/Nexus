@@ -239,18 +239,18 @@ export function AppearanceSettings() {
 
           {/* 2. PRESET PALETTES */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5">
                 <label className="text-xs font-semibold uppercase tracking-wider block" style={{ color: 'var(--muted)' }}>
                   Preset Palettes
                 </label>
-                <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
+                <p className="text-xs" style={{ color: 'var(--muted)' }}>
                   Hand-crafted, WCAG-compliant color schemes tuned for high focus and visual harmony.
                 </p>
               </div>
               {customAccent && (
                 <span
-                  className="text-[11px] px-2 py-0.5 rounded-full font-medium"
+                  className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0 self-start sm:self-center leading-tight"
                   style={{
                     backgroundColor: 'color-mix(in srgb, var(--accent) 15%, var(--surface))',
                     color: 'var(--accent)',
@@ -392,7 +392,7 @@ export function AppearanceSettings() {
                   Custom Accent Color
                 </label>
                 <span
-                  className="text-[10px] px-1.5 py-0.2 rounded font-medium"
+                  className="inline-flex items-center justify-center text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 leading-tight"
                   style={{
                     backgroundColor: 'color-mix(in srgb, var(--accent) 15%, var(--surface))',
                     color: 'var(--accent)',

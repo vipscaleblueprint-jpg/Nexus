@@ -86,10 +86,13 @@ export const uploadApi = {
     return res.json();
   },
 
-  uploadSound: async (file: File): Promise<{ url: string; user: any }> => {
+  uploadSound: async (file: File, category?: string): Promise<{ url: string; user: any; category?: string; soundId?: string; name?: string }> => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('folder', 'nexus-sounds');
+    if (category) {
+      formData.append('category', category);
+    }
 
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     const res = await fetch(`${API_BASE_URL}/api/upload/sound`, {
@@ -109,9 +112,19 @@ export const uploadApi = {
     return res.json();
   },
 
-  deleteSound: async (): Promise<{ user: any }> => {
+  deleteSound: async (params?: { category?: string; soundId?: string; soundUrl?: string } | string): Promise<{ user: any }> => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    const res = await fetch(`${API_BASE_URL}/api/upload/sound`, {
+    const searchParams = new URLSearchParams();
+    if (typeof params === 'string') {
+      searchParams.append('category', params);
+    } else if (params) {
+      if (params.category) searchParams.append('category', params.category);
+      if (params.soundId) searchParams.append('soundId', params.soundId);
+      if (params.soundUrl) searchParams.append('soundUrl', params.soundUrl);
+    }
+    const query = searchParams.toString();
+    const url = `${API_BASE_URL}/api/upload/sound${query ? `?${query}` : ''}`;
+    const res = await fetch(url, {
       method: 'DELETE',
       credentials: 'include',
       headers: {

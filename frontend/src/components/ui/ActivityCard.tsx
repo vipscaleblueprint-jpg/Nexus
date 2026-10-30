@@ -562,7 +562,7 @@ export function ActivityCard({
         compact ? 'p-3 gap-2.5' : 'p-3.5 sm:p-4 gap-3 sm:gap-3.5'
       } ${
         !isRead
-          ? 'bg-card/95 dark:bg-[#121626]/90 border-blue-500/40 dark:border-blue-500/40 shadow-[0_0_15px_-2px_rgba(59,130,246,0.25)] ring-1 ring-blue-500/25 hover:border-blue-500/60 hover:shadow-[0_0_20px_-2px_rgba(59,130,246,0.35)]'
+          ? 'bg-[var(--notif-unread-bg)] border-[var(--notif-unread-border)] shadow-[var(--notif-unread-shadow)] ring-1 ring-[var(--notif-unread-ring)] hover:border-[var(--notif-unread-hover-border)] hover:shadow-[var(--notif-unread-hover-shadow)]'
           : isGreyed
           ? 'bg-card/40 dark:bg-zinc-900/30 border-border/40 hover:bg-card hover:border-border/80 opacity-[0.85] hover:opacity-100'
           : 'bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border'
@@ -576,7 +576,7 @@ export function ActivityCard({
             alt=""
             className={`${
               compact ? 'size-8' : 'size-9 sm:size-9'
-            } rounded-full object-cover shrink-0 ring-2 ring-card shadow-xs`}
+            } rounded-full object-cover shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs`}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
               if (e.currentTarget.nextElementSibling) {
@@ -589,14 +589,14 @@ export function ActivityCard({
         <div
           className={`${
             compact ? 'size-8 text-xs' : 'size-9 text-xs sm:text-sm'
-          } rounded-full ${avatarBg} text-white on-solid flex items-center justify-center font-medium shrink-0 ring-2 ring-card shadow-xs select-none`}
+          } rounded-full ${avatarBg} text-white on-solid flex items-center justify-center font-medium shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs select-none`}
           style={{ display: actorAvatar ? 'none' : 'flex' }}
         >
           {initial}
         </div>
 
         {/* Micro-badge icon in bottom-right corner of avatar */}
-        <div className={`absolute -bottom-0.5 -right-0.5 size-4 rounded-full bg-card border border-border text-muted-foreground flex items-center justify-center shadow-xs ${
+        <div className={`absolute -bottom-0.5 -right-0.5 size-4 rounded-full ${!isRead ? 'bg-[var(--notif-unread-bg)]' : 'bg-card'} border border-border text-muted-foreground flex items-center justify-center shadow-xs ${
           isGreyed ? 'opacity-70' : ''
         }`}>
           <MicroIcon className="size-2.5 stroke-[2.2]" />
@@ -622,7 +622,7 @@ export function ActivityCard({
             )}
             {!isRead && (
               <span
-                className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.9)] shrink-0 inline-block"
+                className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_3px_rgba(59,130,246,0.6)] shrink-0 inline-block"
                 title="Unread"
               />
             )}
@@ -646,6 +646,8 @@ export function ActivityCard({
               className={`relative px-3 py-2.5 rounded-xl border font-normal leading-relaxed transition-all duration-200 ${
                 isGreyed
                   ? 'bg-background/40 dark:bg-black/30 border-border/40 text-zinc-400 dark:text-zinc-400'
+                  : !isRead
+                  ? 'bg-[var(--notif-quote-bg)] border-[var(--notif-quote-border)] text-foreground shadow-2xs'
                   : 'bg-background/60 border-border text-foreground'
               } ${
                 compact ? 'text-xs' : 'text-sm'
@@ -666,6 +668,8 @@ export function ActivityCard({
                 <div className={`absolute bottom-0 left-0 right-0 h-10 ${
                   isGreyed
                     ? 'bg-gradient-to-t from-background/95 dark:from-zinc-950/95 via-background/60 dark:via-zinc-950/60 to-transparent'
+                    : !isRead
+                    ? 'bg-gradient-to-t from-[var(--notif-quote-bg)] via-[var(--notif-quote-bg)]/60 to-transparent'
                     : 'bg-gradient-to-t from-background/95 via-background/60 to-transparent'
                 } pointer-events-none rounded-b-xl`} />
               )}

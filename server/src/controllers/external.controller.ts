@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { timingSafeEqual } from 'crypto';
 import { io } from '../server';
 import { hashApiKey } from '../utils/apiKey';
-import { invalidateCache } from '../services/redisService';
+import { invalidateCache, redis } from '../services/redisService';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { updatePageBlocks } from '../services/pageContentService';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
@@ -39,6 +39,194 @@ async function getOrCreateVipScaleUser() {
   }
 
   return vipScaleUser;
+}
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function dropCommentCache(taskId: string, subtaskId?: string | null) {
+  if (redis) {
+    const keys = [`comments:list:${taskId}`];
+    if (subtaskId) keys.push(`comments:list:${taskId}:sub:${subtaskId}`);
+    await redis.del(...keys).catch(() => {});
+  }
+}
+
+interface TargetResolution {
+  task: any | null;
+  subtask: any | null;
+  isSubtask: boolean;
+  taskId: string;
+  subtaskId: string | null;
+}
+
+/**
+ * Resolves target task and/or subtask from input which could be:
+ * - A bare UUID (either main task or subtask)
+ * - Explicit { taskId, subtaskId }
+ * - A Nexus link (.../lists/<listId>?task=<taskId>&subtask=<subtaskId> or .../tasks/<id> or .../subtasks/<id>)
+ * - A ClickUp link or ClickUp task ID
+ */
+async function resolveTargetTaskAndSubtask(
+  inputTaskId?: string | null,
+  inputSubtaskId?: string | null,
+  link?: string | null
+): Promise<TargetResolution | null> {
+  let rawTaskId = inputTaskId?.trim() || null;
+  let rawSubtaskId = inputSubtaskId?.trim() || null;
+
+  if (link && typeof link === 'string' && link.trim()) {
+    const val = link.trim();
+    if (UUID_REGEX.test(val)) {
+      if (!rawTaskId) rawTaskId = val;
+    } else {
+      try {
+        const url = new URL(val);
+        const qTask = url.searchParams.get('task');
+        const qSubtask = url.searchParams.get('subtask');
+        if (qTask) rawTaskId = qTask;
+        if (qSubtask) rawSubtaskId = qSubtask;
+        const pathMatch = url.pathname.match(/\/(tasks|subtasks)\/([0-9a-f-]{36})/i);
+        if (pathMatch) {
+          if (pathMatch[1].toLowerCase() === 'subtasks') {
+            rawSubtaskId = pathMatch[2];
+          } else if (!rawTaskId) {
+            rawTaskId = pathMatch[2];
+          }
+        }
+      } catch {
+        // Not a standard URL
+      }
+    }
+  }
+
+  // 1. If explicit subtaskId is provided:
+  if (rawSubtaskId && UUID_REGEX.test(rawSubtaskId)) {
+    const subtask = await prisma.subtask.findUnique({
+      where: { id: rawSubtaskId },
+      include: {
+        task: {
+          include: {
+            list: { select: { id: true, name: true, space: { select: { id: true, name: true } } } },
+            assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+          }
+        },
+        User: { select: { id: true, name: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, avatarUrl: true } },
+      }
+    });
+    if (subtask) {
+      return {
+        task: subtask.task,
+        subtask,
+        isSubtask: true,
+        taskId: subtask.taskId,
+        subtaskId: subtask.id,
+      };
+    }
+  }
+
+  // 2. If rawTaskId is provided:
+  if (rawTaskId && UUID_REGEX.test(rawTaskId)) {
+    // Check if it's a main task
+    const task = await prisma.task.findUnique({
+      where: { id: rawTaskId },
+      include: {
+        list: { select: { id: true, name: true, space: { select: { id: true, name: true } } } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+        subtasks: true,
+      }
+    });
+    if (task) {
+      return {
+        task,
+        subtask: null,
+        isSubtask: false,
+        taskId: task.id,
+        subtaskId: null,
+      };
+    }
+
+    // Check if rawTaskId is actually a subtask ID
+    const subtask = await prisma.subtask.findUnique({
+      where: { id: rawTaskId },
+      include: {
+        task: {
+          include: {
+            list: { select: { id: true, name: true, space: { select: { id: true, name: true } } } },
+            assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+          }
+        },
+        User: { select: { id: true, name: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, avatarUrl: true } },
+      }
+    });
+    if (subtask) {
+      return {
+        task: subtask.task,
+        subtask,
+        isSubtask: true,
+        taskId: subtask.taskId,
+        subtaskId: subtask.id,
+      };
+    }
+  }
+
+  // 3. Fallback: ClickUp link / ID lookup if link or rawTaskId has ClickUp ID
+  const cuCandidate = link || rawTaskId;
+  if (cuCandidate) {
+    const cuId = cuCandidate.trim().replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop();
+    if (cuId && /^[a-z0-9]+$/i.test(cuId)) {
+      const match = { OR: [{ externalId: cuId }, { externalId: { endsWith: `/${cuId}` } }] };
+      const [subtask, task] = await Promise.all([
+        prisma.subtask.findFirst({
+          where: match,
+          include: {
+            task: {
+              include: {
+                list: { select: { id: true, name: true, space: { select: { id: true, name: true } } } },
+                assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+                assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+              }
+            },
+            User: { select: { id: true, name: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, avatarUrl: true } },
+          }
+        }),
+        prisma.task.findFirst({
+          where: match,
+          include: {
+            list: { select: { id: true, name: true, space: { select: { id: true, name: true } } } },
+            assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+            subtasks: true,
+          }
+        }),
+      ]);
+      if (subtask) {
+        return {
+          task: subtask.task,
+          subtask,
+          isSubtask: true,
+          taskId: subtask.taskId,
+          subtaskId: subtask.id,
+        };
+      }
+      if (task) {
+        return {
+          task,
+          subtask: null,
+          isSubtask: false,
+          taskId: task.id,
+          subtaskId: null,
+        };
+      }
+    }
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -362,9 +550,51 @@ export async function getTask(req: Request, res: Response) {
       }
     });
 
-    if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (task) {
+      return res.json({ task, isSubtask: false });
+    }
 
-    return res.json({ task });
+    // Check if taskId is a subtask
+    const subtask = await prisma.subtask.findUnique({
+      where: { id: taskId },
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            listId: true,
+            list: { select: { name: true, space: { select: { name: true } } } }
+          }
+        },
+        User: { select: { id: true, name: true, email: true } },
+        comments: {
+          include: { user: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'desc' }
+        }
+      }
+    });
+
+    if (subtask) {
+      const formattedSubtask = {
+        id: subtask.id,
+        title: subtask.title,
+        description: subtask.description,
+        status: subtask.status,
+        completed: subtask.completed,
+        priority: subtask.priority,
+        dueDate: subtask.dueDate,
+        parentTaskId: subtask.taskId,
+        listId: subtask.task?.listId,
+        list: subtask.task?.list,
+        assignee: subtask.User,
+        comments: subtask.comments,
+        createdAt: subtask.createdAt,
+        updatedAt: (subtask as any).updatedAt ?? subtask.createdAt,
+      };
+      return res.json({ task: formattedSubtask, isSubtask: true });
+    }
+
+    return res.status(404).json({ error: 'Task not found' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -575,16 +805,109 @@ export async function updateTask(req: Request, res: Response) {
     if (!apiKey) return;
 
     const { taskId } = req.params;
-    const { title, description, status, priority, assigneeId } = req.body;
+    const { title, description, status, priority, assigneeId, completed } = req.body;
 
-    const existingTask = await prisma.task.findUnique({ 
-      where: { id: taskId },
-      include: { list: true }
-    });
-    if (!existingTask) return res.status(404).json({ error: 'Task not found' });
+    const target = await resolveTargetTaskAndSubtask(taskId);
+    if (!target) return res.status(404).json({ error: 'Task not found' });
 
+    // Handle subtask update if taskId resolved to a subtask
+    if (target.isSubtask && target.subtask) {
+      const existingSubtask = target.subtask;
+      const normalizedStatus = status !== undefined ? String(status).toUpperCase() : undefined;
+      const isCompleted = completed !== undefined 
+        ? Boolean(completed) 
+        : normalizedStatus !== undefined 
+          ? ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes(normalizedStatus)
+          : undefined;
+
+      const updatedSub = await prisma.subtask.update({
+        where: { id: existingSubtask.id },
+        data: {
+          ...(title !== undefined && { title }),
+          ...(description !== undefined && { description }),
+          ...(normalizedStatus !== undefined && { status: normalizedStatus }),
+          ...(priority !== undefined && { priority }),
+          ...(assigneeId !== undefined && { assigneeId }),
+          ...(isCompleted !== undefined && { completed: isCompleted }),
+        },
+        include: {
+          User: { select: { id: true, name: true, email: true, avatarUrl: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        }
+      });
+
+      // Audit log & activity feed when subtask status changed
+      if (normalizedStatus !== undefined && normalizedStatus !== existingSubtask.status) {
+        try {
+          const actor = apiKey.user || await getOrCreateVipScaleUser();
+          const authorName = 'VIPScale';
+          const log = await prisma.auditLog.create({
+            data: {
+              action: 'STATUS_CHANGE',
+              entity: 'TASK',
+              entityId: target.taskId,
+              userId: actor.id,
+              details: { oldStatus: existingSubtask.status, newStatus: normalizedStatus, subtaskTitle: updatedSub.title, source: 'external' },
+            }
+          });
+          const activity = {
+            id: log.id,
+            type: 'status_change',
+            author: authorName,
+            oldStatus: existingSubtask.status,
+            newStatus: normalizedStatus,
+            subtaskTitle: updatedSub.title,
+            subtaskId: updatedSub.id,
+            date: log.createdAt,
+            user: { ...actor, name: authorName },
+          };
+          io.emit('task_activity', { listId: target.task?.listId, taskId: target.taskId, activity });
+          if (target.task?.listId) {
+            io.to(`list:${target.task.listId}`).emit('task_activity', { listId: target.task.listId, taskId: target.taskId, activity });
+          }
+        } catch (actErr) {
+          console.error('[external.updateTask] subtask activity log error:', actErr);
+        }
+      }
+
+      io.emit('subtask_updated', { taskId: target.taskId, subtask: updatedSub });
+      const fullParent = await prisma.task.findUnique({
+        where: { id: target.taskId },
+        include: {
+          assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+          subtasks: {
+            include: {
+              User: { select: { id: true, name: true, avatarUrl: true } },
+              assignees: { select: { id: true, name: true, avatarUrl: true } },
+            }
+          }
+        }
+      });
+      if (fullParent) {
+        io.emit('task:updated', fullParent);
+        if (fullParent.listId) {
+          io.to(`list:${fullParent.listId}`).emit('task:updated', fullParent);
+        }
+      }
+
+      invalidateCache(
+        `task:${target.taskId}`,
+        `task:${updatedSub.id}`,
+        `task:activities:${target.taskId}`,
+        'tasks:all',
+        'lists:all',
+        'dashboard:all',
+        'spaces:all'
+      ).catch(() => {});
+
+      return res.json({ message: 'Subtask updated successfully', task: updatedSub, isSubtask: true });
+    }
+
+    // Main task update
+    const existingTask = target.task;
     const task = await prisma.task.update({
-      where: { id: taskId },
+      where: { id: target.taskId },
       data: {
         ...(title !== undefined && { title }),
         ...(description !== undefined && { description }),
@@ -598,10 +921,38 @@ export async function updateTask(req: Request, res: Response) {
       }
     });
 
-    // Realtime websocket broadcast so KanbanBoard, TaskDetailModal, and Dashboards update immediately
-    io.emit('task:updated', task);
+    // Cascade main task status to all child subtasks
+    if (status !== undefined) {
+      const normalizedStatus = String(status).toUpperCase();
+      const isDoneStatus = ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes(normalizedStatus);
+      await prisma.subtask.updateMany({
+        where: { taskId: task.id },
+        data: {
+          status: normalizedStatus,
+          completed: isDoneStatus,
+        }
+      });
+    }
+
+    // Re-fetch populated task with updated subtasks for broadcast
+    const updatedFullTask = await prisma.task.findUnique({
+      where: { id: task.id },
+      include: {
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+        subtasks: {
+          include: {
+            User: { select: { id: true, name: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, avatarUrl: true } },
+          }
+        }
+      }
+    });
+
+    const broadcastPayload = updatedFullTask || task;
+    io.emit('task:updated', broadcastPayload);
     if (task.listId) {
-      io.to(`list:${task.listId}`).emit('task:updated', task);
+      io.to(`list:${task.listId}`).emit('task:updated', broadcastPayload);
     }
 
     // Invalidate Redis caches so fetch/refresh queries reflect the updated task
@@ -715,7 +1066,7 @@ export async function updateTask(req: Request, res: Response) {
       }
     }
 
-    return res.json({ message: 'Task updated successfully', task });
+    return res.json({ message: 'Task updated successfully', task: broadcastPayload, isSubtask: false });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -724,21 +1075,24 @@ export async function updateTask(req: Request, res: Response) {
 
 // ---------------------------------------------------------------------------
 // POST /api/external/activity
-// Logs an audit entry against a task (shows in the activity feed)
+// Logs an audit entry against a task or subtask (shows in the activity feed)
 // ---------------------------------------------------------------------------
 export async function postActivity(req: Request, res: Response) {
   try {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { taskId, action, details } = req.body;
+    const { taskId, action, details, subtaskId, task_link } = req.body;
 
-    if (!taskId || !action) {
-      return res.status(400).json({ error: 'taskId and action are required' });
+    if (!taskId && !subtaskId && !task_link) {
+      return res.status(400).json({ error: 'taskId, subtaskId, or task_link is required' });
+    }
+    if (!action) {
+      return res.status(400).json({ error: 'action is required' });
     }
 
-    const task = await prisma.task.findUnique({ where: { id: taskId } });
-    if (!task) {
+    const target = await resolveTargetTaskAndSubtask(taskId, subtaskId, task_link);
+    if (!target) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
@@ -746,9 +1100,12 @@ export async function postActivity(req: Request, res: Response) {
       data: {
         action,
         entity: 'TASK',
-        entityId: taskId,
+        entityId: target.taskId,
         userId: apiKey.userId,
-        details: details || {}
+        details: {
+          ...(details || {}),
+          ...(target.isSubtask && target.subtaskId && { subtaskId: target.subtaskId, subtaskTitle: target.subtask?.title }),
+        }
       }
     });
 
@@ -760,12 +1117,14 @@ export async function postActivity(req: Request, res: Response) {
 
 // ---------------------------------------------------------------------------
 // POST /api/external/comment
-// Posts a formatted comment to a task — shows up in the task modal Comments
+// Posts a formatted comment to a task or subtask — shows up in the task modal Comments
 // section exactly like a regular user comment (with avatar, reactions, reply).
 //
 // Body:
-//   taskId  (string, required) — ID of the target task
-//   content (string, required) — Markdown-formatted comment body
+//   taskId    (string, optional) — ID of the target task or subtask
+//   subtaskId (string, optional) — Explicit subtask ID
+//   task_link (string, optional) — Nexus task link or ClickUp link
+//   content   (string, required) — Markdown-formatted comment body
 //
 // Tip: format your spreadsheet columns as markdown and pass as `content`.
 // The comment will appear under the API key owner's account.
@@ -778,20 +1137,23 @@ export async function postComment(req: Request, res: Response) {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { taskId, content } = req.body;
+    const { taskId, subtaskId, task_link, content } = req.body;
 
-    if (!taskId || !content) {
-      return res.status(400).json({ error: 'taskId and content are required' });
+    if ((!taskId && !subtaskId && !task_link) || !content) {
+      return res.status(400).json({ error: 'taskId (or subtaskId / task_link) and content are required' });
     }
 
-    const task = await prisma.task.findUnique({ where: { id: taskId } });
-    if (!task) {
+    const target = await resolveTargetTaskAndSubtask(taskId, subtaskId, task_link);
+    if (!target) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
+    const finalTaskId = target.taskId;
+    const finalSubtaskId = target.subtaskId || null;
+
     // Integrations sometimes fire the same request twice (~10ms apart). Concurrent duplicates share
     // the first request's insert; later ones within 10s are caught by the DB lookup below.
-    const dedupeKey = `${apiKey.userId}:${taskId}:${content}`;
+    const dedupeKey = `${apiKey.userId}:${finalTaskId}:${finalSubtaskId || 'main'}:${content}`;
     const inFlight = inFlightExternalComments.get(dedupeKey);
     if (inFlight) {
       const existing = await inFlight;
@@ -801,7 +1163,8 @@ export async function postComment(req: Request, res: Response) {
     const createPromise = (async () => {
       const duplicate = await prisma.taskComment.findFirst({
         where: {
-          taskId,
+          taskId: finalTaskId,
+          subtaskId: finalSubtaskId,
           userId: apiKey.userId,
           content,
           createdAt: { gte: new Date(Date.now() - 10_000) },
@@ -816,7 +1179,8 @@ export async function postComment(req: Request, res: Response) {
       const created = await prisma.taskComment.create({
         data: {
           content,
-          taskId,
+          taskId: finalTaskId,
+          subtaskId: finalSubtaskId,
           userId: apiKey.userId,
         },
         include: {
@@ -840,8 +1204,12 @@ export async function postComment(req: Request, res: Response) {
       return res.json({ message: 'Comment posted successfully', comment, deduplicated: true });
     }
 
+    // Invalidate Redis comment caches and task caches
+    await invalidateCache(`task:${finalTaskId}`, ...(finalSubtaskId ? [`task:${finalSubtaskId}`] : []));
+    await dropCommentCache(finalTaskId, finalSubtaskId);
+
     // Realtime update for the frontend
-    io.emit('task:comment_added', { taskId, comment });
+    io.emit('task:comment_added', { taskId: finalTaskId, subtaskId: finalSubtaskId, comment });
 
     return res.json({
       message: 'Comment posted successfully',
@@ -858,14 +1226,16 @@ export async function postComment(req: Request, res: Response) {
 //
 // Body:
 //   commentId (string, required)
-//   content (string, required)
+//   content   (string, required)
+//   taskId    (string, optional)
+//   subtaskId (string, optional)
 // ---------------------------------------------------------------------------
 export async function updateComment(req: Request, res: Response) {
   try {
     const apiKey = await authenticateApiKey(req, res);
     if (!apiKey) return;
 
-    const { commentId, content, taskId } = req.body;
+    const { commentId, content, taskId, subtaskId } = req.body;
 
     if (!commentId || !content) {
       return res.status(400).json({ error: 'commentId and content are required' });
@@ -879,10 +1249,12 @@ export async function updateComment(req: Request, res: Response) {
       return res.status(404).json({ error: 'Comment not found' });
     }
 
-    // Self-healing: if the client provided a taskId that doesn't match where this comment actually lives,
-    // reject the update so the client knows their cache is stale/wrong and can fall back to creating a new one.
-    if (taskId && existingComment.taskId !== taskId) {
+    // Self-healing: if the client provided a taskId or subtaskId, allow matching either
+    if (taskId && existingComment.taskId !== taskId && existingComment.subtaskId !== taskId) {
       return res.status(400).json({ error: 'Task mismatch - comment belongs to a different task' });
+    }
+    if (subtaskId && existingComment.subtaskId !== subtaskId) {
+      return res.status(400).json({ error: 'Subtask mismatch - comment belongs to a different subtask' });
     }
 
     // Only allow the API key owner to update their own comments
@@ -898,7 +1270,14 @@ export async function updateComment(req: Request, res: Response) {
       }
     });
 
-    io.emit('task:comment_updated', { taskId: existingComment.taskId, comment: updatedComment });
+    await invalidateCache(`task:${existingComment.taskId}`, ...(existingComment.subtaskId ? [`task:${existingComment.subtaskId}`] : []));
+    await dropCommentCache(existingComment.taskId, existingComment.subtaskId);
+
+    io.emit('task:comment_updated', {
+      taskId: existingComment.taskId,
+      subtaskId: existingComment.subtaskId,
+      comment: updatedComment
+    });
 
     return res.json({
       message: 'Comment updated successfully',
@@ -977,7 +1356,14 @@ export async function deleteComment(req: Request, res: Response) {
       console.error('[external:deleteComment] Cleanup error:', cleanErr);
     }
 
-    io.emit('task:comment_deleted', { taskId: existingComment.taskId, commentId });
+    await invalidateCache(`task:${existingComment.taskId}`, ...(existingComment.subtaskId ? [`task:${existingComment.subtaskId}`] : []));
+    await dropCommentCache(existingComment.taskId, existingComment.subtaskId);
+
+    io.emit('task:comment_deleted', {
+      taskId: existingComment.taskId,
+      subtaskId: existingComment.subtaskId,
+      commentId
+    });
 
     return res.json({ message: 'Comment deleted successfully' });
   } catch (err: any) {

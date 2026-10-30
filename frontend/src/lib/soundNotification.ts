@@ -59,27 +59,36 @@ export const SAMPLE_CUSTOM_SOUNDS: SampleCustomSound[] = [
     id: 'playzz-fah',
     name: 'Playzz Fah',
     description: 'Catchy and energetic voice alert effect',
-    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/playzz-fah.mp3',
+    url: '/sounds/playzz-fah.mp3',
   },
   {
     id: 'rene-mama',
     name: 'Rene Mama',
     description: 'Expressive vocal audio notification',
-    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/rene-mama.mp3',
+    url: '/sounds/rene-mama.mp3',
   },
   {
     id: 'ungol',
     name: 'Ungol',
     description: 'Distinctive custom alert effect',
-    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/ungol.mp3',
+    url: '/sounds/ungol.mp3',
   },
   {
     id: 'duterte-brrt',
     name: 'Duterte Brrt',
     description: 'Iconic rapid-stutter alert sound',
-    url: 'https://nexus.xfnite.cloud/nexus-sounds/samples/duterte-brrt.mp3',
+    url: '/sounds/duterte-brrt.mp3',
   },
 ];
+
+export function normalizeSoundUrl(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  if (url.includes('/nexus-sounds/samples/') || url.includes('/sounds/')) {
+    const filename = url.split('/').pop()?.split('?')[0];
+    if (filename) return `/sounds/${filename}`;
+  }
+  return url;
+}
 
 // Reusable AudioContext singleton (lazily created to adhere to browser autoplay policy)
 let sharedAudioContext: AudioContext | null = null;
@@ -92,24 +101,16 @@ function getAudioContext(): AudioContext {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     sharedAudioContext = new AudioCtx();
   }
-  if (sharedAudioContext.state === 'suspended') {
-    sharedAudioContext.resume().catch(() => {});
-  }
   return sharedAudioContext;
 }
 
-// In-memory audio element cache for instant zero-lag playback of custom R2 sounds
-const customAudioCache = new Map<string, HTMLAudioElement>();
-
 export function preloadCustomSound(url?: string | null) {
   if (!url || typeof window === 'undefined') return;
-  if (customAudioCache.has(url)) return;
+  const target = normalizeSoundUrl(url) || url;
   try {
     const audio = new Audio();
-    audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
-    audio.src = url;
-    customAudioCache.set(url, audio);
+    audio.src = target;
   } catch {}
 }
 
@@ -124,9 +125,12 @@ export function preloadSampleSounds() {
  * Synthesizes a studio-grade preset alert using Web Audio API.
  * Requires 0 network requests, 0 latency, and produces crisp acoustic sounds.
  */
-export function playPresetTone(preset: SoundPreset, volume = 0.8) {
+export async function playPresetTone(preset: SoundPreset, volume = 0.8) {
   try {
     const ctx = getAudioContext();
+    if (ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
     const clampedVolume = Math.max(0, Math.min(1, volume));
     const now = ctx.currentTime;
 
@@ -315,24 +319,31 @@ export async function playNotificationSound(
   }
 
   if (preset === 'custom' && soundUrl) {
+    const targetUrl = normalizeSoundUrl(soundUrl) || soundUrl;
     try {
-      let audio = customAudioCache.get(soundUrl);
-      if (!audio) {
-        audio = new Audio(soundUrl);
-        audio.crossOrigin = 'anonymous';
-        customAudioCache.set(soundUrl, audio);
-      }
+      const audio = new Audio();
       audio.volume = Math.max(0, Math.min(1, volume));
-      audio.currentTime = 0;
-      await audio.play();
+      audio.preload = 'auto';
+      audio.src = targetUrl;
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
       return;
-    } catch {
-      // If custom audio fails (e.g. cross-origin restriction, network error, corrupted file),
-      // gracefully fall back to the classic synthesized ting so the user never misses an alert
-      playPresetTone('ting', volume);
+    } catch (err) {
+      console.warn('Custom audio playback failed for', targetUrl, err);
+      if (targetUrl !== soundUrl) {
+        try {
+          const fallback = new Audio(soundUrl);
+          fallback.volume = Math.max(0, Math.min(1, volume));
+          await fallback.play();
+          return;
+        } catch {}
+      }
+      await playPresetTone('ting', volume);
     }
   } else {
-    playPresetTone(preset, volume);
+    await playPresetTone(preset, volume);
   }
 }
 

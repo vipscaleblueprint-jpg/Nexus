@@ -3,7 +3,7 @@ import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { ChevronDown, ChevronRight, User, Check, Plus, Trash2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
-import { isNexusAuditChecklist, getRequiredAudits, ALL_AUDIT_OPTIONS } from '@/lib/auditChecklist';
+import { isNexusAuditChecklist, getRequiredAudits, getAiPickedAudits, ALL_AUDIT_OPTIONS } from '@/lib/auditChecklist';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor } from './TaskDetailModal';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
@@ -123,15 +123,17 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
     .filter(i => !(i.text || '').startsWith('!'))
     .map(i => i.text), [auditChecklists]);
 
+  // Audits the Galaxy AI picked replace the role/title rules (saved items and exclusions still apply).
+  const hasAiPickedAudits = !subtaskId && getAiPickedAudits(checklists) !== null;
   const requiredAuditItems = useMemo(() => Array.from(new Set([
-    ...getRequiredAudits(title, auditorRoles),
+    ...(hasAiPickedAudits ? [] : getRequiredAudits(title, auditorRoles)),
     ...activeChecklistItems
   ].filter((text, i, all) => {
     const norm = normalizeAuditName(text);
     if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
     if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
     return all.findIndex(t => normalizeAuditName(t) === norm) === i;
-  }))), [title, auditorRoles, activeChecklistItems, excludedAudits]);
+  }))), [title, auditorRoles, activeChecklistItems, excludedAudits, hasAiPickedAudits]);
 
   // Lookup map for fast O(1) item access instead of flatMap + filter
   const auditItemsMap = useMemo(() => {

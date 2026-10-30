@@ -52,6 +52,19 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
 // TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
 export const HIDE_DESIGN_AUDIT = true;
 
+/**
+ * Audits the Galaxy AI picked for a task, saved as its Audit checklist with this externalId
+ * marker (Nexus-only, never a ClickUp id). Mirrors server/src/utils/auditChecklist.ts.
+ */
+export const isAiAuditChecklist = (c: ChecklistLike | null | undefined) =>
+  !!c?.externalId?.startsWith('ai-audit:');
+
+/** The audits the AI picked for this task, or null when it has none (title rules apply). */
+export function getAiPickedAudits(checklists: ChecklistLike[] | null | undefined): string[] | null {
+  const picked = (checklists ?? []).find((c) => !c.subtaskId && isAiAuditChecklist(c) && isNexusAuditChecklist(c));
+  return picked ? (picked.items ?? []).map((i) => i.text) : null;
+}
+
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): string[] => {
   const audits = new Set<string>();
 
@@ -143,9 +156,11 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
     .filter((i: any) => !(i.text || '').startsWith('!'))
     .map((i: any) => i.text);
 
+  // Audits the Galaxy AI picked replace the role/title rules (saved items and exclusions still apply).
+  const aiPickedAudits = isSubtask ? null : getAiPickedAudits(task.checklists);
   const requiredAuditItems = Array.from(
     new Set([
-      ...getRequiredAudits(task.title || '', auditorRoles),
+      ...(aiPickedAudits ? [] : getRequiredAudits(task.title || '', auditorRoles)),
       ...activeAuditItems,
     ].filter((text, i, all) => {
       const norm = normalizeAuditName(text);

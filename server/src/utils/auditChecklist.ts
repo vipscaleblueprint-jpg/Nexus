@@ -32,6 +32,24 @@ export function isNexusAuditChecklist(c: {
 }
 
 /**
+ * Audits the Galaxy AI picked for a task are saved as its Audit checklist, marked by this
+ * externalId instead of a ClickUp id. Nexus-only: ClickUp sync skips it, and the ClickUp pull
+ * never matches it (it matches ClickUp ids, and never merges an "Audit" checklist by name).
+ */
+const AI_AUDIT_PREFIX = 'ai-audit:';
+export const aiAuditExternalId = (taskId: string) => `${AI_AUDIT_PREFIX}${taskId}`;
+export const isAiAuditChecklist = (c: { externalId?: string | null } | null | undefined) =>
+  !!c?.externalId?.startsWith(AI_AUDIT_PREFIX);
+
+/** The audits the AI picked for this task, or null when it has none (title rules apply). */
+export function getAiPickedAudits(
+  checklists: { name: string; externalId?: string | null; subtaskId?: string | null; items?: { text: string }[] | null }[] | null | undefined
+): string[] | null {
+  const picked = (checklists ?? []).find((c) => !c.subtaskId && isAiAuditChecklist(c) && isNexusAuditChecklist(c));
+  return picked ? (picked.items ?? []).map((i) => i.text) : null;
+}
+
+/**
  * Status gates. Mirrors frontend/src/lib/permissions.ts.
  * - In Review: auditing happens *during* review, so entering it only needs every subtask Closed
  *   (a task with no subtasks moves straight in).

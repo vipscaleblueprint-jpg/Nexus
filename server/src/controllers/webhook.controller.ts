@@ -10,6 +10,9 @@ import { updatePageBlocks } from '../services/pageContentService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
+import { aiAuditExternalId } from '../utils/auditChecklist';
+
+const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 
 
@@ -303,7 +306,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
 
   try {
-    const { clients, prompt, priority, assignee, task_link, listed_by } = req.body;
+    const { clients, prompt, priority, assignee, task_link, listed_by, audits } = req.body;
 
     const clientName = clients?.name;
     if (!clientName) {
@@ -469,6 +472,26 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         externalId: task_link || null
       }
     });
+
+    // Audits the Galaxy AI picked become the task's Audit items (final: no title rules added).
+    // Nexus-only, so no ClickUp checklist is created or matched for them.
+    const pickedAudits = Array.isArray(audits)
+      ? AUDIT_ITEM_ORDER.filter((a) => a === 'Instructions Audit' || audits.some((p: any) => String(p).trim().toLowerCase() === a.toLowerCase()))
+      : [];
+    if (pickedAudits.length > 0) {
+      try {
+        await prisma.checklist.create({
+          data: {
+            taskId: newTask.id,
+            name: 'Audit',
+            externalId: aiAuditExternalId(newTask.id),
+            items: { create: pickedAudits.map((text) => ({ text })) },
+          },
+        });
+      } catch (err) {
+        console.error('Failed to save AI-picked audits:', err);
+      }
+    }
 
     // n8n adds the task's ClickUp subtasks and checklists after it replies to Galaxy,
     // so pull this client's list shortly to bring them in.

@@ -31,7 +31,7 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { convertCommentHtmlToClickUp, fetchImageBuffer } from '../utils/clickupCommentConverter';
-import { isNexusAuditChecklist, requiresClosedSubtasks, requiresCompletedAudits, normalizeAuditName } from '../utils/auditChecklist';
+import { isNexusAuditChecklist, isAiAuditChecklist, getAiPickedAudits, requiresClosedSubtasks, requiresCompletedAudits, normalizeAuditName } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { canUserSetAssignees, getAssignDeniedMessage } from '../utils/assignPermission';
@@ -740,8 +740,9 @@ export async function updateTask(req: Request, res: Response) {
         const activeItems = allItems
           .filter((i: any) => !(i.text || '').startsWith('!'))
           .map((i: any) => i.text);
+        // Audits the Galaxy AI picked replace the role/title rules (saved items and exclusions still apply).
         const requiredTaskAudits = Array.from(new Set([
-          ...getRequiredAudits(currentTask.title, auditorRoles),
+          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
           ...activeItems,
         ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
 
@@ -1231,8 +1232,9 @@ export async function moveTask(req: Request, res: Response) {
         const activeItems = allItems
           .filter((i: any) => !(i.text || '').startsWith('!'))
           .map((i: any) => i.text);
+        // Audits the Galaxy AI picked replace the role/title rules (saved items and exclusions still apply).
         const requiredTaskAudits = Array.from(new Set([
-          ...getRequiredAudits(currentTask.title, auditorRoles),
+          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
           ...activeItems,
         ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
 
@@ -2883,7 +2885,7 @@ export async function updateChecklist(req: Request, res: Response) {
     (async () => {
       try {
         const cl = await prisma.checklist.findUnique({ where: { id: checklistId }, select: { externalId: true } });
-        if (cl?.externalId) await safeUpdateClickUpChecklist(cl.externalId, name);
+        if (cl?.externalId && !isAiAuditChecklist(cl)) await safeUpdateClickUpChecklist(cl.externalId, name);
       } catch (err) { console.error('[ClickUp] updateChecklist sync error:', err); }
     })();
 
@@ -2918,6 +2920,8 @@ export async function deleteChecklist(req: Request, res: Response) {
     // --- ClickUp Sync ---
     (async () => {
       try {
+        // Nexus-only AI audits: never look up (and delete) a ClickUp "Audit" checklist by name.
+        if (isAiAuditChecklist(cl)) return;
         let cuChecklistId: string | null | undefined = cl?.externalId;
         if (!cuChecklistId && cl) {
           // If we don't have it in memory, try looking it up in ClickUp by name
@@ -3196,7 +3200,8 @@ export async function createChecklistItem(req: Request, res: Response) {
         }
 
         // 3. ClickUp Sync (Isolated in try/catch so network/API errors never block audit/activity)
-        try {
+        // Nexus-only AI audits: never attach to a ClickUp "Audit" checklist found by name.
+        if (!isAiAuditChecklist(cl)) try {
           let cuChecklistId = cl?.externalId;
           if (!cuChecklistId && cl) {
             let parentExternalId = null;

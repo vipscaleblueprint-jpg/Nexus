@@ -3,7 +3,7 @@ import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { ChevronDown, ChevronRight, User, Check, Plus, Trash2 } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
-import { isNexusAuditChecklist, getRequiredAudits, getAiPickedAudits, ALL_AUDIT_OPTIONS } from '@/lib/auditChecklist';
+import { isNexusAuditChecklist, getRequiredAudits, getAiPickedAudits, ALL_AUDIT_OPTIONS, isAuditorFor } from '@/lib/auditChecklist';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor } from './TaskDetailModal';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
@@ -142,7 +142,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
     for (const item of allItems) {
       const norm = normalizeAuditName(item.text);
       const existing = map.get(norm);
-      if (!existing || (!existing.completed && item.completed) || (!existing.assigneeId && item.assigneeId)) {
+      if (!existing || (!existing.completed && item.completed) || (!existing.assigneeId?.length && item.assigneeId?.length)) {
         map.set(norm, item);
       }
     }
@@ -257,7 +257,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
         const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { 
           text, 
           completed: newCompleted,
-          assigneeId: currentItem?.assigneeId || undefined,
+          assigneeIds: currentItem?.assigneeId || [],
           subtaskId,
           checklistName: 'Audit',
         });
@@ -296,8 +296,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
     }
   };
 
-  const handleUpdateAssignee = async (text: string, currentItem: ChecklistItem | undefined, assigneeId: string) => {
-    const selectedUser = users.find(u => u.id === assigneeId);
+  const handleUpdateAssignee = async (text: string, currentItem: ChecklistItem | undefined, assigneeIds: string[]) => {
 
     let targetChecklistId = currentItem?.checklistId || auditChecklist?.id;
     const tempChecklistCreated = !targetChecklistId;
@@ -330,8 +329,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
         checklistId: targetChecklistId,
         text,
         completed: false,
-        assigneeId: assigneeId || undefined,
-        assignee: selectedUser || undefined,
+        assigneeId: assigneeIds,
         createdAt: new Date().toISOString(),
       };
       optimisticChecklists = optimisticChecklists.map(c => {
@@ -346,7 +344,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
           return {
             ...c,
             items: (c.items || []).map(i =>
-              i.id === optimisticItemId ? { ...i, assigneeId: assigneeId || undefined, assignee: selectedUser || undefined } : i
+              i.id === optimisticItemId ? { ...i, assigneeId: assigneeIds } : i
             ),
           };
         }
@@ -366,9 +364,9 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
       const realChecklistId = currentItem?.checklistId || auditChecklist?.id || targetChecklistId;
 
       if (tempItemCreated) {
-        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { 
-          text, 
-          assigneeId: assigneeId || undefined,
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, {
+          text,
+          assigneeIds,
           completed: currentItem?.completed || false,
           subtaskId,
           checklistName: 'Audit',
@@ -393,7 +391,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
         }
         useAppStore.getState().updateTask(reconciledTask);
       } else {
-        await tasksApi.updateChecklistItem(task.id, realChecklistId, optimisticItemId!, { assigneeId });
+        await tasksApi.updateChecklistItem(task.id, realChecklistId, optimisticItemId!, { assigneeIds });
       }
     } catch (e) {
       console.error('[AuditSection] Failed to persist assignee:', e);
@@ -788,8 +786,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                 {requiredAuditItems.map((text, idx) => {
                   const item = getAuditItem(text);
                   const isCompleted = !!item?.completed;
-                  const assigneeId = item?.assigneeId;
-                  const assignee = assigneeId ? usersMap.get(assigneeId) : undefined;
+                  const assigneeIds = item?.assigneeId || [];
 
                   const isItemNeeded = Boolean(
                     highlightedAudits &&
@@ -869,17 +866,33 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                         {/* Assignee */}
                         <Popover.Root>
                           <Popover.Trigger asChild>
-                            <button className="w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover cursor-pointer" disabled={isProcessing}>
-                              {assignee?.avatarUrl ? (
-                                <img src={assignee.avatarUrl} alt={assignee.name} title={assignee.name} className="w-full h-full rounded-full object-cover" />
-                              ) : assigneeId ? (
-                                <div title={assignee?.name} className={`w-full h-full rounded-full flex items-center justify-center text-[9px] text-white font-bold ${getAssigneeAvatarColor(assignee?.name || assigneeId)}`}>
-                                  {assignee?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
-                                </div>
-                              ) : (
+                            {assigneeIds.length === 0 ? (
+                              <button className="w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover cursor-pointer" disabled={isProcessing}>
                                 <User className="w-3 h-3" />
-                              )}
-                            </button>
+                              </button>
+                            ) : (
+                              <button
+                                className="flex items-center -space-x-1.5 cursor-pointer"
+                                disabled={isProcessing}
+                                title={assigneeIds.map(id => usersMap.get(id)?.name || 'Unknown').join(', ')}
+                              >
+                                {assigneeIds.slice(0, 3).map(id => {
+                                  const assignee = usersMap.get(id);
+                                  return assignee?.avatarUrl ? (
+                                    <img key={id} src={assignee.avatarUrl} alt={assignee.name} className="w-6 h-6 rounded-full object-cover ring-2 ring-card" />
+                                  ) : (
+                                    <div key={id} className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-card ${getAssigneeAvatarColor(assignee?.name || id)}`}>
+                                      {assignee?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
+                                    </div>
+                                  );
+                                })}
+                                {assigneeIds.length > 3 && (
+                                  <div className="w-6 h-6 rounded-full bg-zinc-800 text-muted-foreground text-[9px] font-bold flex items-center justify-center ring-2 ring-card">
+                                    +{assigneeIds.length - 3}
+                                  </div>
+                                )}
+                              </button>
+                            )}
                           </Popover.Trigger>
                           <Popover.Portal>
                             <Popover.Content className="z-[100] w-56 rounded-lg bg-popover border border-border p-2 shadow-xl outline-none" align="end" sideOffset={5}>
@@ -887,22 +900,22 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                               <div className="max-h-60 overflow-y-auto">
                                 <button 
                                   className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 mb-1 cursor-pointer"
-                                  onClick={() => handleUpdateAssignee(text, item, '')}
+                                  onClick={() => handleUpdateAssignee(text, item, [])}
                                 >
                                   <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center"><User className="w-3 h-3 text-muted-foreground" /></div>
                                   Unassigned
                                 </button>
-                                {users.filter(u => {
-                                  const uRoles = (u.roles || []).map(r => r?.toLowerCase() || '');
-                                  if (text === 'UI UX Audit' || text === 'UI/UX Audit') return uRoles.some(r => r.includes('ui/ux') || r.includes('ui ux') || r.includes('ui-ux'));
-                                  if (text === 'Design Audit') return uRoles.some(r => r.includes('design'));
-                                  if (text === 'Funnel Audit') return uRoles.some(r => r.includes('funnel') || r.includes('backend'));
-                                  return true;
-                                }).map(u => (
+                                {/* Strictly holders of this audit's auditor role */}
+                                {users.filter(u => isAuditorFor(text, u.roles)).map(u => (
                                   <button 
                                     key={u.id}
                                     className="w-full text-left px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 cursor-pointer"
-                                    onClick={() => handleUpdateAssignee(text, item, u.id)}
+                                    // Toggles this person; the list stays open so several can be picked
+                                    onClick={() => handleUpdateAssignee(
+                                      text,
+                                      item,
+                                      assigneeIds.includes(u.id) ? assigneeIds.filter(id => id !== u.id) : [...assigneeIds, u.id],
+                                    )}
                                   >
                                     {u.avatarUrl ? (
                                       <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
@@ -912,7 +925,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                       </div>
                                     )}
                                     <span className="flex-1 truncate">{u.name}</span>
-                                    {u.id === assigneeId && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                                    {assigneeIds.includes(u.id) && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                                   </button>
                                 ))}
                               </div>

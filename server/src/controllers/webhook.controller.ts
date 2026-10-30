@@ -11,6 +11,7 @@ import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } fr
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
 import { aiAuditExternalId } from '../utils/auditChecklist';
+import { autoAssignAudits } from '../services/auditAutoAssign';
 
 const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
@@ -492,6 +493,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         console.error('Failed to save AI-picked audits:', err);
       }
     }
+    await autoAssignAudits(newTask.id, creator.id).catch((err) => console.error('Galaxy task: audit auto-assign failed:', err));
 
     // n8n adds the task's ClickUp subtasks and checklists after it replies to Galaxy,
     // so pull this client's list shortly to bring them in.
@@ -890,6 +892,11 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     await injectSubtaskIntoJournal(parentTask.id, { id: subtask.id, title: subtask.title });
 
     io.emit('subtask_created', subtask);
+
+    // An "--Audit" subtask can add a required audit to its parent
+    if (auditorRole || (subtask.title || '').trim().toLowerCase().startsWith('--audit')) {
+      autoAssignAudits(parentTask.id).catch((err) => console.error('Galaxy subtask: audit auto-assign failed:', err));
+    }
 
     // Brings in the subtask's ClickUp checklist, and its ClickUp id when Galaxy sent the parent's link.
     scheduleListPull(parentTask.listId, (room, event, payload) => io.to(room).emit(event, payload));

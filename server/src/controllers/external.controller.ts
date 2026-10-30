@@ -19,6 +19,7 @@ import {
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
+import { autoAssignAudits } from '../services/auditAutoAssign';
 
 
 async function getOrCreateVipScaleUser() {
@@ -706,6 +707,10 @@ export async function createTask(req: Request, res: Response) {
           }))
         });
       }
+    }
+
+    if (!req.body.skipAutoAudit) {
+      await autoAssignAudits(task.id, vipScaleUser.id).catch((err) => console.error('External task: audit auto-assign failed:', err));
     }
 
     try {

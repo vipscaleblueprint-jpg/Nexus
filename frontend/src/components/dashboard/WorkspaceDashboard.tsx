@@ -38,6 +38,7 @@ import {
   CheckCheck,
   ExternalLink,
   Lock,
+  ShieldCheck,
 } from "lucide-react";
 import { Space, Folder, List, Doc, Task } from "@/lib/types";
 import type { WorkspaceRole } from "@/types/models";
@@ -49,6 +50,8 @@ import {
 } from "@/components/ui/Skeleton";
 import { useAppStore } from "@/lib/store";
 import { tasksApi } from "@/api";
+import type { MyAuditItem } from "@/api/tasks";
+import { HIDE_DESIGN_AUDIT, normalizeAuditName } from "@/lib/auditChecklist";
 import { clickUpApi } from "@/api/clickup";
 import { io, Socket } from "socket.io-client";
 import { API_BASE_URL } from "@/api/client";
@@ -660,6 +663,24 @@ function WorkspaceDashboardContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Unchecked audits assigned to the current user, shown as their own section in My Tasks
+  const [myAudits, setMyAudits] = useState<MyAuditItem[]>([]);
+  const myAuditsRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadMyAudits = useCallback(() => {
+    if (currentTab !== "my") return;
+    tasksApi
+      .getMyAudits()
+      .then((res) => setMyAudits(
+        (res.audits || []).filter((a) => !(HIDE_DESIGN_AUDIT && normalizeAuditName(a.text) === "design audit")),
+      ))
+      .catch((err) => console.error("Failed to load my audits:", err));
+  }, [currentTab]);
+  const loadMyAuditsRef = useRef(loadMyAudits);
+  loadMyAuditsRef.current = loadMyAudits;
+  useEffect(() => {
+    loadMyAudits();
+  }, [loadMyAudits]);
+
   // 2. Real-time Synchronization via Socket.io
   useEffect(() => {
     const s = io(API_BASE_URL, { withCredentials: true });
@@ -689,6 +710,14 @@ function WorkspaceDashboardContent({
       removeTask(id);
       setSelectedTask((prev) => (prev?.id === id ? null : prev));
     });
+
+    // Audit checks, assignments and status moves change what's in My Tasks' Audits section
+    ["task:checklist_item_created", "task:checklist_item_updated", "task:checklist_deleted", "task:updated"].forEach((event) =>
+      s.on(event, () => {
+        if (myAuditsRefreshRef.current) clearTimeout(myAuditsRefreshRef.current);
+        myAuditsRefreshRef.current = setTimeout(() => loadMyAuditsRef.current(), 800);
+      }),
+    );
 
     return () => {
       s.disconnect();
@@ -1820,6 +1849,88 @@ function WorkspaceDashboardContent({
       {/* ─── TAB CONTENT: MY TASKS (CLICKUP GROUPED STATUS TABLE) ─── */}
       {currentTab === "my" && (
         <div className="space-y-6">
+          {/* Audits assigned to me (unchecked, on open tasks) */}
+          {myAudits.length > 0 && (
+            <div className="space-y-0.5">
+              <div className="flex items-center justify-between px-1 pb-2 pt-2">
+                <div
+                  className="flex items-center gap-2 cursor-pointer select-none bg-[var(--task-chip)] hover:bg-zinc-800 rounded-md transition-colors pl-2 pr-1 py-1 w-fit shadow-sm"
+                  onClick={() => toggleGroup("__my_audits")}
+                >
+                  <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${collapsedGroups.has("__my_audits") ? "-rotate-90" : ""}`} />
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-[4px] uppercase tracking-wide bg-emerald-600 text-white shadow-sm">
+                    <ShieldCheck className="w-3 h-3" />
+                    Audits
+                  </span>
+                </div>
+                <span className="text-xs font-semibold text-zinc-400 w-8 shrink-0 text-center">
+                  {myAudits.length}
+                </span>
+              </div>
+
+              {!collapsedGroups.has("__my_audits") && (
+                <>
+                  <div className="hidden sm:flex items-center justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1 pb-1.5 border-b border-zinc-800/60 w-full">
+                    <span className="text-left pl-6">Task</span>
+                    <div className="flex items-center shrink-0 w-[220px] pr-2">
+                      <span className="w-[120px] shrink-0 text-center">Audit</span>
+                      <span className="w-[100px] shrink-0 text-center">Priority</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col w-full">
+                    {myAudits.map((audit) => {
+                      const known = tasksWithSubtasks.find((t) => t.id === audit.task.id);
+                      const taskRow = known || ({ ...audit.task, listId: audit.task.list?.id, createdAt: audit.createdAt } as unknown as Task);
+                      const priorityConfig = getPriorityConfig(audit.task.priority);
+                      const auditLabel = normalizeAuditName(audit.text) === "ui ux audit" ? "UI/UX Audit" : audit.text;
+
+                      return (
+                        <div
+                          key={audit.id}
+                          onClick={() => openRow(taskRow, audit.subtask?.id ?? null)}
+                          className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">
+                            <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                            <span className="text-[13px] font-medium text-zinc-300 group-hover:text-indigo-300 transition-colors truncate">
+                              {audit.task.title}
+                            </span>
+                            {audit.subtask && (
+                              <span className="hidden md:inline text-[10px] text-violet-300 bg-violet-500/15 border border-violet-500/30 rounded px-1.5 py-0.5 shrink-0 max-w-[240px] truncate font-semibold">
+                                Subtask · {audit.subtask.title}
+                              </span>
+                            )}
+                            {audit.task.list && (
+                              <span className="hidden md:inline-flex items-center text-[11px] text-zinc-600 shrink-0 max-w-[200px] truncate ml-1 font-medium group-hover:text-zinc-400 transition-colors">
+                                ≡ {audit.task.list.name}
+                              </span>
+                            )}
+                            <span className="hidden md:inline text-[10px] text-zinc-500 shrink-0 uppercase tracking-wide font-semibold">
+                              {audit.task.status}
+                            </span>
+                          </div>
+
+                          <div className="hidden sm:flex items-center shrink-0 w-[220px] pr-2">
+                            <div className="flex items-center justify-center w-[120px] shrink-0">
+                              <span className="text-[11px] font-semibold text-emerald-500 bg-emerald-500/10 border border-emerald-500/25 rounded px-1.5 py-0.5 truncate">
+                                {auditLabel}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-center gap-1 w-[100px] shrink-0 text-[11px] font-medium">
+                              <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
+                              <span className={priorityConfig.color}>{priorityConfig.label}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {loadingTasks && filteredMyTasks.length === 0 ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (

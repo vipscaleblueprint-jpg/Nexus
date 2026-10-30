@@ -6,6 +6,7 @@ import { getCache, setCache, invalidateCache, getCacheGeneration } from '../serv
 import { redis } from '../config/redis';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { getPositionAfter } from '../services/taskOrderService';
+import { autoAssignAudits } from '../services/auditAutoAssign';
 import { io } from '../server';
 import {
   safeCreateClickUpTask,
@@ -448,6 +449,10 @@ export async function createTask(req: Request, res: Response) {
         io.to(`user:${id}`).emit('notification_received');
       });
     })().catch((err) => console.error('createTask: assignment notifications failed:', err));
+
+    autoAssignAudits(task.id, (req as any).user?.id || creatorId).catch((err) =>
+      console.error('createTask: audit auto-assign failed:', err)
+    );
 
     // Duplicate recurring task to PENDING immediately upon creation if set time is provided
     if (recurringConfig && recurringConfig.time) {
@@ -2279,6 +2284,13 @@ export async function createSubtask(req: Request, res: Response) {
       // Global broadcast (like updateSubtask) so the dashboard, which joins no list room, gets the new row
       io.emit('task:updated', task);
 
+      // An "--Audit" subtask can add a required audit to its parent
+      if ((title || '').trim().toLowerCase().startsWith('--audit')) {
+        autoAssignAudits(taskId, (req as any).user?.id).catch((err) =>
+          console.error('createSubtask: audit auto-assign failed:', err)
+        );
+      }
+
       const authReq = req as any;
       const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
       if (actingUserId) {
@@ -2959,10 +2971,24 @@ export async function deleteChecklist(req: Request, res: Response) {
   }
 }
 
+/**
+ * Checklist item assignees from a request body: assigneeIds (several people), or a lone
+ * assigneeId for older callers ('' clears). Returns null when the body doesn't touch assignees.
+ */
+function itemAssigneeIds(assigneeId: unknown, assigneeIds: unknown): string[] | null {
+  let ids: string[];
+  const list = Array.isArray(assigneeIds) ? assigneeIds : Array.isArray(assigneeId) ? assigneeId : null;
+  if (list) ids = list.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  else if (assigneeId !== undefined) ids = typeof assigneeId === 'string' && assigneeId ? [assigneeId] : [];
+  else return null;
+  return Array.from(new Set(ids));
+}
+
 export async function createChecklistItem(req: Request, res: Response) {
   try {
     let { checklistId } = req.params;
-    const { text, completed, assigneeId, subtaskId, checklistName } = req.body;
+    const { text, completed, subtaskId, checklistName } = req.body;
+    const assigneeIdsInput = itemAssigneeIds(req.body.assigneeId, req.body.assigneeIds);
     const taskId = req.params.id;
     const userId = (req as any).user?.id;
 
@@ -3011,15 +3037,14 @@ export async function createChecklistItem(req: Request, res: Response) {
         data.checkedById = userId;
       }
     }
-    if (assigneeId !== undefined) {
-      data.assigneeId = assigneeId === '' ? null : assigneeId;
+    if (assigneeIdsInput) {
+      data.assigneeId = assigneeIdsInput;
     }
 
     const item = await prisma.checklistItem.create({
       data,
       include: {
         checkedBy: { select: { id: true, name: true, avatarUrl: true } },
-        assignee: { select: { id: true, name: true, avatarUrl: true } },
         checklist: {
           select: {
             id: true,
@@ -3174,7 +3199,7 @@ export async function createChecklistItem(req: Request, res: Response) {
         }
 
         // 2. Checklist Item Assignment Notification
-        if (assigneeId && cl) {
+        if (assigneeIdsInput && assigneeIdsInput.length > 0 && cl) {
           const targetTask = cl.task || cl.subtask?.task;
           const subtask = cl.subtask;
           const actor = userId
@@ -3182,20 +3207,21 @@ export async function createChecklistItem(req: Request, res: Response) {
             : null;
           const actorName = actor?.name || 'Someone';
 
-          if (assigneeId !== userId) {
-            const shouldNotify = await filterUsersByNotificationPreference([assigneeId], 'checklists');
-            if (shouldNotify.length > 0) {
-              await prisma.taskNotification.create({
-                data: {
-                  userId: assigneeId,
-                  actorId: userId || '',
-                  taskId: targetTask?.id || subtask?.taskId || '',
-                  type: 'CHECKLIST_ITEM_ASSIGNED',
-                  title: `${actorName} assigned you "${item.text}" in ${cl.name || 'Checklist'}`,
-                },
-              });
-              io.to(`user:${assigneeId}`).emit('notification_received');
-            }
+          const shouldNotify = await filterUsersByNotificationPreference(
+            assigneeIdsInput.filter((id) => id !== userId),
+            'checklists'
+          );
+          for (const notifyId of shouldNotify) {
+            await prisma.taskNotification.create({
+              data: {
+                userId: notifyId,
+                actorId: userId || '',
+                taskId: targetTask?.id || subtask?.taskId || '',
+                type: 'CHECKLIST_ITEM_ASSIGNED',
+                title: `${actorName} assigned you "${item.text}" in ${cl.name || 'Checklist'}`,
+              },
+            });
+            io.to(`user:${notifyId}`).emit('notification_received');
           }
         }
 
@@ -3256,10 +3282,22 @@ export async function createChecklistItem(req: Request, res: Response) {
 export async function updateChecklistItem(req: Request, res: Response) {
   try {
     const { itemId } = req.params;
-    const { text, completed, assigneeId } = req.body;
-    
-    // We get user making request for checkedBy mapping 
+    const { text, completed } = req.body;
+    const assigneeIdsInput = itemAssigneeIds(req.body.assigneeId, req.body.assigneeIds);
+
+    // We get user making request for checkedBy mapping
     const userId = (req as any).user?.id;
+
+    // Only people newly added get an assignment notification
+    let newlyAssignedIds: string[] = [];
+    if (assigneeIdsInput) {
+      const before = await prisma.checklistItem.findUnique({
+        where: { id: itemId },
+        select: { assigneeId: true },
+      });
+      const previous = new Set(before?.assigneeId || []);
+      newlyAssignedIds = assigneeIdsInput.filter((id) => !previous.has(id));
+    }
 
     const data: any = {};
     if (text !== undefined) data.text = text;
@@ -3271,8 +3309,8 @@ export async function updateChecklistItem(req: Request, res: Response) {
         data.checkedById = null;
       }
     }
-    if (assigneeId !== undefined) {
-      data.assigneeId = assigneeId === '' ? null : assigneeId;
+    if (assigneeIdsInput) {
+      data.assigneeId = assigneeIdsInput;
     }
 
     const item = await prisma.checklistItem.update({
@@ -3280,7 +3318,6 @@ export async function updateChecklistItem(req: Request, res: Response) {
       data,
       include: {
         checkedBy: { select: { id: true, name: true, avatarUrl: true } },
-        assignee: { select: { id: true, name: true, avatarUrl: true } },
         checklist: { select: { taskId: true, subtaskId: true } },
       },
     });
@@ -3449,7 +3486,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
         }
 
         // 2. Checklist Item Assignment Notification
-        if (assigneeId !== undefined && assigneeId && itemRef?.checklist) {
+        if (newlyAssignedIds.length > 0 && itemRef?.checklist) {
           const checklist = itemRef.checklist;
           const targetTask = checklist.task || checklist.subtask?.task;
           const subtask = checklist.subtask;
@@ -3461,20 +3498,21 @@ export async function updateChecklistItem(req: Request, res: Response) {
             : null;
           const actorName = actor?.name || 'Someone';
 
-          if (assigneeId !== userId) {
-            const shouldNotify = await filterUsersByNotificationPreference([assigneeId], 'checklists');
-            if (shouldNotify.length > 0) {
-              await prisma.taskNotification.create({
-                data: {
-                  userId: assigneeId,
-                  actorId: userId || '',
-                  taskId: targetTask?.id || subtask?.taskId || '',
-                  type: 'CHECKLIST_ITEM_ASSIGNED',
-                  title: `${actorName} assigned you "${itemRef.text}" in ${checklist.name || 'Checklist'}`,
-                },
-              });
-              io.to(`user:${assigneeId}`).emit('notification_received');
-            }
+          const shouldNotify = await filterUsersByNotificationPreference(
+            newlyAssignedIds.filter((id) => id !== userId),
+            'checklists'
+          );
+          for (const notifyId of shouldNotify) {
+            await prisma.taskNotification.create({
+              data: {
+                userId: notifyId,
+                actorId: userId || '',
+                taskId: targetTask?.id || subtask?.taskId || '',
+                type: 'CHECKLIST_ITEM_ASSIGNED',
+                title: `${actorName} assigned you "${itemRef.text}" in ${checklist.name || 'Checklist'}`,
+              },
+            });
+            io.to(`user:${notifyId}`).emit('notification_received');
           }
         }
 
@@ -3675,3 +3713,58 @@ export async function triggerRecurringRollover(req: Request, res: Response) {
 }
 
 
+
+// GET /api/tasks/my-audits — unchecked audit items assigned to the current user, on open tasks
+export async function listMyAudits(req: Request, res: Response) {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const items = await prisma.checklistItem.findMany({
+      where: {
+        assigneeId: { has: userId },
+        completed: false,
+        NOT: { text: { startsWith: '!' } },
+        checklist: { name: { equals: 'Audit', mode: 'insensitive' } },
+      },
+      select: {
+        id: true,
+        text: true,
+        createdAt: true,
+        checklist: {
+          select: {
+            id: true,
+            subtask: { select: { id: true, title: true } },
+            task: { select: { id: true, title: true, status: true, priority: true, list: { select: { id: true, name: true } } } },
+            subtaskId: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Subtask audit checklists carry the parent task through the subtask
+    const subtaskIds = items.filter((i) => !i.checklist.task && i.checklist.subtaskId).map((i) => i.checklist.subtaskId as string);
+    const subtaskParents = subtaskIds.length
+      ? await prisma.subtask.findMany({
+          where: { id: { in: subtaskIds } },
+          select: { id: true, task: { select: { id: true, title: true, status: true, priority: true, list: { select: { id: true, name: true } } } } },
+        })
+      : [];
+    const parentBySubtask = new Map(subtaskParents.map((s) => [s.id, s.task]));
+
+    const closed = ['closed', 'done', 'completed', 'resolved', 'cancelled'];
+    const audits = items
+      .map((i) => {
+        const task = i.checklist.task || (i.checklist.subtaskId ? parentBySubtask.get(i.checklist.subtaskId) : null);
+        if (!task || closed.includes((task.status || '').trim().toLowerCase())) return null;
+        return { id: i.id, text: i.text, createdAt: i.createdAt, task, subtask: i.checklist.subtask || null };
+      })
+      .filter(Boolean);
+
+    res.json({ audits });
+  } catch (error) {
+    console.error('listMyAudits error:', error);
+    res.status(500).json({ error: 'Failed to load audits' });
+  }
+}

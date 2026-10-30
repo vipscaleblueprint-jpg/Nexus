@@ -1,6 +1,14 @@
 import { apiClient } from './client';
 import { Task } from '@/lib/types';
 
+export interface MyAuditItem {
+  id: string;
+  text: string;
+  createdAt: string;
+  task: { id: string; title: string; status: string; priority?: string; list?: { id: string; name: string } | null };
+  subtask: { id: string; title: string } | null;
+}
+
 export const tasksApi = {
   async getTasks(params?: { lightweight?: boolean }): Promise<{ tasks: Task[] }> {
     // Default to lightweight=true — the global store only needs card-level fields.
@@ -8,6 +16,13 @@ export const tasksApi = {
     const lightweight = params?.lightweight !== false;
     const qs = lightweight ? '?lightweight=true' : '';
     return apiClient<{ tasks: Task[] }>(`/api/tasks${qs}`, {
+      method: 'GET',
+    });
+  },
+
+  // Unchecked audit items assigned to the current user, on open tasks
+  async getMyAudits(): Promise<{ audits: MyAuditItem[] }> {
+    return apiClient<{ audits: MyAuditItem[] }>('/api/tasks/my-audits', {
       method: 'GET',
     });
   },

@@ -32,7 +32,7 @@ const NEXUS_AUDIT_ITEMS = new Set([
 export interface ChecklistLike {
   name: string;
   externalId?: string | null;
-  items?: { text: string; completed?: boolean; assigneeId?: string | null }[] | null;
+  items?: { text: string; completed?: boolean; assigneeId?: string[] }[] | null;
   subtaskId?: string | null;
 }
 
@@ -51,6 +51,24 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
 
 // TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
 export const HIDE_DESIGN_AUDIT = true;
+
+// Which auditor role (User.roles) audits each item. Mirrors server/src/services/auditAutoAssign.ts.
+const AUDIT_ROLE_MATCHERS: Record<string, (role: string) => boolean> = {
+  'instructions audit': (r) => r.includes('instruction'),
+  'ui ux audit': (r) => /ui\s*\/?\s*ux/.test(r),
+  'design audit': (r) => r.includes('design'),
+  'funnel audit': (r) => r.includes('funnel'),
+};
+
+/** Whether someone with these roles holds the auditor role for this audit item (e.g. "UI UX Auditor"). */
+export function isAuditorFor(auditText: string, roles: (string | null | undefined)[] | null | undefined): boolean {
+  const matches = AUDIT_ROLE_MATCHERS[normalizeAuditName(auditText)];
+  if (!matches) return false;
+  return (roles || []).some((role) => {
+    const r = (role || '').toLowerCase();
+    return r.includes('audit') && matches(r);
+  });
+}
 
 /**
  * Audits the Galaxy AI picked for a task, saved as its Audit checklist with this externalId
@@ -173,7 +191,7 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
   const getAuditItem = (text: string) => {
     const norm = normalizeAuditName(text);
     const matches = auditChecklists.flatMap((c: any) => c.items || []).filter((i: any) => normalizeAuditName(i.text) === norm);
-    return matches.find((i: any) => i.assigneeId || i.completed) || matches[0];
+    return matches.find((i: any) => i.assigneeId?.length || i.completed) || matches[0];
   };
 
   const uncheckedAudits: string[] = [];

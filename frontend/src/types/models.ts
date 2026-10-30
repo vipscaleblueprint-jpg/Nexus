@@ -270,8 +270,8 @@ export interface ChecklistItem {
   completed: boolean;
   checklistId: string;
   checkedById?: string;
-  assigneeId?: string | null;
-  assignee?: User | null;
+  // Every assignee's user id (several auditors can share an audit item)
+  assigneeId?: string[];
   createdAt: string;
 }
 

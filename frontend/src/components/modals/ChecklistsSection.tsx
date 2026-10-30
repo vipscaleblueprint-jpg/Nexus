@@ -303,9 +303,9 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                       <Popover.Root>
                         <Popover.Trigger asChild>
                           <button className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 cursor-pointer">
-                            {item.assigneeId ? (
+                            {item.assigneeId?.length ? (
                               <div className="w-full h-full rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[10px] font-medium border border-indigo-500/30">
-                                {users.find(u => u.id === item.assigneeId)?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
+                                {users.find(u => u.id === item.assigneeId?.[0])?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
                               </div>
                             ) : (
                               <User className="w-3 h-3" />
@@ -318,7 +318,7 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                             <div className="max-h-60 overflow-y-auto">
                               <button 
                                 className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2 mb-1 cursor-pointer"
-                                onClick={() => handleUpdateItem(checklist.id, item.id, { assigneeId: '' })}
+                                onClick={() => handleUpdateItem(checklist.id, item.id, { assigneeId: [] })}
                               >
                                 <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center"><X className="w-3 h-3" /></div>
                                 Unassigned
@@ -327,7 +327,7 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                                 <button 
                                   key={u.id}
                                   className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2 cursor-pointer"
-                                  onClick={() => handleUpdateItem(checklist.id, item.id, { assigneeId: u.id })}
+                                  onClick={() => handleUpdateItem(checklist.id, item.id, { assigneeId: [u.id] })}
                                 >
                                   {u.avatarUrl ? (
                                     <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />

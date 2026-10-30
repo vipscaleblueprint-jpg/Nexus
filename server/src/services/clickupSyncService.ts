@@ -752,7 +752,8 @@ async function syncChecklists(checklists: any[] | undefined, target: Target, ctx
       const data = {
         text: item.name,
         completed: !!item.resolved,
-        ...(assigneeId && { assigneeId }),
+        // ClickUp items have one assignee
+        ...(assigneeId && { assigneeId: [assigneeId] }),
       };
       const existingItem =
         (await prisma.checklistItem.findUnique({ where: { externalId: item.id }, select: { id: true } })) ??

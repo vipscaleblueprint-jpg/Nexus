@@ -23,6 +23,7 @@ import {
   deleteChecklist,
   createChecklistItem,
   updateChecklistItem,
+  listMyAudits,
   deleteChecklistItem,
   createTaskAttachment,
   deleteTaskAttachment,
@@ -46,6 +47,7 @@ export const taskRouter = Router();
 
 taskRouter.get('/live-blocks', getLiveBlocksData);
 taskRouter.get('/', validate({ query: listTasksQuery }), listTasks);
+taskRouter.get('/my-audits', optionalAuthenticateToken, listMyAudits);
 taskRouter.post('/', validate({ body: createTaskSchema }), createTask);
 taskRouter.post('/batch', validate({ body: batchGetTasksSchema }), batchGetTasks);
 

@@ -864,15 +864,16 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                         )}
 
                         {/* Assignee */}
-                        <Popover.Root>
+                        {/* Only Project Managers, Seniors and Admins assign or remove auditors; others just see them */}
+                        <Popover.Root open={canManageAudits ? undefined : false}>
                           <Popover.Trigger asChild>
                             {assigneeIds.length === 0 ? (
-                              <button className="w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover cursor-pointer" disabled={isProcessing}>
+                              <button className={`w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover ${canManageAudits ? 'cursor-pointer' : 'cursor-default'}`} disabled={isProcessing} title={canManageAudits ? 'Assign auditors' : 'Unassigned. Only Project Managers can assign auditors'}>
                                 <User className="w-3 h-3" />
                               </button>
                             ) : (
                               <button
-                                className="flex items-center -space-x-1.5 cursor-pointer"
+                                className={`flex items-center -space-x-1.5 ${canManageAudits ? 'cursor-pointer' : 'cursor-default'}`}
                                 disabled={isProcessing}
                                 title={assigneeIds.map(id => usersMap.get(id)?.name || 'Unknown').join(', ')}
                               >
@@ -928,6 +929,28 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                     {assigneeIds.includes(u.id) && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                                   </button>
                                 ))}
+                                {/* Assigned before the strict role lists: removable only, never offered for adding */}
+                                {assigneeIds.filter(id => !isAuditorFor(text, usersMap.get(id)?.roles)).map(id => {
+                                  const u = usersMap.get(id);
+                                  return (
+                                    <button
+                                      key={id}
+                                      className="w-full text-left px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded flex items-center gap-2 cursor-pointer"
+                                      title="Not an auditor for this audit — click to remove"
+                                      onClick={() => handleUpdateAssignee(text, item, assigneeIds.filter(a => a !== id))}
+                                    >
+                                      {u?.avatarUrl ? (
+                                        <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover opacity-60" />
+                                      ) : (
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] text-white font-bold opacity-60 ${getAssigneeAvatarColor(u?.name || id)}`}>
+                                          {u?.name?.substring(0, 2).toUpperCase() || <User className="w-3 h-3" />}
+                                        </div>
+                                      )}
+                                      <span className="flex-1 truncate">{u?.name || 'Unknown user'}</span>
+                                      <span className="text-[10px] text-rose-500 shrink-0">Remove</span>
+                                    </button>
+                                  );
+                                })}
                               </div>
                             </Popover.Content>
                           </Popover.Portal>

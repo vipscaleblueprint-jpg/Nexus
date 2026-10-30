@@ -2984,6 +2984,12 @@ function itemAssigneeIds(assigneeId: unknown, assigneeIds: unknown): string[] | 
   return Array.from(new Set(ids));
 }
 
+const isAuditChecklistName = (name: string | null | undefined) => (name || '').trim().toLowerCase() === 'audit';
+
+async function getAuditAssignDeniedMessage(): Promise<string> {
+  return (await getAssignDeniedMessage()).replace('set Team Role and Assignees', 'assign or remove auditors');
+}
+
 export async function createChecklistItem(req: Request, res: Response) {
   try {
     let { checklistId } = req.params;
@@ -3038,6 +3044,10 @@ export async function createChecklistItem(req: Request, res: Response) {
       }
     }
     if (assigneeIdsInput) {
+      // Assigning auditors is for Project Managers, Seniors and Admins
+      if (assigneeIdsInput.length > 0 && isAuditChecklistName(checklist?.name) && !(await canUserSetAssignees(userId))) {
+        return res.status(403).json({ error: await getAuditAssignDeniedMessage() });
+      }
       data.assigneeId = assigneeIdsInput;
     }
 
@@ -3293,8 +3303,12 @@ export async function updateChecklistItem(req: Request, res: Response) {
     if (assigneeIdsInput) {
       const before = await prisma.checklistItem.findUnique({
         where: { id: itemId },
-        select: { assigneeId: true },
+        select: { assigneeId: true, checklist: { select: { name: true } } },
       });
+      // Assigning or removing auditors is for Project Managers, Seniors and Admins
+      if (isAuditChecklistName(before?.checklist?.name) && !(await canUserSetAssignees(userId))) {
+        return res.status(403).json({ error: await getAuditAssignDeniedMessage() });
+      }
       const previous = new Set(before?.assigneeId || []);
       newlyAssignedIds = assigneeIdsInput.filter((id) => !previous.has(id));
     }

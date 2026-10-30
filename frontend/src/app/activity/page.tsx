@@ -785,7 +785,7 @@ function ActivityFeedContent() {
    * - Status Updates: Status changes on tasks assigned to you
    * - Checklists: Checklist item assigned to you or completed on tasks assigned to you
    * - Auditor: Audit checklist checked on tasks assigned to you
-   * - Assigned to Me: When you were assigned or unassigned
+   * - Assigned to Me: When you were assigned or unassigned, including audits assigned to you
    * - Comments: Comments on tasks assigned to you or mentions
    */
   const matchesTabFilter = useCallback(
@@ -794,12 +794,15 @@ function ActivityFeedContent() {
       const isAssigned = isTaskAssignedToMe(item.taskId);
       const prefs = currentUser?.notificationPreferences;
 
+      // Being assigned an audit ('... "UI UX Audit" in Audit') counts as an assignment too
+      const isAuditAssignment = type === 'CHECKLIST_ITEM_ASSIGNED' && /\bin Audit\b/i.test(item.title || '');
+
       if (viewMode === 'show_all') {
         if (cat === 'all') return true;
         if (cat === 'status') return type === 'STATUS_CHANGE';
         if (cat === 'checklists') return type === 'CHECKLIST_ITEM_CHECKED' || type === 'CHECKLIST_ITEM_ASSIGNED';
         if (cat === 'audits') return type === 'AUDIT_ITEM_CHECKED';
-        if (cat === 'assigned') return type === 'ASSIGNMENT' || type === 'UNASSIGNMENT';
+        if (cat === 'assigned') return type === 'ASSIGNMENT' || type === 'UNASSIGNMENT' || isAuditAssignment;
         if (cat === 'comments') return type === 'COMMENT' || type === 'REPLY' || type === 'MENTION';
         return false;
       }
@@ -834,7 +837,7 @@ function ActivityFeedContent() {
       }
 
       if (cat === 'assigned') {
-        return type === 'ASSIGNMENT' || type === 'UNASSIGNMENT';
+        return type === 'ASSIGNMENT' || type === 'UNASSIGNMENT' || isAuditAssignment;
       }
 
       if (cat === 'comments') {

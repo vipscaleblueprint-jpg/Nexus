@@ -198,11 +198,13 @@ export function ActivityCard({
     return () => observer.disconnect();
   }, [content, maxHeight]);
 
+  const isAuditAssignment = normType === 'CHECKLIST_ITEM_ASSIGNED' && /\bin Audit\b/i.test(title);
+
   // Determine micro-badge icon
   let MicroIcon = MessageSquare;
   if (normType === 'UNASSIGNMENT' || (normType === 'ASSIGNMENT' && title.includes('unassigned'))) {
     MicroIcon = UserMinus;
-  } else if (normType === 'ASSIGNMENT') {
+  } else if (normType === 'ASSIGNMENT' || isAuditAssignment) {
     MicroIcon = UserPlus;
   } else if (
     normType === 'STATUS_CHANGE' ||
@@ -407,6 +409,26 @@ export function ActivityCard({
           {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
             <span className={actionClass}> in {taskTitle}</span>
           )}
+        </span>
+      );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
+    }
+
+    // 2b. Audit assigned to you ('... "UI UX Audit" in Audit ...')
+    if (isAuditAssignment) {
+      const auditMatch = title.match(/"([^"]+)"/);
+      const rawAudit = auditMatch ? auditMatch[1] : 'an audit';
+      const auditLabel = /^ui ux audit$/i.test(rawAudit.trim()) ? 'UI/UX Audit' : rawAudit;
+
+      const titleNode = (
+        <span className="leading-snug">
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> assigned you to </span>
+          <span className={taskClass}>{auditLabel}</span>
+          <span className={actionClass}> on </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
         </span>
       );
 

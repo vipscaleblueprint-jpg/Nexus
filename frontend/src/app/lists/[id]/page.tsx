@@ -1028,21 +1028,21 @@ export default function BoardPage() {
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </button>
-                <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 flex-wrap">
                   {list?.space && (
                     <>
-                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 transition-colors cursor-pointer">{list.space.name}</button>
-                      <span className="text-zinc-600">/</span>
+                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 transition-colors cursor-pointer shrink-0">{list.space.name}</button>
+                      <span className="text-zinc-600 shrink-0">/</span>
                     </>
                   )}
                   {list?.folder && (
                     <>
-                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 transition-colors cursor-pointer">{list.folder.name}</button>
-                      <span className="text-zinc-600">/</span>
+                      <button onClick={() => router.push('/tasks')} className="hover:text-zinc-300 transition-colors cursor-pointer shrink-0">{list.folder.name}</button>
+                      <span className="text-zinc-600 shrink-0">/</span>
                     </>
                   )}
                   {list?.name && (
-                    <span className="text-zinc-400">{list.name}</span>
+                    <span className="text-zinc-400 break-words">{list.name}</span>
                   )}
                 </div>
               </div>
@@ -1050,7 +1050,7 @@ export default function BoardPage() {
                 <div className="p-2 rounded-lg bg-blue-500/15 shrink-0">
                   <ListIcon className="w-5 h-5 text-blue-400" />
                 </div>
-                <div className="group flex items-center gap-2 min-w-0">
+                <div className="group flex items-center gap-2 min-w-0 flex-wrap">
                   {isEditingName ? (
                     <motion.div
                       layout
@@ -1058,7 +1058,7 @@ export default function BoardPage() {
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.98 }}
                       transition={{ type: 'spring', stiffness: 350, damping: 28 }}
-                      className="flex items-center"
+                      className="flex items-center max-w-full"
                     >
                       <input
                         type="text"
@@ -1086,7 +1086,7 @@ export default function BoardPage() {
                         }}
                         autoFocus
                         style={{ width: `${Math.max(120, (editingNameValue.length + 1) * 12)}px` }}
-                        className="text-xl font-semibold text-zinc-100 bg-secondary border border-zinc-700 rounded px-2 py-0.5 outline-none focus:border-indigo-500 transition-all duration-200"
+                        className="text-xl font-semibold text-zinc-100 bg-secondary border border-zinc-700 rounded px-2 py-0.5 outline-none focus:border-indigo-500 transition-all duration-200 max-w-full"
                       />
                     </motion.div>
                   ) : (
@@ -1096,7 +1096,7 @@ export default function BoardPage() {
                           setEditingNameValue(list?.name || '');
                           setIsEditingName(true);
                         }}
-                        className="text-xl font-semibold text-zinc-100 cursor-pointer hover:text-white transition-colors truncate"
+                        className="text-xl font-semibold text-zinc-100 cursor-pointer hover:text-white transition-colors break-words whitespace-normal"
                         title="Click to rename"
                       >
                         {list?.name}

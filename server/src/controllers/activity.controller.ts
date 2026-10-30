@@ -81,9 +81,9 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     if (category === 'status') {
       actionWhere = { action: { in: ['STATUS_CHANGE', 'TITLE_CHANGE'] } };
     } else if (category === 'checklists') {
-      actionWhere = { action: 'CHECKLIST_ITEM_CHECKED' };
+      actionWhere = { action: { in: ['CHECKLIST_ITEM_CHECKED', 'CHECKLIST_ITEM_UNCHECKED'] } };
     } else if (category === 'audits') {
-      actionWhere = { action: 'AUDIT_ITEM_CHECKED' };
+      actionWhere = { action: { in: ['AUDIT_ITEM_CHECKED', 'AUDIT_ITEM_UNCHECKED'] } };
     } else if (category === 'assigned') {
       actionWhere = { action: 'ASSIGNMENT' };
     }

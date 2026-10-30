@@ -112,25 +112,7 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     if (!taskData?.assigneeRoleRestrictions || taskData.assigneeRoleRestrictions.length === 0) {
       return workspaceUsers;
     }
-    // Build a map of TeamRole name -> teamId for fast lookup
-    const teamRoleToTeamId = new Map<string, string>();
-    workspaceTeams.forEach((team: any) => {
-      (team.teamRoles || []).forEach((tr: any) => {
-        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
-      });
-    });
-
-    return workspaceUsers.filter((u) => {
-      const userRoles = (u.roles || []) as string[];
-      return taskData.assigneeRoleRestrictions.some((role: string) => {
-        // Check generic role match
-        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
-        // Check TeamRole match
-        const teamId = teamRoleToTeamId.get(role.toLowerCase());
-        if (teamId && (u as any).teamId === teamId) return true;
-        return false;
-      });
-    });
+    return resolveUsersFromRoleRestrictions(taskData.assigneeRoleRestrictions, workspaceUsers, workspaceTeams);
   }, [taskData?.assigneeRoleRestrictions, workspaceUsers, workspaceTeams]);
   
   const listStatuses = React.useMemo(() => {

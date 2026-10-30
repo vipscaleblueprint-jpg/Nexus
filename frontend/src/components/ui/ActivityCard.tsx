@@ -13,6 +13,7 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronUp,
+  Smile,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { CommentContent } from '@/components/ui/CommentContent';
@@ -40,6 +41,47 @@ export interface ActivityCardProps {
   onMarkAsRead?: (e: React.MouseEvent) => void;
   onPreviewImage?: (src: string, allImages?: string[]) => void;
   customStatusColor?: string;
+  listId?: string;
+  customStatusColors?: Record<string, string>;
+}
+
+export const STATUS_HEX_MAP: Record<string, string> = {
+  KYC: '#3A8F55',
+  'PIN BOARD': '#1F8A6E',
+  PIN_BOARD: '#1F8A6E',
+  DAILY: '#2F7BD0',
+  WEEKLY: '#2F7BD0',
+  MONTHLY: '#2F7BD0',
+  PENDING: '#D29A2A',
+  'IN PROGRESS': '#D04A7C',
+  IN_PROGRESS: '#D04A7C',
+  REVISION: '#5B6BD6',
+  WAITING: '#D9534F',
+  'IN REVIEW': '#D97B3A',
+  IN_REVIEW: '#D97B3A',
+  CHECKING: '#A35DB8',
+  CRM: '#22A3AE',
+  CLOSED: '#2FA37A',
+  DONE: '#2FA37A',
+  COMPLETE: '#2FA37A',
+  COMPLETED: '#2FA37A',
+  'ON-HOLD': '#8A8F98',
+  'ON_HOLD': '#8A8F98',
+  TODO: '#4f46e5',
+  CANCELLED: '#64748b',
+};
+
+export function resolveStatusColor(
+  status?: string,
+  listId?: string,
+  customStatusColors?: Record<string, string>
+): string | undefined {
+  if (!status) return undefined;
+  const clean = status.trim().toUpperCase().replace(/_/g, ' ');
+  if (listId && customStatusColors && customStatusColors[`${listId}:${clean}`]) {
+    return customStatusColors[`${listId}:${clean}`];
+  }
+  return STATUS_HEX_MAP[clean] || STATUS_HEX_MAP[status.trim().toUpperCase()];
 }
 
 const AVATAR_PALETTE = [
@@ -73,40 +115,18 @@ export function StatusPill({
 }) {
   if (!status) return null;
   const clean = status.trim().toUpperCase().replace(/_/g, ' ');
-
-  // Default / fallback
-  let pillClasses =
-    'bg-amber-500/15 text-amber-500 dark:text-amber-400 border-amber-500/30 [.theme-light_&]:bg-amber-50 [.theme-light_&]:text-amber-700 [.theme-light_&]:border-amber-200';
-
-  if (
-    clean === 'CLOSED' ||
-    clean === 'DONE' ||
-    clean === 'COMPLETE' ||
-    clean === 'COMPLETED'
-  ) {
-    pillClasses =
-      'bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 border-emerald-500/30 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-700 [.theme-light_&]:border-emerald-200';
-  } else if (clean === 'IN PROGRESS' || clean === 'IN_PROGRESS') {
-    pillClasses =
-      'bg-blue-500/15 text-blue-500 dark:text-blue-400 border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200';
-  } else if (clean === 'WAITING' || clean === 'PENDING') {
-    pillClasses =
-      'bg-amber-500/15 text-amber-500 dark:text-amber-400 border-amber-500/30 [.theme-light_&]:bg-amber-50 [.theme-light_&]:text-amber-700 [.theme-light_&]:border-amber-200';
-  } else if (clean === 'IN REVIEW' || clean === 'IN_REVIEW' || clean === 'REVIEW') {
-    pillClasses =
-      'bg-orange-500/15 text-orange-500 dark:text-orange-400 border-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-700 [.theme-light_&]:border-orange-200';
-  }
-
+  const hexColor = color || STATUS_HEX_MAP[clean] || STATUS_HEX_MAP[status.trim().toUpperCase()];
   const greyedModifier = isGreyed ? 'opacity-80 saturate-[0.85]' : '';
 
-  if (color) {
+  if (hexColor) {
+    const baseHex = hexColor.startsWith('#') ? hexColor.slice(0, 7) : `#${hexColor.slice(0, 6)}`;
     return (
       <span
         className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border ${greyedModifier}`}
         style={{
-          backgroundColor: `${color}20`,
-          color: color,
-          borderColor: `${color}40`,
+          backgroundColor: `${baseHex}20`,
+          color: baseHex,
+          borderColor: `${baseHex}40`,
         }}
       >
         {clean}
@@ -116,7 +136,7 @@ export function StatusPill({
 
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border ${pillClasses} ${greyedModifier}`}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider select-none leading-none border bg-zinc-500/15 text-zinc-400 border-zinc-500/30 ${greyedModifier}`}
     >
       {clean}
     </span>
@@ -145,6 +165,8 @@ export function ActivityCard({
   onMarkAsRead,
   onPreviewImage,
   customStatusColor,
+  listId,
+  customStatusColors,
 }: ActivityCardProps) {
   const currentUser = useAppStore((state) => state.currentUser);
   const normType = (type || '').toUpperCase();
@@ -195,6 +217,11 @@ export function ActivityCard({
     title.toLowerCase().includes('checklist')
   ) {
     MicroIcon = Check;
+  } else if (
+    normType === 'REACTION' ||
+    title.toLowerCase().includes('reacted')
+  ) {
+    MicroIcon = Smile;
   } else if (
     normType === 'COMMENT' ||
     normType === 'REPLY' ||
@@ -250,20 +277,37 @@ export function ActivityCard({
   const effectiveTaskTitle = subtaskTitle || taskTitle || 'task';
   const effectiveIsSubtask = isSubtask || title.toLowerCase().includes('subtask');
 
-  // Parse title & status details
-  const renderTitleContent = () => {
+  // Parse title, status pills, and mention badge
+  const { titleNode, statusPills, mentionBadge } = (() => {
     const actorClass = isGreyed
       ? 'font-medium text-zinc-400 dark:text-zinc-400'
-      : 'font-medium text-foreground';
+      : 'font-semibold text-foreground';
     const actionClass = isGreyed
       ? 'text-zinc-500 dark:text-zinc-500 font-normal'
       : 'text-muted-foreground font-normal';
     const taskClass = isGreyed
       ? 'font-medium text-zinc-300 dark:text-zinc-300'
-      : 'font-medium text-foreground';
+      : 'font-semibold text-foreground';
     const mentionClass = isGreyed
       ? 'bg-blue-500/10 text-blue-400/80 border-blue-500/20'
       : 'bg-blue-500/15 text-blue-400 border-blue-500/30 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200';
+
+    let pillsNode: React.ReactNode = null;
+    let badgeNode: React.ReactNode = null;
+
+    if (isMention) {
+      badgeNode = (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border select-none ${mentionClass}`}>
+          Mentioned you
+        </span>
+      );
+    } else if (isYouMentioned) {
+      badgeNode = (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border select-none ${mentionClass}`}>
+          You mentioned
+        </span>
+      );
+    }
 
     // 1. Status Change
     if (
@@ -292,30 +336,42 @@ export function ActivityCard({
         }
       }
 
-      return (
+      if (newStatus) {
+        const resolvedOldColor = resolveStatusColor(oldStatus, listId, customStatusColors);
+        const resolvedNewColor =
+          resolveStatusColor(newStatus, listId, customStatusColors) || customStatusColor;
+
+        pillsNode = (
+          <div className="inline-flex items-center gap-1.5 flex-wrap">
+            {oldStatus && (
+              <>
+                <StatusPill status={oldStatus} color={resolvedOldColor} isGreyed={isGreyed} />
+                <span className={`${isGreyed ? 'text-zinc-600' : 'text-muted-foreground/60'} font-normal select-none text-xs`}>→</span>
+              </>
+            )}
+            <StatusPill status={newStatus} color={resolvedNewColor} isGreyed={isGreyed} />
+          </div>
+        );
+      }
+
+      const titleNode = (
         <span className="leading-snug">
           <span className={actorClass}>{actorName}</span>
           <span className={actionClass}> changed status on </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
-          {newStatus && (
-            <span className="inline-flex items-center ml-1.5 align-middle gap-1 flex-wrap">
-              {oldStatus && (
-                <>
-                  <StatusPill status={oldStatus} isGreyed={isGreyed} />
-                  <span className={`${isGreyed ? 'text-zinc-600' : 'text-muted-foreground/60'} font-normal select-none`}>→</span>
-                </>
-              )}
-              <StatusPill status={newStatus} color={customStatusColor} isGreyed={isGreyed} />
-            </span>
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
           )}
         </span>
       );
+
+      return { titleNode, statusPills: pillsNode, mentionBadge: badgeNode };
     }
 
     // 2. Audit Item Checked
     if (normType === 'AUDIT_ITEM_CHECKED' || title.toLowerCase().includes('auditing')) {
-      let auditText = 'design and instructions';
+      let auditText = '';
       const rawText = title.toLowerCase();
       if (rawText.includes('all auditing')) {
         auditText = 'all';
@@ -330,17 +386,31 @@ export function ActivityCard({
           auditText = `${types.join(', ')} and ${last}`;
         } else if (types.length === 1) {
           auditText = types[0];
+        } else {
+          const checkedMatch = title.match(/checked\s+(.+?)(?:\s+auditing|\s+on|\s*$)/i);
+          if (checkedMatch && checkedMatch[1].trim() && checkedMatch[1].trim().toLowerCase() !== 'auditing') {
+            auditText = checkedMatch[1].trim();
+          }
         }
       }
 
-      return (
+      const auditLabel = auditText
+        ? (auditText.toLowerCase().includes('auditing') ? auditText : `${auditText} auditing`)
+        : 'auditing';
+
+      const titleNode = (
         <span className="leading-snug">
           <span className={actorClass}>{actorName}</span>
-          <span className={actionClass}> checked {auditText} auditing on </span>
+          <span className={actionClass}> checked {auditLabel} on </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
+          )}
         </span>
       );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
     }
 
     // 3. Checklist Item Completed
@@ -360,13 +430,19 @@ export function ActivityCard({
         }
       }
 
-      return (
+      const titleNode = (
         <span className="leading-snug">
           <span className={actorClass}>{actorName}</span>
           <span className={actionClass}> completed {countText} in </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
+          )}
         </span>
       );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
     }
 
     // 4. Assigned / Unassigned
@@ -379,7 +455,7 @@ export function ActivityCard({
       const isUnassign =
         normType === 'UNASSIGNMENT' || title.toLowerCase().includes('unassigned');
 
-      return (
+      const titleNode = (
         <span className="leading-snug">
           <span className={actorClass}>{actorName}</span>
           <span className={actionClass}>
@@ -388,103 +464,110 @@ export function ActivityCard({
           </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
+          )}
         </span>
       );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
     }
 
-    // 5. Reply
+    // 5. Reaction to Comment
+    if (
+      normType === 'REACTION' ||
+      title.toLowerCase().includes('reacted')
+    ) {
+      const emojiMatch = title.match(/reacted\s+(\S+)\s+to\s+your\s+comment/i);
+      const emoji = emojiMatch ? emojiMatch[1] : '';
+
+      const titleNode = (
+        <span className="leading-snug">
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> reacted </span>
+          {emoji && <span className="inline-block text-base mx-0.5 align-middle select-none">{emoji}</span>}
+          <span className={actionClass}> to your comment on </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
+          )}
+        </span>
+      );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
+    }
+
+    // 6. Reply
     if (
       normType === 'REPLY' ||
       title.toLowerCase().includes('replied to your comment')
     ) {
-      return (
+      const titleNode = (
         <span className="leading-snug">
           <span className={actorClass}>{actorName}</span>
           <span className={actionClass}> replied to your comment on </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
-          {isMention ? (
-            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
-              Mentioned you
-            </span>
-          ) : isYouMentioned ? (
-            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
-              You mentioned
-            </span>
-          ) : null}
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
+          )}
         </span>
       );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
     }
 
-    // 6. Comment
+    // 7. Comment
     if (
       normType === 'COMMENT' ||
       normType === 'MENTION' ||
       title.toLowerCase().includes('commented on')
     ) {
-      return (
+      const titleNode = (
         <span className="leading-snug">
           <span className={actorClass}>{actorName}</span>
           <span className={actionClass}> commented on </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
-          {isMention ? (
-            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
-              Mentioned you
-            </span>
-          ) : isYouMentioned ? (
-            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
-              You mentioned
-            </span>
-          ) : null}
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
+          )}
         </span>
       );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
     }
 
-    // 7. General Fallback
+    // 8. General Fallback
     let restOfTitle = title;
     if (restOfTitle.startsWith(actorName)) {
       restOfTitle = restOfTitle.substring(actorName.length).trim();
     }
 
-    return (
+    const titleNode = (
       <span className="leading-snug">
         <span className={actorClass}>{actorName}</span>
         <span className={actionClass}> {restOfTitle}</span>
-        {isMention ? (
-          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
-            Mentioned you
-          </span>
-        ) : isYouMentioned ? (
-          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ml-1.5 align-middle select-none ${mentionClass}`}>
-            You mentioned
-          </span>
-        ) : null}
       </span>
     );
-  };
+
+    return { titleNode, statusPills: null, mentionBadge: badgeNode };
+  })();
 
   return (
     <div
       onClick={onClick}
-      className={`group/card relative flex items-start cursor-pointer rounded-xl transition-all duration-150 shadow-xs border ${
+      className={`group/card relative flex items-start cursor-pointer rounded-xl transition-all duration-150 border ${
         compact ? 'p-3 gap-2.5' : 'p-3.5 sm:p-4 gap-3 sm:gap-3.5'
       } ${
-        isGreyed
+        !isRead
+          ? 'bg-card/95 dark:bg-[#121626]/90 border-blue-500/40 dark:border-blue-500/40 shadow-[0_0_15px_-2px_rgba(59,130,246,0.25)] ring-1 ring-blue-500/25 hover:border-blue-500/60 hover:shadow-[0_0_20px_-2px_rgba(59,130,246,0.35)]'
+          : isGreyed
           ? 'bg-card/40 dark:bg-zinc-900/30 border-border/40 hover:bg-card hover:border-border/80 opacity-[0.85] hover:opacity-100'
           : 'bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border'
       }`}
     >
-      {/* Blue unread dot on far left */}
-      {!isRead && (
-        <div className="shrink-0 flex items-center justify-center pt-2.5 sm:pt-3">
-          <span
-            className="w-2 h-2 rounded-full bg-blue-500 shadow-sm"
-            title="Unread"
-          />
-        </div>
-      )}
-
       {/* Avatar with dark/light micro-badge */}
       <div className={`shrink-0 relative transition-all duration-150 ${isGreyed ? 'opacity-70 saturate-[0.8]' : ''}`}>
         {actorAvatar ? (
@@ -522,21 +605,37 @@ export function ActivityCard({
 
       {/* Content Column */}
       <div className="flex-1 min-w-0">
-        {/* Top Line: Actor + Action + Target + Mention + Status Pills + Timestamp */}
+        {/* Top Line: Actor + Action + Target + Timestamp + Unread Dot */}
         <div className="flex items-start justify-between gap-3">
-          <div className={`${compact ? 'text-xs' : 'text-sm'} text-foreground min-w-0 pr-1`}>
-            {renderTitleContent()}
+          <div className={`${compact ? 'text-xs' : 'text-sm'} text-foreground min-w-0 pr-1 leading-snug`}>
+            {titleNode}
           </div>
 
-          {/* Timestamp right-aligned */}
-          {formattedTime && (
-            <div className={`shrink-0 text-xs font-normal pt-0.5 ml-auto select-none ${
-              isGreyed ? 'text-zinc-500 dark:text-zinc-600' : 'text-muted-foreground'
-            }`}>
-              {formattedTime}
-            </div>
-          )}
+          {/* Timestamp right-aligned with unread blue dot */}
+          <div className="shrink-0 flex items-center gap-1.5 pt-0.5 ml-auto select-none">
+            {formattedTime && (
+              <span className={`text-xs font-normal ${
+                isGreyed ? 'text-zinc-500 dark:text-zinc-600' : 'text-muted-foreground'
+              }`}>
+                {formattedTime}
+              </span>
+            )}
+            {!isRead && (
+              <span
+                className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.9)] shrink-0 inline-block"
+                title="Unread"
+              />
+            )}
+          </div>
         </div>
+
+        {/* Sub-row for badges (Status pills, Mentions) */}
+        {(statusPills || mentionBadge) && (
+          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+            {mentionBadge}
+            {statusPills}
+          </div>
+        )}
 
         {/* Comment quote box with height limit & See more toggle */}
         {content && (

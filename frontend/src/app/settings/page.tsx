@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
 import { authApi, usersApi } from '@/api';
 import { API_BASE_URL } from '@/api/client';
-import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell, Palette, Volume2, Volume1, VolumeX, Music, CheckCircle2 } from 'lucide-react';
+import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell, Palette, Volume2, Volume1, VolumeX, Music, CheckCircle2, AtSign, Smile, MessageSquare, RefreshCw } from 'lucide-react';
 import { UserNotificationPreferences } from '@/types';
 import {
   playNotificationSound,
@@ -15,6 +15,9 @@ import {
   SAMPLE_CUSTOM_SOUNDS,
   SampleCustomSound,
   preloadSampleSounds,
+  SOUND_CATEGORIES,
+  SoundCategory,
+  SoundChoice,
 } from '@/lib/soundNotification';
 import { SettingsSkeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/lib/toast';
@@ -502,6 +505,74 @@ export default function SettingsPage() {
       setNotifPrefs(notifPrefs);
       toast.error(e?.message || 'Failed to update sound preset');
     }
+  };
+
+  const handleChangeCategorySound = async (
+    category: SoundCategory,
+    preset: SoundChoice,
+    soundUrl?: string | null
+  ) => {
+    const currentTypeSounds = notifPrefs.typeSounds || {};
+    const updatedTypeSounds = {
+      ...currentTypeSounds,
+      [category]: {
+        preset,
+        soundUrl: preset === 'custom' ? (soundUrl ?? notifPrefs.soundUrl) : undefined,
+      },
+    };
+
+    const updated: UserNotificationPreferences = {
+      ...notifPrefs,
+      typeSounds: updatedTypeSounds,
+    };
+    setNotifPrefs(updated);
+
+    try {
+      const res = await authApi.updateProfile({ notificationPreferences: updated });
+      setCurrentUser(res.user);
+      const categoryLabel = SOUND_CATEGORIES.find((c) => c.id === category)?.name || category;
+      toast.success(`${categoryLabel} alert sound updated`);
+    } catch (e: any) {
+      setNotifPrefs(notifPrefs);
+      toast.error(e?.message || 'Failed to update category sound');
+    }
+  };
+
+  const handleAuditionCategory = (
+    category: SoundCategory,
+    e?: React.MouseEvent
+  ) => {
+    if (e) e.stopPropagation();
+    const config = notifPrefs.typeSounds?.[category];
+    const choice = config?.preset || 'inherit';
+
+    if (choice === 'mute') {
+      toast.info('This category is set to Mute (no sound)');
+      return;
+    }
+
+    setAuditioningPreset(`category-${category}`);
+
+    if (choice === 'inherit') {
+      if ((notifPrefs.soundPreset || 'ting') === 'custom' && notifPrefs.soundUrl) {
+        playNotificationSound(notifPrefs.soundUrl, notifPrefs.soundVolume ?? 0.8, 'custom');
+      } else {
+        playPresetTone((notifPrefs.soundPreset as SoundPreset) || 'ting', notifPrefs.soundVolume ?? 0.8);
+      }
+    } else if (choice === 'custom') {
+      const url = config?.soundUrl || notifPrefs.soundUrl;
+      if (url) {
+        playNotificationSound(url, notifPrefs.soundVolume ?? 0.8, 'custom');
+      } else {
+        playPresetTone('ting', notifPrefs.soundVolume ?? 0.8);
+      }
+    } else {
+      playPresetTone(choice as SoundPreset, notifPrefs.soundVolume ?? 0.8);
+    }
+
+    setTimeout(() => {
+      setAuditioningPreset((prev) => (prev === `category-${category}` ? null : prev));
+    }, 700);
   };
 
   const handleSoundUpload = async (rawFile: File) => {
@@ -1380,6 +1451,104 @@ export default function SettingsPage() {
                           );
                         })()}
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Per-Category Sound Customization (Scalable & Non-Redundant) */}
+                  <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Volume2 className="w-4 h-4 text-indigo-400" />
+                        <h4 className="text-xs font-semibold text-zinc-200">Per-Category Sound Alerts</h4>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25 font-medium">
+                          Smart Inherit
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-zinc-500">
+                        Customize tones for specific alerts or keep on Default to inherit
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-zinc-800/60 border border-zinc-800/80 rounded-xl overflow-hidden bg-zinc-950/40">
+                      {SOUND_CATEGORIES.map((cat) => {
+                        const currentChoice: SoundChoice = notifPrefs.typeSounds?.[cat.id]?.preset || 'inherit';
+                        const isAuditioning = auditioningPreset === `category-${cat.id}`;
+
+                        const CategoryIcon =
+                          cat.id === 'mention'
+                            ? AtSign
+                            : cat.id === 'reaction'
+                            ? Smile
+                            : cat.id === 'comment'
+                            ? MessageSquare
+                            : RefreshCw;
+
+                        return (
+                          <div
+                            key={cat.id}
+                            className="p-3 sm:px-4 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-900/40 transition-colors"
+                          >
+                            <div className="flex items-center gap-3 min-w-0 pr-2">
+                              <div className="w-7 h-7 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center shrink-0 text-indigo-400">
+                                <CategoryIcon className="w-3.5 h-3.5" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-zinc-200 truncate">{cat.name}</p>
+                                <p className="text-[10px] text-zinc-400 truncate">{cat.description}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                              {/* Dropdown Selector */}
+                              <select
+                                value={currentChoice}
+                                onChange={(e) => handleChangeCategorySound(cat.id, e.target.value as SoundChoice)}
+                                className={`text-xs rounded-lg px-2.5 py-1.5 border font-medium cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+                                  currentChoice !== 'inherit' && currentChoice !== 'mute'
+                                    ? 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200'
+                                    : currentChoice === 'mute'
+                                    ? 'bg-rose-950/20 border-rose-500/30 text-rose-300'
+                                    : 'bg-zinc-800 border-zinc-700 text-zinc-300'
+                                }`}
+                              >
+                                <option value="inherit">
+                                  Default ({SOUND_PRESETS.find((p) => p.id === (notifPrefs.soundPreset || 'ting'))?.name || 'Classic Ting'})
+                                </option>
+                                <option value="ting">Classic Ting</option>
+                                <option value="chime">Crystal Chime</option>
+                                <option value="pop">Subtle Pop</option>
+                                <option value="bell">Desk Bell</option>
+                                <option value="glass">Glass Clink</option>
+                                {notifPrefs.soundUrl && (
+                                  <option value="custom">Custom Audio (Active file)</option>
+                                )}
+                                <option value="mute">Mute (No sound)</option>
+                              </select>
+
+                              {/* Audition Play Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleAuditionCategory(cat.id, e)}
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors shadow-xs ${
+                                  currentChoice === 'mute'
+                                    ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+                                    : isAuditioning
+                                    ? 'bg-indigo-500 text-white'
+                                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700/60'
+                                }`}
+                                title={currentChoice === 'mute' ? 'Category is muted' : `Preview ${cat.name} alert`}
+                                disabled={currentChoice === 'mute'}
+                              >
+                                {isAuditioning ? (
+                                  <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                                ) : (
+                                  <Play className="w-3 h-3 fill-current ml-0.5" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 

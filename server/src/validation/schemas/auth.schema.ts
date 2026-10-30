@@ -19,6 +19,11 @@ export const loginSchema = z.object({
   rememberMe: z.boolean().optional(),
 });
 
+export const categorySoundConfigSchema = z.object({
+  preset: z.enum(['inherit', 'ting', 'chime', 'pop', 'bell', 'glass', 'custom', 'mute']).optional(),
+  soundUrl: z.string().nullable().optional(),
+});
+
 export const notificationPreferencesSchema = z.object({
   status: z.boolean().optional(),
   checklists: z.boolean().optional(),
@@ -33,6 +38,7 @@ export const notificationPreferencesSchema = z.object({
   soundPreset: z.enum(['ting', 'chime', 'pop', 'bell', 'glass', 'custom']).optional(),
   soundVolume: z.number().min(0).max(1).optional(),
   soundUrl: z.string().nullable().optional(),
+  typeSounds: z.record(z.enum(['mention', 'reaction', 'comment', 'status']), categorySoundConfigSchema).optional(),
 });
 
 export const updateProfileSchema = z.object({

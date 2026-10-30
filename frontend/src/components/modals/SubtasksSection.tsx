@@ -14,7 +14,7 @@ import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 import { useAppStore } from '@/lib/store';
-import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, prefetchSubtaskActivities, isClosedStatus } from './TaskDetailModal';
+import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, prefetchSubtaskActivities, isClosedStatus } from './TaskDetailModal';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -454,22 +454,7 @@ function SubtaskRow({
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
       return wsUsers;
     }
-    const teamRoleToTeamId = new Map<string, string>();
-    wsTeams.forEach((team: any) => {
-      (team.teamRoles || []).forEach((tr: any) => {
-        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
-      });
-    });
-
-    return wsUsers.filter((u: any) => {
-      const userRoles = (u.roles || []) as string[];
-      return localRoleRestrictions.some((role: string) => {
-        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
-        const teamId = teamRoleToTeamId.get(role.toLowerCase());
-        if (teamId && (u as any).teamId === teamId) return true;
-        return false;
-      });
-    });
+    return resolveUsersFromRoleRestrictions(localRoleRestrictions, wsUsers, wsTeams);
   }, [localRoleRestrictions, users, teams]);
 
   // Only Project Managers and Admins can set Team Role and Assignees
@@ -739,38 +724,44 @@ function SubtaskRow({
       )}
       {(teams || []).map((team: any) => {
         const teamRoles = team.teamRoles || [];
-        const current = localRoleRestrictions || [];
+        const current = latestRoleRestrictionsRef.current || [];
         const hasRoles = teamRoles.length > 0;
-        const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-        const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+        const allSelected = hasRoles && teamRoles.every((r: any) => hasRole(current, r.name));
+        const someSelected = hasRoles && teamRoles.some((r: any) => hasRole(current, r.name));
 
         return (
           <div key={team.id} className="mb-2">
             <div
               onClick={() => {
                 if (!hasRoles || !canEditAssignment) return;
+                const isAllSelected = hasRoles && teamRoles.every((r: any) => hasRole(current, r.name));
                 let next = [...current];
-                if (allSelected) {
-                  next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                if (isAllSelected) {
+                  next = next.filter(r => !teamRoles.some((tr: any) => matchesRole(tr.name, r)));
                 } else {
-                  const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                  const toAdd = teamRoles.filter((tr: any) => !hasRole(next, tr.name)).map((tr: any) => tr.name);
                   next = [...next, ...toAdd];
                 }
+                next = normalizeRoles(next, teams);
                 const matchingUsers = resolveUsersFromRoleRestrictions(next, users || [], teams || []);
-                const matchingIds = matchingUsers.map((u: any) => u.id);
+                const currentAssigneesList = latestAssigneesRef.current || [];
+                const validAssignees = next.length > 0
+                  ? currentAssigneesList.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
+                  : [];
+                const validIds = validAssignees.map((u: any) => u.id);
 
                 lastRoleUpdateTimestampRef.current = Date.now();
                 latestRoleRestrictionsRef.current = next;
                 setLocalRoleRestrictions(next);
 
                 lastAssigneeUpdateTimestampRef.current = Date.now();
-                latestAssigneesRef.current = matchingUsers;
-                setLocalAssignees(matchingUsers);
+                latestAssigneesRef.current = validAssignees;
+                setLocalAssignees(validAssignees);
 
                 subtask.assigneeRoleRestrictions = next;
-                subtask.assignees = matchingUsers;
-                subtask.assigneeIds = matchingIds;
-                onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds, assignees: matchingUsers } as any);
+                subtask.assignees = validAssignees;
+                subtask.assigneeIds = validIds;
+                onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: validIds, assignees: validAssignees } as any);
               }}
               className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles && canEditAssignment ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'} ${!canEditAssignment ? 'opacity-50 pointer-events-none' : ''}`}
             >
@@ -788,32 +779,38 @@ function SubtaskRow({
             {team.teamRoles && team.teamRoles.length > 0 && (
               <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
                 {team.teamRoles.map((role: any) => {
-                  const selected = (localRoleRestrictions || []).includes(role.name);
+                  const selected = hasRole(localRoleRestrictions, role.name);
                   return (
                     <div
                       key={role.id}
                       onClick={() => {
                         if (!canEditAssignment) return;
-                        const current = localRoleRestrictions || [];
-                        const next = selected
-                          ? current.filter((r: string) => r !== role.name)
-                          : [...current, role.name];
+                        const current = latestRoleRestrictionsRef.current || [];
+                        const isSelected = hasRole(current, role.name);
+                        const next = normalizeRoles(
+                          isSelected ? withoutRole(current, role.name) : [...current, role.name],
+                          teams
+                        );
 
                         const matchingUsers = resolveUsersFromRoleRestrictions(next, users || [], teams || []);
-                        const matchingIds = matchingUsers.map((u: any) => u.id);
+                        const currentAssigneesList = latestAssigneesRef.current || [];
+                        const validAssignees = next.length > 0
+                          ? currentAssigneesList.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
+                          : [];
+                        const validIds = validAssignees.map((u: any) => u.id);
 
                         lastRoleUpdateTimestampRef.current = Date.now();
                         latestRoleRestrictionsRef.current = next;
                         setLocalRoleRestrictions(next);
 
                         lastAssigneeUpdateTimestampRef.current = Date.now();
-                        latestAssigneesRef.current = matchingUsers;
-                        setLocalAssignees(matchingUsers);
+                        latestAssigneesRef.current = validAssignees;
+                        setLocalAssignees(validAssignees);
 
                         subtask.assigneeRoleRestrictions = next;
-                        subtask.assignees = matchingUsers;
-                        subtask.assigneeIds = matchingIds;
-                        onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds, assignees: matchingUsers } as any);
+                        subtask.assignees = validAssignees;
+                        subtask.assigneeIds = validIds;
+                        onUpdate(subtask.id, { assigneeRoleRestrictions: next, assigneeIds: validIds, assignees: validAssignees } as any);
                       }}
                       className={`flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 rounded-md transition-colors ${!canEditAssignment ? 'opacity-50 pointer-events-none' : ''}`}
                     >
@@ -1631,7 +1628,7 @@ function SubtaskRow({
                       const requiredAudits = Array.from(new Set([
                         ...getRequiredAudits(subtask.title, subtask.assigneeRoleRestrictions),
                         ...activeItems
-                      ].filter((text) => !text.startsWith('!') && !excludedAudits.has(text.toLowerCase()))));
+                      ].filter((text) => !text.startsWith('!') && !excludedAudits.has(text.toLowerCase()) && text.toLowerCase() !== 'design audit')));
                       
                       return requiredAudits.map((text, idx) => {
                         const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());

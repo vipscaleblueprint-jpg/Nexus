@@ -27,6 +27,7 @@ export function BlurUpImage({
   onPreview,
 }: BlurUpImageProps) {
   const [thumbLoaded, setThumbLoaded] = useState(false);
+  const [fullLoaded, setFullLoaded] = useState(() => isVectorOrDataUrl(src));
   const [useFallback, setUseFallback] = useState(false);
   const [failed, setFailed] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -35,7 +36,7 @@ export function BlurUpImage({
     if (useFallback || isVectorOrDataUrl(src)) {
       return src;
     }
-    return getThumbnailUrl(src, 360, 35);
+    return getThumbnailUrl(src, 480, 45);
   }, [src, useFallback]);
 
   // Clean filename for alt/title display
@@ -62,6 +63,25 @@ export function BlurUpImage({
     }
   }, [thumbUrl]);
 
+  // Progressively upgrade to full resolution original image once mounted
+  useEffect(() => {
+    if (isVectorOrDataUrl(src) || useFallback) {
+      return;
+    }
+    let active = true;
+    const img = new Image();
+    img.src = src;
+    img.onload = () => {
+      if (active) {
+        setFullLoaded(true);
+        setThumbLoaded(true);
+      }
+    };
+    return () => {
+      active = false;
+    };
+  }, [src, useFallback]);
+
   const handleImageError = () => {
     if (!useFallback && !isVectorOrDataUrl(src)) {
       // If thumbnail proxy fails, retry once with direct original src
@@ -76,6 +96,7 @@ export function BlurUpImage({
     setFailed(false);
     setUseFallback(false);
     setThumbLoaded(false);
+    setFullLoaded(false);
   };
 
   if (failed) {
@@ -98,10 +119,12 @@ export function BlurUpImage({
     );
   }
 
-  const effectiveMaxWidth = maxWidth ?? (isReply ? 260 : 340);
-  const effectiveMaxHeight = maxHeight ?? (isReply ? 180 : 220);
+  const effectiveMaxWidth = maxWidth ?? (isReply ? 420 : '100%');
+  const effectiveMaxHeight = maxHeight ?? (isReply ? 340 : 540);
   const styleMaxWidth = typeof effectiveMaxWidth === 'number' ? `${effectiveMaxWidth}px` : effectiveMaxWidth;
   const styleMaxHeight = typeof effectiveMaxHeight === 'number' ? `${effectiveMaxHeight}px` : effectiveMaxHeight;
+
+  const isDisplayFull = isVectorOrDataUrl(src) || useFallback || fullLoaded;
 
   return (
     <span
@@ -149,10 +172,10 @@ export function BlurUpImage({
         </span>
       )}
 
-      {/* 1-15kb Compressed Thumbnail with BlurUP effect */}
+      {/* Compressed Thumbnail with BlurUP effect progressively upgrading to full original */}
       <img
         ref={imgRef}
-        src={thumbUrl}
+        src={isDisplayFull ? src : thumbUrl}
         alt={cleanFileName}
         loading="lazy"
         decoding="async"
@@ -166,7 +189,7 @@ export function BlurUpImage({
         }}
         className={`${imgClassName || 'object-contain'} rounded-lg border border-zinc-800/70 bg-zinc-950/40 shadow-sm transition-all duration-300 ${
           thumbLoaded
-            ? 'block group-hover/image:brightness-95 filter blur-0 opacity-100'
+            ? `block group-hover/image:brightness-95 ${isDisplayFull ? 'filter blur-0 opacity-100' : 'filter blur-[0.5px] opacity-95'}`
             : 'invisible absolute h-0 w-0 opacity-0 pointer-events-none'
         }`}
       />

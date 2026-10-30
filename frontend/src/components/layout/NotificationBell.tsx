@@ -7,15 +7,23 @@ import {
   Bell,
   Clock,
   ArrowRight,
+  Check,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { format, isToday, isYesterday } from "date-fns";
 import { notificationsApi, TaskNotification } from "@/api/notifications";
 import { useAppStore } from "@/lib/store";
 import { fetchListStatuses } from "@/lib/listStatusCache";
 import { ActivityCard } from "@/components/ui/ActivityCard";
 import { prefetchTaskActivities } from "@/components/modals/TaskDetailModal";
 
-type TabType = "all" | "mentions" | "unread";
+type TabType = "all" | "mentions";
+
+function extractSubtaskTitle(title: string): string | undefined {
+  if (!title || !title.toLowerCase().includes("subtask")) return undefined;
+  const match = title.match(/(?:on subtask|to subtask|from subtask|commented on subtask|subtask)\s+([^:]+?)(?:\s+in\s+task|\s+on\s+task|\s+from\s+|$)/i);
+  return match ? match[1].trim() : undefined;
+}
 
 export function NotificationBell() {
   const router = useRouter();
@@ -25,6 +33,8 @@ export function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("all");
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
+  const [newIds, setNewIds] = useState<Set<string>>(() => new Set());
+  const [recentlyReadIds, setRecentlyReadIds] = useState<Set<string>>(() => new Set());
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -32,6 +42,7 @@ export function NotificationBell() {
   const [customStatusColors, setCustomStatusColors] = useState<Record<string, string>>({});
 
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const prevIsOpenRef = useRef(false);
 
   // Pre-load custom list status colors for tasks in notification list
   useEffect(() => {
@@ -83,6 +94,16 @@ export function NotificationBell() {
 
         const freshItems = res.notifications || [];
 
+        // Identify unread notifications to display under "New" with glowing border and blue dot
+        const freshUnread = freshItems.filter((n) => !n.isRead);
+        if (freshUnread.length > 0) {
+          setNewIds((prev) => {
+            const next = new Set(prev);
+            freshUnread.forEach((n) => next.add(n.id));
+            return next;
+          });
+        }
+
         if (pageNum === 1) {
           setNotifications(freshItems);
         } else {
@@ -124,6 +145,32 @@ export function NotificationBell() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isOpen]);
+
+  // Mark notifications as read ONLY AFTER closing the dropdown
+  useEffect(() => {
+    if (prevIsOpenRef.current && !isOpen) {
+      const unread = notifications.filter((n) => !n.isRead);
+      if (unread.length > 0 || unreadCount > 0) {
+        setUnreadCount(0);
+        setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+        notificationsApi.markAllAsRead().catch((e) => {
+          console.error("Failed to mark all as read on close", e);
+        });
+      }
+      setNewIds(new Set());
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen, notifications, unreadCount, setUnreadCount]);
+
+  // Cleanup on unmount if user navigates while dropdown was open
+  useEffect(() => {
+    return () => {
+      if (prevIsOpenRef.current) {
+        useAppStore.getState().setUnreadNotifications(0);
+        notificationsApi.markAllAsRead().catch(() => {});
+      }
+    };
+  }, []);
 
   // Listen for real-time events to reload
   useEffect(() => {
@@ -210,6 +257,11 @@ export function NotificationBell() {
       for (const targetId of idsToMark) {
         await notificationsApi.markAsRead(targetId);
       }
+      setRecentlyReadIds((prev) => {
+        const next = new Set(prev);
+        idsToMark.forEach((targetId) => next.add(targetId));
+        return next;
+      });
       setNotifications((prev) =>
         prev.map((n) => (idsToMark.includes(n.id) ? { ...n, isRead: true } : n))
       );
@@ -269,7 +321,12 @@ export function NotificationBell() {
             const last = typeArray.pop();
             mergedTitle = `${current.actor?.name || "Someone"} checked ${typeArray.join(", ")} and ${last} auditing on ${current.task?.title || "task"}`;
           } else {
-            mergedTitle = `${current.actor?.name || "Someone"} checked ${typeArray[0] || "auditing"} auditing on ${current.task?.title || "task"}`;
+            const singleType = typeArray[0];
+            if (singleType && singleType.toLowerCase() !== "auditing") {
+              mergedTitle = `${current.actor?.name || "Someone"} checked ${singleType} auditing on ${current.task?.title || "task"}`;
+            } else {
+              mergedTitle = `${current.actor?.name || "Someone"} checked auditing on ${current.task?.title || "task"}`;
+            }
           }
 
           const hasUnread = cluster.some((c) => !c.isRead);
@@ -326,6 +383,57 @@ export function NotificationBell() {
     return merged;
   }, [notifications]);
 
+  // Partition into:
+  // 1. Unread ("New") -> item is in newIds or !item.isRead (blue dot, glowing border)
+  // 2. Recently Read ("Recently Read") -> item is read (not in newIds) and today or recently marked
+  // 3. Old Information ("Yesterday", older dates) -> item is read, older than today (greyer side)
+  const { unreadItems, recentlyReadItems, oldItemsGrouped } = useMemo(() => {
+    const unread: (TaskNotification & { childIds?: string[] })[] = [];
+    const read: (TaskNotification & { childIds?: string[] })[] = [];
+
+    displayList.forEach((item) => {
+      const isNew =
+        newIds.has(item.id) ||
+        (item.childIds && item.childIds.some((cid) => newIds.has(cid))) ||
+        !item.isRead;
+      if (isNew) {
+        unread.push(item);
+      } else {
+        read.push(item);
+      }
+    });
+
+    const recent: (TaskNotification & { childIds?: string[] })[] = [];
+    const oldGrouped: { [key: string]: (TaskNotification & { childIds?: string[] })[] } = {};
+
+    read.forEach((item) => {
+      const d = new Date(item.createdAt);
+      const isRecent =
+        isToday(d) ||
+        recentlyReadIds.has(item.id) ||
+        (item.childIds && item.childIds.some((cid) => recentlyReadIds.has(cid)));
+
+      if (isRecent) {
+        recent.push(item);
+      } else {
+        let g = "";
+        if (isYesterday(d)) {
+          g = "Yesterday";
+        } else {
+          g = format(d, "EEE, MMM d");
+        }
+        if (!oldGrouped[g]) oldGrouped[g] = [];
+        oldGrouped[g].push(item);
+      }
+    });
+
+    return {
+      unreadItems: unread,
+      recentlyReadItems: recent,
+      oldItemsGrouped: oldGrouped,
+    };
+  }, [displayList, newIds, recentlyReadIds]);
+
   const bellVariants = {
     ringing: {
       rotate: [0, -20, 20, -20, 20, -10, 10, 0],
@@ -341,28 +449,77 @@ export function NotificationBell() {
     },
   };
 
-  const handleToggleOpen = async () => {
+  const handleToggleOpen = () => {
     const nextOpen = !isOpen;
     setIsOpen(nextOpen);
 
     if (nextOpen) {
-      const hasUnread = unreadCount > 0 || notifications.some((n) => !n.isRead);
-      if (hasUnread) {
-        setUnreadCount(0);
-        setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-        try {
-          await notificationsApi.markAllAsRead();
-        } catch (error) {
-          console.error("Failed to mark all as read", error);
-        }
+      // Record any currently unread items as new for this session so glowing blue border and dot remain visible
+      const existingUnread = notifications.filter((n) => !n.isRead);
+      if (existingUnread.length > 0) {
+        setNewIds((prev) => {
+          const next = new Set(prev);
+          existingUnread.forEach((n) => next.add(n.id));
+          return next;
+        });
       }
 
-      const targetTab = activeTab === "unread" ? "all" : activeTab;
-      if (activeTab === "unread") {
-        setActiveTab("all");
-      }
-      loadNotifications(1, targetTab);
+      loadNotifications(1, activeTab);
     }
+  };
+
+  const renderCard = (
+    n: TaskNotification & { childIds?: string[] },
+    isRead: boolean,
+    isGreyed: boolean
+  ) => {
+    const actorName = n.actor?.name || "Someone";
+    const isSubtask = n.title.toLowerCase().includes("subtask");
+    const subtaskTitle = extractSubtaskTitle(n.title);
+
+    return (
+      <ActivityCard
+        key={n.id}
+        id={n.id}
+        type={n.type}
+        actorId={n.actorId || n.actor?.id}
+        actorName={actorName}
+        actorAvatar={n.actor?.imageUrl || n.actor?.avatarUrl}
+        taskTitle={n.task?.title || "task"}
+        isSubtask={isSubtask}
+        subtaskTitle={subtaskTitle}
+        title={n.title}
+        content={n.content}
+        isRead={isRead}
+        isGreyed={isGreyed}
+        createdAt={n.createdAt}
+        compact={true}
+        listId={n.task?.listId}
+        customStatusColors={customStatusColors}
+        onClick={() => {
+          setIsOpen(false);
+          if (!n.isRead) {
+            handleMarkAsRead(n.id, n.childIds);
+          }
+          if (n.task?.id) {
+            prefetchTaskActivities(n.task.id);
+            const isCommentNotif =
+              n.type === "MENTION" || n.type === "COMMENT" || n.type === "REACTION" || (n.title || "").includes("comment");
+            const cId = (n as any).commentId || (n as any).details?.commentId;
+            const sId = (n as any).subtaskId || (n as any).details?.subtaskId;
+            let commentQuery = "";
+            if (isCommentNotif) {
+              if (cId) commentQuery += `&comment=${encodeURIComponent(cId)}`;
+              if (sId) commentQuery += `&subtask=${encodeURIComponent(sId)}`;
+              if (n.content) commentQuery += `&commentText=${encodeURIComponent(n.content)}`;
+            }
+            router.push(`/activity?task=${n.task.id}${commentQuery}`);
+          } else {
+            router.push("/activity");
+          }
+        }}
+      />
+    );
   };
 
   return (
@@ -399,54 +556,40 @@ export function NotificationBell() {
             transition={{ duration: 0.15, ease: "easeOut" }}
             className="absolute right-0 mt-2 w-88 sm:w-[420px] bg-card border border-border rounded-xl shadow-2xl z-[200] overflow-hidden origin-top-right flex flex-col max-h-[85vh]"
           >
-            {/* Header: Notifications on left, All, @ Mentions & Unread on right */}
-            <div className="px-4 py-3.5 border-b border-border flex items-center justify-between bg-card">
-              <h3 className="font-semibold text-base text-foreground tracking-tight">Notifications</h3>
+            {/* Header: Notifications on left, Segmented Tabs on right (All, @ Mentions) */}
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between bg-card shrink-0">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm text-foreground tracking-tight">Notifications</h3>
+                {unreadCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/15 text-blue-500 dark:text-blue-400 border border-blue-500/30">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </div>
 
-              <div className="flex items-center gap-4">
+              {/* Segmented Pill Tabs */}
+              <div className="flex items-center p-0.5 bg-muted/70 [.theme-light_&]:bg-zinc-200/80 rounded-lg border border-border/40">
                 <button
+                  type="button"
                   onClick={() => handleTabChange("all")}
-                  className={`relative pb-1 text-sm font-medium transition-colors cursor-pointer ${
-                    activeTab === "all" ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                    activeTab === "all"
+                      ? "bg-card text-foreground shadow-xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   All
-                  {activeTab === "all" && (
-                    <motion.div
-                      layoutId="activeBellTab"
-                      className="absolute -bottom-1 left-0 right-0 h-[2px] bg-foreground rounded-full"
-                    />
-                  )}
                 </button>
-
                 <button
+                  type="button"
                   onClick={() => handleTabChange("mentions")}
-                  className={`relative pb-1 text-sm font-medium transition-colors cursor-pointer ${
-                    activeTab === "mentions" ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                    activeTab === "mentions"
+                      ? "bg-card text-foreground shadow-xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   @ Mentions
-                  {activeTab === "mentions" && (
-                    <motion.div
-                      layoutId="activeBellTab"
-                      className="absolute -bottom-1 left-0 right-0 h-[2px] bg-foreground rounded-full"
-                    />
-                  )}
-                </button>
-
-                <button
-                  onClick={() => handleTabChange("unread")}
-                  className={`relative pb-1 text-sm font-medium transition-colors cursor-pointer ${
-                    activeTab === "unread" ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Unread
-                  {activeTab === "unread" && (
-                    <motion.div
-                      layoutId="activeBellTab"
-                      className="absolute -bottom-1 left-0 right-0 h-[2px] bg-foreground rounded-full"
-                    />
-                  )}
                 </button>
               </div>
             </div>
@@ -454,7 +597,7 @@ export function NotificationBell() {
             {/* List Body with Slim Scrollbar & Infinite Scroll */}
             <div
               onScroll={handleScroll}
-              className="overflow-y-auto overflow-x-hidden flex-1 p-2.5 space-y-2.5 custom-scrollbar max-h-[500px] bg-[#101013] [.theme-light_&]:bg-[#f8f8fa]"
+              className="overflow-y-auto overflow-x-hidden flex-1 p-3 space-y-3 custom-scrollbar max-h-[500px] bg-card/40"
             >
               {isLoading && notifications.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground text-xs flex flex-col items-center gap-2">
@@ -467,56 +610,61 @@ export function NotificationBell() {
                     <Bell className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <p className="text-xs font-medium text-muted-foreground">
-                    {activeTab === "unread"
-                      ? "No unread notifications"
-                      : activeTab === "mentions"
+                    {activeTab === "mentions"
                       ? "No @mentions yet"
                       : "You're all caught up!"}
                   </p>
                 </div>
               ) : (
                 <>
-                  {displayList.map((n) => {
-                    const actorName = n.actor?.name || "Someone";
-                    const isSubtask = n.title.toLowerCase().includes("subtask");
+                  {/* 1. NEW / UNREAD SECTION */}
+                  {unreadItems.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="px-1 pt-0.5 pb-0.5 flex items-center justify-between select-none">
+                        <h4 className="text-[11px] font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <span>New</span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        </h4>
+                        <span className="text-[10px] font-semibold text-blue-500 dark:text-blue-400 px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/25">
+                          {unreadItems.length}
+                        </span>
+                      </div>
 
-                    return (
-                      <ActivityCard
-                        key={n.id}
-                        id={n.id}
-                        type={n.type}
-                        actorId={n.actorId || n.actor?.id}
-                        actorName={actorName}
-                        actorAvatar={n.actor?.imageUrl || n.actor?.avatarUrl}
-                        taskTitle={n.task?.title || "task"}
-                        isSubtask={isSubtask}
-                        title={n.title}
-                        content={n.content}
-                        isRead={n.isRead}
-                        createdAt={n.createdAt}
-                        compact={true}
-                        customStatusColor={
-                          n.task?.listId && n.task?.status
-                            ? customStatusColors[`${n.task.listId}:${n.task.status.toUpperCase()}`]
-                            : undefined
-                        }
-                        onClick={() => {
-                          setIsOpen(false);
-                          if (!n.isRead) {
-                            handleMarkAsRead(n.id, n.childIds);
-                          }
-                          if (n.task?.id) {
-                            prefetchTaskActivities(n.task.id);
-                            const isCommentNotif = n.type === 'MENTION' || n.type === 'COMMENT' || (n.title || '').includes('comment');
-                            const commentQuery = isCommentNotif && n.content ? `&commentText=${encodeURIComponent(n.content)}` : '';
-                            router.push(`/activity?task=${n.task.id}${commentQuery}`);
-                          } else {
-                            router.push("/activity");
-                          }
-                        }}
-                      />
-                    );
-                  })}
+                      <div className="space-y-2">
+                        {unreadItems.map((n) => renderCard(n, false, false))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. RECENTLY READ SECTION */}
+                  {recentlyReadItems.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="px-1 pt-1.5 pb-0.5 flex items-center select-none">
+                        <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                          Recently Read
+                        </h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        {recentlyReadItems.map((n) => renderCard(n, true, false))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. OLD DATA GROUPED BY DAY */}
+                  {Object.entries(oldItemsGrouped).map(([groupName, items]) => (
+                    <div key={groupName} className="space-y-2">
+                      <div className="px-1 pt-1.5 pb-0.5 flex items-center select-none">
+                        <h4 className="text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wider">
+                          {groupName}
+                        </h4>
+                      </div>
+
+                      <div className="space-y-2">
+                        {items.map((n) => renderCard(n, true, true))}
+                      </div>
+                    </div>
+                  ))}
 
                   {/* Infinite Scroll Spinner */}
                   {isLoadingMore && (
@@ -542,13 +690,13 @@ export function NotificationBell() {
             </div>
 
             {/* View all activity footer link */}
-            <div className="p-2 border-t border-border bg-card">
+            <div className="p-2.5 border-t border-border bg-card shrink-0">
               <button
                 onClick={() => {
                   setIsOpen(false);
                   router.push("/activity");
                 }}
-                className="w-full py-1.5 px-3 rounded-lg bg-secondary hover:bg-zinc-800/80 [.theme-light_&]:hover:bg-zinc-200/70 border border-border text-xs font-medium text-secondary-foreground hover:text-foreground transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                className="w-full py-2 px-3 rounded-lg bg-secondary/80 hover:bg-secondary border border-border/60 text-xs font-medium text-secondary-foreground hover:text-foreground transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <span>View all activity</span>
                 <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />

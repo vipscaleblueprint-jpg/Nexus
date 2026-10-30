@@ -338,7 +338,7 @@ function FilterDropdown({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; group?: string }[];
   icon?: React.ElementType;
   isActive: boolean;
   onClear?: () => void;
@@ -398,7 +398,8 @@ function FilterDropdown({
   }, [open]);
 
   const filteredOptions = options.filter((opt) => 
-    opt.label.toLowerCase().includes(searchQuery.toLowerCase())
+    opt.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (opt.group && opt.group.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   return (
@@ -450,20 +451,31 @@ function FilterDropdown({
           )}
           <div className="py-1 flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/50">
             {filteredOptions.length > 0 ? (
-              filteredOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => { onChange(opt.value); setOpen(false); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer truncate ${
-                    value === opt.value
-                      ? "bg-indigo-500/15 text-indigo-300"
-                      : "text-foreground hover:bg-accent hover:text-accent-foreground"
-                  }`}
-                  title={opt.label}
-                >
-                  {opt.label}
-                </button>
-              ))
+              filteredOptions.map((opt, idx) => {
+                const showGroupHeader = Boolean(
+                  opt.group && (idx === 0 || filteredOptions[idx - 1]?.group !== opt.group)
+                );
+                return (
+                  <React.Fragment key={opt.value}>
+                    {showGroupHeader && (
+                      <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider select-none border-t border-border/40 first:border-t-0 first:pt-1">
+                        {opt.group}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => { onChange(opt.value); setOpen(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer truncate ${
+                        value === opt.value
+                          ? "bg-indigo-500/15 text-indigo-300"
+                          : "text-foreground hover:bg-accent hover:text-accent-foreground"
+                      }`}
+                      title={opt.label}
+                    >
+                      {opt.label}
+                    </button>
+                  </React.Fragment>
+                );
+              })
             ) : (
               <div className="px-3 py-3 text-xs text-zinc-500 text-center">No results found</div>
             )}
@@ -843,7 +855,7 @@ function WorkspaceDashboardContent({
     const s = (t.status || "").trim().toUpperCase();
     return s === "CLOSED" || s === "DONE" || s === "COMPLETED" || s === "RESOLVED" || s === "CANCELLED";
   };
-  const showClosed = filterStatus.toUpperCase() === "CLOSED" || filterStatus.toUpperCase() === "DONE";
+  const showClosed = filterStatus.toUpperCase() === "CLOSED" || filterStatus.toUpperCase() === "DONE" || filterStatus.toUpperCase() === "COMPLETED";
 
   const filteredMyTasks = useMemo(() => {
     let result = showClosed ? [...myTasks] : myTasks.filter((t) => !isClosedTask(t));
@@ -1467,22 +1479,21 @@ function WorkspaceDashboardContent({
               align="right"
               options={[
                 { value: "all", label: "Status" },
-                { value: "KYC", label: "KYC" },
-                { value: "PIN BOARD", label: "Pin Board" },
-                { value: "DAILY", label: "Daily" },
-                { value: "WEEKLY", label: "Weekly" },
-                { value: "MONTHLY", label: "Monthly" },
-                { value: "PENDING", label: "Pending" },
-                { value: "IN PROGRESS", label: "In Progress" },
-                { value: "REVISION", label: "Revision" },
-                { value: "WAITING", label: "Waiting" },
-                { value: "IN REVIEW", label: "In Review" },
-                { value: "CHECKING", label: "Checking" },
-                { value: "CRM", label: "CRM" },
-                { value: "CLOSED", label: "Closed" },
-                { value: "ON-HOLD", label: "On-Hold" },
-                { value: "TODO", label: "To Do" },
-                { value: "COMPLETED", label: "Completed" },
+                { value: "KYC", label: "KYC", group: "Client Details" },
+                { value: "PIN BOARD", label: "Pin Board", group: "Client Details" },
+                { value: "DAILY", label: "Daily", group: "Recurring" },
+                { value: "WEEKLY", label: "Weekly", group: "Recurring" },
+                { value: "MONTHLY", label: "Monthly", group: "Recurring" },
+                { value: "PENDING", label: "Pending", group: "Workflow & Progress" },
+                { value: "IN PROGRESS", label: "In Progress", group: "Workflow & Progress" },
+                { value: "REVISION", label: "Revision", group: "Workflow & Progress" },
+                { value: "ON-HOLD", label: "On-Hold", group: "Workflow & Progress" },
+                { value: "WAITING", label: "Waiting", group: "Management" },
+                { value: "IN REVIEW", label: "In Review", group: "Management" },
+                { value: "CHECKING", label: "Checking", group: "Management" },
+                { value: "CRM", label: "CRM", group: "Management" },
+                { value: "CLOSED", label: "Closed", group: "Closed Task" },
+                { value: "COMPLETED", label: "Completed", group: "Closed Task" },
               ]}
               icon={CheckSquare}
               isActive={filterStatus !== "all"}

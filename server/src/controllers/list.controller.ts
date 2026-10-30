@@ -56,10 +56,16 @@ export async function getList(req: Request, res: Response) {
               creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
               subtasks: { 
                 include: { 
-                  checklists: { include: { items: true } }
+                  checklists: { 
+                    where: { name: { equals: 'Audit', mode: 'insensitive' } },
+                    include: { items: true } 
+                  }
                 } 
               },
-              checklists: { include: { items: true } },
+              checklists: { 
+                where: { name: { equals: 'Audit', mode: 'insensitive' } },
+                include: { items: true } 
+              },
               _count: {
                 select: {
                   comments: true,

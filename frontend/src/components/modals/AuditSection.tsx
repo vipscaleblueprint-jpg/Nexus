@@ -12,6 +12,11 @@ import { useAppStore } from '@/lib/store';
 
 export { getRequiredAudits, ALL_AUDIT_OPTIONS };
 
+// TEMPORARY TOGGLES: Hidden per user request until process is finalized. Set to false to restore.
+export const HIDE_AUDIT_DELETE = true;
+export const HIDE_ADD_AUDIT = true;
+export const HIDE_DESIGN_AUDIT = true;
+
 export const normalizeAuditName = (name: string) => {
   const clean = (name || '').trim().toLowerCase();
   return clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
@@ -124,6 +129,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
   ].filter((text, i, all) => {
     const norm = normalizeAuditName(text);
     if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
+    if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
     return all.findIndex(t => normalizeAuditName(t) === norm) === i;
   }))), [title, auditorRoles, activeChecklistItems, excludedAudits]);
 
@@ -154,6 +160,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
 
   const availableAuditsToAdd = useMemo(() => ALL_AUDIT_OPTIONS.filter(option => {
     const norm = normalizeAuditName(option.id);
+    if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
     return !requiredAuditItems.some(req => normalizeAuditName(req) === norm) || excludedAudits.has(norm);
   }), [requiredAuditItems, excludedAudits]);
 
@@ -666,7 +673,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
         </div>
 
         {/* PM Action: Add Audit Popover */}
-        {canManageAudits && (
+        {!HIDE_ADD_AUDIT && canManageAudits && (
           <Popover.Root open={isAddMenuOpen} onOpenChange={setIsAddMenuOpen}>
             <Popover.Trigger asChild>
               <button
@@ -762,7 +769,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                 <p className="text-[11px] text-zinc-500 max-w-[300px]">
                   No audits are currently required for this task. Project Managers can add audits at any time.
                 </p>
-                {canManageAudits && (
+                {!HIDE_ADD_AUDIT && canManageAudits && (
                   <button
                     type="button"
                     onClick={() => setIsAddMenuOpen(true)}
@@ -912,7 +919,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                         </Popover.Root>
 
                         {/* PM Action: Remove Audit Button */}
-                        {canManageAudits && (
+                        {!HIDE_AUDIT_DELETE && canManageAudits && (
                           <button
                             type="button"
                             className="w-6 h-6 rounded-md flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0 opacity-0 group-hover/item:opacity-100 focus:opacity-100"

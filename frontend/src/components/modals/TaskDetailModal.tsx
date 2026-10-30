@@ -171,6 +171,7 @@ interface Props {
   mode?: 'modal' | 'full';
   targetCommentId?: string | null;
   targetCommentText?: string | null;
+  targetSubtaskId?: string | null;
   scrollToComments?: boolean;
 }
 
@@ -331,50 +332,91 @@ export function getAssigneeAvatarColor(name: string) {
 }
 
 // Role restrictions can arrive in any casing (Galaxy sends "DEVELOPER", the team role is "Developer"),
-// so every comparison goes through roleKey.
-const roleKey = (role: string) => (role || '').trim().toLowerCase();
+// or variations ("Instruction Audits" vs "Instruction Auditor"), so every comparison goes through matchesRole.
+export const roleKey = (role: string) => (role || '').trim().toLowerCase();
 
-function hasRole(roles: string[], name: string): boolean {
-  return roles.some((r) => roleKey(r) === roleKey(name));
+export function normalizeRoleName(role: string): string {
+  if (!role) return '';
+  return role
+    .trim()
+    .toLowerCase()
+    .replace(/\baudits\b/g, 'audit')
+    .replace(/\bauditors\b/g, 'audit')
+    .replace(/\bauditor\b/g, 'audit')
+    .replace(/s\b/g, '');
 }
 
-function withoutRole(roles: string[], name: string): string[] {
-  return roles.filter((r) => roleKey(r) !== roleKey(name));
+export function matchesRole(userRole: string, targetRole: string): boolean {
+  if (!userRole || !targetRole) return false;
+  const u = userRole.trim().toLowerCase();
+  const t = targetRole.trim().toLowerCase();
+  if (u === t) return true;
+  return normalizeRoleName(u) === normalizeRoleName(t);
+}
+
+export function hasRole(roles: string[], name: string): boolean {
+  return (roles || []).some((r) => matchesRole(r, name));
+}
+
+export function withoutRole(roles: string[], name: string): string[] {
+  return (roles || []).filter((r) => !matchesRole(r, name));
 }
 
 /** One entry per role regardless of casing, spelled like its TeamRole when there is one. */
-function normalizeRoles(roles: string[], teams?: any[]): string[] {
+export function normalizeRoles(roles: string[], teams?: any[]): string[] {
   const canonical = new Map<string, string>();
-  (teams || []).forEach((team: any) => (team.teamRoles || []).forEach((tr: any) => canonical.set(roleKey(tr.name), tr.name)));
+  (teams || []).forEach((team: any) =>
+    (team.teamRoles || []).forEach((tr: any) => {
+      canonical.set(roleKey(tr.name), tr.name);
+      canonical.set(normalizeRoleName(tr.name), tr.name);
+    })
+  );
   const out = new Map<string, string>();
   roles.forEach((r) => {
-    if (!out.has(roleKey(r))) out.set(roleKey(r), canonical.get(roleKey(r)) ?? r);
+    const key = normalizeRoleName(r) || roleKey(r);
+    if (!out.has(key)) {
+      out.set(key, canonical.get(key) ?? canonical.get(roleKey(r)) ?? r);
+    }
   });
   return [...out.values()];
 }
 
 export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[], teams?: any[]): any[] {
   if (!roles || roles.length === 0) return [];
-  const teamRoleToTeamId = new Map<string, string>();
+  const teamNameToTeamId = new Map<string, string>();
   (teams || []).forEach((team: any) => {
-    (team.teamRoles || []).forEach((tr: any) => {
-      teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
-    });
+    if (team?.name && team?.id) {
+      teamNameToTeamId.set(team.name.toLowerCase().trim(), team.id);
+    }
   });
 
   return (users || []).filter((u: any) => {
     const userRoles = (u.roles || []) as string[];
+    const userTeamId = u.teamId || u.team?.id;
     return roles.some((role: string) => {
-      if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
-      const teamId = teamRoleToTeamId.get(role.toLowerCase());
-      if (teamId && (u as any).teamId === teamId) return true;
+      // 1. Direct role match on user's assigned roles
+      if (userRoles.some((ur: string) => matchesRole(ur, role))) return true;
+      // 2. Generic systemRole match (e.g. role is "ADMIN" and user is ADMIN)
+      if (u.systemRole && matchesRole(u.systemRole, role)) return true;
+      // 3. Whole-team match (only if the role matches the entire team's name, e.g. "Dev Team")
+      const matchedTeamId = teamNameToTeamId.get(role.toLowerCase().trim());
+      if (matchedTeamId && userTeamId === matchedTeamId) return true;
       return false;
     });
   });
 }
 
 function LazyMarkdownImage({ src, alt, onPreview, isReply }: { src: string; alt?: string; onPreview: (src: string) => void; isReply?: boolean }) {
-  return <BlurUpImage src={src} alt={alt} onPreview={onPreview} isReply={isReply} />;
+  return (
+    <BlurUpImage
+      src={src}
+      alt={alt}
+      onPreview={onPreview}
+      isReply={isReply}
+      maxWidth="100%"
+      maxHeight={isReply ? 360 : 540}
+    />
+  );
 }
 
 function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: string) => void }) {
@@ -434,7 +476,7 @@ const isActivityVisible = (act: any): boolean => {
   if (t === 'create_subtask') return true;
   if (t === 'team_role_change') return true;
   if (t === 'attachment') return true;
-  if (t === 'audit_item_checked' || t === 'checklist_item_checked') return true;
+  if (t === 'audit_item_checked' || t === 'checklist_item_checked' || t === 'audit_item_unchecked' || t === 'checklist_item_unchecked') return true;
   return false;
 };
 
@@ -586,6 +628,28 @@ const renderTitleChangeActivity = (act: any, currentUserName?: string) => {
   );
 };
 
+/**
+ * Normalizes comment text or HTML preview for reliable substring matching
+ * regardless of HTML entities, mentions, image markdown tags, or surrounding whitespace.
+ */
+export function normalizeCommentSearchText(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/…/g, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/mention:\/\/[^\s>]+/g, ' ')
+    .replace(/[#*_`~>\[\]\(\)!]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 export function TaskDetailModalContent({
   isOpen,
   onClose,
@@ -598,6 +662,7 @@ export function TaskDetailModalContent({
   mode = 'modal',
   targetCommentId,
   targetCommentText,
+  targetSubtaskId,
   scrollToComments,
 }: Props) {
   const router = useRouter();
@@ -702,16 +767,13 @@ export function TaskDetailModalContent({
   }, [task?.id]);
 
   const [activeSubtask, setActiveSubtaskState] = useState<any>(() => {
-    if (typeof window !== 'undefined' && task?.subtasks) {
-      const url = new URL(window.location.href);
-      const subtaskId = url.searchParams.get('subtask');
-      if (subtaskId) {
-        const found = task.subtasks.find((s: any) => s.id === subtaskId);
-        if (found) {
-          hadActiveSubtaskRef.current = true;
-          initialSubtaskIdRef.current = null;
-          return found;
-        }
+    const sId = targetSubtaskId || (typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('subtask') : null);
+    if (sId && task?.subtasks) {
+      const found = task.subtasks.find((s: any) => s.id === sId);
+      if (found) {
+        hadActiveSubtaskRef.current = true;
+        initialSubtaskIdRef.current = null;
+        return found;
       }
     }
     return null;
@@ -751,16 +813,16 @@ export function TaskDetailModalContent({
       if (found && found !== activeSubtask) {
         setActiveSubtaskState(found);
       }
-    } else if (!userClosedSubtaskRef.current && initialSubtaskIdRef.current) {
-      const targetSubtaskId = initialSubtaskIdRef.current;
-      const found = task.subtasks.find((s: any) => s.id === targetSubtaskId);
+    } else if (!userClosedSubtaskRef.current && (initialSubtaskIdRef.current || targetSubtaskId)) {
+      const sTargetId = targetSubtaskId || initialSubtaskIdRef.current;
+      const found = task.subtasks.find((s: any) => s.id === sTargetId);
       if (found) {
         hadActiveSubtaskRef.current = true;
         initialSubtaskIdRef.current = null;
         setActiveSubtaskState(found);
       }
     }
-  }, [task?.subtasks, activeSubtask]);
+  }, [task?.subtasks, activeSubtask, targetSubtaskId]);
 
   // Keep URL query param in sync with activeSubtask
   useEffect(() => {
@@ -841,13 +903,13 @@ export function TaskDetailModalContent({
             onUpdateTaskRef.current({ ...taskRef.current, checklists: incoming.checklists });
           }
         }
-        if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+        if (Date.now() - lastAssigneeUpdateTimestampRef.current > 5000) {
           if (incoming.assignees !== undefined) {
             setLocalAssignees(incoming.assignees);
             latestAssigneesRef.current = incoming.assignees;
           }
         }
-        if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+        if (Date.now() - lastRoleUpdateTimestampRef.current > 5000) {
           if (incoming.assigneeRoleRestrictions !== undefined) {
             setLocalRoleRestrictions(incoming.assigneeRoleRestrictions);
             latestRoleRestrictionsRef.current = incoming.assigneeRoleRestrictions;
@@ -964,6 +1026,37 @@ export function TaskDetailModalContent({
     }));
   }, []);
 
+  const toggleBlockExpansion = useCallback((blockId: string) => {
+    setExpandedBlocks(prev => {
+      const isCurrentlyExpanded = prev.includes(blockId);
+      if (isCurrentlyExpanded) {
+        return prev.filter(id => id !== blockId);
+      } else {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const container = activityScrollRef.current;
+            if (container) {
+              const latestEl = document.getElementById(`activity-latest-${blockId}`);
+              if (latestEl) {
+                const containerRect = container.getBoundingClientRect();
+                const elRect = latestEl.getBoundingClientRect();
+                const diff = elRect.bottom - containerRect.bottom + 24;
+                if (diff > 0) {
+                  container.scrollBy({ top: diff, behavior: 'smooth' });
+                } else {
+                  container.scrollBy({ top: 80, behavior: 'smooth' });
+                }
+              } else {
+                container.scrollBy({ top: 120, behavior: 'smooth' });
+              }
+            }
+          }, 60);
+        });
+        return [...prev, blockId];
+      }
+    });
+  }, []);
+
 
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1070,23 +1163,37 @@ export function TaskDetailModalContent({
   const targetKey = `${targetCommentId || ''}_${targetCommentText ? targetCommentText.slice(0, 30) : ''}_${scrollToComments ? '1' : '0'}`;
   const lastTargetKeyRef = useRef('');
   const hasScrolledToTargetRef = useRef(false);
+  const targetCommentElRef = useRef<HTMLElement | null>(null);
+  const isUserScrollingRef = useRef(false);
+  const stabilizationTimerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearStabilizationTimers = useCallback(() => {
+    stabilizationTimerRef.current.forEach(t => clearTimeout(t));
+    stabilizationTimerRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    return () => clearStabilizationTimers();
+  }, [clearStabilizationTimers]);
 
   useEffect(() => {
     if (targetKey !== lastTargetKeyRef.current) {
       lastTargetKeyRef.current = targetKey;
       hasScrolledToTargetRef.current = false;
+      isUserScrollingRef.current = false;
+      clearStabilizationTimers();
     }
-  }, [targetKey]);
+  }, [targetKey, clearStabilizationTimers]);
 
   // If a target comment is older than visibleActivityCount, expand visibleActivityCount so it is rendered
   useEffect(() => {
     if ((targetCommentId || targetCommentText) && combined.length > visibleActivityCount) {
+      const cleanSnippet = targetCommentText ? normalizeCommentSearchText(targetCommentText).slice(0, 30) : '';
       const idx = combined.findIndex((item) => {
         if (targetCommentId && (item.id === targetCommentId || item.commentId === targetCommentId)) return true;
-        if (targetCommentText) {
-          const itemText = (item.text || item.content || '').toLowerCase();
-          const cleanSnippet = targetCommentText.trim().toLowerCase().slice(0, 30);
-          if (cleanSnippet && itemText.includes(cleanSnippet)) return true;
+        if (cleanSnippet) {
+          const itemText = normalizeCommentSearchText(item.text || item.content || '');
+          if (itemText.includes(cleanSnippet)) return true;
         }
         return false;
       });
@@ -1120,17 +1227,24 @@ export function TaskDetailModalContent({
         (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
     }
     if (!targetEl && targetCommentText) {
-      const lines = targetCommentText
-        .split('\n')
-        .map(l => l.trim().toLowerCase())
-        .filter(l => l.length >= 15 && !l.includes('📅') && !l.includes('🖊') && !l.startsWith('status:') && !l.startsWith('resources:'));
-      
-      const snippet = (lines[0] || targetCommentText.trim().toLowerCase()).slice(0, 50);
-      if (snippet) {
+      const cleanTarget = normalizeCommentSearchText(targetCommentText);
+      const snippet = cleanTarget.slice(0, 45);
+      const keywords = cleanTarget
+        .split(/\s+/)
+        .filter(w => w.length >= 3 || w.startsWith('@'))
+        .slice(0, 6);
+
+      if (snippet || keywords.length > 0) {
         const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment')).reverse();
         for (const el of commentEls) {
-          const txt = el.textContent?.toLowerCase() || '';
-          if (txt.includes(snippet) || (lines.length > 1 && lines.some(line => line.length >= 20 && txt.includes(line.slice(0, 40))))) {
+          const txt = normalizeCommentSearchText(el.textContent || '');
+          const dataTxt = normalizeCommentSearchText(el.getAttribute('data-comment-text') || '');
+          const isMatch =
+            (snippet && (txt.includes(snippet) || dataTxt.includes(snippet))) ||
+            (keywords.length >= 2 && keywords.every(kw => txt.includes(kw) || dataTxt.includes(kw))) ||
+            (cleanTarget.length > 0 && (txt.includes(cleanTarget) || dataTxt.includes(cleanTarget)));
+
+          if (isMatch) {
             targetEl = el;
             break;
           }
@@ -1140,10 +1254,24 @@ export function TaskDetailModalContent({
 
     if (targetEl) {
       hasScrolledToTargetRef.current = true;
-      const containerRect = container.getBoundingClientRect();
-      const elRect = targetEl.getBoundingClientRect();
-      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
-      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
+      targetCommentElRef.current = targetEl;
+      isUserScrollingRef.current = false;
+      clearStabilizationTimers();
+
+      const scrollIntoTarget = (smooth = true) => {
+        if (!container || !targetEl || !container.contains(targetEl) || isUserScrollingRef.current) return;
+        const containerRect = container.getBoundingClientRect();
+        const elRect = targetEl.getBoundingClientRect();
+        const targetTop = containerRect.top + 14;
+        const drift = Math.abs(elRect.top - targetTop);
+        if (drift > 8) {
+          const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
+          container.scrollTo({ top: Math.max(0, relativeTop), behavior: smooth ? 'smooth' : 'auto' });
+        }
+      };
+
+      // Initial scroll
+      scrollIntoTarget(true);
 
       // Clear any existing rings across all comments first so only ONE comment is highlighted
       container.querySelectorAll('.ring-indigo-500\\/80').forEach(el => {
@@ -1153,7 +1281,27 @@ export function TaskDetailModalContent({
       targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
       setTimeout(() => {
         targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
-      }, 3000);
+      }, 3500);
+
+      // Listen for any images that finish loading inside the container and realign
+      const onImageLoad = () => {
+        scrollIntoTarget(false);
+      };
+      container.querySelectorAll('img').forEach(img => {
+        if (!img.complete) {
+          img.addEventListener('load', onImageLoad, { once: true });
+        }
+      });
+
+      // Post-scroll layout-shift stabilization checks for async images / attachments / markdown
+      const delays = [120, 300, 600, 1000, 1500, 2200];
+      delays.forEach(d => {
+        const timer = setTimeout(() => {
+          scrollIntoTarget(false);
+        }, d);
+        stabilizationTimerRef.current.push(timer);
+      });
+
       return true;
     }
 
@@ -1165,7 +1313,7 @@ export function TaskDetailModalContent({
     }
 
     return false;
-  }, [targetCommentId, targetCommentText, scrollToComments, scrollToLatestComment]);
+  }, [targetCommentId, targetCommentText, scrollToComments, scrollToLatestComment, clearStabilizationTimers]);
 
   const hasScrolledInitiallyRef = useRef(false);
   useEffect(() => {
@@ -1359,7 +1507,7 @@ export function TaskDetailModalContent({
   const lastRoleUpdateTimestampRef = useRef<number>(0);
 
   useEffect(() => {
-    if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+    if (Date.now() - lastRoleUpdateTimestampRef.current > 5000) {
       const fromProps = task?.assigneeRoleRestrictions || [];
       setLocalRoleRestrictions(fromProps);
       latestRoleRestrictionsRef.current = fromProps;
@@ -1373,36 +1521,8 @@ export function TaskDetailModalContent({
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
       return workspaceUsers;
     }
-    // Build a map of TeamRole name -> teamId for fast lookup
-    const teamRoleToTeamId = new Map<string, string>();
-    workspaceTeams.forEach((team: any) => {
-      (team.teamRoles || []).forEach((tr: any) => {
-        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
-      });
-    });
-
-    const filteredUsers = workspaceUsers.filter((u) => {
-      const userRoles = (u.roles || []) as string[];
-      return localRoleRestrictions.some((role) => {
-        // Check generic role match (TECH, PM, AUDITOR...)
-        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
-        // Check TeamRole match — filter by team membership
-        const teamId = teamRoleToTeamId.get(role.toLowerCase());
-        if (teamId && (u as any).teamId === teamId) return true;
-        return false;
-      });
-    });
-
-    // Always allow the current user to assign themselves
-    if (currentUser && !filteredUsers.some(u => u.id === currentUser.id)) {
-      const me = workspaceUsers.find(u => u.id === currentUser.id);
-      if (me) {
-        filteredUsers.push(me);
-      }
-    }
-
-    return filteredUsers;
-  }, [workspaceUsers, workspaceTeams, localRoleRestrictions, currentUser]);
+    return resolveUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams);
+  }, [workspaceUsers, workspaceTeams, localRoleRestrictions]);
 
 
   // Fetch persistent activities and comments from DB
@@ -1887,9 +2007,9 @@ export function TaskDetailModalContent({
     taskRef.current = task;
   }, [task]);
 
-  // Socket: listen for editing lock and description updates
+  // Socket & Window: listen for editing lock, description updates, comments, and checklists
   useEffect(() => {
-    if (!socket || !task) return;
+    if (!task) return;
 
     const handleEditingStart = (data: { taskId: string; userName: string }) => {
       if (data.taskId === task.id && data.userName !== currentUser?.name) {
@@ -1923,15 +2043,15 @@ export function TaskDetailModalContent({
         if (isSubtask && data.activity.subtaskTitle && data.activity.subtaskTitle !== currentTask.title) return;
 
         setActivities(prev => mergeIncomingActivity(prev, data.activity));
-
-
       }
     };
 
-    socket.on('task_editing_start', handleEditingStart);
-    socket.on('task_editing_stop', handleEditingStop);
-    socket.on('task_editing_content', handleEditingContent);
-    socket.on('task_activity', handleActivity);
+    if (socket) {
+      socket.on('task_editing_start', handleEditingStart);
+      socket.on('task_editing_stop', handleEditingStop);
+      socket.on('task_editing_content', handleEditingContent);
+      socket.on('task_activity', handleActivity);
+    }
 
     // ── Real-time comment delivery ──────────────────────────────────────────
     // After bootstrap, new comments arrive via socket only — no polling needed.
@@ -2252,28 +2372,58 @@ export function TaskDetailModalContent({
       }
     };
 
-    socket.on('task:comment_added', handleCommentAdded);
-    socket.on('task:comment_updated', handleCommentUpdated);
-    socket.on('task:comment_deleted', handleCommentDeleted);
-    socket.on('task:checklist_created', handleChecklistCreated);
-    socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
-    socket.on('task:checklist_item_created', handleChecklistItemCreated);
-    socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
-    socket.on('task:checklist_deleted', handleChecklistDeleted);
+    if (socket) {
+      socket.on('task:comment_added', handleCommentAdded);
+      socket.on('task:comment_updated', handleCommentUpdated);
+      socket.on('task:comment_deleted', handleCommentDeleted);
+      socket.on('task:checklist_created', handleChecklistCreated);
+      socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
+      socket.on('task:checklist_item_created', handleChecklistItemCreated);
+      socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
+      socket.on('task:checklist_deleted', handleChecklistDeleted);
+    }
+
+    const onWinCommentAdded = (e: any) => handleCommentAdded(e.detail);
+    const onWinCommentUpdated = (e: any) => handleCommentUpdated(e.detail);
+    const onWinCommentDeleted = (e: any) => handleCommentDeleted(e.detail);
+    const onWinChecklistCreated = (e: any) => handleChecklistCreated(e.detail);
+    const onWinChecklistItemUpdated = (e: any) => handleChecklistItemUpdated(e.detail);
+    const onWinChecklistItemCreated = (e: any) => handleChecklistItemCreated(e.detail);
+    const onWinChecklistItemDeleted = (e: any) => handleChecklistItemDeleted(e.detail);
+    const onWinChecklistDeleted = (e: any) => handleChecklistDeleted(e.detail);
+
+    window.addEventListener('task:comment_added', onWinCommentAdded);
+    window.addEventListener('task:comment_updated', onWinCommentUpdated);
+    window.addEventListener('task:comment_deleted', onWinCommentDeleted);
+    window.addEventListener('task:checklist_created', onWinChecklistCreated);
+    window.addEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
+    window.addEventListener('task:checklist_item_created', onWinChecklistItemCreated);
+    window.addEventListener('task:checklist_item_deleted', onWinChecklistItemDeleted);
+    window.addEventListener('task:checklist_deleted', onWinChecklistDeleted);
 
     return () => {
-      socket.off('task_editing_start', handleEditingStart);
-      socket.off('task_editing_stop', handleEditingStop);
-      socket.off('task_editing_content', handleEditingContent);
-      socket.off('task_activity', handleActivity);
-      socket.off('task:comment_added', handleCommentAdded);
-      socket.off('task:comment_updated', handleCommentUpdated);
-      socket.off('task:comment_deleted', handleCommentDeleted);
-      socket.off('task:checklist_created', handleChecklistCreated);
-      socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
-      socket.off('task:checklist_item_created', handleChecklistItemCreated);
-      socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
-      socket.off('task:checklist_deleted', handleChecklistDeleted);
+      if (socket) {
+        socket.off('task_editing_start', handleEditingStart);
+        socket.off('task_editing_stop', handleEditingStop);
+        socket.off('task_editing_content', handleEditingContent);
+        socket.off('task_activity', handleActivity);
+        socket.off('task:comment_added', handleCommentAdded);
+        socket.off('task:comment_updated', handleCommentUpdated);
+        socket.off('task:comment_deleted', handleCommentDeleted);
+        socket.off('task:checklist_created', handleChecklistCreated);
+        socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
+        socket.off('task:checklist_item_created', handleChecklistItemCreated);
+        socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
+        socket.off('task:checklist_deleted', handleChecklistDeleted);
+      }
+      window.removeEventListener('task:comment_added', onWinCommentAdded);
+      window.removeEventListener('task:comment_updated', onWinCommentUpdated);
+      window.removeEventListener('task:comment_deleted', onWinCommentDeleted);
+      window.removeEventListener('task:checklist_created', onWinChecklistCreated);
+      window.removeEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
+      window.removeEventListener('task:checklist_item_created', onWinChecklistItemCreated);
+      window.removeEventListener('task:checklist_item_deleted', onWinChecklistItemDeleted);
+      window.removeEventListener('task:checklist_deleted', onWinChecklistDeleted);
     };
   }, [socket, task?.id, currentUser?.name]);
 
@@ -2747,11 +2897,12 @@ export function TaskDetailModalContent({
     if (!task) return;
     const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
 
-    // Stop pre-filling assignees: retain only existing assignees that are still valid under new roles
+    // When next.length === 0 (role removed), all assignees must be cleared!
+    // When next.length > 0, retain only existing assignees that still match the remaining roles.
     const currentAssigneesList = latestAssigneesRef.current || [];
     const validAssignees = next.length > 0
       ? currentAssigneesList.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
-      : currentAssigneesList;
+      : [];
     const validIds = validAssignees.map((u: any) => u.id);
     const primaryAssignee = validAssignees.length > 0 ? validAssignees[0] : null;
 
@@ -2803,6 +2954,11 @@ export function TaskDetailModalContent({
           setIsAssigneeOpen(true);
         }, 220);
       }
+    } else {
+      if (roleToAssigneeTimeoutRef.current) {
+        clearTimeout(roleToAssigneeTimeoutRef.current);
+      }
+      setIsAssigneeOpen(false);
     }
   };
 
@@ -3526,15 +3682,17 @@ export function TaskDetailModalContent({
                                     <div
                                       onClick={() => {
                                         if (!hasRoles) return;
-                                        let next = [...current];
-                                        if (allSelected) {
-                                          next = next.filter(r => !teamRoles.some((tr: any) => roleKey(tr.name) === roleKey(r)));
+                                        const currentRoles = latestRoleRestrictionsRef.current;
+                                        const isAllSelected = hasRoles && teamRoles.every((r: any) => hasRole(currentRoles, r.name));
+                                        let next = [...currentRoles];
+                                        if (isAllSelected) {
+                                          next = next.filter(r => !teamRoles.some((tr: any) => matchesRole(tr.name, r)));
                                         } else {
                                           const toAdd = teamRoles.filter((tr: any) => !hasRole(next, tr.name)).map((tr: any) => tr.name);
                                           next = [...next, ...toAdd];
                                         }
                                         next = normalizeRoles(next, workspaceTeams);
-                                        handleApplyRoleRestrictions(next, true);
+                                        handleApplyRoleRestrictions(next, !isAllSelected);
                                       }}
                                       className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/30 ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
                                     >
@@ -3560,11 +3718,12 @@ export function TaskDetailModalContent({
                                           key={role.id}
                                           onClick={() => {
                                             const current = latestRoleRestrictionsRef.current;
+                                            const isCurrentlySelected = hasRole(current, role.name);
                                             const next = normalizeRoles(
-                                              selected ? withoutRole(current, role.name) : [...current, role.name],
+                                              isCurrentlySelected ? withoutRole(current, role.name) : [...current, role.name],
                                               workspaceTeams
                                             );
-                                            handleApplyRoleRestrictions(next, true);
+                                            handleApplyRoleRestrictions(next, !isCurrentlySelected);
                                           }}
                                           className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors rounded-md"
                                         >
@@ -4170,7 +4329,14 @@ export function TaskDetailModalContent({
               </div>
             </div>
 
-            <div ref={activityScrollRef} onScroll={handleActivityScroll} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <div
+              ref={activityScrollRef}
+              onScroll={handleActivityScroll}
+              onWheel={() => { isUserScrollingRef.current = true; }}
+              onTouchStart={() => { isUserScrollingRef.current = true; }}
+              onPointerDown={() => { isUserScrollingRef.current = true; }}
+              className="flex-1 overflow-y-auto p-6 custom-scrollbar"
+            >
               <div className="space-y-5">
 
                 {/* Loading older activities indicator / trigger */}
@@ -4487,29 +4653,8 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
-                              if (item.isShowMore) {
-                                return (
-                                  <button
-                                    key={`show-more-${item.blockId}`}
-                                    onClick={() => setExpandedBlocks(prev => [...prev, item.blockId])}
-                                    className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                                  >
-                                    <ChevronRight className="w-4 h-4" />
-                                    Show more
-                                  </button>
-                                );
-                              }
-                              if (item.isShowLess) {
-                                return (
-                                  <button
-                                    key={`show-less-${item.blockId}`}
-                                    onClick={() => setExpandedBlocks(prev => prev.filter(id => id !== item.blockId))}
-                                    className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                                  >
-                                    <ChevronDown className="w-4 h-4" />
-                                    Show less
-                                  </button>
-                                );
+                              if (item.isShowMore || item.isShowLess) {
+                                return null;
                               }
                               if (item.isActivityType) {
                               const act = item;
@@ -4663,19 +4808,21 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
-                              if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked') {
-                                const isAudit = act.type === 'audit_item_checked' || act.isAudit;
+                              if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked' || act.type === 'audit_item_unchecked' || act.type === 'checklist_item_unchecked') {
+                                const isAudit = act.type.startsWith('audit_') || act.isAudit;
+                                const isUnchecked = act.type.includes('unchecked');
                                 const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
-                                const itemName = act.itemName || 'item';
+                                const itemName = act.itemName || act.details?.itemName || act.details?.text || act.details?.itemText || 'item';
+                                const actionWord = isUnchecked ? 'unchecked' : 'checked';
                                 return (
                                   <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
-                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                                    <div className={`mt-1.5 w-1.5 h-1.5 rounded-full ${isUnchecked ? 'bg-zinc-500' : 'bg-violet-500'} shrink-0`} />
                                     <div className="flex-1 leading-relaxed">
                                       <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
                                       {act.subtaskTitle && !((task as any)?.parentTaskId) ? (
-                                        <>checked {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span> on subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
+                                        <>{actionWord} {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span> on subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
                                       ) : (
-                                        <>checked {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span></>
+                                        <>{actionWord} {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span></>
                                       )}
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -4700,11 +4847,14 @@ export function TaskDetailModalContent({
                                 const blocks: any[][] = [];
 
                                 dayGroup.items.forEach(item => {
-                                  const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? (item.type || 'activity') : 'comment');
+                                  const isActivity = Boolean(item.isActivityType);
+                                  const isCreation = Boolean(item.isCreationEvent);
+                                  const key = isCreation ? 'creation' : (isActivity ? 'activity' : 'comment');
+
                                   if (currentGroupKey === null) {
                                     currentGroupKey = key;
                                     currentBlock.push(item);
-                                  } else if (currentGroupKey === key && item.isActivityType) {
+                                  } else if (currentGroupKey === 'activity' && key === 'activity') {
                                     currentBlock.push(item);
                                   } else {
                                     blocks.push(currentBlock);
@@ -4713,21 +4863,6 @@ export function TaskDetailModalContent({
                                   }
                                 });
                                 if (currentBlock.length > 0) blocks.push(currentBlock);
-
-                                const dayTimelineItems: any[] = [];
-                                blocks.forEach((block, bIdx) => {
-                                  const blockId = `${dayGroup.dayKey}-${bIdx}`;
-                                  const isExpanded = expandedBlocks.includes(blockId);
-                                  if (!block[0].isActivityType || block.length <= 1) {
-                                    dayTimelineItems.push(...block);
-                                  } else if (isExpanded) {
-                                    dayTimelineItems.push({ isShowLess: true, blockId });
-                                    dayTimelineItems.push(...block);
-                                  } else {
-                                    dayTimelineItems.push({ isShowMore: true, count: block.length - 1, blockId });
-                                    dayTimelineItems.push(...block.slice(-1));
-                                  }
-                                });
 
                                 const visibleItems = dayGroup.items.filter(item => {
                                   if (item.isCreationEvent) return true;
@@ -4763,7 +4898,65 @@ export function TaskDetailModalContent({
                                           transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
                                           className="overflow-hidden space-y-4 pt-1"
                                         >
-                                          {dayTimelineItems.map((item) => renderTimelineItem(item))}
+                                          {blocks.map((block, bIdx) => {
+                                            const blockId = `${dayGroup.dayKey}-${bIdx}`;
+                                            const isActivityBlock = Boolean(block[0]?.isActivityType);
+
+                                            if (!isActivityBlock || block.length < 3) {
+                                              return (
+                                                <div key={`block-${blockId}`} className="space-y-4">
+                                                  {block.map(item => renderTimelineItem(item))}
+                                                </div>
+                                              );
+                                            }
+
+                                            const isExpanded = expandedBlocks.includes(blockId);
+                                            const hiddenItems = block.slice(0, -1);
+                                            const latestItem = block[block.length - 1];
+
+                                            return (
+                                              <div key={`activity-block-${blockId}`} className="space-y-3">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => toggleBlockExpansion(blockId)}
+                                                  className="flex items-center gap-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors py-1 px-1 cursor-pointer select-none group"
+                                                >
+                                                  {isExpanded ? (
+                                                    <>
+                                                      <ChevronDown className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 transition-colors shrink-0" />
+                                                      <span>Show less</span>
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <ChevronRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 transition-colors shrink-0" />
+                                                      <span>See more ({hiddenItems.length})</span>
+                                                    </>
+                                                  )}
+                                                </button>
+
+                                                <AnimatePresence initial={false}>
+                                                  {isExpanded && (
+                                                    <motion.div
+                                                      key={`expanded-content-${blockId}`}
+                                                      initial={{ height: 0, opacity: 0 }}
+                                                      animate={{ height: 'auto', opacity: 1 }}
+                                                      exit={{ height: 0, opacity: 0 }}
+                                                      transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                                                      className="overflow-hidden"
+                                                    >
+                                                      <div className="space-y-4 py-1">
+                                                        {hiddenItems.map(item => renderTimelineItem(item))}
+                                                      </div>
+                                                    </motion.div>
+                                                  )}
+                                                </AnimatePresence>
+
+                                                <div id={`activity-latest-${blockId}`}>
+                                                  {renderTimelineItem(latestItem)}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
                                         </motion.div>
                                       )}
                                     </AnimatePresence>
@@ -5134,7 +5327,7 @@ export function SubtaskDetailView({
   const lastRoleUpdateTimestampRef = useRef<number>(0);
 
   useEffect(() => {
-    if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+    if (Date.now() - lastRoleUpdateTimestampRef.current > 5000) {
       const fromProps = subtask?.assigneeRoleRestrictions || [];
       setLocalRoleRestrictions(fromProps);
       latestRoleRestrictionsRef.current = fromProps;
@@ -5142,38 +5335,11 @@ export function SubtaskDetailView({
   }, [subtask?.assigneeRoleRestrictions]);
 
   const subtaskAssignableUsers = React.useMemo(() => {
-    const wsUsers = workspaceUsers || [];
-    const wsTeams = workspaceTeams || [];
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
-      return wsUsers;
+      return workspaceUsers || [];
     }
-    const teamRoleToTeamId = new Map<string, string>();
-    wsTeams.forEach((team: any) => {
-      (team.teamRoles || []).forEach((tr: any) => {
-        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
-      });
-    });
-
-    const filteredUsers = wsUsers.filter((u) => {
-      const userRoles = (u.roles || []) as string[];
-      return localRoleRestrictions.some((role: string) => {
-        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
-        const teamId = teamRoleToTeamId.get(role.toLowerCase());
-        if (teamId && (u as any).teamId === teamId) return true;
-        return false;
-      });
-    });
-
-    // Always allow the current user to assign themselves
-    if (currentUser && !filteredUsers.some(u => u.id === currentUser.id)) {
-      const me = wsUsers.find(u => u.id === currentUser.id);
-      if (me) {
-        filteredUsers.push(me);
-      }
-    }
-
-    return filteredUsers;
-  }, [localRoleRestrictions, workspaceUsers, workspaceTeams, currentUser]);
+    return resolveUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers || [], workspaceTeams || []);
+  }, [localRoleRestrictions, workspaceUsers, workspaceTeams]);
 
   const [richComments, setRichComments] = useState<any[]>([]);
   const commentImages = useMemo(() => {
@@ -5323,23 +5489,37 @@ export function SubtaskDetailView({
   const targetKey = `${targetCommentId || ''}_${targetCommentText ? targetCommentText.slice(0, 30) : ''}_${scrollToComments ? '1' : '0'}`;
   const lastTargetKeyRef = useRef('');
   const hasScrolledToTargetRef = useRef(false);
+  const targetCommentElRef = useRef<HTMLElement | null>(null);
+  const isUserScrollingRef = useRef(false);
+  const stabilizationTimerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearStabilizationTimers = useCallback(() => {
+    stabilizationTimerRef.current.forEach(t => clearTimeout(t));
+    stabilizationTimerRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    return () => clearStabilizationTimers();
+  }, [clearStabilizationTimers]);
 
   useEffect(() => {
     if (targetKey !== lastTargetKeyRef.current) {
       lastTargetKeyRef.current = targetKey;
       hasScrolledToTargetRef.current = false;
+      isUserScrollingRef.current = false;
+      clearStabilizationTimers();
     }
-  }, [targetKey]);
+  }, [targetKey, clearStabilizationTimers]);
 
   // If a target comment is older than visibleActivityCount, expand visibleActivityCount so it is rendered
   useEffect(() => {
     if ((targetCommentId || targetCommentText) && combined.length > visibleActivityCount) {
+      const cleanSnippet = targetCommentText ? normalizeCommentSearchText(targetCommentText).slice(0, 30) : '';
       const idx = combined.findIndex((item) => {
         if (targetCommentId && (item.id === targetCommentId || item.commentId === targetCommentId)) return true;
-        if (targetCommentText) {
-          const itemText = (item.text || item.content || '').toLowerCase();
-          const cleanSnippet = targetCommentText.trim().toLowerCase().slice(0, 30);
-          if (cleanSnippet && itemText.includes(cleanSnippet)) return true;
+        if (cleanSnippet) {
+          const itemText = normalizeCommentSearchText(item.text || item.content || '');
+          if (itemText.includes(cleanSnippet)) return true;
         }
         return false;
       });
@@ -5373,17 +5553,24 @@ export function SubtaskDetailView({
         (container.querySelector(`[data-comment-id="${targetCommentId}"]`) as HTMLElement | null);
     }
     if (!targetEl && targetCommentText) {
-      const lines = targetCommentText
-        .split('\n')
-        .map(l => l.trim().toLowerCase())
-        .filter(l => l.length >= 15 && !l.includes('📅') && !l.includes('🖊') && !l.startsWith('status:') && !l.startsWith('resources:'));
-      
-      const snippet = (lines[0] || targetCommentText.trim().toLowerCase()).slice(0, 50);
-      if (snippet) {
+      const cleanTarget = normalizeCommentSearchText(targetCommentText);
+      const snippet = cleanTarget.slice(0, 45);
+      const keywords = cleanTarget
+        .split(/\s+/)
+        .filter(w => w.length >= 3 || w.startsWith('@'))
+        .slice(0, 6);
+
+      if (snippet || keywords.length > 0) {
         const commentEls = Array.from(container.querySelectorAll<HTMLElement>('.group\\/comment')).reverse();
         for (const el of commentEls) {
-          const txt = el.textContent?.toLowerCase() || '';
-          if (txt.includes(snippet) || (lines.length > 1 && lines.some(line => line.length >= 20 && txt.includes(line.slice(0, 40))))) {
+          const txt = normalizeCommentSearchText(el.textContent || '');
+          const dataTxt = normalizeCommentSearchText(el.getAttribute('data-comment-text') || '');
+          const isMatch =
+            (snippet && (txt.includes(snippet) || dataTxt.includes(snippet))) ||
+            (keywords.length >= 2 && keywords.every(kw => txt.includes(kw) || dataTxt.includes(kw))) ||
+            (cleanTarget.length > 0 && (txt.includes(cleanTarget) || dataTxt.includes(cleanTarget)));
+
+          if (isMatch) {
             targetEl = el;
             break;
           }
@@ -5393,10 +5580,24 @@ export function SubtaskDetailView({
 
     if (targetEl) {
       hasScrolledToTargetRef.current = true;
-      const containerRect = container.getBoundingClientRect();
-      const elRect = targetEl.getBoundingClientRect();
-      const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
-      container.scrollTo({ top: Math.max(0, relativeTop), behavior: 'smooth' });
+      targetCommentElRef.current = targetEl;
+      isUserScrollingRef.current = false;
+      clearStabilizationTimers();
+
+      const scrollIntoTarget = (smooth = true) => {
+        if (!container || !targetEl || !container.contains(targetEl) || isUserScrollingRef.current) return;
+        const containerRect = container.getBoundingClientRect();
+        const elRect = targetEl.getBoundingClientRect();
+        const targetTop = containerRect.top + 14;
+        const drift = Math.abs(elRect.top - targetTop);
+        if (drift > 8) {
+          const relativeTop = elRect.top - containerRect.top + container.scrollTop - 14;
+          container.scrollTo({ top: Math.max(0, relativeTop), behavior: smooth ? 'smooth' : 'auto' });
+        }
+      };
+
+      // Initial scroll
+      scrollIntoTarget(true);
 
       // Clear any existing rings across all comments first so only ONE comment is highlighted
       container.querySelectorAll('.ring-indigo-500\\/80').forEach(el => {
@@ -5406,7 +5607,27 @@ export function SubtaskDetailView({
       targetEl.classList.add('ring-2', 'ring-indigo-500/80', 'transition-all', 'duration-500');
       setTimeout(() => {
         targetEl?.classList.remove('ring-2', 'ring-indigo-500/80');
-      }, 3000);
+      }, 3500);
+
+      // Listen for any images that finish loading inside the container and realign
+      const onImageLoad = () => {
+        scrollIntoTarget(false);
+      };
+      container.querySelectorAll('img').forEach(img => {
+        if (!img.complete) {
+          img.addEventListener('load', onImageLoad, { once: true });
+        }
+      });
+
+      // Post-scroll layout-shift stabilization checks for async images / attachments / markdown
+      const delays = [120, 300, 600, 1000, 1500, 2200];
+      delays.forEach(d => {
+        const timer = setTimeout(() => {
+          scrollIntoTarget(false);
+        }, d);
+        stabilizationTimerRef.current.push(timer);
+      });
+
       return true;
     }
 
@@ -5418,7 +5639,7 @@ export function SubtaskDetailView({
     }
 
     return false;
-  }, [targetCommentId, targetCommentText, scrollToComments, scrollToLatestComment]);
+  }, [targetCommentId, targetCommentText, scrollToComments, scrollToLatestComment, clearStabilizationTimers]);
 
   const hasScrolledInitiallyRef = useRef(false);
   useEffect(() => {
@@ -5479,6 +5700,36 @@ export function SubtaskDetailView({
 
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [expandedBlocks, setExpandedBlocks] = useState<(string | number)[]>([]);
+  const toggleBlockExpansion = useCallback((blockId: string) => {
+    setExpandedBlocks(prev => {
+      const isCurrentlyExpanded = prev.includes(blockId);
+      if (isCurrentlyExpanded) {
+        return prev.filter(id => id !== blockId);
+      } else {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const container = activityScrollRef.current;
+            if (container) {
+              const latestEl = document.getElementById(`subtask-activity-latest-${blockId}`);
+              if (latestEl) {
+                const containerRect = container.getBoundingClientRect();
+                const elRect = latestEl.getBoundingClientRect();
+                const diff = elRect.bottom - containerRect.bottom + 24;
+                if (diff > 0) {
+                  container.scrollBy({ top: diff, behavior: 'smooth' });
+                } else {
+                  container.scrollBy({ top: 80, behavior: 'smooth' });
+                }
+              } else {
+                container.scrollBy({ top: 120, behavior: 'smooth' });
+              }
+            }
+          }, 60);
+        });
+        return [...prev, blockId];
+      }
+    });
+  }, []);
   const [isRoleOpen, setIsRoleOpen] = useState(false);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const roleToAssigneeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -5802,7 +6053,7 @@ export function SubtaskDetailView({
   }, [subtask.description, subtask.title, isLocalEditing, isEditingTitle]);
 
   useEffect(() => {
-    if (!socket || !subtask?.id) return;
+    if (!subtask?.id) return;
 
     const handleEditingStart = (data: { taskId: string; userName: string }) => {
       if (data.taskId === subtask.id && data.userName !== currentUser?.name) {
@@ -6062,32 +6313,62 @@ export function SubtaskDetailView({
       syncSubtaskToParent({ ...currentSub, checklists });
     };
 
-    socket.on('task_editing_start', handleEditingStart);
-    socket.on('task_editing_stop', handleEditingStop);
-    socket.on('task_editing_content', handleEditingContent);
-    socket.on('task_activity', handleActivity);
-    socket.on('task:comment_added', handleCommentAdded);
-    socket.on('task:comment_updated', handleCommentUpdated);
-    socket.on('task:comment_deleted', handleCommentDeleted);
-    socket.on('task:checklist_created', handleChecklistCreated);
-    socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
-    socket.on('task:checklist_item_created', handleChecklistItemCreated);
-    socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
-    socket.on('task:checklist_deleted', handleChecklistDeleted);
+    if (socket) {
+      socket.on('task_editing_start', handleEditingStart);
+      socket.on('task_editing_stop', handleEditingStop);
+      socket.on('task_editing_content', handleEditingContent);
+      socket.on('task_activity', handleActivity);
+      socket.on('task:comment_added', handleCommentAdded);
+      socket.on('task:comment_updated', handleCommentUpdated);
+      socket.on('task:comment_deleted', handleCommentDeleted);
+      socket.on('task:checklist_created', handleChecklistCreated);
+      socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
+      socket.on('task:checklist_item_created', handleChecklistItemCreated);
+      socket.on('task:checklist_item_deleted', handleChecklistItemDeleted);
+      socket.on('task:checklist_deleted', handleChecklistDeleted);
+    }
+
+    const onWinCommentAdded = (e: any) => handleCommentAdded(e.detail);
+    const onWinCommentUpdated = (e: any) => handleCommentUpdated(e.detail);
+    const onWinCommentDeleted = (e: any) => handleCommentDeleted(e.detail);
+    const onWinChecklistCreated = (e: any) => handleChecklistCreated(e.detail);
+    const onWinChecklistItemUpdated = (e: any) => handleChecklistItemUpdated(e.detail);
+    const onWinChecklistItemCreated = (e: any) => handleChecklistItemCreated(e.detail);
+    const onWinChecklistItemDeleted = (e: any) => handleChecklistItemDeleted(e.detail);
+    const onWinChecklistDeleted = (e: any) => handleChecklistDeleted(e.detail);
+
+    window.addEventListener('task:comment_added', onWinCommentAdded);
+    window.addEventListener('task:comment_updated', onWinCommentUpdated);
+    window.addEventListener('task:comment_deleted', onWinCommentDeleted);
+    window.addEventListener('task:checklist_created', onWinChecklistCreated);
+    window.addEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
+    window.addEventListener('task:checklist_item_created', onWinChecklistItemCreated);
+    window.addEventListener('task:checklist_item_deleted', onWinChecklistItemDeleted);
+    window.addEventListener('task:checklist_deleted', onWinChecklistDeleted);
 
     return () => {
-      socket.off('task_editing_start', handleEditingStart);
-      socket.off('task_editing_stop', handleEditingStop);
-      socket.off('task_editing_content', handleEditingContent);
-      socket.off('task_activity', handleActivity);
-      socket.off('task:comment_added', handleCommentAdded);
-      socket.off('task:comment_updated', handleCommentUpdated);
-      socket.off('task:comment_deleted', handleCommentDeleted);
-      socket.off('task:checklist_created', handleChecklistCreated);
-      socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
-      socket.off('task:checklist_item_created', handleChecklistItemCreated);
-      socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
-      socket.off('task:checklist_deleted', handleChecklistDeleted);
+      if (socket) {
+        socket.off('task_editing_start', handleEditingStart);
+        socket.off('task_editing_stop', handleEditingStop);
+        socket.off('task_editing_content', handleEditingContent);
+        socket.off('task_activity', handleActivity);
+        socket.off('task:comment_added', handleCommentAdded);
+        socket.off('task:comment_updated', handleCommentUpdated);
+        socket.off('task:comment_deleted', handleCommentDeleted);
+        socket.off('task:checklist_created', handleChecklistCreated);
+        socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
+        socket.off('task:checklist_item_created', handleChecklistItemCreated);
+        socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
+        socket.off('task:checklist_deleted', handleChecklistDeleted);
+      }
+      window.removeEventListener('task:comment_added', onWinCommentAdded);
+      window.removeEventListener('task:comment_updated', onWinCommentUpdated);
+      window.removeEventListener('task:comment_deleted', onWinCommentDeleted);
+      window.removeEventListener('task:checklist_created', onWinChecklistCreated);
+      window.removeEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
+      window.removeEventListener('task:checklist_item_created', onWinChecklistItemCreated);
+      window.removeEventListener('task:checklist_item_deleted', onWinChecklistItemDeleted);
+      window.removeEventListener('task:checklist_deleted', onWinChecklistDeleted);
     };
   }, [socket, subtask?.id, currentUser?.name, parentTask.id, syncSubtaskToParent]);
 
@@ -6122,12 +6403,12 @@ export function SubtaskDetailView({
         targetSubtask = incoming.subtasks.find((s: any) => s.id === subtask.id);
       }
       if (targetSubtask) {
-        if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+        if (Date.now() - lastAssigneeUpdateTimestampRef.current > 5000) {
           const fromProps = targetSubtask.assignees || (targetSubtask.User ? [targetSubtask.User] : (targetSubtask.assignee ? [targetSubtask.assignee] : []));
           setLocalAssignees(fromProps);
           latestAssigneesRef.current = fromProps;
         }
-        if (Date.now() - lastRoleUpdateTimestampRef.current > 1500) {
+        if (Date.now() - lastRoleUpdateTimestampRef.current > 5000) {
           if (targetSubtask.assigneeRoleRestrictions !== undefined) {
             setLocalRoleRestrictions(targetSubtask.assigneeRoleRestrictions);
             latestRoleRestrictionsRef.current = targetSubtask.assigneeRoleRestrictions;
@@ -6275,7 +6556,7 @@ export function SubtaskDetailView({
     const currentAssigneesList = latestAssigneesRef.current || [];
     const validAssignees = next.length > 0
       ? currentAssigneesList.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
-      : currentAssigneesList;
+      : [];
     const validIds = validAssignees.map((u: any) => u.id);
     const primaryAssignee = validAssignees.length > 0 ? validAssignees[0] : null;
 
@@ -6320,6 +6601,11 @@ export function SubtaskDetailView({
           setIsAssigneeOpen(true);
         }, 220);
       }
+    } else {
+      if (roleToAssigneeTimeoutRef.current) {
+        clearTimeout(roleToAssigneeTimeoutRef.current);
+      }
+      setIsAssigneeOpen(false);
     }
   };
 
@@ -7258,15 +7544,17 @@ export function SubtaskDetailView({
                                   <div
                                       onClick={() => {
                                         if (!hasRoles) return;
+                                        const current = latestRoleRestrictionsRef.current;
+                                        const isAllSelected = hasRoles && teamRoles.every((r: any) => hasRole(current, r.name));
                                         let next = [...current];
-                                        if (allSelected) {
-                                          next = next.filter(r => !teamRoles.some((tr: any) => roleKey(tr.name) === roleKey(r)));
+                                        if (isAllSelected) {
+                                          next = next.filter(r => !teamRoles.some((tr: any) => matchesRole(tr.name, r)));
                                         } else {
                                           const toAdd = teamRoles.filter((tr: any) => !hasRole(next, tr.name)).map((tr: any) => tr.name);
                                           next = [...next, ...toAdd];
                                         }
                                         next = normalizeRoles(next, workspaceTeams);
-                                        handleApplySubtaskRoleRestrictions(next, true);
+                                        handleApplySubtaskRoleRestrictions(next, !isAllSelected);
                                       }}
                                     className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-accent/30 ${hasRoles ? 'cursor-pointer hover:bg-accent/50 hover:text-foreground transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-muted-foreground'}`}
                                   >
@@ -7292,11 +7580,12 @@ export function SubtaskDetailView({
                                         key={role.id}
                                         onClick={() => {
                                           const current = latestRoleRestrictionsRef.current;
+                                          const isSelected = hasRole(current, role.name);
                                           const next = normalizeRoles(
-                                            selected ? withoutRole(current, role.name) : [...current, role.name],
+                                            isSelected ? withoutRole(current, role.name) : [...current, role.name],
                                             workspaceTeams
                                           );
-                                          handleApplySubtaskRoleRestrictions(next, true);
+                                          handleApplySubtaskRoleRestrictions(next, !isSelected);
                                         }}
                                         className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors rounded-md"
                                       >
@@ -7727,7 +8016,14 @@ export function SubtaskDetailView({
             </div>
           </div>
 
-          <div ref={activityScrollRef} onScroll={handleActivityScroll} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+          <div
+            ref={activityScrollRef}
+            onScroll={handleActivityScroll}
+            onWheel={() => { isUserScrollingRef.current = true; }}
+            onTouchStart={() => { isUserScrollingRef.current = true; }}
+            onPointerDown={() => { isUserScrollingRef.current = true; }}
+            className="flex-1 overflow-y-auto p-6 custom-scrollbar"
+          >
             <div className="space-y-5">
 
               {/* Loading older activities indicator / trigger */}
@@ -8051,29 +8347,8 @@ export function SubtaskDetailView({
                                 </div>
                               );
                             }
-                            if (item.isShowMore) {
-                              return (
-                                <button
-                                  key={`show-more-${item.blockId}`}
-                                  onClick={() => setExpandedBlocks(prev => [...prev, item.blockId])}
-                                  className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                                >
-                                  <ChevronRight className="w-4 h-4" />
-                                  Show more
-                                </button>
-                              );
-                            }
-                            if (item.isShowLess) {
-                              return (
-                                <button
-                                  key={`show-less-${item.blockId}`}
-                                  onClick={() => setExpandedBlocks(prev => prev.filter(id => id !== item.blockId))}
-                                  className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors w-full py-2 mb-2"
-                                >
-                                  <ChevronDown className="w-4 h-4" />
-                                  Show less
-                                </button>
-                              );
+                            if (item.isShowMore || item.isShowLess) {
+                              return null;
                             }
                             if (item.isActivityType) {
                             const act = item;
@@ -8188,16 +8463,18 @@ export function SubtaskDetailView({
                                 </div>
                               );
                             }
-                            if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked') {
-                              const isAudit = act.type === 'audit_item_checked' || act.isAudit;
+                            if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked' || act.type === 'audit_item_unchecked' || act.type === 'checklist_item_unchecked') {
+                              const isAudit = act.type.startsWith('audit_') || act.isAudit;
+                              const isUnchecked = act.type.includes('unchecked');
                               const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
-                              const itemName = act.itemName || 'item';
+                              const itemName = act.itemName || act.details?.itemName || act.details?.text || act.details?.itemText || 'item';
+                              const actionWord = isUnchecked ? 'unchecked' : 'checked';
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
-                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                                  <div className={`mt-1.5 w-1.5 h-1.5 rounded-full ${isUnchecked ? 'bg-zinc-500' : 'bg-violet-500'} shrink-0`} />
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
-                                    checked {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span>
+                                    {actionWord} {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -8221,11 +8498,14 @@ export function SubtaskDetailView({
                               const blocks: any[][] = [];
 
                               dayGroup.items.forEach(item => {
-                                const key = item.isCreationEvent ? 'creation' : (item.isActivityType ? (item.type || 'activity') : 'comment');
+                                const isActivity = Boolean(item.isActivityType);
+                                const isCreation = Boolean(item.isCreationEvent);
+                                const key = isCreation ? 'creation' : (isActivity ? 'activity' : 'comment');
+
                                 if (currentGroupKey === null) {
                                   currentGroupKey = key;
                                   currentBlock.push(item);
-                                } else if (currentGroupKey === key && item.isActivityType) {
+                                } else if (currentGroupKey === 'activity' && key === 'activity') {
                                   currentBlock.push(item);
                                 } else {
                                   blocks.push(currentBlock);
@@ -8235,61 +8515,104 @@ export function SubtaskDetailView({
                               });
                               if (currentBlock.length > 0) blocks.push(currentBlock);
 
-                              const dayTimelineItems: any[] = [];
-                              blocks.forEach((block, bIdx) => {
-                                const blockId = `${dayGroup.dayKey}-${bIdx}`;
-                                const isExpanded = expandedBlocks.includes(blockId);
-                                if (!block[0].isActivityType || block.length <= 1) {
-                                  dayTimelineItems.push(...block);
-                                } else if (isExpanded) {
-                                  dayTimelineItems.push({ isShowLess: true, blockId });
-                                  dayTimelineItems.push(...block);
-                                } else {
-                                  dayTimelineItems.push({ isShowMore: true, count: block.length - 1, blockId });
-                                  dayTimelineItems.push(...block.slice(-1));
-                                }
+                              const visibleItems = dayGroup.items.filter(item => {
+                                if (item.isCreationEvent) return true;
+                                if (item.isActivityType) return isActivityVisible(item);
+                                return true; // rich comment
+                              });
+                              if (visibleItems.length === 0) return null;
+
+                              const hasLogUpdateOrComment = dayGroup.items.some(item => {
+                                if (item.isCreationEvent) return false;
+                                if (item.isActivityType) return isActivityVisible(item);
+                                return true; // rich comment
                               });
 
-                                const visibleItems = dayGroup.items.filter(item => {
-                                  if (item.isCreationEvent) return true;
-                                  if (item.isActivityType) return isActivityVisible(item);
-                                  return true; // rich comment
-                                });
-                                if (visibleItems.length === 0) return null;
+                              return (
+                                <div key={`day-section-${dayGroup.dayKey}`} className="w-full">
+                                  {hasLogUpdateOrComment && (
+                                    <ActivityDayDivider
+                                      date={dayGroup.date}
+                                      isNew={dayGroup.isNew}
+                                      isCollapsed={isCollapsed}
+                                      itemCount={visibleItems.length}
+                                      onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
+                                    />
+                                  )}
+                                  <AnimatePresence initial={false}>
+                                    {(!isCollapsed || !hasLogUpdateOrComment) && (
+                                      <motion.div
+                                        key={`day-content-${dayGroup.dayKey}`}
+                                        initial={{ height: 0, opacity: 0 }}
+                                        animate={{ height: 'auto', opacity: 1 }}
+                                        exit={{ height: 0, opacity: 0 }}
+                                        transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
+                                        className="overflow-hidden space-y-4 pt-1"
+                                      >
+                                        {blocks.map((block, bIdx) => {
+                                          const blockId = `${dayGroup.dayKey}-${bIdx}`;
+                                          const isActivityBlock = Boolean(block[0]?.isActivityType);
 
-                                const hasLogUpdateOrComment = dayGroup.items.some(item => {
-                                  if (item.isCreationEvent) return false;
-                                  if (item.isActivityType) return isActivityVisible(item);
-                                  return true; // rich comment
-                                });
+                                          if (!isActivityBlock || block.length < 3) {
+                                            return (
+                                              <div key={`block-${blockId}`} className="space-y-4">
+                                                {block.map(item => renderTimelineItem(item))}
+                                              </div>
+                                            );
+                                          }
 
-                                return (
-                                  <div key={`day-section-${dayGroup.dayKey}`} className="w-full">
-                                    {hasLogUpdateOrComment && (
-                                      <ActivityDayDivider
-                                        date={dayGroup.date}
-                                        isNew={dayGroup.isNew}
-                                        isCollapsed={isCollapsed}
-                                        itemCount={visibleItems.length}
-                                        onToggleCollapse={() => toggleCollapseDay(dayGroup.dayKey)}
-                                      />
+                                          const isExpanded = expandedBlocks.includes(blockId);
+                                          const hiddenItems = block.slice(0, -1);
+                                          const latestItem = block[block.length - 1];
+
+                                          return (
+                                            <div key={`activity-block-${blockId}`} className="space-y-3">
+                                              <button
+                                                type="button"
+                                                onClick={() => toggleBlockExpansion(blockId)}
+                                                className="flex items-center gap-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors py-1 px-1 cursor-pointer select-none group"
+                                              >
+                                                {isExpanded ? (
+                                                  <>
+                                                    <ChevronDown className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 transition-colors shrink-0" />
+                                                    <span>Show less</span>
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    <ChevronRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 transition-colors shrink-0" />
+                                                    <span>See more ({hiddenItems.length})</span>
+                                                  </>
+                                                )}
+                                              </button>
+
+                                              <AnimatePresence initial={false}>
+                                                {isExpanded && (
+                                                  <motion.div
+                                                    key={`expanded-content-${blockId}`}
+                                                    initial={{ height: 0, opacity: 0 }}
+                                                    animate={{ height: 'auto', opacity: 1 }}
+                                                    exit={{ height: 0, opacity: 0 }}
+                                                    transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                                                    className="overflow-hidden"
+                                                  >
+                                                    <div className="space-y-4 py-1">
+                                                      {hiddenItems.map(item => renderTimelineItem(item))}
+                                                    </div>
+                                                  </motion.div>
+                                                )}
+                                              </AnimatePresence>
+
+                                              <div id={`subtask-activity-latest-${blockId}`}>
+                                                {renderTimelineItem(latestItem)}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </motion.div>
                                     )}
-                                    <AnimatePresence initial={false}>
-                                      {(!isCollapsed || !hasLogUpdateOrComment) && (
-                                        <motion.div
-                                          key={`day-content-${dayGroup.dayKey}`}
-                                          initial={{ height: 0, opacity: 0 }}
-                                          animate={{ height: 'auto', opacity: 1 }}
-                                          exit={{ height: 0, opacity: 0 }}
-                                          transition={{ duration: 0.24, ease: [0.4, 0, 0.2, 1] }}
-                                          className="overflow-hidden space-y-4 pt-1"
-                                        >
-                                          {dayTimelineItems.map((item) => renderTimelineItem(item))}
-                                        </motion.div>
-                                      )}
-                                    </AnimatePresence>
-                                  </div>
-                                );
+                                  </AnimatePresence>
+                                </div>
+                              );
                             })}
                           </>
                         );
@@ -8621,6 +8944,14 @@ export function TaskDetailModal(props: Props) {
               const merged: any = { ...prev, ...res.task };
               locallyEditedKeysRef.current.forEach((key) => { merged[key] = (prev as any)[key]; });
 
+              if (locallyEditedKeysRef.current.has('assigneeRoleRestrictions')) {
+                merged.assigneeRoleRestrictions = prev.assigneeRoleRestrictions;
+                merged.assignees = prev.assignees;
+                merged.assigneeIds = prev.assigneeIds;
+                merged.assignee = prev.assignee;
+                merged.assigneeId = prev.assigneeId;
+              }
+
               // Preserve optimistic / locally modified checklist items across background refresh
               if (prev.checklists && res.task.checklists) {
                 const prevItemsMap = new Map<string, any>();
@@ -8710,6 +9041,9 @@ export function TaskDetailModal(props: Props) {
     const handleTaskUpdated = (e: any) => {
       const incoming = e.detail?.task;
       if (!incoming || !fullTask || incoming.id !== fullTask.id) return;
+      for (const key of Object.keys(incoming)) {
+        locallyEditedKeysRef.current.add(key);
+      }
       setFullTask(prev => prev ? { ...prev, ...incoming } : prev);
     };
     window.addEventListener('task:updated', handleTaskUpdated);
@@ -8717,7 +9051,7 @@ export function TaskDetailModal(props: Props) {
   }, [fullTask?.id]);
 
   useEffect(() => {
-    if (!props.socket || !fullTask?.id) return;
+    if (!fullTask?.id) return;
     const handleSocketTaskUpdated = (incoming: any) => {
       if (incoming && incoming.id === fullTask.id) {
         setFullTask(prev => {
@@ -8745,272 +9079,17 @@ export function TaskDetailModal(props: Props) {
         setFullTask(prev => prev ? { ...prev, status } : prev);
       }
     };
-    const handleSocketChecklistCreated = (payload: any) => {
-      if (!payload || payload.taskId !== fullTask.id || !payload.checklist) return;
-      setFullTask(prev => {
-        if (!prev) return prev;
-        let updated: any;
-        if (!payload.subtaskId) {
-          const exists = (prev.checklists || []).some(c => c.id === payload.checklist.id);
-          if (exists) return prev;
-          const checklists = [...(prev.checklists || []), payload.checklist];
-          updated = { ...prev, checklists };
-        } else {
-          const subtasks = (prev.subtasks || []).map((st: any) => {
-            if (st.id === payload.subtaskId) {
-              const exists = (st.checklists || []).some((c: any) => c.id === payload.checklist.id);
-              if (exists) return st;
-              return { ...st, checklists: [...(st.checklists || []), payload.checklist] };
-            }
-            return st;
-          });
-          updated = { ...prev, subtasks };
-        }
-        if (props.onUpdateTask) props.onUpdateTask(updated);
-        return updated;
-      });
-    };
 
-    const handleSocketChecklistItemCreated = (payload: any) => {
-      if (!payload || payload.taskId !== fullTask.id || !payload.item) return;
-      setFullTask(prev => {
-        if (!prev) return prev;
-        let updated: any;
-        if (!payload.subtaskId) {
-          let found = false;
-          const checklists = (prev.checklists || []).map(c => {
-            if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
-              found = true;
-              if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
-              const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
-              if (tempIdx !== -1) {
-                const newItems = [...c.items];
-                newItems[tempIdx] = payload.item;
-                return { ...c, items: newItems };
-              }
-              return { ...c, items: [...(c.items || []), payload.item] };
-            }
-            return c;
-          });
-          const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
-          const finalChecklists = found ? checklists : [
-            ...(prev.checklists || []),
-            {
-              id: payload.checklistId,
-              taskId: fullTask.id,
-              name: isAudit ? 'Audit' : 'Checklist',
-              createdAt: new Date().toISOString(),
-              items: [payload.item],
-            }
-          ];
-          updated = { ...prev, checklists: finalChecklists };
-        } else {
-          const subtasks = (prev.subtasks || []).map((st: any) => {
-            if (st.id === payload.subtaskId) {
-              let found = false;
-              const checklists = (st.checklists || []).map((c: any) => {
-                if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
-                  found = true;
-                  if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
-                  const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
-                  if (tempIdx !== -1) {
-                    const newItems = [...c.items];
-                    newItems[tempIdx] = payload.item;
-                    return { ...c, items: newItems };
-                  }
-                  return { ...c, items: [...(c.items || []), payload.item] };
-                }
-                return c;
-              });
-              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
-              const finalChecklists = found ? checklists : [
-                ...(st.checklists || []),
-                {
-                  id: payload.checklistId,
-                  taskId: fullTask.id,
-                  subtaskId: payload.subtaskId,
-                  name: isAudit ? 'Audit' : 'Checklist',
-                  createdAt: new Date().toISOString(),
-                  items: [payload.item],
-                }
-              ];
-              return { ...st, checklists: finalChecklists };
-            }
-            return st;
-          });
-          updated = { ...prev, subtasks };
-        }
-        if (props.onUpdateTask) props.onUpdateTask(updated);
-        return updated;
-      });
-    };
-
-    const handleSocketChecklistUpdated = (payload: any) => {
-      if (!payload || payload.taskId !== fullTask.id || !payload.item) return;
-      setFullTask(prev => {
-        if (!prev) return prev;
-        let updated: any;
-        if (!payload.subtaskId) {
-          let found = false;
-          const checklists = (prev.checklists || []).map(c => {
-            if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
-              found = true;
-              const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
-              if (hasItem) {
-                const items = (c.items || []).map(i =>
-                  (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                    ? { ...i, ...payload.item }
-                    : i
-                );
-                return { ...c, items };
-              } else {
-                return { ...c, items: [...(c.items || []), payload.item] };
-              }
-            }
-            return c;
-          });
-          const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
-          const finalChecklists = found ? checklists : [
-            ...(prev.checklists || []),
-            {
-              id: payload.checklistId,
-              taskId: fullTask.id,
-              name: isAudit ? 'Audit' : 'Checklist',
-              createdAt: new Date().toISOString(),
-              items: [payload.item],
-            }
-          ];
-          updated = { ...prev, checklists: finalChecklists };
-        } else {
-          const subtasks = (prev.subtasks || []).map((st: any) => {
-            if (st.id === payload.subtaskId) {
-              let found = false;
-              const checklists = (st.checklists || []).map((c: any) => {
-                if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
-                  found = true;
-                  const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
-                  if (hasItem) {
-                    const items = (c.items || []).map((i: any) =>
-                      (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
-                        ? { ...i, ...payload.item }
-                        : i
-                    );
-                    return { ...c, items };
-                  } else {
-                    return { ...c, items: [...(c.items || []), payload.item] };
-                  }
-                }
-                return c;
-              });
-              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
-              const finalChecklists = found ? checklists : [
-                ...(st.checklists || []),
-                {
-                  id: payload.checklistId,
-                  taskId: fullTask.id,
-                  subtaskId: payload.subtaskId,
-                  name: isAudit ? 'Audit' : 'Checklist',
-                  createdAt: new Date().toISOString(),
-                  items: [payload.item],
-                }
-              ];
-              return { ...st, checklists: finalChecklists };
-            }
-            return st;
-          });
-          updated = { ...prev, subtasks };
-        }
-        if (props.onUpdateTask) props.onUpdateTask(updated);
-        useAppStore.getState().updateTask(updated);
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
-        }
-        return updated;
-      });
-    };
-
-    const handleSocketChecklistItemDeleted = (payload: any) => {
-      if (!payload || payload.taskId !== fullTask.id) return;
-      setFullTask(prev => {
-        if (!prev) return prev;
-        let updated: any;
-        if (!payload.subtaskId) {
-          const checklists = (prev.checklists || []).map((c: any) => {
-            if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
-              const items = (c.items || []).filter((i: any) => {
-                if (i.id === payload.itemId) return false;
-                if (payload.text && i.text === payload.text) return false;
-                return true;
-              });
-              return { ...c, items };
-            }
-            return c;
-          });
-          updated = { ...prev, checklists };
-        } else {
-          const subtasks = (prev.subtasks || []).map((st: any) => {
-            if (st.id === payload.subtaskId) {
-              const checklists = (st.checklists || []).map((c: any) => {
-                if (c.id === payload.checklistId || isNexusAuditChecklist(c)) {
-                  const items = (c.items || []).filter((i: any) => {
-                    if (i.id === payload.itemId) return false;
-                    if (payload.text && i.text === payload.text) return false;
-                    return true;
-                  });
-                  return { ...c, items };
-                }
-                return c;
-              });
-              return { ...st, checklists };
-            }
-            return st;
-          });
-          updated = { ...prev, subtasks };
-        }
-        if (props.onUpdateTask) props.onUpdateTask(updated);
-        return updated;
-      });
-    };
-
-    const handleSocketChecklistDeleted = (payload: any) => {
-      if (!payload || payload.taskId !== fullTask.id) return;
-      setFullTask(prev => {
-        if (!prev) return prev;
-        let updated: any;
-        if (!payload.subtaskId) {
-          const checklists = (prev.checklists || []).filter((c: any) => c.id !== payload.checklistId);
-          updated = { ...prev, checklists };
-        } else {
-          const subtasks = (prev.subtasks || []).map((st: any) => {
-            if (st.id === payload.subtaskId) {
-              const checklists = (st.checklists || []).filter((c: any) => c.id !== payload.checklistId);
-              return { ...st, checklists };
-            }
-            return st;
-          });
-          updated = { ...prev, subtasks };
-        }
-        if (props.onUpdateTask) props.onUpdateTask(updated);
-        return updated;
-      });
-    };
-
-    props.socket.on('task:updated', handleSocketTaskUpdated);
-    props.socket.on('task_move_preview', handleSocketTaskMovePreview);
-    props.socket.on('task:checklist_created', handleSocketChecklistCreated);
-    props.socket.on('task:checklist_item_updated', handleSocketChecklistUpdated);
-    props.socket.on('task:checklist_item_created', handleSocketChecklistItemCreated);
-    props.socket.on('task:checklist_item_deleted', handleSocketChecklistItemDeleted);
-    props.socket.on('task:checklist_deleted', handleSocketChecklistDeleted);
+    if (props.socket) {
+      props.socket.on('task:updated', handleSocketTaskUpdated);
+      props.socket.on('task_move_preview', handleSocketTaskMovePreview);
+    }
 
     return () => {
-      props.socket.off('task:updated', handleSocketTaskUpdated);
-      props.socket.off('task_move_preview', handleSocketTaskMovePreview);
-      props.socket.off('task:checklist_created', handleSocketChecklistCreated);
-      props.socket.off('task:checklist_item_updated', handleSocketChecklistUpdated);
-      props.socket.off('task:checklist_item_created', handleSocketChecklistItemCreated);
-      props.socket.off('task:checklist_item_deleted', handleSocketChecklistItemDeleted);
-      props.socket.off('task:checklist_deleted', handleSocketChecklistDeleted);
+      if (props.socket) {
+        props.socket.off('task:updated', handleSocketTaskUpdated);
+        props.socket.off('task_move_preview', handleSocketTaskMovePreview);
+      }
     };
   }, [props.socket, fullTask?.id, props.listStatuses]);
 
@@ -9062,6 +9141,9 @@ export function TaskDetailModal(props: Props) {
         if ((updatedTask as any)[key] !== (fullTask as any)[key]) locallyEditedKeysRef.current.add(key);
       }
     }
+    if (updatedTask.assigneeRoleRestrictions) locallyEditedKeysRef.current.add('assigneeRoleRestrictions');
+    if (updatedTask.assignees) locallyEditedKeysRef.current.add('assignees');
+    if (updatedTask.assigneeIds) locallyEditedKeysRef.current.add('assigneeIds');
     setFullTask(updatedTask);
     if (props.onUpdateTask) props.onUpdateTask(updatedTask);
   };

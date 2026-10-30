@@ -49,6 +49,9 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
   });
 }
 
+// TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
+export const HIDE_DESIGN_AUDIT = true;
+
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): string[] => {
   const audits = new Set<string>();
 
@@ -57,21 +60,21 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
 
   // Title-based checks (requested by user)
   const title = (taskTitle || '').toLowerCase();
-  if (title.includes('design')) audits.add('Design Audit');
+  if (!HIDE_DESIGN_AUDIT && title.includes('design')) audits.add('Design Audit');
   if (title.includes('ui/ux') || title.includes('ui ux')) audits.add('UI UX Audit');
   if (taskTitle.startsWith('Do a feasibility') || taskTitle.startsWith('Prepare a report') || title.includes('funnel')) {
     audits.add('Funnel Audit');
   }
 
   // Same title rules as the server's getRequiredAudits, so every audit it requires is shown here.
-  if (/graphic|reel|video|sample/.test(title)) audits.add('Design Audit');
+  if (!HIDE_DESIGN_AUDIT && /graphic|reel|video|sample/.test(title)) audits.add('Design Audit');
   if (/email|newsletter|social media/.test(title)) {
-    audits.add('Design Audit');
+    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
     audits.add('Funnel Audit');
   }
   if (/website|page|funnel|link/.test(title)) {
     audits.add('UI UX Audit');
-    audits.add('Design Audit');
+    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
     audits.add('Funnel Audit');
   }
 
@@ -80,7 +83,7 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
   (auditorRoles || []).forEach((role) => {
     const r = (role || '').toLowerCase();
     if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
-    if (r.includes('design')) audits.add('Design Audit');
+    if (!HIDE_DESIGN_AUDIT && r.includes('design')) audits.add('Design Audit');
     if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
   });
 
@@ -147,6 +150,7 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
     ].filter((text, i, all) => {
       const norm = normalizeAuditName(text);
       if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
+      if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
       return all.findIndex(t => normalizeAuditName(t) === norm) === i;
     }))
   );

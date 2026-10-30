@@ -27,10 +27,12 @@ export async function getNotifications(req: Request, res: Response) {
     // 5. System notification not linked to any task
     const forMeCondition: any[] = [
       { type: { equals: 'MENTION', mode: 'insensitive' } },
+      { type: { equals: 'REACTION', mode: 'insensitive' } },
       { title: { contains: 'mentioned you', mode: 'insensitive' } },
       { title: { contains: 'assigned you', mode: 'insensitive' } },
       { title: { contains: 'unassigned you', mode: 'insensitive' } },
       { title: { contains: 'replied to your comment', mode: 'insensitive' } },
+      { title: { contains: 'reacted', mode: 'insensitive' } },
       {
         task: {
           OR: [
@@ -96,7 +98,7 @@ export async function getNotifications(req: Request, res: Response) {
 
     // Prune orphaned comment and mention notifications whose comment was deleted from TaskComment
     const commentNotifs = notifications.filter(
-      n => (n.type === 'MENTION' || n.type === 'COMMENT') && n.taskId
+      n => (n.type === 'MENTION' || n.type === 'COMMENT' || n.type === 'REACTION') && n.taskId
     );
 
     let activeNotifications = notifications;
@@ -117,7 +119,12 @@ export async function getNotifications(req: Request, res: Response) {
         const preview = n.content?.trim();
         const matched = existingComments.find(c => {
           if (c.taskId !== n.taskId) return false;
-          if (n.actorId && c.userId !== n.actorId) return false;
+          if (n.type === 'REACTION') {
+            // For reactions, the comment belongs to the recipient of the notification (n.userId)
+            if (c.userId !== n.userId) return false;
+          } else {
+            if (n.actorId && c.userId !== n.actorId) return false;
+          }
           if (!preview) return true;
           const cPreview = toNotificationPreview(c.content);
           return cPreview === preview || c.content.includes(preview) || preview.includes(cPreview);

@@ -1,5 +1,14 @@
 import { prisma } from '../config/prisma';
 
+export type SoundChoice = 'inherit' | 'ting' | 'chime' | 'pop' | 'bell' | 'glass' | 'custom' | 'mute';
+
+export interface CategorySoundConfig {
+  preset?: SoundChoice;
+  soundUrl?: string | null;
+}
+
+export type SoundCategory = 'mention' | 'reaction' | 'comment' | 'status';
+
 export interface UserNotificationPreferences {
   status?: boolean;
   checklists?: boolean;
@@ -14,6 +23,7 @@ export interface UserNotificationPreferences {
   soundPreset?: 'ting' | 'chime' | 'pop' | 'bell' | 'glass' | 'custom';
   soundVolume?: number;
   soundUrl?: string | null;
+  typeSounds?: Partial<Record<SoundCategory, CategorySoundConfig>>;
 }
 
 export const DEFAULT_NOTIFICATION_PREFERENCES: Required<UserNotificationPreferences> = {
@@ -30,6 +40,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: Required<UserNotificationPreferen
   soundPreset: 'ting',
   soundVolume: 0.8,
   soundUrl: null as unknown as string,
+  typeSounds: {},
 };
 
 /**

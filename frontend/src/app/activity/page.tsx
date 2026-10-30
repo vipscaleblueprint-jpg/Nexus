@@ -158,6 +158,7 @@ function ActivityFeedContent() {
   const { decrementUnreadNotifications, currentUser, tasksIndex, tasks, workspaceRoles } = useAppStore();
   const hadSelectedTask = useRef(false);
   const lastUrlTaskId = useRef<string | null>(null);
+  const closedTaskIdRef = useRef<string | null>(null);
 
   const isPrivileged =
     currentUser?.systemRole === 'ADMIN' ||
@@ -318,6 +319,7 @@ function ActivityFeedContent() {
     }
 
     lastUrlTaskId.current = taskId;
+    closedTaskIdRef.current = null;
 
     if (feedScrollRef.current) {
       if (feedCache) {
@@ -390,40 +392,43 @@ function ActivityFeedContent() {
 
   // Open task if ?task= param is present in URL
   useEffect(() => {
-    const taskIdParam = searchParams.get('task');
-    const commentParam = searchParams.get('comment');
-    const commentTextParam = searchParams.get('commentText');
-    const actualTaskId = taskIdParam ? taskIdParam.split('/')[0].trim() : null;
+    const rawParam =
+      searchParams?.get('task') ||
+      (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('task') : null);
+    const commentParam =
+      searchParams?.get('comment') ||
+      (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('comment') : null);
+    const commentTextParam =
+      searchParams?.get('commentText') ||
+      (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('commentText') : null);
+    const subtaskParam =
+      searchParams?.get('subtask') ||
+      (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('subtask') : null);
+    const actualTaskId = rawParam ? rawParam.split('/')[0].trim() : null;
 
     if (actualTaskId) {
-      if ((commentParam || commentTextParam) && !targetCommentInfo) {
-        setTargetCommentInfo({ id: commentParam || null, text: commentTextParam || null });
+      if (actualTaskId === closedTaskIdRef.current) return;
+      if (commentParam || commentTextParam || subtaskParam) {
+        setTargetCommentInfo({
+          id: commentParam || null,
+          text: commentTextParam || null,
+          subtaskId: subtaskParam || null,
+        });
       }
       if (actualTaskId !== lastUrlTaskId.current && actualTaskId !== selectedTask?.id) {
         lastUrlTaskId.current = actualTaskId;
         handleOpenTask(actualTaskId);
       }
-    } else if (hadSelectedTask.current && selectedTask) {
-      lastUrlTaskId.current = null;
-      setSelectedTask(null);
-      setTargetCommentInfo(null);
     }
   }, [searchParams]);
 
   // Sync selectedTask to URL searchParams
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && selectedTask) {
       const url = new URL(window.location.href);
-      if (selectedTask) {
-        hadSelectedTask.current = true;
-        if (url.searchParams.get('task') !== selectedTask.id) {
-          url.searchParams.set('task', selectedTask.id);
-          window.history.replaceState(null, '', url.pathname + url.search);
-        }
-      } else if (hadSelectedTask.current && url.searchParams.has('task')) {
-        url.searchParams.delete('task');
-        url.searchParams.delete('subtask');
-        window.history.replaceState(null, '', url.pathname + (url.search || ''));
+      if (url.searchParams.get('task') !== selectedTask.id) {
+        url.searchParams.set('task', selectedTask.id);
+        window.history.replaceState(null, '', url.pathname + url.search);
       }
     }
   }, [selectedTask]);
@@ -440,10 +445,14 @@ function ActivityFeedContent() {
       refreshTimer = setTimeout(() => fetchData(true), 400);
     };
     const onClear = () => {
+      closedTaskIdRef.current = selectedTask?.id || lastUrlTaskId.current;
       lastUrlTaskId.current = null;
       setSelectedTask(null);
       const u = new URL(window.location.href);
       u.searchParams.delete('task');
+      u.searchParams.delete('subtask');
+      u.searchParams.delete('comment');
+      u.searchParams.delete('commentText');
       window.history.pushState({}, '', u.toString());
     };
 
@@ -705,6 +714,10 @@ function ActivityFeedContent() {
         taskId = notif.task?.id || notif.taskId || '';
         taskTitle = notif.task?.title || 'task';
         isSubtask = (notif.title || '').includes('subtask');
+        if (isSubtask) {
+          const match = (notif.title || '').match(/(?:on subtask|to subtask|from subtask|commented on subtask|subtask)\s+([^:]+?)(?:\s+in\s+task|\s+on\s+task|\s+from\s+|$)/i);
+          if (match) subtaskTitle = match[1].trim();
+        }
         content = notif.content || '';
         isRead = notif.isRead !== false;
         title = notif.title || '';
@@ -1489,6 +1502,8 @@ function ActivityFeedContent() {
           isOpen={true}
           mode="full"
           onClose={() => {
+            closedTaskIdRef.current = selectedTask?.id || lastUrlTaskId.current;
+            lastUrlTaskId.current = null;
             setSelectedTask(null);
             setTargetCommentInfo(null);
             if (typeof window !== 'undefined') {
@@ -1496,12 +1511,14 @@ function ActivityFeedContent() {
               url.searchParams.delete('task');
               url.searchParams.delete('subtask');
               url.searchParams.delete('comment');
+              url.searchParams.delete('commentText');
               window.history.replaceState(null, '', url.pathname + (url.search || ''));
             }
           }}
           task={selectedTask}
           targetCommentId={targetCommentInfo?.id}
           targetCommentText={targetCommentInfo?.text}
+          targetSubtaskId={targetCommentInfo?.subtaskId}
           scrollToComments={Boolean(targetCommentInfo)}
           workspaceRoles={workspaceRoles}
           onUpdateTask={(updatedTask) => {

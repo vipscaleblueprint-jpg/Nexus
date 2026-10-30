@@ -5,8 +5,9 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2 } from 'lucide-react';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus } from '@/components/modals/TaskDetailModal';
+import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck } from 'lucide-react';
+import { getTaskAuditStatus } from '@/lib/auditChecklist';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus } from '@/components/modals/TaskDetailModal';
 import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -377,32 +378,8 @@ const CardContent = memo(({
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
       return workspaceUsers;
     }
-    const teamRoleToTeamId = new Map<string, string>();
-    workspaceTeams.forEach((team: any) => {
-      (team.teamRoles || []).forEach((tr: any) => {
-        teamRoleToTeamId.set(tr.name.toLowerCase(), team.id);
-      });
-    });
-
-    const filteredUsers = workspaceUsers.filter((u: any) => {
-      const userRoles = (u.roles || []) as string[];
-      return localRoleRestrictions.some((role: string) => {
-        if (userRoles.map(r => r.toUpperCase()).includes(role.toUpperCase())) return true;
-        const teamId = teamRoleToTeamId.get(role.toLowerCase());
-        if (teamId && (u as any).teamId === teamId) return true;
-        return false;
-      });
-    });
-
-    if (currentUser && !filteredUsers.some(u => u.id === currentUser.id)) {
-      const me = workspaceUsers.find(u => u.id === currentUser.id);
-      if (me) {
-        filteredUsers.push(me);
-      }
-    }
-
-    return filteredUsers;
-  }, [workspaceUsers, workspaceTeams, localRoleRestrictions, currentUser]);
+    return resolveUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams);
+  }, [workspaceUsers, workspaceTeams, localRoleRestrictions]);
 
   const handleAssigneeToggle = async (user: any) => {
     if (!currentUser) return;
@@ -481,8 +458,12 @@ const CardContent = memo(({
     if (!currentUser) return;
 
     const matchingUsers = resolveUsersFromRoleRestrictions(next, workspaceUsers, workspaceTeams);
-    const matchingIds = matchingUsers.map((u: any) => u.id);
-    const primaryAssignee = matchingUsers.length > 0 ? matchingUsers[0] : null;
+    const currentAssignees = assignees;
+    const validAssignees = next.length > 0
+      ? currentAssignees.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
+      : [];
+    const validIds = validAssignees.map((u: any) => u.id);
+    const primaryAssignee = validAssignees.length > 0 ? validAssignees[0] : null;
 
     latestRoleRestrictionsRef.current = next;
     setLocalRoleRestrictions(next);
@@ -491,8 +472,8 @@ const CardContent = memo(({
     const updatedTask = {
       ...task,
       assigneeRoleRestrictions: next,
-      assignees: matchingUsers,
-      assigneeIds: matchingIds,
+      assignees: validAssignees,
+      assigneeIds: validIds,
       assignee: primaryAssignee,
       assigneeId: primaryAssignee?.id || null,
     };
@@ -504,9 +485,9 @@ const CardContent = memo(({
     try {
       const parentId = isSubtask ? ((task as Subtask).taskId || (task as any).parentTaskId) : null;
       if (isSubtask && parentId) {
-        await tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any);
+        await tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any);
       } else {
-        await tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: matchingIds } as any);
+        await tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any);
       }
       toast.success(next.length > 0 ? 'Team role updated' : 'Team role cleared');
     } catch (e: any) {
@@ -524,17 +505,7 @@ const CardContent = memo(({
     return task.description.replace(/<[^>]*>?/gm, '').trim();
   }, [task.description]);
 
-    let checklistTotal = 0;
-  let checklistCompleted = 0;
-  if ('checklists' in task && task.checklists) {
-    task.checklists.forEach((c: any) => {
-      if (isSubtask && c.subtaskId !== task.id) return;
-      if (!isSubtask && c.subtaskId) return;
-      
-      checklistTotal += c.items?.length || 0;
-      checklistCompleted += c.items?.filter((i: any) => i.completed).length || 0;
-    });
-  }
+  const auditStatus = useMemo(() => getTaskAuditStatus(task), [task]);
 
   const breadcrumbs = 'list' in task && task.list ? `In ${task.list.space?.name || 'Space'} | ${task.list.folder?.name || 'Folder'} | ${task.list.name}` : '';
   const statusStr = ('status' in task && task.status) ? task.status : ('completed' in task && task.completed ? 'CLOSED' : 'PENDING');
@@ -547,7 +518,7 @@ const CardContent = memo(({
     <div className="flex flex-col w-full text-left">
       <div className="flex items-start justify-between gap-2 min-w-0">
         <h4
-          className={`text-[13px] font-semibold text-foreground leading-tight line-clamp-2 break-words ${!isSubtask ? 'pr-5' : ''}`}
+          className={`text-[13px] font-semibold text-foreground leading-tight break-words whitespace-normal ${!isSubtask ? 'pr-5' : ''}`}
           title={task.title}
         >
           {task.title}
@@ -555,13 +526,13 @@ const CardContent = memo(({
       </div>
 
       {!isSubtask && breadcrumbs && (
-        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 truncate mt-1">
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 break-words whitespace-normal mt-1">
           {breadcrumbs}
         </div>
       )}
 
       {isSubtask && breadcrumbs && (
-        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 truncate mt-1">
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 break-words whitespace-normal mt-1">
           {breadcrumbs}
         </div>
       )}
@@ -731,11 +702,44 @@ const CardContent = memo(({
           )}
         </div>
 
-        {/* Checklists */}
-        {checklistTotal > 0 && (
-          <div className={`${fieldHoverClass} w-full text-zinc-500 dark:text-zinc-500 dark:text-zinc-400`}>
-            <CheckSquare className="w-3.5 h-3.5" />
-            <span>{checklistCompleted}/{checklistTotal}</span>
+        {/* Things to Audit */}
+        {auditStatus.hasRequiredAudits && (
+          <div
+            className={`${fieldHoverClass} w-full ${
+              auditStatus.isComplete
+                ? 'text-emerald-500 dark:text-emerald-400'
+                : 'text-zinc-500 dark:text-zinc-400'
+            }`}
+            title={
+              auditStatus.isComplete
+                ? 'All audits completed'
+                : `Audits: ${auditStatus.completedCount}/${auditStatus.totalCount} completed (${auditStatus.uncheckedAudits.join(', ')})`
+            }
+            onClick={(e) => {
+              if (auditStatus.uncheckedAudits.length > 0) {
+                const pendingHighlight = {
+                  taskId: task.id,
+                  targetStatus: 'CLOSED',
+                  uncheckedAudits: auditStatus.uncheckedAudits,
+                  openSubtasks: [],
+                };
+                (window as any).__pendingAuditHighlight = pendingHighlight;
+                window.dispatchEvent(
+                  new CustomEvent('task:highlight-audits', {
+                    detail: pendingHighlight,
+                  })
+                );
+              }
+            }}
+          >
+            <ShieldCheck
+              className={`w-3.5 h-3.5 shrink-0 ${
+                auditStatus.isComplete
+                  ? 'text-emerald-500 dark:text-emerald-400'
+                  : 'text-zinc-500 dark:text-zinc-400'
+              }`}
+            />
+            <span>{auditStatus.completedCount}/{auditStatus.totalCount}</span>
           </div>
         )}
 
@@ -797,21 +801,23 @@ const CardContent = memo(({
                     const teamRoles = team.teamRoles || [];
                     const current = latestRoleRestrictionsRef.current;
                     const hasRoles = teamRoles.length > 0;
-                    const allSelected = hasRoles && teamRoles.every((r: any) => current.includes(r.name));
-                    const someSelected = hasRoles && teamRoles.some((r: any) => current.includes(r.name));
+                    const allSelected = hasRoles && teamRoles.every((r: any) => hasRole(current, r.name));
+                    const someSelected = hasRoles && teamRoles.some((r: any) => hasRole(current, r.name));
 
                     return (
                       <div key={team.id} className="mb-2">
                         <div
                           onClick={() => {
                             if (!hasRoles) return;
+                            const isAllSelected = hasRoles && teamRoles.every((r: any) => hasRole(current, r.name));
                             let next = [...current];
-                            if (allSelected) {
-                              next = next.filter(r => !teamRoles.find((tr: any) => tr.name === r));
+                            if (isAllSelected) {
+                              next = next.filter(r => !teamRoles.some((tr: any) => matchesRole(tr.name, r)));
                             } else {
-                              const toAdd = teamRoles.filter((tr: any) => !next.includes(tr.name)).map((tr: any) => tr.name);
+                              const toAdd = teamRoles.filter((tr: any) => !hasRole(next, tr.name)).map((tr: any) => tr.name);
                               next = [...next, ...toAdd];
                             }
+                            next = normalizeRoles(next, workspaceTeams);
                             handleRoleRestrictionsChange(next);
                           }}
                           className={`flex items-center gap-2 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase bg-zinc-800/40 rounded ${hasRoles ? 'cursor-pointer hover:bg-zinc-800/70 hover:text-zinc-200 transition-colors' : ''} ${someSelected ? 'text-indigo-400' : 'text-zinc-400'}`}
@@ -830,15 +836,17 @@ const CardContent = memo(({
                         {teamRoles && teamRoles.length > 0 && (
                           <div className="flex flex-col ml-[15px] pl-3 py-0.5 border-l border-zinc-700/50 mt-1 mb-1 relative">
                             {teamRoles.map((role: any) => {
-                              const selected = localRoleRestrictions.includes(role.name);
+                              const selected = hasRole(localRoleRestrictions, role.name);
                               return (
                                 <div
                                   key={role.id}
                                   onClick={() => {
                                     const current = latestRoleRestrictionsRef.current;
-                                    const next = selected
-                                      ? current.filter(r => r !== role.name)
-                                      : [...current, role.name];
+                                    const isSelected = hasRole(current, role.name);
+                                    const next = normalizeRoles(
+                                      isSelected ? withoutRole(current, role.name) : [...current, role.name],
+                                      workspaceTeams
+                                    );
                                     handleRoleRestrictionsChange(next);
                                   }}
                                   className="flex items-center gap-2 cursor-pointer px-1 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700/50 hover:text-zinc-100 transition-colors rounded-md"

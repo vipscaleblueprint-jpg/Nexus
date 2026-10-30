@@ -23,6 +23,9 @@ export interface TaskNotification {
     status: string;
     listId: string;
   } | null;
+  commentId?: string | null;
+  subtaskId?: string | null;
+  details?: any;
 }
 
 export interface GetNotificationsParams {

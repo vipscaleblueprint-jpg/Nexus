@@ -182,16 +182,17 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     // "For Me" notifications (forMeCondition in notification.controller). Only chime when the filtered
     // unread count actually grows, so users never hear a sound for a notification they can't see.
     let lastSoundAt = 0;
-    s.on('notification_received', () => {
+    s.on('notification_received', (data?: { type?: string; [key: string]: any }) => {
       const prevUnread = useAppStore.getState().unreadNotifications;
-      window.dispatchEvent(new CustomEvent('notification_received'));
+      window.dispatchEvent(new CustomEvent('notification_received', { detail: data }));
       notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
         if (typeof res.unreadCount !== 'number') return;
         setUnreadNotifications(res.unreadCount);
         const now = Date.now();
         if (res.unreadCount > prevUnread && now - lastSoundAt > 1500) {
           lastSoundAt = now;
-          playNotificationSound();
+          const notifType = res.notifications?.[0]?.type || data?.type;
+          playNotificationSound(undefined, undefined, undefined, notifType);
         }
       }).catch(() => {});
     });
@@ -221,6 +222,78 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('task:comment_added', (payload: any) => {
       window.dispatchEvent(new CustomEvent('task:comment_added', { detail: payload }));
+    });
+
+    s.on('task:comment_updated', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:comment_updated', { detail: payload }));
+    });
+
+    s.on('task:comment_deleted', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:comment_deleted', { detail: payload }));
+    });
+
+    s.on('task:checklist_created', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:checklist_created', { detail: payload }));
+    });
+
+    s.on('task:checklist_item_created', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:checklist_item_created', { detail: payload }));
+      if (payload?.taskId && payload?.item) {
+        const store = useAppStore.getState();
+        const existingTask = store.tasks.find((t: any) => t.id === payload.taskId);
+        if (existingTask) {
+          const checklists = (existingTask.checklists || []).map((c: any) => {
+            if (c.id === payload.checklistId || c.name?.toLowerCase() === 'audit') {
+              const items = (c.items || []).some((i: any) => i.id === payload.item.id)
+                ? (c.items || []).map((i: any) => i.id === payload.item.id ? payload.item : i)
+                : [...(c.items || []), payload.item];
+              return { ...c, items };
+            }
+            return c;
+          });
+          store.updateTask({ ...existingTask, checklists });
+        }
+      }
+    });
+
+    s.on('task:checklist_item_updated', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:checklist_item_updated', { detail: payload }));
+      if (payload?.taskId && payload?.item) {
+        const store = useAppStore.getState();
+        const existingTask = store.tasks.find((t: any) => t.id === payload.taskId);
+        if (existingTask) {
+          const checklists = (existingTask.checklists || []).map((c: any) => {
+            if (c.id === payload.checklistId || c.name?.toLowerCase() === 'audit') {
+              const items = (c.items || []).map((i: any) => i.id === payload.item.id ? { ...i, ...payload.item } : i);
+              return { ...c, items };
+            }
+            return c;
+          });
+          store.updateTask({ ...existingTask, checklists });
+        }
+      }
+    });
+
+    s.on('task:checklist_item_deleted', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:checklist_item_deleted', { detail: payload }));
+      if (payload?.taskId && payload?.itemId) {
+        const store = useAppStore.getState();
+        const existingTask = store.tasks.find((t: any) => t.id === payload.taskId);
+        if (existingTask) {
+          const checklists = (existingTask.checklists || []).map((c: any) => {
+            if (c.id === payload.checklistId || c.name?.toLowerCase() === 'audit') {
+              const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+              return { ...c, items };
+            }
+            return c;
+          });
+          store.updateTask({ ...existingTask, checklists });
+        }
+      }
+    });
+
+    s.on('task:checklist_deleted', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:checklist_deleted', { detail: payload }));
     });
 
     s.on('task:created', (task) => {

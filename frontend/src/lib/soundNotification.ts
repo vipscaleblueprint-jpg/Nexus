@@ -6,8 +6,32 @@
  */
 
 import { useAppStore } from './store';
+import { SoundCategory, SoundChoice, CategorySoundConfig } from '@/types';
 
 export type SoundPreset = 'ting' | 'chime' | 'pop' | 'bell' | 'glass' | 'custom';
+export type { SoundCategory, SoundChoice, CategorySoundConfig };
+
+export interface SoundCategoryOption {
+  id: SoundCategory;
+  name: string;
+  description: string;
+}
+
+export const SOUND_CATEGORIES: SoundCategoryOption[] = [
+  { id: 'mention', name: '@ Mentions', description: 'When teammates directly @mention you in comments or tasks' },
+  { id: 'reaction', name: 'Comment Reactions', description: 'When teammates react with an emoji to your comments' },
+  { id: 'comment', name: 'Comments & Replies', description: 'When teammates comment or reply on your tasks' },
+  { id: 'status', name: 'Task & Status Updates', description: 'Status transitions, assignments, audits, and checklists' },
+];
+
+export function getCategoryForNotificationType(type?: string): SoundCategory {
+  if (!type) return 'status';
+  const clean = type.trim().toUpperCase();
+  if (clean === 'MENTION' || clean.includes('MENTION')) return 'mention';
+  if (clean === 'REACTION') return 'reaction';
+  if (clean === 'COMMENT' || clean === 'REPLY') return 'comment';
+  return 'status';
+}
 
 export interface SoundPresetOption {
   id: SoundPreset;
@@ -249,7 +273,12 @@ export function playPresetTone(preset: SoundPreset, volume = 0.8) {
  * Evaluates user preferences (soundEnabled, soundVolume, soundPreset, soundUrl)
  * and falls back seamlessly if custom audio playback encounters any error.
  */
-export async function playNotificationSound(overrideUrl?: string, overrideVolume?: number, overridePreset?: SoundPreset) {
+export async function playNotificationSound(
+  overrideUrl?: string,
+  overrideVolume?: number,
+  overridePreset?: SoundPreset,
+  notificationType?: string
+) {
   if (typeof window === 'undefined') return;
 
   const currentUser = useAppStore.getState().currentUser;
@@ -261,8 +290,29 @@ export async function playNotificationSound(overrideUrl?: string, overrideVolume
   }
 
   const volume = overrideVolume ?? prefs?.soundVolume ?? 0.8;
-  const preset = overridePreset ?? (prefs?.soundPreset as SoundPreset) ?? 'ting';
-  const soundUrl = overrideUrl ?? prefs?.soundUrl;
+  let preset: SoundPreset = overridePreset ?? (prefs?.soundPreset as SoundPreset) ?? 'ting';
+  let soundUrl: string | null | undefined = overrideUrl ?? prefs?.soundUrl;
+
+  // If a notification type is provided and no manual override preset/url was passed,
+  // resolve per-category sound customization with automatic inheritance
+  if (notificationType && overridePreset === undefined && overrideUrl === undefined) {
+    const category = getCategoryForNotificationType(notificationType);
+    const categoryConfig = prefs?.typeSounds?.[category];
+
+    if (categoryConfig?.preset === 'mute') {
+      return; // Category explicitly muted
+    }
+
+    if (categoryConfig?.preset && categoryConfig.preset !== 'inherit') {
+      if (categoryConfig.preset === 'custom') {
+        preset = 'custom';
+        soundUrl = categoryConfig.soundUrl || prefs?.soundUrl;
+      } else {
+        preset = categoryConfig.preset as SoundPreset;
+        soundUrl = undefined;
+      }
+    }
+  }
 
   if (preset === 'custom' && soundUrl) {
     try {

@@ -44,13 +44,16 @@ import {
   formatChecklistNotificationTitle,
 } from '../utils/roleNotification';
 import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
-import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
+import { filterUsersByNotificationPreference, shouldUserReceiveNotification } from '../utils/notificationPreferences';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
 const cuChecklistItemIdMap = new Map<string, { cuChecklistId: string; cuItemId: string }>(); // nexusItemId -> { cuChecklistId, cuItemId }
 const cuSubtaskIdMap = new Map<string, string>(); // nexusSubtaskId -> cuSubtaskId
 
+
+// TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
+const HIDE_DESIGN_AUDIT = true;
 
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
   const t = taskTitle.toLowerCase();
@@ -64,25 +67,25 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) =>
   (auditorRoles || []).forEach((role) => {
     const r = role.toLowerCase();
     if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
-    if (r.includes('design')) audits.add('Design Audit');
+    if (!HIDE_DESIGN_AUDIT && r.includes('design')) audits.add('Design Audit');
     if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
   });
 
   // 1. Graphics, Reels, Video, Samples -> ONLY Design
-  if (t.match(/graphic|reel|video|sample/)) {
+  if (!HIDE_DESIGN_AUDIT && t.match(/graphic|reel|video|sample/)) {
     audits.add('Design Audit');
   }
 
   // 2. Newsletters, Emails, Social Media Packages -> Design + Funnel
   if (t.match(/email|newsletter|social media/)) {
-    audits.add('Design Audit');
+    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
     audits.add('Funnel Audit');
   }
 
   // 3. Websites, Links, Landing Pages -> ALL THREE
   if (t.match(/website|page|funnel|link/)) {
     audits.add('UI UX Audit');
-    audits.add('Design Audit');
+    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
     audits.add('Funnel Audit');
   }
 
@@ -612,24 +615,55 @@ async function checkCanMoveFromStatus(
   }
 }
 
+export function normalizeRoleName(role: string): string {
+  if (!role) return '';
+  return role
+    .trim()
+    .toLowerCase()
+    .replace(/\baudits\b/g, 'audit')
+    .replace(/\bauditors\b/g, 'audit')
+    .replace(/\bauditor\b/g, 'audit')
+    .replace(/s\b/g, '');
+}
+
+export function matchesRole(userRole: string, targetRole: string): boolean {
+  if (!userRole || !targetRole) return false;
+  const u = userRole.trim().toLowerCase();
+  const t = targetRole.trim().toLowerCase();
+  if (u === t) return true;
+  return normalizeRoleName(u) === normalizeRoleName(t);
+}
+
 async function resolveUsersFromRoles(roleRestrictions: string[]): Promise<string[]> {
   if (!roleRestrictions || roleRestrictions.length === 0) return [];
-  const users = await prisma.user.findMany({
-    where: {
-      OR: [
-        { roles: { hasSome: roleRestrictions } },
-        {
-          team: {
-            teamRoles: {
-              some: { name: { in: roleRestrictions, mode: 'insensitive' } }
-            }
-          }
-        }
-      ]
-    },
-    select: { id: true }
+  const [users, teams] = await Promise.all([
+    prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, roles: true, systemRole: true, teamId: true }
+    }),
+    prisma.team.findMany({
+      select: { id: true, name: true }
+    })
+  ]);
+
+  const teamNameToTeamId = new Map<string, string>();
+  teams.forEach(t => {
+    if (t.name) teamNameToTeamId.set(t.name.trim().toLowerCase(), t.id);
   });
-  return users.map(u => u.id);
+
+  return users.filter(u => {
+    const userRoles = u.roles || [];
+    return roleRestrictions.some(role => {
+      // 1. Direct role match on user roles
+      if (userRoles.some(ur => matchesRole(ur, role))) return true;
+      // 2. System role match
+      if (u.systemRole && matchesRole(u.systemRole, role)) return true;
+      // 3. Whole team name match
+      const matchedTeamId = teamNameToTeamId.get(role.trim().toLowerCase());
+      if (matchedTeamId && u.teamId === matchedTeamId) return true;
+      return false;
+    });
+  }).map(u => u.id);
 }
 
 // PATCH /api/tasks/:id
@@ -709,7 +743,7 @@ export async function updateTask(req: Request, res: Response) {
         const requiredTaskAudits = Array.from(new Set([
           ...getRequiredAudits(currentTask.title, auditorRoles),
           ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)));
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
 
         const completedTexts = new Set(
           allItems
@@ -783,6 +817,8 @@ export async function updateTask(req: Request, res: Response) {
         select: { id: true, name: true, color: true }
       }) : null;
     }
+    // Invalidate Redis cache immediately BEFORE socket emit and HTTP response
+    await invalidateCache(`task:${taskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(() => {});
 
     // Broadcast IMMEDIATELY after update
     const roomListId = listId || currentListId || currentTask.listId;
@@ -1076,8 +1112,27 @@ export async function updateTask(req: Request, res: Response) {
               user,
             };
           }
-
           if (activity) emitActivity(activity);
+
+          if (assigneeRoleRestrictions !== undefined) {
+            const roleLog = await prisma.auditLog.create({
+              data: {
+                action: 'TEAM_ROLE_CHANGE',
+                entity: 'TASK',
+                entityId: taskId,
+                userId: actingUserId,
+                details: { roles: assigneeRoleRestrictions },
+              },
+            });
+            emitActivity({
+              id: roleLog.id,
+              type: 'team_role_change',
+              author: user?.name || 'Someone',
+              roles: assigneeRoleRestrictions,
+              date: roleLog.createdAt,
+              user,
+            });
+          }
         } catch (err) {
           console.error('Background task logging error:', err);
         }
@@ -1179,7 +1234,7 @@ export async function moveTask(req: Request, res: Response) {
         const requiredTaskAudits = Array.from(new Set([
           ...getRequiredAudits(currentTask.title, auditorRoles),
           ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)));
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
 
         const completedTexts = new Set(
           allItems
@@ -1737,6 +1792,55 @@ export async function toggleCommentReaction(req: Request, res: Response) {
       include: { user: { select: { id: true, name: true } } },
     });
 
+    // If reaction was added, notify comment author in background (fire-and-forget)
+    if (!existing) {
+      (async () => {
+        const comment = await prisma.taskComment.findUnique({
+          where: { id: commentId },
+          select: {
+            id: true,
+            userId: true,
+            content: true,
+            taskId: true,
+            subtaskId: true,
+            task: { select: { title: true } },
+            subtask: { select: { title: true } },
+          },
+        });
+
+        if (comment && comment.userId && comment.userId !== effectiveUserId) {
+          const allowed = await shouldUserReceiveNotification(comment.userId, 'comments');
+          if (allowed) {
+            const actor = await prisma.user.findUnique({
+              where: { id: effectiveUserId },
+              select: { name: true },
+            });
+            const actorName = actor?.name || 'Someone';
+            const targetTitle = comment.subtask?.title || comment.task?.title || 'task';
+            const contextType = comment.subtaskId ? 'subtask' : 'task';
+
+            await prisma.taskNotification.create({
+              data: {
+                userId: comment.userId,
+                actorId: effectiveUserId,
+                taskId: comment.taskId,
+                type: 'REACTION',
+                title: `${actorName} reacted ${emoji} to your comment on ${contextType} ${targetTitle}`,
+                content: toNotificationPreview(comment.content),
+              },
+            });
+
+            io.to(`user:${comment.userId}`).emit('notification_received', {
+              type: 'REACTION',
+              taskId: comment.taskId,
+              commentId: comment.id,
+              subtaskId: comment.subtaskId,
+            });
+          }
+        }
+      })().catch((err) => console.error('toggleCommentReaction: notification failed:', err));
+    }
+
     return res.json({ reactions, toggled: existing ? 'removed' : 'added' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1947,12 +2051,17 @@ export async function getTaskActivities(req: Request, res: Response) {
           user: log.user,
         };
       }
-      if (log.action === 'AUDIT_ITEM_CHECKED' || log.action === 'CHECKLIST_ITEM_CHECKED') {
+      if (
+        log.action === 'AUDIT_ITEM_CHECKED' ||
+        log.action === 'CHECKLIST_ITEM_CHECKED' ||
+        log.action === 'AUDIT_ITEM_UNCHECKED' ||
+        log.action === 'CHECKLIST_ITEM_UNCHECKED'
+      ) {
         return {
           id: log.id,
           type: log.action.toLowerCase(),
           author: log.user?.name || 'Someone',
-          itemName: details.itemName,
+          itemName: details.itemName || details.text || details.itemText,
           checklistName: details.checklistName,
           isAudit: details.isAudit,
           subtaskTitle: details.subtaskTitle,
@@ -2305,7 +2414,7 @@ export async function updateSubtask(req: Request, res: Response) {
           const requiredSubtaskAudits = Array.from(new Set([
             ...getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions),
             ...activeItems,
-          ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)));
+          ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
 
           const completedTexts = new Set(
             allItems
@@ -2526,7 +2635,7 @@ export async function updateSubtask(req: Request, res: Response) {
     }
 
     let statusActivity: any = null;
-    await invalidateCache(`task:${taskId}`);
+    await invalidateCache(`task:${taskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(() => {});
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 
@@ -2957,84 +3066,20 @@ export async function createChecklistItem(req: Request, res: Response) {
     // causing a 12-20s cold Postgres query storm that blocks the Prisma connection pool!
     if (targetTaskId) {
       invalidateCache(`task:${targetTaskId}`).catch(console.error);
+      invalidateCache(`task:activities:${targetTaskId}`).catch(console.error);
     }
     if (targetSubtaskId) {
       invalidateCache(`task:${targetSubtaskId}`).catch(console.error);
+      invalidateCache(`task:activities:${targetSubtaskId}`).catch(console.error);
     }
 
-    // --- Background Operations: ClickUp Sync, AuditLog & Notifications ---
+    // --- Background Operations: AuditLog & Notifications (Immediate), ClickUp Sync (Isolated) ---
     (async () => {
       try {
         if (text && text.startsWith('!')) return; // Internal Nexus exclusion marker
         const cl = item.checklist || checklist;
-        let cuChecklistId = cl?.externalId;
 
-        // Fallback: look up checklist from ClickUp by name if externalId is missing
-        if (!cuChecklistId && cl) {
-          let parentExternalId = null;
-          if (cl.subtaskId) {
-            const st = await prisma.subtask.findUnique({ where: { id: cl.subtaskId }, select: { title: true, externalId: true } });
-            parentExternalId = st?.externalId;
-            if (!parentExternalId) {
-              const parent = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
-              if (st && parent?.externalId) {
-                const { findClickUpSubtaskByName } = require('../services/clickupService');
-                parentExternalId = await findClickUpSubtaskByName(parent.externalId, st.title);
-              }
-            }
-          } else {
-            const parentTask = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
-            parentExternalId = parentTask?.externalId;
-          }
-
-          if (parentExternalId) {
-            const clickUpTaskId = extractClickUpTaskId(parentExternalId);
-            const foundId = await findClickUpChecklistByName(clickUpTaskId, cl.name);
-            if (foundId) {
-              await prisma.checklist.update({ where: { id: checklistId }, data: { externalId: foundId } });
-              cuChecklistId = foundId;
-            }
-          }
-        }
-
-        // 1. ClickUp Sync: create item (and resolve if completed)
-        if (cuChecklistId) {
-          const cuItemId = await safeCreateClickUpChecklistItem(cuChecklistId, text || '');
-          if (cuItemId) {
-            await prisma.checklistItem.update({ where: { id: item.id }, data: { externalId: cuItemId } });
-            if (completed) {
-              await safeUpdateClickUpChecklistItem(cuChecklistId, cuItemId, { resolved: true });
-            }
-          }
-        }
-
-        // 2. Checklist Item Assignment Notification
-        if (assigneeId && cl) {
-          const targetTask = cl.task || cl.subtask?.task;
-          const subtask = cl.subtask;
-          const actor = userId
-            ? await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true } })
-            : null;
-          const actorName = actor?.name || 'Someone';
-
-          if (assigneeId !== userId) {
-            const shouldNotify = await filterUsersByNotificationPreference([assigneeId], 'checklists');
-            if (shouldNotify.length > 0) {
-              await prisma.taskNotification.create({
-                data: {
-                  userId: assigneeId,
-                  actorId: userId || '',
-                  taskId: targetTask?.id || subtask?.taskId || '',
-                  type: 'CHECKLIST_ITEM_ASSIGNED',
-                  title: `${actorName} assigned you "${item.text}" in ${cl.name || 'Checklist'}`,
-                },
-              });
-              io.to(`user:${assigneeId}`).emit('notification_received');
-            }
-          }
-        }
-
-        // 3. AuditLog & Role Notifications on Item Check (completed === true)
+        // 1. AuditLog & Role Notifications on Item Check (completed === true)
         if (completed === true && cl) {
           const targetTask = cl.task || cl.subtask?.task;
           const subtask = cl.subtask;
@@ -3117,13 +3162,83 @@ export async function createChecklistItem(req: Request, res: Response) {
               isAudit,
               date: log.createdAt,
               user: actor,
+              subtaskTitle: subtask?.title,
             };
 
             io.emit('task_activity', { listId: targetTask.listId, taskId: targetTask.id, activity });
           }
         }
+
+        // 2. Checklist Item Assignment Notification
+        if (assigneeId && cl) {
+          const targetTask = cl.task || cl.subtask?.task;
+          const subtask = cl.subtask;
+          const actor = userId
+            ? await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true } })
+            : null;
+          const actorName = actor?.name || 'Someone';
+
+          if (assigneeId !== userId) {
+            const shouldNotify = await filterUsersByNotificationPreference([assigneeId], 'checklists');
+            if (shouldNotify.length > 0) {
+              await prisma.taskNotification.create({
+                data: {
+                  userId: assigneeId,
+                  actorId: userId || '',
+                  taskId: targetTask?.id || subtask?.taskId || '',
+                  type: 'CHECKLIST_ITEM_ASSIGNED',
+                  title: `${actorName} assigned you "${item.text}" in ${cl.name || 'Checklist'}`,
+                },
+              });
+              io.to(`user:${assigneeId}`).emit('notification_received');
+            }
+          }
+        }
+
+        // 3. ClickUp Sync (Isolated in try/catch so network/API errors never block audit/activity)
+        try {
+          let cuChecklistId = cl?.externalId;
+          if (!cuChecklistId && cl) {
+            let parentExternalId = null;
+            if (cl.subtaskId) {
+              const st = await prisma.subtask.findUnique({ where: { id: cl.subtaskId }, select: { title: true, externalId: true } });
+              parentExternalId = st?.externalId;
+              if (!parentExternalId) {
+                const parent = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
+                if (st && parent?.externalId) {
+                  const { findClickUpSubtaskByName } = require('../services/clickupService');
+                  parentExternalId = await findClickUpSubtaskByName(parent.externalId, st.title);
+                }
+              }
+            } else {
+              const parentTask = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
+              parentExternalId = parentTask?.externalId;
+            }
+
+            if (parentExternalId) {
+              const clickUpTaskId = extractClickUpTaskId(parentExternalId);
+              const foundId = await findClickUpChecklistByName(clickUpTaskId, cl.name);
+              if (foundId) {
+                await prisma.checklist.update({ where: { id: checklistId }, data: { externalId: foundId } });
+                cuChecklistId = foundId;
+              }
+            }
+          }
+
+          if (cuChecklistId) {
+            const cuItemId = await safeCreateClickUpChecklistItem(cuChecklistId, text || '');
+            if (cuItemId) {
+              await prisma.checklistItem.update({ where: { id: item.id }, data: { externalId: cuItemId } });
+              if (completed) {
+                await safeUpdateClickUpChecklistItem(cuChecklistId, cuItemId, { resolved: true });
+              }
+            }
+          }
+        } catch (cuErr) {
+          console.error('[ClickUp] createChecklistItem sync error:', cuErr);
+        }
       } catch (err) {
-        console.error('[ClickUp] createChecklistItem sync error:', err);
+        console.error('[createChecklistItem background error]:', err);
       }
     })();
 
@@ -3170,12 +3285,14 @@ export async function updateChecklistItem(req: Request, res: Response) {
     io.emit('task:checklist_item_updated', { taskId, subtaskId, checklistId: req.params.checklistId, item });
     if (taskId) {
       invalidateCache(`task:${taskId}`).catch(console.error);
+      invalidateCache(`task:activities:${taskId}`).catch(console.error);
     }
     if (subtaskId) {
       invalidateCache(`task:${subtaskId}`).catch(console.error);
+      invalidateCache(`task:activities:${subtaskId}`).catch(console.error);
     }
 
-    // --- Background Operations: ClickUp Sync, AuditLog & Role Notifications ---
+    // --- Background Operations: AuditLog & Notifications (Immediate), ClickUp Sync (Isolated) ---
     (async () => {
       try {
         const itemRef = await prisma.checklistItem.findUnique({ 
@@ -3225,13 +3342,104 @@ export async function updateChecklistItem(req: Request, res: Response) {
           }
         });
 
-        // 1. ClickUp Sync
-        if (itemRef?.externalId && itemRef.checklist?.externalId) {
-          const cuPayload: { name?: string; resolved?: boolean } = {};
-          if (text !== undefined) cuPayload.name = text;
-          if (completed !== undefined) cuPayload.resolved = completed;
-          if (Object.keys(cuPayload).length > 0) {
-            await safeUpdateClickUpChecklistItem(itemRef.checklist.externalId, itemRef.externalId, cuPayload);
+        // 1. AuditLog & Role Notifications on Item Check / Uncheck
+        if (completed !== undefined && itemRef?.checklist) {
+          const checklist = itemRef.checklist;
+          const targetTask = checklist.task || checklist.subtask?.task;
+          const subtask = checklist.subtask;
+          const isAudit = isAuditItem(checklist.name, itemRef.text, checklist.externalId);
+
+          const actor = userId
+            ? await prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true, name: true, avatarUrl: true, email: true },
+              })
+            : null;
+          const actorName = actor?.name || 'Someone';
+
+          const notifTitle = formatChecklistNotificationTitle(
+            actorName,
+            itemRef.text,
+            targetTask?.title || subtask?.title || 'task',
+            isAudit
+          );
+
+          // Create AuditLog entry
+          const log = await prisma.auditLog.create({
+            data: {
+              action: completed 
+                ? (isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED')
+                : (isAudit ? 'AUDIT_ITEM_UNCHECKED' : 'CHECKLIST_ITEM_UNCHECKED'),
+              entity: 'TASK',
+              entityId: targetTask?.id || subtask?.taskId || '',
+              userId: userId || '',
+              details: {
+                isAudit,
+                completed,
+                itemId: itemRef.id,
+                itemName: itemRef.text,
+                checklistId: checklist.id,
+                checklistName: checklist.name,
+                subtaskTitle: subtask?.title,
+              },
+            },
+          });
+
+          // Recipients: Assignees of task + subtask (only notify on check)
+          if (targetTask) {
+            if (completed) {
+              const combinedAssignees = [
+                ...(targetTask.assignees || []),
+                ...(subtask?.assignees || []),
+              ];
+              const rawRecipients = await getChecklistCheckRecipients(
+                {
+                  id: targetTask.id,
+                  teamId: targetTask.teamId,
+                  assigneeId: targetTask.assigneeId,
+                  assignees: combinedAssignees,
+                },
+                userId
+              );
+
+              const recipients = await filterUsersByNotificationPreference(
+                rawRecipients,
+                isAudit ? 'audits' : 'checklists'
+              );
+
+              if (recipients.length > 0) {
+                await prisma.taskNotification.createMany({
+                  data: recipients.map((rId: string) => ({
+                    userId: rId,
+                    actorId: userId,
+                    taskId: targetTask.id,
+                    type: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
+                    title: notifTitle,
+                  })),
+                });
+
+                recipients.forEach((rId: string) => {
+                  io.to(`user:${rId}`).emit('notification_received');
+                });
+              }
+            }
+
+            // Realtime socket broadcast for Activity page and board
+            const activity = {
+              id: log.id,
+              type: completed
+                ? (isAudit ? 'audit_item_checked' : 'checklist_item_checked')
+                : (isAudit ? 'audit_item_unchecked' : 'checklist_item_unchecked'),
+              author: actorName,
+              itemName: itemRef.text,
+              checklistName: checklist.name,
+              isAudit,
+              date: log.createdAt,
+              user: actor,
+              subtaskTitle: subtask?.title,
+            };
+
+            io.emit('task_activity', { listId: targetTask.listId, taskId: targetTask.id, activity });
           }
         }
 
@@ -3265,96 +3473,17 @@ export async function updateChecklistItem(req: Request, res: Response) {
           }
         }
 
-        // 3. AuditLog & Role Notifications on Item Check (completed === true)
-        if (completed === true && itemRef?.checklist) {
-          const checklist = itemRef.checklist;
-          const targetTask = checklist.task || checklist.subtask?.task;
-          const subtask = checklist.subtask;
-          const isAudit = isAuditItem(checklist.name, itemRef.text, checklist.externalId);
-
-          const actor = userId
-            ? await prisma.user.findUnique({
-                where: { id: userId },
-                select: { id: true, name: true, avatarUrl: true, email: true },
-              })
-            : null;
-          const actorName = actor?.name || 'Someone';
-
-          const notifTitle = formatChecklistNotificationTitle(
-            actorName,
-            itemRef.text,
-            targetTask?.title || subtask?.title || 'task',
-            isAudit
-          );
-
-          // Create AuditLog entry
-          const log = await prisma.auditLog.create({
-            data: {
-              action: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
-              entity: 'TASK',
-              entityId: targetTask?.id || subtask?.taskId || '',
-              userId: userId || '',
-              details: {
-                isAudit,
-                itemId: itemRef.id,
-                itemName: itemRef.text,
-                checklistId: checklist.id,
-                checklistName: checklist.name,
-                subtaskTitle: subtask?.title,
-              },
-            },
-          });
-
-          // Recipients: Assignees of task + subtask
-          if (targetTask) {
-            const combinedAssignees = [
-              ...(targetTask.assignees || []),
-              ...(subtask?.assignees || []),
-            ];
-            const rawRecipients = await getChecklistCheckRecipients(
-              {
-                id: targetTask.id,
-                teamId: targetTask.teamId,
-                assigneeId: targetTask.assigneeId,
-                assignees: combinedAssignees,
-              },
-              userId
-            );
-
-            const recipients = await filterUsersByNotificationPreference(
-              rawRecipients,
-              isAudit ? 'audits' : 'checklists'
-            );
-
-            if (recipients.length > 0) {
-              await prisma.taskNotification.createMany({
-                data: recipients.map((rId: string) => ({
-                  userId: rId,
-                  actorId: userId,
-                  taskId: targetTask.id,
-                  type: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
-                  title: notifTitle,
-                })),
-              });
-
-              recipients.forEach((rId: string) => {
-                io.to(`user:${rId}`).emit('notification_received');
-              });
+        // 3. ClickUp Sync (Isolated in try/catch)
+        if (itemRef?.externalId && itemRef.checklist?.externalId) {
+          try {
+            const cuPayload: { name?: string; resolved?: boolean } = {};
+            if (text !== undefined) cuPayload.name = text;
+            if (completed !== undefined) cuPayload.resolved = completed;
+            if (Object.keys(cuPayload).length > 0) {
+              await safeUpdateClickUpChecklistItem(itemRef.checklist.externalId, itemRef.externalId, cuPayload);
             }
-
-            // Realtime socket broadcast for Activity page and board
-            const activity = {
-              id: log.id,
-              type: isAudit ? 'audit_item_checked' : 'checklist_item_checked',
-              author: actorName,
-              itemName: itemRef.text,
-              checklistName: checklist.name,
-              isAudit,
-              date: log.createdAt,
-              user: actor,
-            };
-
-            io.emit('task_activity', { listId: targetTask.listId, taskId: targetTask.id, activity });
+          } catch (cuErr) {
+            console.error('[ClickUp] updateChecklistItem sync error:', cuErr);
           }
         }
       } catch (err) {

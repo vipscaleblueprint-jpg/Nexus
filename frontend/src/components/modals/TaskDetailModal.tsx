@@ -835,6 +835,12 @@ export function TaskDetailModalContent({
             onUpdateTaskRef.current({ ...taskRef.current, subtasks: incoming.subtasks });
           }
         }
+        if (incoming.checklists !== undefined && taskRef.current) {
+          taskRef.current.checklists = incoming.checklists;
+          if (onUpdateTaskRef.current) {
+            onUpdateTaskRef.current({ ...taskRef.current, checklists: incoming.checklists });
+          }
+        }
         if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
           if (incoming.assignees !== undefined) {
             setLocalAssignees(incoming.assignees);
@@ -2430,14 +2436,16 @@ export function TaskDetailModalContent({
 
     const transitionCheck = canTransitionTaskStatus(task, newStatus);
     if (!transitionCheck.allowed) {
-      window.dispatchEvent(new CustomEvent('task:highlight-audits', {
-        detail: {
-          taskId: task.id,
-          targetStatus: newStatus,
-          uncheckedAudits: transitionCheck.uncheckedAudits,
-          openSubtasks: transitionCheck.openSubtasks,
-        }
-      }));
+      if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+        window.dispatchEvent(new CustomEvent('task:highlight-audits', {
+          detail: {
+            taskId: task.id,
+            targetStatus: newStatus,
+            uncheckedAudits: transitionCheck.uncheckedAudits,
+            openSubtasks: transitionCheck.openSubtasks,
+          }
+        }));
+      }
       toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
       return;
     }
@@ -4106,7 +4114,13 @@ export function TaskDetailModalContent({
                   checklists={task.checklists || []}
                   currentUser={currentUser}
                   onUpdateChecklists={(checklists) => {
-                    if (onUpdateTask) onUpdateTask({ ...task, checklists });
+                    const updatedTask = { ...(taskRef.current || task), checklists };
+                    if (taskRef.current) taskRef.current = updatedTask;
+                    if (onUpdateTask) onUpdateTask(updatedTask);
+                    useAppStore.getState().updateTask(updatedTask);
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+                    }
                   }}
                 />
                 <ChecklistsSection
@@ -4115,7 +4129,13 @@ export function TaskDetailModalContent({
                   checklists={task.checklists || []}
                   currentUser={currentUser}
                   onUpdateChecklists={(checklists) => {
-                    if (onUpdateTask) onUpdateTask({ ...task, checklists });
+                    const updatedTask = { ...(taskRef.current || task), checklists };
+                    if (taskRef.current) taskRef.current = updatedTask;
+                    if (onUpdateTask) onUpdateTask(updatedTask);
+                    useAppStore.getState().updateTask(updatedTask);
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+                    }
                   }}
                 />
                 <input type="file" ref={fileInputRef} className="hidden" onChange={handleDescriptionFileChange} />
@@ -5949,8 +5969,10 @@ export function SubtaskDetailView({
       const currentSub = subtaskRef.current;
       if (!currentSub || payload.subtaskId !== currentSub.id || !payload.item) return;
 
+      let found = false;
       const checklists = (currentSub.checklists || []).map((c: any) => {
         if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+          found = true;
           const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
           if (hasItem) {
             const items = (c.items || []).map((i: any) =>
@@ -5965,7 +5987,19 @@ export function SubtaskDetailView({
         }
         return c;
       });
-      syncSubtaskToParent({ ...currentSub, checklists });
+      const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+      const finalChecklists = found ? checklists : [
+        ...(currentSub.checklists || []),
+        {
+          id: payload.checklistId,
+          taskId: parentTask.id,
+          subtaskId: currentSub.id,
+          name: isAudit ? 'Audit' : 'Checklist',
+          createdAt: new Date().toISOString(),
+          items: [payload.item],
+        }
+      ];
+      syncSubtaskToParent({ ...currentSub, checklists: finalChecklists });
     };
 
     const handleChecklistItemCreated = (payload: { taskId: string; subtaskId?: string | null; checklistId: string; item: any }) => {
@@ -8586,6 +8620,54 @@ export function TaskDetailModal(props: Props) {
               const canonicalStatus = props.task?.status || prev.status;
               const merged: any = { ...prev, ...res.task };
               locallyEditedKeysRef.current.forEach((key) => { merged[key] = (prev as any)[key]; });
+
+              // Preserve optimistic / locally modified checklist items across background refresh
+              if (prev.checklists && res.task.checklists) {
+                const prevItemsMap = new Map<string, any>();
+                (prev.checklists || []).forEach((c: any) => {
+                  (c.items || []).forEach((item: any) => {
+                    const normText = normalizeAuditName(item.text || '');
+                    if (item.id) prevItemsMap.set(String(item.id), item);
+                    if (normText) prevItemsMap.set(normText, item);
+                  });
+                });
+
+                const mergedChecklists = (res.task.checklists || []).map((c: any) => {
+                  const items = (c.items || []).map((serverItem: any) => {
+                    const normText = normalizeAuditName(serverItem.text || '');
+                    const prevItem = prevItemsMap.get(String(serverItem.id)) || prevItemsMap.get(normText);
+                    if (prevItem && prevItem.completed !== undefined) {
+                      return {
+                        ...serverItem,
+                        completed: prevItem.completed || serverItem.completed,
+                        checkedById: prevItem.checkedById || serverItem.checkedById,
+                        checkedBy: prevItem.checkedBy || serverItem.checkedBy,
+                      };
+                    }
+                    return serverItem;
+                  });
+
+                  const prevCl = (prev.checklists || []).find((pc: any) => pc.id === c.id || (isNexusAuditChecklist(pc) && isNexusAuditChecklist(c)));
+                  if (prevCl) {
+                    const pendingItems = (prevCl.items || []).filter((pi: any) => 
+                      typeof pi.id === 'string' && pi.id.startsWith('temp-') &&
+                      !items.some((si: any) => normalizeAuditName(si.text) === normalizeAuditName(pi.text))
+                    );
+                    if (pendingItems.length > 0) {
+                      return { ...c, items: [...items, ...pendingItems] };
+                    }
+                  }
+                  return { ...c, items };
+                });
+
+                const pendingChecklists = (prev.checklists || []).filter((pc: any) =>
+                  typeof pc.id === 'string' && pc.id.startsWith('temp-') &&
+                  !mergedChecklists.some((mc: any) => mc.name === pc.name)
+                );
+
+                merged.checklists = [...mergedChecklists, ...pendingChecklists];
+              }
+
               // The Kanban board status (props.task.status / prev.status) is canonical when the modal opens.
               // Background getTask is used only to enrich secondary details (comments, checklists, attachments, etc.)
               // and must not revert the live status unless the user explicitly changed it in this session.
@@ -8769,8 +8851,10 @@ export function TaskDetailModal(props: Props) {
         if (!prev) return prev;
         let updated: any;
         if (!payload.subtaskId) {
+          let found = false;
           const checklists = (prev.checklists || []).map(c => {
             if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              found = true;
               const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
               if (hasItem) {
                 const items = (c.items || []).map(i =>
@@ -8785,12 +8869,25 @@ export function TaskDetailModal(props: Props) {
             }
             return c;
           });
-          updated = { ...prev, checklists };
+          const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+          const finalChecklists = found ? checklists : [
+            ...(prev.checklists || []),
+            {
+              id: payload.checklistId,
+              taskId: fullTask.id,
+              name: isAudit ? 'Audit' : 'Checklist',
+              createdAt: new Date().toISOString(),
+              items: [payload.item],
+            }
+          ];
+          updated = { ...prev, checklists: finalChecklists };
         } else {
           const subtasks = (prev.subtasks || []).map((st: any) => {
             if (st.id === payload.subtaskId) {
+              let found = false;
               const checklists = (st.checklists || []).map((c: any) => {
                 if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                  found = true;
                   const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
                   if (hasItem) {
                     const items = (c.items || []).map((i: any) =>
@@ -8805,13 +8902,29 @@ export function TaskDetailModal(props: Props) {
                 }
                 return c;
               });
-              return { ...st, checklists };
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const finalChecklists = found ? checklists : [
+                ...(st.checklists || []),
+                {
+                  id: payload.checklistId,
+                  taskId: fullTask.id,
+                  subtaskId: payload.subtaskId,
+                  name: isAudit ? 'Audit' : 'Checklist',
+                  createdAt: new Date().toISOString(),
+                  items: [payload.item],
+                }
+              ];
+              return { ...st, checklists: finalChecklists };
             }
             return st;
           });
           updated = { ...prev, subtasks };
         }
         if (props.onUpdateTask) props.onUpdateTask(updated);
+        useAppStore.getState().updateTask(updated);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
+        }
         return updated;
       });
     };

@@ -490,13 +490,16 @@ export default function BoardPage() {
     s.on('task:checklist_item_updated', (payload: { taskId: string; checklistId: string; item: any; subtaskId?: string }) => {
       setList((prev: any) => {
         if (!prev || !prev.tasks || !payload.item) return prev;
+        let modifiedTask: any = null;
         const newTasks = prev.tasks.map((t: any) => {
           if (payload.subtaskId) {
             if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
               const updatedSubtasks = t.subtasks.map((st: any) => {
-                if (st.id === payload.subtaskId && st.checklists) {
-                  const updatedChecklists = st.checklists.map((c: any) => {
+                if (st.id === payload.subtaskId) {
+                  let found = false;
+                  const updatedChecklists = (st.checklists || []).map((c: any) => {
                     if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                      found = true;
                       const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
                       if (hasItem) {
                         const updatedItems = (c.items || []).map((i: any) =>
@@ -511,15 +514,31 @@ export default function BoardPage() {
                     }
                     return c;
                   });
+                  if (!found) {
+                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+                    const newChecklist = {
+                      id: payload.checklistId,
+                      taskId: t.id,
+                      subtaskId: payload.subtaskId,
+                      name: isAudit ? 'Audit' : 'Checklist',
+                      createdAt: new Date().toISOString(),
+                      items: [payload.item],
+                    };
+                    return { ...st, checklists: [...(st.checklists || []), newChecklist] };
+                  }
                   return { ...st, checklists: updatedChecklists };
                 }
                 return st;
               });
-              return { ...t, subtasks: updatedSubtasks };
+              const ut = { ...t, subtasks: updatedSubtasks };
+              modifiedTask = ut;
+              return ut;
             }
-          } else if (t.id === payload.taskId && t.checklists) {
-            const updatedChecklists = t.checklists.map((c: any) => {
+          } else if (t.id === payload.taskId) {
+            let found = false;
+            const updatedChecklists = (t.checklists || []).map((c: any) => {
               if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                found = true;
                 const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
                 if (hasItem) {
                   const updatedItems = (c.items || []).map((i: any) =>
@@ -534,10 +553,31 @@ export default function BoardPage() {
               }
               return c;
             });
-            return { ...t, checklists: updatedChecklists };
+            if (!found) {
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const newChecklist = {
+                id: payload.checklistId,
+                taskId: t.id,
+                name: isAudit ? 'Audit' : 'Checklist',
+                createdAt: new Date().toISOString(),
+                items: [payload.item],
+              };
+              const ut = { ...t, checklists: [...(t.checklists || []), newChecklist] };
+              modifiedTask = ut;
+              return ut;
+            }
+            const ut = { ...t, checklists: updatedChecklists };
+            modifiedTask = ut;
+            return ut;
           }
           return t;
         });
+        if (modifiedTask) {
+          useAppStore.getState().updateTask(modifiedTask);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: modifiedTask } }));
+          }
+        }
         return { ...prev, tasks: newTasks };
       });
     });
@@ -545,6 +585,7 @@ export default function BoardPage() {
     s.on('task:checklist_item_created', (payload: { taskId: string; checklistId: string; item: any; subtaskId?: string }) => {
       setList((prev: any) => {
         if (!prev || !prev.tasks || !payload.item) return prev;
+        let modifiedTask: any = null;
         const newTasks = prev.tasks.map((t: any) => {
           if (payload.subtaskId) {
             if (t.subtasks && t.subtasks.some((st: any) => st.id === payload.subtaskId)) {
@@ -581,7 +622,9 @@ export default function BoardPage() {
                 }
                 return st;
               });
-              return { ...t, subtasks: updatedSubtasks };
+              const ut = { ...t, subtasks: updatedSubtasks };
+              modifiedTask = ut;
+              return ut;
             }
           } else if (t.id === payload.taskId) {
             let found = false;
@@ -608,12 +651,22 @@ export default function BoardPage() {
                 createdAt: new Date().toISOString(),
                 items: [payload.item],
               };
-              return { ...t, checklists: [...(t.checklists || []), newChecklist] };
+              const ut = { ...t, checklists: [...(t.checklists || []), newChecklist] };
+              modifiedTask = ut;
+              return ut;
             }
-            return { ...t, checklists: updatedChecklists };
+            const ut = { ...t, checklists: updatedChecklists };
+            modifiedTask = ut;
+            return ut;
           }
           return t;
         });
+        if (modifiedTask) {
+          useAppStore.getState().updateTask(modifiedTask);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: modifiedTask } }));
+          }
+        }
         return { ...prev, tasks: newTasks };
       });
     });

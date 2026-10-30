@@ -679,6 +679,7 @@ export async function updateTask(req: Request, res: Response) {
       // In Review: only subtasks must be Closed (auditing happens during review)
       if (requiresClosedSubtasks(status)) {
         const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => {
+          if ((st.title || '').trim().toLowerCase().startsWith('--audit')) return false;
           const s = (st.status || '').toLowerCase();
           return s !== 'closed' && s !== 'done' && !st.completed;
         });
@@ -1148,6 +1149,7 @@ export async function moveTask(req: Request, res: Response) {
       // In Review: only subtasks must be Closed (auditing happens during review)
       if (requiresClosedSubtasks(status)) {
         const hasUnclosedSubtasks = currentTask.subtasks.some((st: any) => {
+          if ((st.title || '').trim().toLowerCase().startsWith('--audit')) return false;
           const s = (st.status || '').toLowerCase();
           return s !== 'closed' && s !== 'done' && !st.completed;
         });
@@ -2692,7 +2694,10 @@ export async function createChecklist(req: Request, res: Response) {
     });
 
     io.emit('task:checklist_created', { taskId, subtaskId: subtaskId || null, checklist });
-    invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+    invalidateCache(`task:${taskId}`).catch(console.error);
+    if (subtaskId) {
+      invalidateCache(`task:${subtaskId}`).catch(console.error);
+    }
 
     // --- ClickUp Sync: create checklist (fire-and-forget) ---
     (async () => {
@@ -2757,8 +2762,12 @@ export async function updateChecklist(req: Request, res: Response) {
     });
 
     const targetTaskId = req.params.id || (checklist as any).taskId;
+    const targetSubtaskId = (checklist as any).subtaskId || null;
     if (targetTaskId) {
-      invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+      invalidateCache(`task:${targetTaskId}`).catch(console.error);
+    }
+    if (targetSubtaskId) {
+      invalidateCache(`task:${targetSubtaskId}`).catch(console.error);
     }
 
     // --- ClickUp Sync: rename checklist ---
@@ -2789,8 +2798,12 @@ export async function deleteChecklist(req: Request, res: Response) {
     io.emit('task:checklist_deleted', { taskId: cl?.taskId || req.params.id, subtaskId: cl?.subtaskId || null, checklistId });
 
     const targetTaskId = cl?.taskId || req.params.id;
+    const targetSubtaskId = cl?.subtaskId || null;
     if (targetTaskId) {
-      invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+      invalidateCache(`task:${targetTaskId}`).catch(console.error);
+    }
+    if (targetSubtaskId) {
+      invalidateCache(`task:${targetSubtaskId}`).catch(console.error);
     }
 
     // --- ClickUp Sync ---
@@ -2835,56 +2848,145 @@ export async function deleteChecklist(req: Request, res: Response) {
 
 export async function createChecklistItem(req: Request, res: Response) {
   try {
-    const { checklistId } = req.params;
-    const { text } = req.body;
+    let { checklistId } = req.params;
+    const { text, completed, assigneeId, subtaskId, checklistName } = req.body;
+    const taskId = req.params.id;
+    const userId = (req as any).user?.id;
+
+    // Check if checklist exists or find/create it atomically if checklistId is temporary or named 'audit'
+    let checklist: any = null;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(checklistId);
+    if (isUuid) {
+      checklist = await prisma.checklist.findUnique({
+        where: { id: checklistId },
+        select: { id: true, name: true, taskId: true, subtaskId: true, externalId: true },
+      });
+    }
+
+    if (!checklist) {
+      const targetName = checklistName || 'Audit';
+      checklist = await prisma.checklist.findFirst({
+        where: {
+          taskId,
+          subtaskId: subtaskId || null,
+          name: targetName,
+        },
+        select: { id: true, name: true, taskId: true, subtaskId: true, externalId: true },
+      });
+
+      if (!checklist) {
+        checklist = await prisma.checklist.create({
+          data: {
+            name: targetName,
+            taskId,
+            subtaskId: subtaskId || null,
+          },
+          select: { id: true, name: true, taskId: true, subtaskId: true, externalId: true },
+        });
+        io.emit('task:checklist_created', { taskId, subtaskId: subtaskId || null, checklist });
+      }
+      checklistId = checklist.id;
+    }
+
+    const data: any = {
+      text: text || '',
+      checklistId,
+    };
+    if (completed !== undefined) {
+      data.completed = Boolean(completed);
+      if (completed && userId) {
+        data.checkedById = userId;
+      }
+    }
+    if (assigneeId !== undefined) {
+      data.assigneeId = assigneeId === '' ? null : assigneeId;
+    }
 
     const item = await prisma.checklistItem.create({
-      data: {
-        text: text || '',
-        checklistId,
-      },
+      data,
       include: {
-        checklist: { select: { taskId: true, subtaskId: true } },
+        checkedBy: { select: { id: true, name: true, avatarUrl: true } },
+        assignee: { select: { id: true, name: true, avatarUrl: true } },
+        checklist: {
+          select: {
+            id: true,
+            name: true,
+            externalId: true,
+            taskId: true,
+            subtaskId: true,
+            task: {
+              select: {
+                id: true,
+                title: true,
+                teamId: true,
+                assigneeId: true,
+                listId: true,
+                assignees: { select: { id: true } },
+              },
+            },
+            subtask: {
+              select: {
+                id: true,
+                title: true,
+                taskId: true,
+                assigneeId: true,
+                assignees: { select: { id: true } },
+                task: {
+                  select: {
+                    id: true,
+                    title: true,
+                    teamId: true,
+                    assigneeId: true,
+                    listId: true,
+                    assignees: { select: { id: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
-    const taskId = item.checklist?.taskId || req.params.id;
-    const subtaskId = item.checklist?.subtaskId || null;
-    io.emit('task:checklist_item_created', { taskId, subtaskId, checklistId, item });
-    if (taskId) {
-      invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+    const targetTaskId = item.checklist?.taskId || taskId;
+    const targetSubtaskId = item.checklist?.subtaskId || null;
+    io.emit('task:checklist_item_created', { taskId: targetTaskId, subtaskId: targetSubtaskId, checklistId, item });
+
+    // ONLY invalidate the specific task and subtask in Redis.
+    // NEVER invalidate 'tasks:all' or 'dashboard:all' here — doing so evicts the 1200+ task list cache,
+    // causing a 12-20s cold Postgres query storm that blocks the Prisma connection pool!
+    if (targetTaskId) {
+      invalidateCache(`task:${targetTaskId}`).catch(console.error);
+    }
+    if (targetSubtaskId) {
+      invalidateCache(`task:${targetSubtaskId}`).catch(console.error);
     }
 
-    // --- ClickUp Sync: add checklist item ---
+    // --- Background Operations: ClickUp Sync, AuditLog & Notifications ---
     (async () => {
       try {
         if (text && text.startsWith('!')) return; // Internal Nexus exclusion marker
-        const cl = await prisma.checklist.findUnique({
-          where: { id: checklistId },
-          select: { name: true, taskId: true, subtaskId: true, externalId: true },
-        });
-        
+        const cl = item.checklist || checklist;
         let cuChecklistId = cl?.externalId;
 
-        // 2. Fallback: if not in map (server restart / pre-existing checklist),
-        //    look it up from ClickUp by matching the checklist name against the parent task
+        // Fallback: look up checklist from ClickUp by name if externalId is missing
         if (!cuChecklistId && cl) {
           let parentExternalId = null;
           if (cl.subtaskId) {
             const st = await prisma.subtask.findUnique({ where: { id: cl.subtaskId }, select: { title: true, externalId: true } });
             parentExternalId = st?.externalId;
             if (!parentExternalId) {
-               const parent = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
-               if (st && parent?.externalId) {
-                 const { findClickUpSubtaskByName } = require('../services/clickupService');
-                 parentExternalId = await findClickUpSubtaskByName(parent.externalId, st.title);
-               }
+              const parent = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
+              if (st && parent?.externalId) {
+                const { findClickUpSubtaskByName } = require('../services/clickupService');
+                parentExternalId = await findClickUpSubtaskByName(parent.externalId, st.title);
+              }
             }
           } else {
             const parentTask = await prisma.task.findUnique({ where: { id: cl.taskId }, select: { externalId: true } });
             parentExternalId = parentTask?.externalId;
           }
-          
+
           if (parentExternalId) {
             const clickUpTaskId = extractClickUpTaskId(parentExternalId);
             const foundId = await findClickUpChecklistByName(clickUpTaskId, cl.name);
@@ -2895,16 +2997,137 @@ export async function createChecklistItem(req: Request, res: Response) {
           }
         }
 
+        // 1. ClickUp Sync: create item (and resolve if completed)
         if (cuChecklistId) {
           const cuItemId = await safeCreateClickUpChecklistItem(cuChecklistId, text || '');
           if (cuItemId) {
             await prisma.checklistItem.update({ where: { id: item.id }, data: { externalId: cuItemId } });
+            if (completed) {
+              await safeUpdateClickUpChecklistItem(cuChecklistId, cuItemId, { resolved: true });
+            }
           }
         }
-      } catch (err) { console.error('[ClickUp] createChecklistItem sync error:', err); }
+
+        // 2. Checklist Item Assignment Notification
+        if (assigneeId && cl) {
+          const targetTask = cl.task || cl.subtask?.task;
+          const subtask = cl.subtask;
+          const actor = userId
+            ? await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true } })
+            : null;
+          const actorName = actor?.name || 'Someone';
+
+          if (assigneeId !== userId) {
+            const shouldNotify = await filterUsersByNotificationPreference([assigneeId], 'checklists');
+            if (shouldNotify.length > 0) {
+              await prisma.taskNotification.create({
+                data: {
+                  userId: assigneeId,
+                  actorId: userId || '',
+                  taskId: targetTask?.id || subtask?.taskId || '',
+                  type: 'CHECKLIST_ITEM_ASSIGNED',
+                  title: `${actorName} assigned you "${item.text}" in ${cl.name || 'Checklist'}`,
+                },
+              });
+              io.to(`user:${assigneeId}`).emit('notification_received');
+            }
+          }
+        }
+
+        // 3. AuditLog & Role Notifications on Item Check (completed === true)
+        if (completed === true && cl) {
+          const targetTask = cl.task || cl.subtask?.task;
+          const subtask = cl.subtask;
+          const isAudit = isAuditItem(cl.name, item.text, cl.externalId);
+
+          const actor = userId
+            ? await prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true, name: true, avatarUrl: true, email: true },
+              })
+            : null;
+          const actorName = actor?.name || 'Someone';
+
+          const notifTitle = formatChecklistNotificationTitle(
+            actorName,
+            item.text,
+            targetTask?.title || subtask?.title || 'task',
+            isAudit
+          );
+
+          const log = await prisma.auditLog.create({
+            data: {
+              action: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
+              entity: 'TASK',
+              entityId: targetTask?.id || subtask?.taskId || '',
+              userId: userId || '',
+              details: {
+                isAudit,
+                itemId: item.id,
+                itemName: item.text,
+                checklistId: cl.id,
+                checklistName: cl.name,
+                subtaskTitle: subtask?.title,
+              },
+            },
+          });
+
+          if (targetTask) {
+            const combinedAssignees = [
+              ...(targetTask.assignees || []),
+              ...(subtask?.assignees || []),
+            ];
+            const rawRecipients = await getChecklistCheckRecipients(
+              {
+                id: targetTask.id,
+                teamId: targetTask.teamId,
+                assigneeId: targetTask.assigneeId,
+                assignees: combinedAssignees,
+              },
+              userId
+            );
+
+            const recipients = await filterUsersByNotificationPreference(
+              rawRecipients,
+              isAudit ? 'audits' : 'checklists'
+            );
+
+            if (recipients.length > 0) {
+              await prisma.taskNotification.createMany({
+                data: recipients.map((rId: string) => ({
+                  userId: rId,
+                  actorId: userId,
+                  taskId: targetTask.id,
+                  type: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
+                  title: notifTitle,
+                })),
+              });
+
+              recipients.forEach((rId: string) => {
+                io.to(`user:${rId}`).emit('notification_received');
+              });
+            }
+
+            const activity = {
+              id: log.id,
+              type: isAudit ? 'audit_item_checked' : 'checklist_item_checked',
+              author: actorName,
+              itemName: item.text,
+              checklistName: cl.name,
+              isAudit,
+              date: log.createdAt,
+              user: actor,
+            };
+
+            io.emit('task_activity', { listId: targetTask.listId, taskId: targetTask.id, activity });
+          }
+        }
+      } catch (err) {
+        console.error('[ClickUp] createChecklistItem sync error:', err);
+      }
     })();
 
-    return res.json({ item });
+    return res.json({ item, checklistId });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -2946,7 +3169,10 @@ export async function updateChecklistItem(req: Request, res: Response) {
     const subtaskId = item.checklist?.subtaskId || null;
     io.emit('task:checklist_item_updated', { taskId, subtaskId, checklistId: req.params.checklistId, item });
     if (taskId) {
-      invalidateCache(`task:${taskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+      invalidateCache(`task:${taskId}`).catch(console.error);
+    }
+    if (subtaskId) {
+      invalidateCache(`task:${subtaskId}`).catch(console.error);
     }
 
     // --- Background Operations: ClickUp Sync, AuditLog & Role Notifications ---
@@ -3156,10 +3382,11 @@ export async function deleteChecklistItem(req: Request, res: Response) {
     });
 
     const targetTaskId = item?.checklist?.taskId || req.params.id;
+    const targetSubtaskId = item?.checklist?.subtaskId || null;
 
     if (!item) {
       if (targetTaskId) {
-        invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+        invalidateCache(`task:${targetTaskId}`).catch(console.error);
       }
       return res.json({ success: true, message: 'Item already deleted' });
     }
@@ -3167,7 +3394,10 @@ export async function deleteChecklistItem(req: Request, res: Response) {
     await prisma.checklistItem.delete({ where: { id: itemId } });
 
     if (targetTaskId) {
-      invalidateCache(`task:${targetTaskId}`, 'tasks:all', 'dashboard:all').catch(console.error);
+      invalidateCache(`task:${targetTaskId}`).catch(console.error);
+    }
+    if (targetSubtaskId) {
+      invalidateCache(`task:${targetSubtaskId}`).catch(console.error);
     }
 
     io.emit('task:checklist_item_deleted', {

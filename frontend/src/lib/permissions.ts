@@ -98,11 +98,25 @@ export function getAssignDeniedMessage(workspaceRoles: { name: string }[] = []):
 }
 
 /** Entering In Review only needs every subtask Closed — auditing happens during review. */
-export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review'];
+export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review', 'review', 'under review', 'for review'];
 /** Post-review statuses need every subtask Closed AND every required audit checked. */
-export const COMPLETION_GATE_STATUSES = ['checking', 'closed', 'crm', 'done', 'completed'];
+export const COMPLETION_GATE_STATUSES = ['checking', 'in checking', 'inchecking', 'closed', 'crm', 'done', 'completed'];
 /** Every status that has any gate (kept for existing imports). */
 export const RESTRICTED_GATE_STATUSES = [...IN_REVIEW_STATUSES, ...COMPLETION_GATE_STATUSES];
+
+export function normalizeStatus(status?: string | null): string {
+  return (status || '').trim().toLowerCase();
+}
+
+export function isReviewStatus(status?: string | null): boolean {
+  const norm = normalizeStatus(status);
+  return IN_REVIEW_STATUSES.includes(norm);
+}
+
+export function isCompletionStatus(status?: string | null): boolean {
+  const norm = normalizeStatus(status);
+  return COMPLETION_GATE_STATUSES.includes(norm);
+}
 
 export interface TransitionCheckResult {
   allowed: boolean;
@@ -125,16 +139,20 @@ export function canTransitionTaskStatus(
     return { allowed: true, uncheckedAudits: [], openSubtasks: [], targetStatus: newStatus || '' };
   }
 
-  const currentStatusNorm = (task.status || '').trim().toLowerCase();
-  const targetStatusNorm = newStatus.trim().toLowerCase();
+  const currentStatusNorm = normalizeStatus(task.status);
+  const targetStatusNorm = normalizeStatus(newStatus);
 
   // If status is not changing, allow
   if (currentStatusNorm === targetStatusNorm) {
     return { allowed: true, uncheckedAudits: [], openSubtasks: [], targetStatus: newStatus };
   }
 
-  if (RESTRICTED_GATE_STATUSES.includes(targetStatusNorm)) {
-    const needsAudits = COMPLETION_GATE_STATUSES.includes(targetStatusNorm);
+  const isReview = isReviewStatus(targetStatusNorm);
+  const isCompletion = isCompletionStatus(targetStatusNorm);
+
+  if (isReview || isCompletion) {
+    // In Review explicitly does NOT need audits. Audits are only required for completion gate statuses.
+    const needsAudits = isCompletion && !isReview;
     const subtaskStatus = getTaskSubtaskStatus(task);
     const auditStatus = needsAudits ? getTaskAuditStatus(task) : null;
 

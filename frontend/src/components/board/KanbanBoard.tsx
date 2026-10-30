@@ -923,7 +923,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       return;
     }
 
-    const task = tasks.find((t) => t.id === active.id);
+    const task = latestTasksRef.current.find((t) => t.id === active.id) || localTasks.find((t) => t.id === active.id) || tasks.find((t) => t.id === active.id);
     if (task) {
       // Check task-level edit restriction (teamAssignAccessRole)
       const editCheck = canUserEditTask(task, currentUser);
@@ -1208,7 +1208,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       return;
     }
 
-    const originalTask = activeTask;
+    const activeId = active.id as string;
+    const originalTask = latestTasksRef.current.find((t) => t.id === activeId) || localTasks.find((t) => t.id === activeId) || activeTask;
 
     // Clear drag state
     isDraggingRef.current = false;
@@ -1217,8 +1218,6 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     if (!originalTask) {
       return;
     }
-
-    const activeId = active.id as string;
 
     // Check task-level edit restriction (teamAssignAccessRole) in drag END too
     const editCheck = canUserEditTask(originalTask, currentUser);
@@ -1239,9 +1238,9 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
     if (over) {
       const overId = over.id as string;
-      finalStatus = over.data?.current?.status;
+      finalStatus = over.data?.current?.status || over.data?.current?.task?.status;
       if (!finalStatus) {
-        const overTask = tasks.find((t) => t.id === overId);
+        const overTask = latestTasksRef.current.find((t) => t.id === overId) || localTasks.find((t) => t.id === overId) || tasks.find((t) => t.id === overId);
         if (overTask) finalStatus = overTask.status;
       }
     }
@@ -1800,20 +1799,22 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
         onReviewAudits={() => {
           if (blockedAuditAlert.task) {
             handleTaskClick(blockedAuditAlert.task);
-            const pendingHighlight = {
-              taskId: blockedAuditAlert.task.id,
-              targetStatus: blockedAuditAlert.targetStatus,
-              uncheckedAudits: blockedAuditAlert.uncheckedAudits,
-              openSubtasks: blockedAuditAlert.openSubtasks,
-            };
-            if (typeof window !== 'undefined') {
-              (window as any).__pendingAuditHighlight = pendingHighlight;
+            if (blockedAuditAlert.uncheckedAudits && blockedAuditAlert.uncheckedAudits.length > 0) {
+              const pendingHighlight = {
+                taskId: blockedAuditAlert.task.id,
+                targetStatus: blockedAuditAlert.targetStatus,
+                uncheckedAudits: blockedAuditAlert.uncheckedAudits,
+                openSubtasks: blockedAuditAlert.openSubtasks,
+              };
+              if (typeof window !== 'undefined') {
+                (window as any).__pendingAuditHighlight = pendingHighlight;
+              }
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('task:highlight-audits', {
+                  detail: pendingHighlight
+                }));
+              }, 350);
             }
-            setTimeout(() => {
-              window.dispatchEvent(new CustomEvent('task:highlight-audits', {
-                detail: pendingHighlight
-              }));
-            }, 350);
           }
         }}
         reviewButtonText={blockedAuditAlert.uncheckedAudits.length > 0 ? 'Open Task & Review Audits' : 'Open Task & Review Subtasks'}

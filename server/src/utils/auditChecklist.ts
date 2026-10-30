@@ -37,18 +37,30 @@ export function isNexusAuditChecklist(c: {
  *   (a task with no subtasks moves straight in).
  * - Completion statuses: need every subtask Closed AND every required audit checked.
  */
-export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review'];
-export const COMPLETION_GATE_STATUSES = ['checking', 'closed', 'crm', 'done', 'completed'];
+export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review', 'review', 'under review', 'for review'];
+export const COMPLETION_GATE_STATUSES = ['checking', 'in checking', 'inchecking', 'closed', 'crm', 'done', 'completed'];
 
-const norm = (status: string | null | undefined) => (status || '').trim().toLowerCase();
+const norm = (status: string | null | undefined) =>
+  (status || '').trim().toLowerCase().replace(/[\-_]/g, ' ').replace(/\s+/g, ' ');
 
-/** Moving to this status requires every subtask to be Closed. */
-export function requiresClosedSubtasks(status: string | null | undefined): boolean {
+export function isReviewStatus(status: string | null | undefined): boolean {
   const s = norm(status);
-  return IN_REVIEW_STATUSES.includes(s) || COMPLETION_GATE_STATUSES.includes(s);
+  return IN_REVIEW_STATUSES.includes(s) || s.includes('review');
+}
+
+export function isCompletionStatus(status: string | null | undefined): boolean {
+  const s = norm(status);
+  return COMPLETION_GATE_STATUSES.includes(s);
+}
+
+/** Moving to this status requires every non-audit subtask to be Closed. */
+export function requiresClosedSubtasks(status: string | null | undefined): boolean {
+  return isReviewStatus(status) || isCompletionStatus(status);
 }
 
 /** Moving to this status requires every required audit to be checked. */
 export function requiresCompletedAudits(status: string | null | undefined): boolean {
-  return COMPLETION_GATE_STATUSES.includes(norm(status));
+  // Review statuses never require completed audits — auditing happens during review
+  if (isReviewStatus(status)) return false;
+  return isCompletionStatus(status);
 }

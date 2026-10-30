@@ -178,10 +178,22 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       }
     });
 
+    // The server emits notification_received for every TaskNotification row, but the cowbell only shows
+    // "For Me" notifications (forMeCondition in notification.controller). Only chime when the filtered
+    // unread count actually grows, so users never hear a sound for a notification they can't see.
+    let lastSoundAt = 0;
     s.on('notification_received', () => {
-      setUnreadNotifications(useAppStore.getState().unreadNotifications + 1);
+      const prevUnread = useAppStore.getState().unreadNotifications;
       window.dispatchEvent(new CustomEvent('notification_received'));
-      playNotificationSound();
+      notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+        if (typeof res.unreadCount !== 'number') return;
+        setUnreadNotifications(res.unreadCount);
+        const now = Date.now();
+        if (res.unreadCount > prevUnread && now - lastSoundAt > 1500) {
+          lastSoundAt = now;
+          playNotificationSound();
+        }
+      }).catch(() => {});
     });
 
     s.on('notification_read', (data: { id: string }) => {

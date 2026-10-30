@@ -193,7 +193,13 @@ export interface TaskSubtaskStatus {
 }
 
 export function getTaskSubtaskStatus(task: any): TaskSubtaskStatus {
-  const subtasks: any[] = task?.subtasks || [];
+  const allSubtasks: any[] = task?.subtasks || [];
+  // Exclude internal helper subtasks (e.g. "--Audit - <Role> -") from regular subtask gates
+  const subtasks = allSubtasks.filter((s: any) => {
+    const title = (s.title || '').trim().toLowerCase();
+    return !title.startsWith('--audit');
+  });
+
   const totalCount = subtasks.length;
   if (totalCount === 0) {
     return {

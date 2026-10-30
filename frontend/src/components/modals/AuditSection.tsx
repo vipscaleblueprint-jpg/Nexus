@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { ChevronDown, ChevronRight, User, Check, Plus, Trash2 } from 'lucide-react';
@@ -8,6 +8,7 @@ import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor } from './TaskDetailModal';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { toast } from '@/lib/toast';
+import { useAppStore } from '@/lib/store';
 
 export { getRequiredAudits, ALL_AUDIT_OPTIONS };
 
@@ -26,7 +27,7 @@ interface AuditSectionProps {
   currentUser?: UserModel | null;
 }
 
-export function AuditSection({ task, title, subtaskId, users, checklists, onUpdateChecklists, currentUser }: AuditSectionProps) {
+function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUpdateChecklists, currentUser }: AuditSectionProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isShaking, setIsShaking] = useState(false);
@@ -48,9 +49,14 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
         return;
       }
 
+      // If there are no unchecked audits to highlight, do not shake or highlight
+      if (!detail?.uncheckedAudits || detail.uncheckedAudits.length === 0) {
+        return;
+      }
+
       setIsExpanded(true);
       setIsShaking(true);
-      setHighlightedAudits(detail?.uncheckedAudits || []);
+      setHighlightedAudits(detail.uncheckedAudits);
 
       if (highlightTimerRef.current) {
         clearTimeout(highlightTimerRef.current);
@@ -80,58 +86,76 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
 
   // A task can end up with more than one Audit checklist (e.g. two clicks racing to create it).
   // Read items from all of them so an assignee or check saved on either one still shows.
-  const auditChecklists = checklists.filter(c => {
+  const auditChecklists = useMemo(() => checklists.filter(c => {
     if (!isNexusAuditChecklist(c)) return false;
     if (subtaskId) {
       return c.subtaskId === subtaskId || !c.subtaskId;
     } else {
       return !c.subtaskId;
     }
-  });
+  }), [checklists, subtaskId]);
   const auditChecklist = auditChecklists[0];
 
   // Roles suggested by the auditor: from the specific "--Audit" subtask when one is targeted,
   // otherwise from the task's own roles plus every "--Audit" subtask attached to it
   // (the server's completion check uses the task's own roles too).
-  const auditorRoles = subtaskId
+  const auditorRoles = useMemo(() => subtaskId
     ? (task.subtasks?.find((s: any) => s.id === subtaskId)?.assigneeRoleRestrictions || [])
     : [
         ...(task.assigneeRoleRestrictions || []),
         ...(task.subtasks || [])
           .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
           .flatMap((s: any) => s.assigneeRoleRestrictions || []),
-      ];
+      ], [subtaskId, task.subtasks, task.assigneeRoleRestrictions]);
 
-  const excludedAudits = new Set(
+  const excludedAudits = useMemo(() => new Set(
     auditChecklists.flatMap(c => c.items || [])
       .filter(i => (i.text || '').startsWith('!'))
       .map(i => normalizeAuditName((i.text || '').replace(/^!\s*/, '')))
-  );
+  ), [auditChecklists]);
 
-  const activeChecklistItems = auditChecklists.flatMap(c => c.items || [])
+  const activeChecklistItems = useMemo(() => auditChecklists.flatMap(c => c.items || [])
     .filter(i => !(i.text || '').startsWith('!'))
-    .map(i => i.text);
+    .map(i => i.text), [auditChecklists]);
 
-  const requiredAuditItems = Array.from(new Set([
+  const requiredAuditItems = useMemo(() => Array.from(new Set([
     ...getRequiredAudits(title, auditorRoles),
     ...activeChecklistItems
   ].filter((text, i, all) => {
     const norm = normalizeAuditName(text);
     if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
     return all.findIndex(t => normalizeAuditName(t) === norm) === i;
-  })));
+  }))), [title, auditorRoles, activeChecklistItems, excludedAudits]);
 
-  // Prefer the copy that carries state (assigned or checked) when duplicates exist.
+  // Lookup map for fast O(1) item access instead of flatMap + filter
+  const auditItemsMap = useMemo(() => {
+    const map = new Map<string, ChecklistItem>();
+    const allItems = auditChecklists.flatMap(c => c.items || []);
+    for (const item of allItems) {
+      const norm = normalizeAuditName(item.text);
+      const existing = map.get(norm);
+      if (!existing || (!existing.completed && item.completed) || (!existing.assigneeId && item.assigneeId)) {
+        map.set(norm, item);
+      }
+    }
+    return map;
+  }, [auditChecklists]);
+
   const getAuditItem = (text: string) => {
-    const norm = normalizeAuditName(text);
-    const matches = auditChecklists.flatMap(c => c.items || []).filter(i => normalizeAuditName(i.text) === norm);
-    return matches.find(i => i.assigneeId || i.completed) || matches[0];
+    return auditItemsMap.get(normalizeAuditName(text));
   };
 
-  const completedCount = requiredAuditItems.reduce((acc, text) => {
-    const item = getAuditItem(text);
+  const usersMap = useMemo(() => new Map<string, UserModel>(users.map(u => [u.id, u])), [users]);
+
+  const completedCount = useMemo(() => requiredAuditItems.reduce((acc, text) => {
+    const item = auditItemsMap.get(normalizeAuditName(text));
     return acc + (item?.completed ? 1 : 0);
-  }, 0);
+  }, 0), [requiredAuditItems, auditItemsMap]);
+
+  const availableAuditsToAdd = useMemo(() => ALL_AUDIT_OPTIONS.filter(option => {
+    const norm = normalizeAuditName(option.id);
+    return !requiredAuditItems.some(req => normalizeAuditName(req) === norm) || excludedAudits.has(norm);
+  }), [requiredAuditItems, excludedAudits]);
 
   const handleToggleItem = async (text: string, currentItem?: ChecklistItem) => {
     const newCompleted = currentItem ? !currentItem.completed : true;
@@ -209,35 +233,45 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
 
     // Apply to frontend state immediately
     onUpdateChecklists(optimisticChecklists);
+    const optimisticTask = { ...task, checklists: optimisticChecklists };
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: optimisticTask } }));
+    }
+    useAppStore.getState().updateTask(optimisticTask);
 
     // 2. Persist to DB in the background
     try {
-      let realChecklistId = targetChecklistId;
-      if (tempChecklistCreated) {
-        const res = await tasksApi.createChecklist(task.id, {
-          name: 'Audit',
-          subtaskId,
-        });
-        realChecklistId = res.checklist.id;
-      }
+      const realChecklistId = currentItem?.checklistId || auditChecklist?.id || targetChecklistId;
 
       if (tempItemCreated) {
-        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { text });
-        const realItemId = res.item.id;
-        const updatedItemRes = await tasksApi.updateChecklistItem(task.id, realChecklistId, realItemId, { completed: newCompleted });
+        // Atomic single request: server automatically finds or creates the Audit checklist if needed
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { 
+          text, 
+          completed: newCompleted,
+          assigneeId: currentItem?.assigneeId || undefined,
+          subtaskId,
+          checklistName: 'Audit',
+        });
+
+        const actualChecklistId = (res as any).checklistId || res.item.checklistId || realChecklistId;
 
         // Reconcile temporary IDs with actual database IDs
         const reconciled = optimisticChecklists.map(c => {
-          if (c.id === targetChecklistId || c.id === realChecklistId) {
+          if (c.id === targetChecklistId || c.id === actualChecklistId) {
             return {
               ...c,
-              id: realChecklistId,
-              items: (c.items || []).map(i => i.id === optimisticItemId ? updatedItemRes.item : i),
+              id: actualChecklistId,
+              items: (c.items || []).map(i => i.id === optimisticItemId ? res.item : i),
             };
           }
           return c;
         });
         onUpdateChecklists(reconciled);
+        const reconciledTask = { ...task, checklists: reconciled };
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: reconciledTask } }));
+        }
+        useAppStore.getState().updateTask(reconciledTask);
       } else {
         await tasksApi.updateChecklistItem(task.id, realChecklistId, optimisticItemId!, { completed: newCompleted });
       }
@@ -245,6 +279,11 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
       console.error('[AuditSection] Failed to persist audit toggle:', e);
       // Revert if API call fails
       onUpdateChecklists(checklists);
+      const revertedTask = { ...task, checklists };
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: revertedTask } }));
+      }
+      useAppStore.getState().updateTask(revertedTask);
     }
   };
 
@@ -308,36 +347,53 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
 
     // Apply to frontend state immediately
     onUpdateChecklists(optimisticChecklists);
+    const optimisticTask = { ...task, checklists: optimisticChecklists };
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: optimisticTask } }));
+    }
+    useAppStore.getState().updateTask(optimisticTask);
 
     try {
-      let realChecklistId = targetChecklistId;
-      if (tempChecklistCreated) {
-        const res = await tasksApi.createChecklist(task.id, { name: 'Audit', subtaskId });
-        realChecklistId = res.checklist.id;
-      }
+      const realChecklistId = currentItem?.checklistId || auditChecklist?.id || targetChecklistId;
 
       if (tempItemCreated) {
-        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { text });
-        const realItemId = res.item.id;
-        const updatedItemRes = await tasksApi.updateChecklistItem(task.id, realChecklistId, realItemId, { assigneeId });
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { 
+          text, 
+          assigneeId: assigneeId || undefined,
+          completed: currentItem?.completed || false,
+          subtaskId,
+          checklistName: 'Audit',
+        });
+
+        const actualChecklistId = (res as any).checklistId || res.item.checklistId || realChecklistId;
 
         const reconciled = optimisticChecklists.map(c => {
-          if (c.id === targetChecklistId || c.id === realChecklistId) {
+          if (c.id === targetChecklistId || c.id === actualChecklistId) {
             return {
               ...c,
-              id: realChecklistId,
-              items: (c.items || []).map(i => i.id === optimisticItemId ? updatedItemRes.item : i),
+              id: actualChecklistId,
+              items: (c.items || []).map(i => i.id === optimisticItemId ? res.item : i),
             };
           }
           return c;
         });
         onUpdateChecklists(reconciled);
+        const reconciledTask = { ...task, checklists: reconciled };
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: reconciledTask } }));
+        }
+        useAppStore.getState().updateTask(reconciledTask);
       } else {
         await tasksApi.updateChecklistItem(task.id, realChecklistId, optimisticItemId!, { assigneeId });
       }
     } catch (e) {
       console.error('[AuditSection] Failed to persist assignee:', e);
       onUpdateChecklists(checklists);
+      const revertedTask = { ...task, checklists };
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: revertedTask } }));
+      }
+      useAppStore.getState().updateTask(revertedTask);
     }
   };
 
@@ -415,19 +471,14 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
     });
 
     onUpdateChecklists(optimisticChecklists);
+    const optimisticTask = { ...task, checklists: optimisticChecklists };
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { ...task, checklists: optimisticChecklists } } }));
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: optimisticTask } }));
     }
+    useAppStore.getState().updateTask(optimisticTask);
 
     try {
       let realChecklistId = targetChecklistId;
-      if (tempChecklistCreated) {
-        const res = await tasksApi.createChecklist(task.id, {
-          name: 'Audit',
-          subtaskId,
-        });
-        realChecklistId = res.checklist.id;
-      }
 
       // If there was an exclusion marker in DB, delete it
       if (existingExclusionItem && !existingExclusionItem.id.startsWith('temp-')) {
@@ -436,22 +487,28 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
 
       // If active item did not exist in DB and not naturally generated, create it
       if (tempItemCreated) {
-        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { text: auditId });
-        const realItemId = res.item.id;
+        const res = await tasksApi.createChecklistItem(task.id, realChecklistId, { 
+          text: auditId,
+          subtaskId,
+          checklistName: 'Audit',
+        });
+        const actualChecklistId = (res as any).checklistId || res.item.checklistId || realChecklistId;
         const reconciled = optimisticChecklists.map(c => {
-          if (c.id === targetChecklistId || c.id === realChecklistId) {
+          if (c.id === targetChecklistId || c.id === actualChecklistId) {
             return {
               ...c,
-              id: realChecklistId,
+              id: actualChecklistId,
               items: (c.items || []).map(i => (i.id === optimisticItemId ? res.item : i)),
             };
           }
           return c;
         });
         onUpdateChecklists(reconciled);
+        const reconciledTask = { ...task, checklists: reconciled };
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { ...task, checklists: reconciled } } }));
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: reconciledTask } }));
         }
+        useAppStore.getState().updateTask(reconciledTask);
       }
       toast.success(`Added ${auditId}`);
     } catch (e: any) {
@@ -564,29 +621,27 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
           return c;
         });
         onUpdateChecklists(reconciled);
+        const reconciledTask = { ...task, checklists: reconciled };
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { ...task, checklists: reconciled } } }));
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: reconciledTask } }));
         }
+        useAppStore.getState().updateTask(reconciledTask);
       }
       toast.success(`Removed ${auditText}`);
     } catch (e: any) {
       console.error('[AuditSection] Failed to remove audit:', e);
       toast.error('Failed to remove audit from server');
       onUpdateChecklists(checklists);
+      const revertedTask = { ...task, checklists };
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { ...task, checklists } } }));
+        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: revertedTask } }));
       }
+      useAppStore.getState().updateTask(revertedTask);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Determine which standard audit types are not currently added
-  const availableAuditsToAdd = ALL_AUDIT_OPTIONS.filter(
-    option => !requiredAuditItems.some(
-      t => normalizeAuditName(t) === normalizeAuditName(option.id)
-    )
-  );
 
   // If no audits are required and user cannot manage audits, hide section entirely
   if (requiredAuditItems.length === 0 && !canManageAudits) return null;
@@ -725,12 +780,13 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
                   const item = getAuditItem(text);
                   const isCompleted = !!item?.completed;
                   const assigneeId = item?.assigneeId;
-                  const assignee = assigneeId ? users.find(u => u.id === assigneeId) : undefined;
+                  const assignee = assigneeId ? usersMap.get(assigneeId) : undefined;
 
                   const isItemNeeded = Boolean(
                     highlightedAudits &&
                     !isCompleted &&
-                    (highlightedAudits.length === 0 || highlightedAudits.some(a => a.toLowerCase() === text.toLowerCase()))
+                    highlightedAudits.length > 0 &&
+                    highlightedAudits.some(a => a.toLowerCase() === text.toLowerCase())
                   );
 
                   const roles = (currentUser?.roles || []).map(r => r?.toLowerCase() || '');
@@ -898,3 +954,5 @@ export function AuditSection({ task, title, subtaskId, users, checklists, onUpda
     </div>
   );
 }
+
+export const AuditSection = React.memo(AuditSectionComponent);

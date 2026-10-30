@@ -82,12 +82,12 @@ export const idAndSubtaskIdParams = z.object({
 
 export const idAndChecklistIdParams = z.object({
   id: z.string().uuid('must be a valid uuid'),
-  checklistId: z.string().uuid('must be a valid uuid'),
+  checklistId: z.string().min(1, 'checklistId is required'),
 });
 
 export const idChecklistIdItemIdParams = z.object({
   id: z.string().uuid('must be a valid uuid'),
-  checklistId: z.string().uuid('must be a valid uuid'),
+  checklistId: z.string().min(1, 'checklistId is required'),
   itemId: z.string().uuid('must be a valid uuid'),
 });
 

@@ -31,10 +31,31 @@ import { queueUserPush } from '../services/toolsSync';
 
 function formatNotificationPreferences(prefs: any) {
   if (!prefs || typeof prefs !== 'object') return prefs;
-  return {
+  const formatted: any = {
     ...prefs,
     soundUrl: decryptText(prefs.soundUrl),
+    uploadedSoundUrl: decryptText(prefs.uploadedSoundUrl),
   };
+  if (Array.isArray(prefs.uploadedSounds)) {
+    formatted.uploadedSounds = prefs.uploadedSounds.map((s: any) => ({
+      ...s,
+      url: decryptText(s.url),
+    }));
+  }
+  if (prefs.typeSounds && typeof prefs.typeSounds === 'object') {
+    formatted.typeSounds = {};
+    for (const [key, val] of Object.entries(prefs.typeSounds)) {
+      if (val && typeof val === 'object') {
+        formatted.typeSounds[key] = {
+          ...val,
+          soundUrl: decryptText((val as any).soundUrl),
+        };
+      } else {
+        formatted.typeSounds[key] = val;
+      }
+    }
+  }
+  return formatted;
 }
 import { createLogger, errMsg } from '../config/logger';
 
@@ -444,10 +465,26 @@ export async function updateProfile(req: AuthRequest, res: Response) {
   try {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const data = { ...req.body } as UpdateProfileInput;
-    if (data.notificationPreferences && (data.notificationPreferences as any).soundUrl) {
-      const rawSound = (data.notificationPreferences as any).soundUrl;
-      if (rawSound && !rawSound.startsWith('enc:v1:')) {
-        (data.notificationPreferences as any).soundUrl = encryptText(rawSound);
+    if (data.notificationPreferences) {
+      const prefs = data.notificationPreferences as any;
+      if (prefs.soundUrl && !prefs.soundUrl.startsWith('enc:v1:')) {
+        prefs.soundUrl = encryptText(prefs.soundUrl);
+      }
+      if (prefs.uploadedSoundUrl && !prefs.uploadedSoundUrl.startsWith('enc:v1:')) {
+        prefs.uploadedSoundUrl = encryptText(prefs.uploadedSoundUrl);
+      }
+      if (Array.isArray(prefs.uploadedSounds)) {
+        prefs.uploadedSounds = prefs.uploadedSounds.map((s: any) => ({
+          ...s,
+          url: s.url && !s.url.startsWith('enc:v1:') ? encryptText(s.url) : s.url,
+        }));
+      }
+      if (prefs.typeSounds && typeof prefs.typeSounds === 'object') {
+        for (const [key, val] of Object.entries(prefs.typeSounds)) {
+          if (val && typeof val === 'object' && (val as any).soundUrl && !(val as any).soundUrl.startsWith('enc:v1:')) {
+            (val as any).soundUrl = encryptText((val as any).soundUrl);
+          }
+        }
       }
     }
 

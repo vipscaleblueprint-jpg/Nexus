@@ -55,21 +55,80 @@ function clickUpIdOf(link: string): string | null {
 }
 
 /** The task (and subtask) a Nexus task link, bare task id, or ClickUp link points to. */
-async function findByNexusLink(link: unknown): Promise<LinkedTarget | null> {
+async function findByNexusLink(link: unknown, explicitSubtaskId?: string): Promise<LinkedTarget | null> {
   if (typeof link !== 'string' || !link.trim()) return null;
   const value = link.trim();
 
   let taskId: string | null = null;
-  let subtaskId: string | null = null;
+  let subtaskId: string | null = explicitSubtaskId?.trim() || null;
+
   if (UUID.test(value)) {
-    taskId = value;
+    // Check if the UUID is a main task
+    const task = await prisma.task.findUnique({
+      where: { id: value },
+      select: { id: true, listId: true, externalId: true },
+    });
+    if (task) {
+      if (subtaskId && UUID.test(subtaskId)) {
+        const subtask = await prisma.subtask.findFirst({
+          where: { id: subtaskId, taskId: task.id },
+          select: { id: true, externalId: true },
+        });
+        if (subtask) {
+          return { taskId: task.id, subtaskId: subtask.id, listId: task.listId, clickUpLink: clickUpLinkOf(subtask.externalId) };
+        }
+      }
+      return { taskId: task.id, subtaskId: null, listId: task.listId, clickUpLink: clickUpLinkOf(task.externalId) };
+    }
+
+    // Check if the UUID is a subtask directly
+    const subtask = await prisma.subtask.findUnique({
+      where: { id: value },
+      select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+    });
+    if (subtask) {
+      return {
+        taskId: subtask.taskId,
+        subtaskId: subtask.id,
+        listId: subtask.task.listId,
+        clickUpLink: clickUpLinkOf(subtask.externalId),
+      };
+    }
   } else {
     try {
       const url = new URL(value);
-      taskId = url.searchParams.get('task');
-      subtaskId = url.searchParams.get('subtask');
+      const qTask = url.searchParams.get('task');
+      const qSubtask = url.searchParams.get('subtask');
+      if (qTask) taskId = qTask;
+      if (qSubtask) subtaskId = qSubtask;
+
+      // Also check pathname format e.g. /tasks/:id or /subtasks/:id
+      const pathMatch = url.pathname.match(/\/(tasks|subtasks)\/([0-9a-f-]{36})/i);
+      if (pathMatch) {
+        if (pathMatch[1].toLowerCase() === 'subtasks') {
+          subtaskId = pathMatch[2];
+        } else if (!taskId) {
+          taskId = pathMatch[2];
+        }
+      }
     } catch {
       // Not a standard URL
+    }
+  }
+
+  // If subtaskId is present without a valid taskId, lookup parent task from subtask
+  if (subtaskId && UUID.test(subtaskId) && (!taskId || !UUID.test(taskId))) {
+    const subtask = await prisma.subtask.findUnique({
+      where: { id: subtaskId },
+      select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+    });
+    if (subtask) {
+      return {
+        taskId: subtask.taskId,
+        subtaskId: subtask.id,
+        listId: subtask.task.listId,
+        clickUpLink: clickUpLinkOf(subtask.externalId),
+      };
     }
   }
 
@@ -81,6 +140,20 @@ async function findByNexusLink(link: unknown): Promise<LinkedTarget | null> {
         if (subtask) return { taskId, subtaskId: subtask.id, listId: task.listId, clickUpLink: clickUpLinkOf(subtask.externalId) };
       }
       return { taskId, subtaskId: null, listId: task.listId, clickUpLink: clickUpLinkOf(task.externalId) };
+    }
+
+    // In case taskId was actually a subtask UUID
+    const subtask = await prisma.subtask.findUnique({
+      where: { id: taskId },
+      select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+    });
+    if (subtask) {
+      return {
+        taskId: subtask.taskId,
+        subtaskId: subtask.id,
+        listId: subtask.task.listId,
+        clickUpLink: clickUpLinkOf(subtask.externalId),
+      };
     }
   }
 
@@ -135,8 +208,12 @@ const str = (v: unknown) => (v == null ? '' : String(v).trim());
 export const handleSheetUpdate = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
   try {
-    const { task_link, what_to_update } = req.body || {};
-    const target = await findByNexusLink(task_link);
+    const { task_link, what_to_update, subtaskId, subtask_id } = req.body || {};
+    const explicitSubtaskId =
+      (typeof subtaskId === 'string' && subtaskId) ||
+      (typeof subtask_id === 'string' && subtask_id) ||
+      undefined;
+    const target = await findByNexusLink(task_link, explicitSubtaskId);
     if (!target) {
       console.warn('[Sheets] handleSheetUpdate: task not found for link:', task_link);
       return res.status(404).json({
@@ -271,6 +348,18 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
       data: { status: listStatus?.name ?? wanted },
       select: { id: true, title: true, status: true, assigneeId: true, listId: true, updatedAt: true },
     });
+
+    // Cascade main task status change to all child subtasks
+    const normalizedStatus = (listStatus?.name ?? wanted).toUpperCase();
+    const isClosedOrCompleted = ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes(normalizedStatus);
+    await prisma.subtask.updateMany({
+      where: { taskId: target.taskId },
+      data: {
+        status: normalizedStatus,
+        completed: isClosedOrCompleted,
+      },
+    });
+
     if (before?.status !== updated.status) {
       const actor = await getOrCreateVipScaleUser();
       const authorName = 'VIPScale';
@@ -322,8 +411,25 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
         console.error('[sheets.applyStatus] notification error:', notifErr);
       }
     }
-    io.emit('task:updated', updated);
-    io.to(`list:${target.listId}`).emit('task:updated', updated);
+
+    const fullParent = await prisma.task.findUnique({
+      where: { id: target.taskId },
+      include: {
+        subtasks: {
+          include: {
+            User: { select: { id: true, name: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, avatarUrl: true } },
+          },
+        },
+      },
+    });
+    if (fullParent) {
+      io.emit('task:updated', fullParent);
+      io.to(`list:${target.listId}`).emit('task:updated', fullParent);
+    } else {
+      io.emit('task:updated', updated);
+      io.to(`list:${target.listId}`).emit('task:updated', updated);
+    }
   }
 
   await invalidateCache(`task:${target.taskId}`, `task:activities:${target.taskId}`, 'tasks:all', 'lists:all', 'spaces:all', 'dashboard:all');
@@ -504,7 +610,8 @@ export const handleSheetComment = async (req: Request, res: Response) => {
         return res.status(200).json({ success: true, id: commentId, clickup_comment_id: legacyClickUpId || null, skipped: 'comment not found' });
       }
       await prisma.taskComment.delete({ where: { id: existing.id } });
-      io.to(`list:${existing.task.listId}`).emit('task:comment_deleted', { taskId: existing.taskId, commentId: existing.id });
+      io.to(`list:${existing.task.listId}`).emit('task:comment_deleted', { taskId: existing.taskId, subtaskId: existing.subtaskId, commentId: existing.id });
+      io.emit('task:comment_deleted', { taskId: existing.taskId, subtaskId: existing.subtaskId, commentId: existing.id });
       await invalidateCache(`task:${existing.taskId}`);
       await dropCommentCache(existing.taskId, existing.subtaskId);
       // n8n deletes the ClickUp copy with this.
@@ -519,7 +626,11 @@ export const handleSheetComment = async (req: Request, res: Response) => {
     if (!text) return res.status(400).json({ error: 'message is required' });
     const content = formatSheetComment(body.name, body.date_posted, text);
 
-    const target = await findByNexusLink(link);
+    const explicitSubtaskId =
+      (typeof body.subtaskId === 'string' && body.subtaskId) ||
+      (typeof body.subtask_id === 'string' && body.subtask_id) ||
+      undefined;
+    const target = await findByNexusLink(link, explicitSubtaskId);
 
     // n8n linking the ClickUp copy it just posted. If the ClickUp pull already
     // imported that comment as its own row, drop that duplicate first.
@@ -543,19 +654,19 @@ export const handleSheetComment = async (req: Request, res: Response) => {
         include: commentInclude,
       });
       if (moved) {
-        io.emit('task:comment_deleted', { taskId: existing.taskId, commentId: existing.id });
-        io.to(`list:${existing.task.listId}`).emit('task:comment_deleted', { taskId: existing.taskId, commentId: existing.id });
+        io.emit('task:comment_deleted', { taskId: existing.taskId, subtaskId: existing.subtaskId, commentId: existing.id });
+        io.to(`list:${existing.task.listId}`).emit('task:comment_deleted', { taskId: existing.taskId, subtaskId: existing.subtaskId, commentId: existing.id });
         io.emit('task:comment_added', { taskId: target!.taskId, subtaskId: target!.subtaskId, comment });
         io.to(`list:${target!.listId}`).emit('task:comment_added', { taskId: target!.taskId, subtaskId: target!.subtaskId, comment });
         await invalidateCache(`task:${existing.taskId}`, `task:${target!.taskId}`);
         await dropCommentCache(target!.taskId, target!.subtaskId);
       } else {
-        io.emit('task:comment_updated', { taskId: existing.taskId, comment });
-        io.to(`list:${existing.task.listId}`).emit('task:comment_updated', { taskId: existing.taskId, comment });
+        io.emit('task:comment_updated', { taskId: existing.taskId, subtaskId: existing.subtaskId, comment });
+        io.to(`list:${existing.task.listId}`).emit('task:comment_updated', { taskId: existing.taskId, subtaskId: existing.subtaskId, comment });
         await invalidateCache(`task:${existing.taskId}`);
       }
       await dropCommentCache(existing.taskId, existing.subtaskId);
-      const current = target ?? (await findByNexusLink(existing.taskId));
+      const current = target ?? (await findByNexusLink(existing.taskId, existing.subtaskId ?? undefined));
       return res.status(200).json({
         success: true,
         id: comment.id,

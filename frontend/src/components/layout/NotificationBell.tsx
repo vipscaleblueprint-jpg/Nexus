@@ -625,7 +625,7 @@ export function NotificationBell() {
                           <span>New</span>
                           <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
                         </h4>
-                        <span className="text-[10px] font-semibold text-blue-500 dark:text-blue-400 px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/25">
+                        <span className="text-[10px] font-semibold text-blue-500 dark:text-blue-400 px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/25 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border-blue-200">
                           {unreadItems.length}
                         </span>
                       </div>

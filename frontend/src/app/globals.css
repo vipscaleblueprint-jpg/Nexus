@@ -41,6 +41,12 @@
   --color-warning: var(--warning);
   --color-danger: var(--danger);
   --color-info: var(--info);
+
+  /* Notification Tokens */
+  --color-notif-unread: var(--notif-unread-bg);
+  --color-notif-unread-border: var(--notif-unread-border);
+  --color-notif-quote: var(--notif-quote-bg);
+  --color-notif-quote-border: var(--notif-quote-border);
 }
 @plugin "../../node_modules/@tailwindcss/typography";
 
@@ -99,6 +105,16 @@
   --info: #38BDF8;
   --accent-tint: color-mix(in srgb, var(--accent) 12%, var(--surface));
   --accent-tint-hover: color-mix(in srgb, var(--accent) 18%, var(--surface));
+
+  /* Unread / New Notification Card Tokens (Dark Mode Default) */
+  --notif-unread-bg: #121626;
+  --notif-unread-border: rgba(59, 130, 246, 0.4);
+  --notif-unread-ring: rgba(59, 130, 246, 0.2);
+  --notif-unread-shadow: 0 0 5px 0px rgba(59, 130, 246, 0.18);
+  --notif-unread-hover-shadow: 0 0 8px 0px rgba(59, 130, 246, 0.26);
+  --notif-unread-hover-border: rgba(59, 130, 246, 0.5);
+  --notif-quote-bg: rgba(19, 19, 22, 0.6);
+  --notif-quote-border: var(--border);
 }
 
 :root.theme-light, .theme-light, :root[data-theme="light"], html[data-theme="light"] {
@@ -165,6 +181,16 @@
   --color-purple-200: #6b21a8;
   --color-purple-300: #7e22ce;
   --color-purple-400: #9333ea;
+
+  /* Unread / New Notification Card Tokens (Light Mode) */
+  --notif-unread-bg: #F0F5FF;
+  --notif-unread-border: rgba(59, 130, 246, 0.35);
+  --notif-unread-ring: rgba(59, 130, 246, 0.15);
+  --notif-unread-shadow: 0 1px 3px 0 rgba(59, 130, 246, 0.08), 0 0 6px 0px rgba(59, 130, 246, 0.12);
+  --notif-unread-hover-shadow: 0 2px 6px 0 rgba(59, 130, 246, 0.15), 0 0 8px 0px rgba(59, 130, 246, 0.2);
+  --notif-unread-hover-border: rgba(59, 130, 246, 0.55);
+  --notif-quote-bg: #FFFFFF;
+  --notif-quote-border: #DDE5F2;
 }
 
 /* ==========================================================================
@@ -200,6 +226,16 @@
   --color-zinc-200: var(--text);
   --color-zinc-100: var(--text);
   --color-zinc-50: var(--text);
+  --notif-unread-bg: color-mix(in srgb, #3b82f6 12%, var(--surface));
+  --notif-quote-bg: color-mix(in srgb, #000000 30%, var(--surface));
+  --notif-quote-border: var(--border);
+}
+
+:root[data-palette]:not([data-palette="nexus"])[data-theme="light"],
+:root[data-palette]:not([data-palette="nexus"]).theme-light {
+  --notif-unread-bg: color-mix(in srgb, #3b82f6 8%, var(--surface));
+  --notif-quote-bg: #FFFFFF;
+  --notif-quote-border: color-mix(in srgb, var(--border) 80%, #93c5fd);
 }
 
 /* Fix Tailwind Typography hardcoded #fff in dark:prose-invert */
@@ -680,6 +716,11 @@ input:disabled,
   text-decoration: none !important;
   cursor: default !important;
   pointer-events: none !important;
+}
+
+.theme-light .ProseMirror a[href^="mention://"] {
+  background-color: rgba(59, 130, 246, 0.12) !important;
+  color: #1d4ed8 !important;
 }
 
 /* Rich-text text colors: the editor's Color mark is a <span style="color"> that can wrap bold/italic/code/links,

@@ -45,7 +45,7 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
     timerRef.current = setTimeout(() => setOpen(false), HOVER_CLOSE_DELAY);
   };
 
-  const chipClass = 'bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded select-none inline-flex items-center mx-0.5 align-baseline';
+  const chipClass = 'bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded select-none inline-flex items-center mx-0.5 align-baseline [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border [.theme-light_&]:border-blue-200/60';
 
   // Unknown or not-yet-loaded user: keep the original static chip
   if (!user) {

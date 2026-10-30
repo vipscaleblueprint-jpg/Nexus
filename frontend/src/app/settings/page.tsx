@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
 import { authApi, usersApi } from '@/api';
 import { API_BASE_URL } from '@/api/client';
-import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell, Palette, Volume2, Volume1, VolumeX, Music, CheckCircle2, AtSign, Smile, MessageSquare, RefreshCw } from 'lucide-react';
-import { UserNotificationPreferences } from '@/types';
+import { Settings, User as UserIcon, Users, Lock, Star, Eye, EyeOff, UploadCloud, Loader2, Code, Plus, Check, Copy, Trash2, Book, Sparkles, Cpu, Wifi, Gauge, X, Play, ShieldCheck, Bell, Palette, Volume2, Volume1, VolumeX, Music, CheckCircle2, AtSign, Smile, MessageSquare, RefreshCw, RotateCcw, AlertCircle } from 'lucide-react';
+import { UserNotificationPreferences, UploadedSoundItem } from '@/types';
 import {
   playNotificationSound,
   playPresetTone,
@@ -71,6 +71,7 @@ export default function SettingsPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadingConfetti, setIsUploadingConfetti] = useState(false);
   const [isUploadingSound, setIsUploadingSound] = useState(false);
+  const [uploadingCategory, setUploadingCategory] = useState<string | null>(null);
   const [audioConversionStats, setAudioConversionStats] = useState<string | null>(null);
   const [auditioningPreset, setAuditioningPreset] = useState<string | null>(null);
   const [perfProfile, setPerfProfile] = useState<PerfProfile | null>(null);
@@ -105,6 +106,9 @@ export default function SettingsPage() {
     soundPreset: 'ting',
     soundVolume: 0.8,
     soundUrl: null,
+    uploadedSoundUrl: null,
+    uploadedSounds: [],
+    typeSounds: {},
   });
 
   // Scrollspy Refs
@@ -159,6 +163,9 @@ export default function SettingsPage() {
           soundPreset: currentUser.notificationPreferences.soundPreset || 'ting',
           soundVolume: currentUser.notificationPreferences.soundVolume ?? 0.8,
           soundUrl: currentUser.notificationPreferences.soundUrl || null,
+          uploadedSoundUrl: currentUser.notificationPreferences.uploadedSoundUrl || null,
+          uploadedSounds: currentUser.notificationPreferences.uploadedSounds || [],
+          typeSounds: currentUser.notificationPreferences.typeSounds || {},
         });
       }
       setLoading(false);
@@ -461,41 +468,98 @@ export default function SettingsPage() {
     }, 1200);
   };
 
-  const handleSelectSampleSound = async (sample: SampleCustomSound) => {
+  const SAMPLE_SOUND_URL_SET = useMemo(() => new Set<string>(SAMPLE_CUSTOM_SOUNDS.map((s) => s.url)), []);
+
+  const isSampleUrl = (url?: string | null): boolean => {
+    if (!url) return false;
+    if (SAMPLE_SOUND_URL_SET.has(url)) return true;
+    const filename = url.split('/').pop()?.split('?')[0];
+    return SAMPLE_CUSTOM_SOUNDS.some((s) => s.url.endsWith(filename || ''));
+  };
+
+  const userUploadedSounds: UploadedSoundItem[] = useMemo((): UploadedSoundItem[] => {
+    if (Array.isArray(notifPrefs.uploadedSounds) && notifPrefs.uploadedSounds.length > 0) {
+      return notifPrefs.uploadedSounds;
+    }
+    const sounds: UploadedSoundItem[] = [];
+    const seenUrls = new Set<string>();
+    const genUrl = notifPrefs.uploadedSoundUrl || (
+      notifPrefs.soundUrl && !isSampleUrl(notifPrefs.soundUrl) ? notifPrefs.soundUrl : null
+    );
+    if (genUrl && !isSampleUrl(genUrl)) {
+      seenUrls.add(genUrl);
+      sounds.push({ id: 'uploaded-default', name: 'Custom Audio', url: genUrl });
+    }
+    if (notifPrefs.typeSounds) {
+      Object.entries(notifPrefs.typeSounds).forEach(([cat, cfg]) => {
+        if (cfg?.soundUrl && !isSampleUrl(cfg.soundUrl) && !seenUrls.has(cfg.soundUrl)) {
+          seenUrls.add(cfg.soundUrl);
+          const catName = SOUND_CATEGORIES.find((c) => c.id === cat)?.name || cat;
+          sounds.push({ id: `uploaded-${cat}`, name: `${catName} Audio`, url: cfg.soundUrl });
+        }
+      });
+    }
+    return sounds;
+  }, [notifPrefs.uploadedSounds, notifPrefs.uploadedSoundUrl, notifPrefs.soundUrl, notifPrefs.typeSounds, SAMPLE_SOUND_URL_SET]);
+
+  const customUploadedCount = userUploadedSounds.length;
+  const isMaxSoundsReached = customUploadedCount >= 4;
+
+  const defaultSoundName = useMemo(() => {
+    if ((notifPrefs.soundPreset || 'ting') === 'custom') {
+      const url = notifPrefs.soundUrl;
+      const matchUploaded = userUploadedSounds.find((s: UploadedSoundItem) => s.url === url);
+      if (matchUploaded) return matchUploaded.name;
+      const matchSample = SAMPLE_CUSTOM_SOUNDS.find((s) => {
+        const filename = s.url.split('/').pop()?.split('?')[0];
+        return s.url === url || (filename && url?.endsWith(filename));
+      });
+      if (matchSample) return matchSample.name;
+      return 'Custom Audio';
+    }
+    return SOUND_PRESETS.find((p) => p.id === (notifPrefs.soundPreset || 'ting'))?.name || 'Classic Ting';
+  }, [notifPrefs.soundPreset, notifPrefs.soundUrl, userUploadedSounds]);
+
+  const handleSetSoundAsDefault = async (sound: UploadedSoundItem | SampleCustomSound) => {
+    const isSample = isSampleUrl(sound.url);
     const updated: UserNotificationPreferences = {
       ...notifPrefs,
-      soundUrl: sample.url,
       soundPreset: 'custom',
+      soundUrl: sound.url,
+      uploadedSoundUrl: isSample ? notifPrefs.uploadedSoundUrl : sound.url,
       soundEnabled: true,
     };
     setNotifPrefs(updated);
-    setAuditioningPreset(sample.id);
-    playNotificationSound(sample.url, notifPrefs.soundVolume ?? 0.8, 'custom');
-    setTimeout(() => {
-      setAuditioningPreset((prev) => (prev === sample.id ? null : prev));
-    }, 1200);
+    setAuditioningPreset(`active-${sound.id}`);
+    playNotificationSound(sound.url, notifPrefs.soundVolume ?? 0.8, 'custom');
+    setTimeout(() => setAuditioningPreset(null), 1200);
 
     try {
       const res = await authApi.updateProfile({ notificationPreferences: updated });
       setCurrentUser(res.user);
-      toast.success(`Notification sound set to "${sample.name}"`);
+      toast.success(`Default alert sound set to "${sound.name}"`);
     } catch (e: any) {
       setNotifPrefs(notifPrefs);
-      toast.error(e?.message || 'Failed to select sound');
+      toast.error(e?.message || 'Failed to set default sound');
     }
   };
 
   const handleChangeSoundPreset = async (preset: SoundPreset) => {
+    const targetSoundUrl = preset === 'custom'
+      ? (notifPrefs.soundUrl || notifPrefs.uploadedSoundUrl || SAMPLE_CUSTOM_SOUNDS[0]?.url)
+      : notifPrefs.soundUrl;
+
     const updated: UserNotificationPreferences = {
       ...notifPrefs,
       soundPreset: preset,
+      soundUrl: targetSoundUrl,
       soundEnabled: true,
     };
     setNotifPrefs(updated);
     if (preset !== 'custom') {
       playPresetTone(preset, notifPrefs.soundVolume ?? 0.8);
-    } else if (notifPrefs.soundUrl) {
-      playNotificationSound(notifPrefs.soundUrl, notifPrefs.soundVolume ?? 0.8, 'custom');
+    } else if (targetSoundUrl) {
+      playNotificationSound(targetSoundUrl, notifPrefs.soundVolume ?? 0.8, 'custom');
     }
     try {
       const res = await authApi.updateProfile({ notificationPreferences: updated });
@@ -513,11 +577,23 @@ export default function SettingsPage() {
     soundUrl?: string | null
   ) => {
     const currentTypeSounds = notifPrefs.typeSounds || {};
+    let resolvedUrl: string | null | undefined = soundUrl;
+
+    if (preset === 'custom') {
+      if (soundUrl !== undefined) {
+        resolvedUrl = soundUrl;
+      } else {
+        resolvedUrl = currentTypeSounds[category]?.soundUrl || notifPrefs.uploadedSoundUrl || notifPrefs.soundUrl;
+      }
+    } else {
+      resolvedUrl = undefined;
+    }
+
     const updatedTypeSounds = {
       ...currentTypeSounds,
       [category]: {
         preset,
-        soundUrl: preset === 'custom' ? (soundUrl ?? notifPrefs.soundUrl) : undefined,
+        soundUrl: resolvedUrl,
       },
     };
 
@@ -526,6 +602,12 @@ export default function SettingsPage() {
       typeSounds: updatedTypeSounds,
     };
     setNotifPrefs(updated);
+
+    if (preset === 'custom' && resolvedUrl) {
+      playNotificationSound(resolvedUrl, notifPrefs.soundVolume ?? 0.8, 'custom');
+    } else if (preset !== 'inherit' && preset !== 'mute') {
+      playPresetTone(preset as SoundPreset, notifPrefs.soundVolume ?? 0.8);
+    }
 
     try {
       const res = await authApi.updateProfile({ notificationPreferences: updated });
@@ -560,7 +642,7 @@ export default function SettingsPage() {
         playPresetTone((notifPrefs.soundPreset as SoundPreset) || 'ting', notifPrefs.soundVolume ?? 0.8);
       }
     } else if (choice === 'custom') {
-      const url = config?.soundUrl || notifPrefs.soundUrl;
+      const url = config?.soundUrl || notifPrefs.uploadedSoundUrl || notifPrefs.soundUrl;
       if (url) {
         playNotificationSound(url, notifPrefs.soundVolume ?? 0.8, 'custom');
       } else {
@@ -587,16 +669,14 @@ export default function SettingsPage() {
         return;
       }
 
-      // Convert & clamp audio duration to uniform minimal MB notification sound
-      const conversion = await convertAudioToNotificationSound(rawFile, 3.0);
-      const origKb = Math.max(1, Math.round(conversion.originalSize / 1024));
-      const convKb = Math.max(1, Math.round(conversion.convertedSize / 1024));
-      const reduction = Math.round((1 - conversion.convertedSize / conversion.originalSize) * 100);
+      if (customUploadedCount >= 4) {
+        toast.error('Maximum of 4 custom notification sounds reached. Please delete an existing sound before uploading a new one.');
+        setIsUploadingSound(false);
+        return;
+      }
 
-      const statsMsg = reduction > 0 
-        ? `${origKb} KB → ${convKb} KB (${reduction}% smaller, ${conversion.duration}s)`
-        : `${convKb} KB (${conversion.duration}s)`;
-      setAudioConversionStats(statsMsg);
+      const conversion = await convertAudioToNotificationSound(rawFile, 3.0);
+      const convKb = Math.max(1, Math.round(conversion.convertedSize / 1024));
 
       if (conversion.file.size > 500 * 1024) {
         toast.error('Notification sound cannot exceed 500 KB');
@@ -606,14 +686,28 @@ export default function SettingsPage() {
 
       const res = await uploadApi.uploadSound(conversion.file);
       setCurrentUser(res.user);
+
+      const cleanName = (res.name || rawFile.name.replace(/\.[^.]+$/, '').replace(/_ting$/i, '').replace(/[_-]+/g, ' '))
+        .trim()
+        .slice(0, 30) || 'Custom Audio';
+
+      const newSoundItem: UploadedSoundItem = {
+        id: res.soundId || `custom-${Date.now()}`,
+        name: cleanName,
+        url: res.url,
+      };
+
+      const nextUploadedSounds = [...userUploadedSounds, newSoundItem];
       const updatedPrefs: UserNotificationPreferences = {
         ...notifPrefs,
+        uploadedSounds: nextUploadedSounds,
+        uploadedSoundUrl: res.url,
         soundUrl: res.url,
         soundPreset: 'custom',
         soundEnabled: true,
       };
       setNotifPrefs(updatedPrefs);
-      toast.success(`Custom notification sound uploaded & converted successfully (${convKb} KB)`);
+      toast.success(`"${newSoundItem.name}" uploaded successfully (${convKb} KB)`);
       playNotificationSound(res.url, notifPrefs.soundVolume ?? 0.8, 'custom');
     } catch (e: any) {
       toast.error(e?.message || 'Failed to convert or upload notification sound');
@@ -625,24 +719,55 @@ export default function SettingsPage() {
   const handleSoundFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       handleSoundUpload(e.target.files[0]);
+      e.target.value = '';
     }
   };
 
-  const handleDeleteSound = async () => {
+  const handleDeleteSound = async (params?: { soundId?: string; soundUrl?: string; category?: SoundCategory } | SoundCategory) => {
     try {
-      const res = await uploadApi.deleteSound();
-      setCurrentUser(res.user);
-      const updatedPrefs: UserNotificationPreferences = {
-        ...notifPrefs,
-        soundUrl: null,
-        soundPreset: 'ting',
-      };
-      setNotifPrefs(updatedPrefs);
-      setAudioConversionStats(null);
-      playPresetTone('ting', notifPrefs.soundVolume ?? 0.8);
-      toast.success('Reverted to default crystal ting alert');
+      if (typeof params === 'string' || (params && 'category' in params && !params.soundId && !params.soundUrl)) {
+        const cat = typeof params === 'string' ? params : params?.category;
+        if (!cat) return;
+        const res = await uploadApi.deleteSound({ category: cat });
+        setCurrentUser(res.user);
+        const currentTypeSounds = { ...(notifPrefs.typeSounds || {}) };
+        currentTypeSounds[cat] = {
+          preset: 'inherit',
+          soundUrl: null,
+        };
+        const updatedPrefs: UserNotificationPreferences = {
+          ...notifPrefs,
+          typeSounds: currentTypeSounds,
+        };
+        setNotifPrefs(updatedPrefs);
+        const catLabel = SOUND_CATEGORIES.find((c) => c.id === cat)?.name || cat;
+        toast.success(`${catLabel} reset to Default chime`);
+      } else if (params && (params.soundId || params.soundUrl)) {
+        const res = await uploadApi.deleteSound({ soundId: params.soundId, soundUrl: params.soundUrl });
+        setCurrentUser(res.user);
+        const remaining = userUploadedSounds.filter((s: UploadedSoundItem) => s.id !== params.soundId && s.url !== params.soundUrl);
+        const deletedUrl = params.soundUrl || userUploadedSounds.find((s: UploadedSoundItem) => s.id === params.soundId)?.url;
+        const updatedPrefs: UserNotificationPreferences = {
+          ...notifPrefs,
+          uploadedSounds: remaining,
+          soundUrl: notifPrefs.soundUrl === deletedUrl ? null : notifPrefs.soundUrl,
+          uploadedSoundUrl: notifPrefs.uploadedSoundUrl === deletedUrl ? (remaining[0]?.url || null) : notifPrefs.uploadedSoundUrl,
+          soundPreset: notifPrefs.soundUrl === deletedUrl ? 'ting' : notifPrefs.soundPreset,
+        };
+        if (updatedPrefs.typeSounds) {
+          const nextTypeSounds = { ...updatedPrefs.typeSounds };
+          for (const [k, v] of Object.entries(nextTypeSounds)) {
+            if (v?.soundUrl === deletedUrl) {
+              nextTypeSounds[k as SoundCategory] = { preset: 'inherit', soundUrl: null };
+            }
+          }
+          updatedPrefs.typeSounds = nextTypeSounds;
+        }
+        setNotifPrefs(updatedPrefs);
+        toast.success('Custom sound removed from library');
+      }
     } catch (e: any) {
-      toast.error(e?.message || 'Failed to remove notification sound');
+      toast.error(e?.message || 'Failed to remove sound');
     }
   };
 
@@ -708,7 +833,6 @@ export default function SettingsPage() {
     setCopiedKey(id);
     setTimeout(() => setCopiedKey(null), 2000);
   };
-
   if (loading) {
     return <SettingsSkeleton />;
   }
@@ -919,7 +1043,7 @@ export default function SettingsPage() {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-1">
                     {/* Agreement 1: Celebrate My Mentions */}
                     <div className={`p-4 rounded-xl border transition-all ${
                       notifPrefs.confettiEnabled
@@ -927,10 +1051,10 @@ export default function SettingsPage() {
                         : 'bg-zinc-900/40 border-zinc-800/80'
                     }`}>
                       <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-zinc-200">Celebrate My Mentions</span>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                        <div className="space-y-1.5 flex-1 min-w-0 pr-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-semibold text-zinc-200 whitespace-nowrap">Celebrate My Mentions</span>
+                            <span className={`inline-flex items-center justify-center text-[10px] px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 leading-tight ${
                               notifPrefs.confettiEnabled
                                 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25'
                                 : 'bg-zinc-800 text-zinc-400'
@@ -968,10 +1092,10 @@ export default function SettingsPage() {
                         : 'bg-zinc-900/40 border-zinc-800/80'
                     }`}>
                       <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-zinc-200">Receive Confetti Animations</span>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                        <div className="space-y-1.5 flex-1 min-w-0 pr-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-semibold text-zinc-200 whitespace-nowrap">Receive Confetti Animations</span>
+                            <span className={`inline-flex items-center justify-center text-[10px] px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 leading-tight ${
                               notifPrefs.receiveConfetti
                                 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25'
                                 : 'bg-zinc-800 text-zinc-400'
@@ -1043,10 +1167,10 @@ export default function SettingsPage() {
                     </div>
 
                     {/* Metadata & Description */}
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-zinc-200">Confetti Image</h3>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-semibold text-zinc-200 whitespace-nowrap">Confetti Image</h3>
+                        <span className={`inline-flex items-center justify-center text-[10px] px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 leading-tight ${
                           confettiUrl
                             ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/25'
                             : 'bg-zinc-800/80 text-zinc-400 border border-zinc-700/50'
@@ -1097,14 +1221,14 @@ export default function SettingsPage() {
               {/* Row 2: Animation Intensity & Hardware Adaptation (Admin Only) */}
               {isAdmin && (
                 <div className="p-6 space-y-4 border-t border-zinc-800/80">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-zinc-200">Animation Intensity</h3>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-semibold text-zinc-200 whitespace-nowrap">Animation Intensity</h3>
+                        <span className="inline-flex items-center justify-center text-[10px] px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 leading-tight">
                           Hardware Adaptive
                         </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-purple-300 border border-purple-500/25">
+                        <span className="inline-flex items-center justify-center text-[10px] px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 bg-purple-500/15 text-purple-300 border border-purple-500/25 leading-tight">
                           Admin Only
                         </span>
                       </div>
@@ -1114,11 +1238,11 @@ export default function SettingsPage() {
                     </div>
 
                     {/* Segmented Control */}
-                    <div className="flex items-center bg-zinc-800/80 p-1 rounded-lg border border-zinc-700/60 shrink-0">
+                    <div className="inline-flex items-center bg-zinc-800/80 p-1 rounded-lg border border-zinc-700/60 shrink-0 self-start lg:self-center">
                       <button
                         type="button"
                         onClick={() => handlePerfOverrideChange('auto')}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer whitespace-nowrap leading-none ${
                           perfOverride === 'auto'
                             ? 'bg-indigo-600 text-white shadow-xs'
                             : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
@@ -1129,7 +1253,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={() => handlePerfOverrideChange('low')}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer whitespace-nowrap leading-none ${
                           perfOverride === 'low'
                             ? 'bg-indigo-600 text-white shadow-xs'
                             : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
@@ -1140,7 +1264,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={() => handlePerfOverrideChange('medium')}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer whitespace-nowrap leading-none ${
                           perfOverride === 'medium'
                             ? 'bg-indigo-600 text-white shadow-xs'
                             : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
@@ -1151,7 +1275,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={() => handlePerfOverrideChange('high')}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer whitespace-nowrap leading-none ${
                           perfOverride === 'high'
                             ? 'bg-indigo-600 text-white shadow-xs'
                             : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
@@ -1298,19 +1422,23 @@ export default function SettingsPage() {
                 <div className="space-y-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Volume2 className="w-4 h-4 text-indigo-400" />
-                        <h3 className="text-sm font-semibold text-zinc-200">Notification Sound ("Ting")</h3>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                        <h3 className="text-sm font-semibold text-zinc-200">Notification Alert Sounds</h3>
+                        <span className={`inline-flex items-center justify-center text-[10px] px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 leading-tight ${
                           notifPrefs.soundEnabled
                             ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/25'
                             : 'bg-zinc-800 text-zinc-500 border border-zinc-700/50'
                         }`}>
-                          {notifPrefs.soundEnabled ? 'Sound Active' : 'Muted'}
+                          {notifPrefs.soundEnabled ? 'Active' : 'Muted'}
+                        </span>
+                        <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800/80 border border-zinc-700/60 text-zinc-300 flex items-center gap-1.5 ml-1">
+                          <Music className="w-3 h-3 text-indigo-400" />
+                          <span>Uploaded: <strong className={isMaxSoundsReached ? 'text-amber-400 font-bold' : 'text-zinc-200'}>{customUploadedCount} / 4</strong></span>
                         </span>
                       </div>
                       <p className="text-xs text-zinc-400">
-                        Plays an audio chime when real-time notifications arrive. Choose an acoustic preset or upload a custom MP3.
+                        Plays an audio chime when real-time notifications arrive. Choose an acoustic preset or upload custom sounds (up to 4 max).
                       </p>
                     </div>
 
@@ -1332,6 +1460,15 @@ export default function SettingsPage() {
                       </button>
                     </div>
                   </div>
+
+                  {isMaxSoundsReached && (
+                    <div className="flex items-center gap-2.5 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span className="flex-1 font-medium">
+                        You have reached your maximum limit of 4 custom notification sounds. Delete an uploaded sound to add a new one.
+                      </span>
+                    </div>
+                  )}
 
                   {/* Volume Slider & Sound Presets Grid */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-1">
@@ -1367,11 +1504,11 @@ export default function SettingsPage() {
                       </p>
                     </div>
 
-                    {/* Presets & Custom Pill Bar */}
+                    {/* Presets Grid */}
                     <div className="lg:col-span-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-zinc-200">Alert Sound Selection</span>
-                        <span className="text-[11px] text-zinc-500">Click ▶ to preview</span>
+                        <span className="text-xs font-semibold text-zinc-200">Alert Sound Presets</span>
+                        <span className="text-[11px] text-zinc-500">Click to set as default or ▶ to preview</span>
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -1384,26 +1521,33 @@ export default function SettingsPage() {
                               onClick={() => handleChangeSoundPreset(preset.id)}
                               className={`group relative p-2.5 rounded-lg border text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${
                                 isSelected
-                                  ? 'bg-indigo-600/15 border-indigo-500/50 text-zinc-100 shadow-xs'
+                                  ? 'bg-zinc-800/90 border-zinc-600 text-zinc-100 shadow-xs ring-1 ring-zinc-500/20'
                                   : 'bg-zinc-800/40 border-zinc-800 hover:border-zinc-700/80 text-zinc-300'
                               }`}
                             >
                               <div className="min-w-0 pr-1">
-                                <p className="text-xs font-semibold truncate">{preset.name}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-semibold truncate text-zinc-100">{preset.name}</p>
+                                  {isSelected && (
+                                    <span className="inline-flex items-center justify-center text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-700 text-zinc-200 border border-zinc-600 font-medium shrink-0 leading-none">
+                                      Default
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-zinc-500 truncate">{preset.id === 'ting' ? 'Default Crystal' : preset.name.split(' ')[0]}</p>
                               </div>
                               <button
                                 type="button"
                                 onClick={(e) => handleAuditionPreset(preset.id, e)}
-                                className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                                  isSelected
-                                    ? 'bg-indigo-500 text-white'
-                                    : 'bg-zinc-700/80 group-hover:bg-zinc-600 text-zinc-300'
+                                className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors border ${
+                                  isAuditioning
+                                    ? 'bg-zinc-700 text-indigo-400 border-zinc-600'
+                                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700/60'
                                 }`}
                                 title={`Audition ${preset.name}`}
                               >
                                 {isAuditioning ? (
-                                  <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
                                 ) : (
                                   <Play className="w-3 h-3 fill-current ml-0.5" />
                                 )}
@@ -1411,67 +1555,266 @@ export default function SettingsPage() {
                             </div>
                           );
                         })}
-
-                        {/* Custom MP3 Option Pill */}
-                        {(() => {
-                          const activeCustomSample = SAMPLE_CUSTOM_SOUNDS.find((s) => s.url === notifPrefs.soundUrl);
-                          const isCustomSelected = (notifPrefs.soundPreset || 'ting') === 'custom';
-                          return (
-                            <div
-                              onClick={() => handleChangeSoundPreset('custom')}
-                              className={`group relative p-2.5 rounded-lg border text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${
-                                isCustomSelected
-                                  ? 'bg-indigo-600/15 border-indigo-500/50 text-zinc-100 shadow-xs'
-                                  : 'bg-zinc-800/40 border-zinc-800 hover:border-zinc-700/80 text-zinc-300'
-                              }`}
-                            >
-                              <div className="min-w-0 pr-1">
-                                <p className="text-xs font-semibold truncate flex items-center gap-1">
-                                  <Music className="w-3 h-3 text-indigo-400" />
-                                  <span>{activeCustomSample ? activeCustomSample.name : 'Custom Audio'}</span>
-                                </p>
-                                <p className="text-[10px] text-zinc-500 truncate">
-                                  {notifPrefs.soundUrl ? (activeCustomSample ? 'Sample Active' : 'Custom File Active') : 'Upload / Sample'}
-                                </p>
-                              </div>
-                              {notifPrefs.soundUrl && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    playNotificationSound(notifPrefs.soundUrl!, notifPrefs.soundVolume ?? 0.8, 'custom');
-                                  }}
-                                  className="w-6 h-6 rounded-md bg-indigo-500 text-white flex items-center justify-center shrink-0"
-                                  title="Audition active custom sound"
-                                >
-                                  <Play className="w-3 h-3 fill-current ml-0.5" />
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })()}
                       </div>
                     </div>
                   </div>
 
-                  {/* Per-Category Sound Customization (Scalable & Non-Redundant) */}
+                  {/* Custom Sound Library (The ONE & ONLY Section with the Upload Button) */}
+                  <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1 min-w-0 pr-2">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
+                            <h4 className="text-sm font-semibold text-zinc-100">Custom Sound Library</h4>
+                          </div>
+                          <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-zinc-800/90 border border-zinc-700/70 text-zinc-300 flex items-center gap-1.5 shrink-0">
+                            <Music className="w-3 h-3 text-indigo-400" />
+                            <span>Uploaded: <strong className={isMaxSoundsReached ? 'text-amber-400 font-bold' : 'text-zinc-100'}>{customUploadedCount} / 4</strong></span>
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          Upload up to 4 custom audio files (MP3, WAV, OGG, M4A) or choose from ready-to-use sample sounds.
+                        </p>
+                      </div>
+
+                      {/* The single Upload Button */}
+                      <div className="shrink-0 self-start sm:self-center">
+                        {isMaxSoundsReached ? (
+                          <button
+                            type="button"
+                            onClick={() => toast.error('Maximum of 4 custom notification sounds reached. Please delete an existing sound before uploading a new one.')}
+                            className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium border bg-zinc-900/80 text-zinc-500 border-zinc-800 cursor-not-allowed whitespace-nowrap shadow-xs"
+                            title="Maximum 4 custom sounds reached. Delete an existing sound first."
+                          >
+                            <UploadCloud className="w-4 h-4 text-zinc-600 shrink-0" />
+                            <span>Upload Audio (Full)</span>
+                          </button>
+                        ) : (
+                          <label
+                            className={`inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all border whitespace-nowrap shadow-xs select-none ${
+                              isUploadingSound
+                                ? 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                                : 'bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white border-indigo-500/80'
+                            }`}
+                            title="Upload a custom alert audio file"
+                          >
+                            {isUploadingSound ? (
+                              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                            ) : (
+                              <UploadCloud className="w-4 h-4 shrink-0" />
+                            )}
+                            <span>{isUploadingSound ? 'Optimizing Audio...' : '+ Upload Audio'}</span>
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept="audio/*,.mp3,.wav,.ogg,.m4a"
+                              disabled={isUploadingSound}
+                              onChange={handleSoundFileChange}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    {isMaxSoundsReached && (
+                      <div className="flex items-center gap-2.5 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span className="flex-1 font-medium">
+                          You have reached your maximum limit of 4 custom notification sounds. Delete an uploaded sound to add a new one.
+                        </span>
+                      </div>
+                    )}
+
+                    {/* My Uploaded Sounds Grid */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                        <span className="font-semibold text-zinc-300">My Uploaded Audio ({userUploadedSounds.length} / 4)</span>
+                        <span>Click ▶ to preview</span>
+                      </div>
+
+                      {userUploadedSounds.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                          {userUploadedSounds.map((sound: UploadedSoundItem) => {
+                            const isDefault = (notifPrefs.soundPreset || 'ting') === 'custom' && notifPrefs.soundUrl === sound.url;
+                            const isAuditioning = auditioningPreset === `uploaded-${sound.id}`;
+
+                            return (
+                              <div
+                                key={sound.id}
+                                className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-all ${
+                                  isDefault
+                                    ? 'bg-zinc-800/90 border-zinc-600 text-zinc-100 shadow-xs ring-1 ring-zinc-500/20'
+                                    : 'bg-zinc-800/40 border-zinc-800 hover:border-zinc-700/80 text-zinc-300'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0 pr-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <Music className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                                      <p className="text-xs font-semibold truncate text-zinc-100" title={sound.name}>{sound.name}</p>
+                                    </div>
+                                    <div className="mt-1">
+                                      {isDefault ? (
+                                        <span className="inline-flex items-center justify-center text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-700 text-zinc-200 border border-zinc-600 font-medium whitespace-nowrap shrink-0 leading-none">
+                                          Default Alert
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] text-zinc-500">Custom Upload</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAuditioningPreset(`uploaded-${sound.id}`);
+                                        playNotificationSound(sound.url, notifPrefs.soundVolume ?? 0.8, 'custom');
+                                        setTimeout(() => setAuditioningPreset(null), 1200);
+                                      }}
+                                      className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors border ${
+                                        isAuditioning
+                                          ? 'bg-zinc-700 text-indigo-400 border-zinc-600'
+                                          : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700/60'
+                                      }`}
+                                      title={`Preview ${sound.name}`}
+                                    >
+                                      {isAuditioning ? (
+                                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-ping" />
+                                      ) : (
+                                        <Play className="w-3 h-3 fill-current ml-0.5" />
+                                      )}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSound({ soundId: sound.id, soundUrl: sound.url })}
+                                      className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors border border-transparent hover:border-rose-500/20"
+                                      title={`Delete "${sound.name}" from library`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[10px]">
+                                  {!isDefault ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetSoundAsDefault(sound)}
+                                      className="text-zinc-400 hover:text-zinc-200 font-medium cursor-pointer transition-colors"
+                                    >
+                                      Set as Default
+                                    </button>
+                                  ) : (
+                                    <span className="text-emerald-400 font-medium">✓ Active Default</span>
+                                  )}
+                                  <span className="text-zinc-500 font-mono">Custom</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-center text-xs text-zinc-500">
+                          No custom sounds uploaded yet. Click <span className="text-indigo-400 font-medium">+ Upload Audio</span> above to add your own alert audio (up to 4).
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Ready-to-Use Sample Sounds Sub-grid */}
+                    <div className="space-y-2 pt-2 border-t border-zinc-800/60">
+                      <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                        <span className="font-semibold text-zinc-300">Ready-to-Use Sample Sounds</span>
+                        <span>Click ▶ to preview</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                        {SAMPLE_CUSTOM_SOUNDS.map((sample) => {
+                          const filename = sample.url.split('/').pop()?.split('?')[0];
+                          const isSelected = (notifPrefs.soundPreset || 'ting') === 'custom' &&
+                            (notifPrefs.soundUrl === sample.url || (filename && notifPrefs.soundUrl?.endsWith(filename)));
+                          const isAuditioning = auditioningPreset === sample.id;
+
+                          return (
+                            <div
+                              key={sample.id}
+                              className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-all ${
+                                isSelected
+                                  ? 'bg-zinc-800/90 border-zinc-600 text-zinc-100 shadow-xs ring-1 ring-zinc-500/20'
+                                  : 'bg-zinc-800/40 border-zinc-800 hover:border-zinc-700/80 text-zinc-300'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 pr-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-xs font-semibold truncate text-zinc-100" title={sample.name}>{sample.name}</p>
+                                    {isSelected && (
+                                      <span className="inline-flex items-center justify-center text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-700 text-zinc-200 border border-zinc-600 font-medium whitespace-nowrap shrink-0 leading-none">
+                                        Default
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-zinc-400 mt-0.5 line-clamp-1" title={sample.description}>{sample.description}</p>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleAuditionSample(sample, e)}
+                                  className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors shadow-xs border ${
+                                    isAuditioning
+                                      ? 'bg-zinc-700 text-indigo-400 border-zinc-600'
+                                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700/60'
+                                  }`}
+                                  title={`Audition ${sample.name}`}
+                                >
+                                  {isAuditioning ? (
+                                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-ping" />
+                                  ) : (
+                                    <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                                  )}
+                                </button>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[10px]">
+                                {!isSelected ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSetSoundAsDefault(sample)}
+                                    className="text-zinc-400 hover:text-zinc-200 font-medium cursor-pointer transition-colors"
+                                  >
+                                    Set as Default
+                                  </button>
+                                ) : (
+                                  <span className="text-emerald-400 font-medium">✓ Active Default</span>
+                                )}
+                                <span className="text-zinc-500 font-mono">Sample</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Per-Category Sound Customization (CLEAN - ZERO UPLOAD BUTTONS) */}
                   <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <Volume2 className="w-4 h-4 text-indigo-400" />
                         <h4 className="text-xs font-semibold text-zinc-200">Per-Category Sound Alerts</h4>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25 font-medium">
-                          Smart Inherit
-                        </span>
                       </div>
                       <span className="text-[11px] text-zinc-500">
-                        Customize tones for specific alerts or keep on Default to inherit
+                        Assign distinct sounds for specific alerts like @ Mentions or Reactions
                       </span>
                     </div>
 
                     <div className="divide-y divide-zinc-800/60 border border-zinc-800/80 rounded-xl overflow-hidden bg-zinc-950/40">
                       {SOUND_CATEGORIES.map((cat) => {
-                        const currentChoice: SoundChoice = notifPrefs.typeSounds?.[cat.id]?.preset || 'inherit';
+                        const config = notifPrefs.typeSounds?.[cat.id];
+                        const currentChoice: SoundChoice = config?.preset || 'inherit';
+                        const categorySoundUrl = config?.soundUrl;
                         const isAuditioning = auditioningPreset === `category-${cat.id}`;
 
                         const CategoryIcon =
@@ -1483,46 +1826,107 @@ export default function SettingsPage() {
                             ? MessageSquare
                             : RefreshCw;
 
+                        // Determine selected value for dropdown
+                        let selectValue = 'inherit';
+                        if (currentChoice === 'mute') {
+                          selectValue = 'mute';
+                        } else if (currentChoice === 'inherit') {
+                          selectValue = 'inherit';
+                        } else if (['ting', 'chime', 'pop', 'bell', 'glass'].includes(currentChoice)) {
+                          selectValue = `preset-${currentChoice}`;
+                        } else if (currentChoice === 'custom' && categorySoundUrl) {
+                          const matchedUploaded = userUploadedSounds.find((s: UploadedSoundItem) => s.url === categorySoundUrl);
+                          const matchedSample = SAMPLE_CUSTOM_SOUNDS.find((s) => {
+                            const filename = s.url.split('/').pop()?.split('?')[0];
+                            return s.url === categorySoundUrl || (filename && categorySoundUrl.endsWith(filename));
+                          });
+                          if (matchedUploaded) {
+                            selectValue = `custom-${matchedUploaded.id}`;
+                          } else if (matchedSample) {
+                            selectValue = `sample-${matchedSample.id}`;
+                          } else {
+                            selectValue = 'inherit';
+                          }
+                        }
+
+                        const handleCategoryDropdownChange = (val: string) => {
+                          if (val === 'inherit') {
+                            handleChangeCategorySound(cat.id, 'inherit');
+                          } else if (val === 'mute') {
+                            handleChangeCategorySound(cat.id, 'mute');
+                          } else if (val.startsWith('preset-')) {
+                            const preset = val.replace('preset-', '') as SoundChoice;
+                            handleChangeCategorySound(cat.id, preset);
+                          } else if (val.startsWith('custom-')) {
+                            const soundId = val.replace('custom-', '');
+                            const sound = userUploadedSounds.find((s: UploadedSoundItem) => s.id === soundId);
+                            if (sound) {
+                              handleChangeCategorySound(cat.id, 'custom', sound.url);
+                            }
+                          } else if (val.startsWith('sample-')) {
+                            const sampleId = val.replace('sample-', '');
+                            const sample = SAMPLE_CUSTOM_SOUNDS.find((s) => s.id === sampleId);
+                            if (sample) {
+                              handleChangeCategorySound(cat.id, 'custom', sample.url);
+                            }
+                          }
+                        };
+
                         return (
                           <div
                             key={cat.id}
-                            className="p-3 sm:px-4 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-900/40 transition-colors"
+                            className="p-3.5 sm:px-4 sm:py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-900/30 transition-colors"
                           >
                             <div className="flex items-center gap-3 min-w-0 pr-2">
-                              <div className="w-7 h-7 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center shrink-0 text-indigo-400">
-                                <CategoryIcon className="w-3.5 h-3.5" />
+                              <div className="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center shrink-0 text-zinc-300">
+                                <CategoryIcon className="w-4 h-4" />
                               </div>
                               <div className="min-w-0">
-                                <p className="text-xs font-semibold text-zinc-200 truncate">{cat.name}</p>
-                                <p className="text-[10px] text-zinc-400 truncate">{cat.description}</p>
+                                <p className="text-xs font-semibold text-zinc-100">{cat.name}</p>
+                                <p className="text-[11px] text-zinc-400 truncate mt-0.5">{cat.description}</p>
                               </div>
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                               {/* Dropdown Selector */}
                               <select
-                                value={currentChoice}
-                                onChange={(e) => handleChangeCategorySound(cat.id, e.target.value as SoundChoice)}
-                                className={`text-xs rounded-lg px-2.5 py-1.5 border font-medium cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
-                                  currentChoice !== 'inherit' && currentChoice !== 'mute'
-                                    ? 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200'
-                                    : currentChoice === 'mute'
-                                    ? 'bg-rose-950/20 border-rose-500/30 text-rose-300'
-                                    : 'bg-zinc-800 border-zinc-700 text-zinc-300'
+                                value={selectValue}
+                                onChange={(e) => handleCategoryDropdownChange(e.target.value)}
+                                className={`text-xs rounded-lg px-2.5 py-1.5 border font-medium cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-500 w-48 sm:w-56 ${
+                                  currentChoice === 'mute'
+                                    ? 'bg-zinc-900 border-rose-500/30 text-rose-300'
+                                    : currentChoice !== 'inherit'
+                                    ? 'bg-zinc-900 border-zinc-700 text-zinc-100 hover:border-zinc-600'
+                                    : 'bg-zinc-900/90 border-zinc-800 text-zinc-300 hover:border-zinc-700'
                                 }`}
                               >
-                                <option value="inherit">
-                                  Default ({SOUND_PRESETS.find((p) => p.id === (notifPrefs.soundPreset || 'ting'))?.name || 'Classic Ting'})
+                                <option value="inherit" className="bg-zinc-900 text-zinc-200">
+                                  Default ({defaultSoundName})
                                 </option>
-                                <option value="ting">Classic Ting</option>
-                                <option value="chime">Crystal Chime</option>
-                                <option value="pop">Subtle Pop</option>
-                                <option value="bell">Desk Bell</option>
-                                <option value="glass">Glass Clink</option>
-                                {notifPrefs.soundUrl && (
-                                  <option value="custom">Custom Audio (Active file)</option>
+                                <optgroup label="Studio Presets" className="bg-zinc-900 text-zinc-400 font-semibold">
+                                  <option value="preset-ting" className="bg-zinc-900 text-zinc-200">Classic Ting</option>
+                                  <option value="preset-chime" className="bg-zinc-900 text-zinc-200">Crystal Chime</option>
+                                  <option value="preset-pop" className="bg-zinc-900 text-zinc-200">Subtle Pop</option>
+                                  <option value="preset-bell" className="bg-zinc-900 text-zinc-200">Desk Bell</option>
+                                  <option value="preset-glass" className="bg-zinc-900 text-zinc-200">Glass Clink</option>
+                                </optgroup>
+                                {userUploadedSounds.length > 0 && (
+                                  <optgroup label="My Uploaded Sounds" className="bg-zinc-900 text-zinc-400 font-semibold">
+                                    {userUploadedSounds.map((sound: UploadedSoundItem) => (
+                                      <option key={sound.id} value={`custom-${sound.id}`} className="bg-zinc-900 text-zinc-200">
+                                        Custom: {sound.name}
+                                      </option>
+                                    ))}
+                                  </optgroup>
                                 )}
-                                <option value="mute">Mute (No sound)</option>
+                                <optgroup label="Sample Sounds" className="bg-zinc-900 text-zinc-400 font-semibold">
+                                  {SAMPLE_CUSTOM_SOUNDS.map((sample) => (
+                                    <option key={sample.id} value={`sample-${sample.id}`} className="bg-zinc-900 text-zinc-200">
+                                      Sample: {sample.name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                                <option value="mute" className="bg-zinc-900 text-rose-300">Mute (No sound)</option>
                               </select>
 
                               {/* Audition Play Button */}
@@ -1545,147 +1949,22 @@ export default function SettingsPage() {
                                   <Play className="w-3 h-3 fill-current ml-0.5" />
                                 )}
                               </button>
+
+                              {/* Reset / Revert to Default Button if category has a custom setting */}
+                              {currentChoice !== 'inherit' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSound({ category: cat.id })}
+                                  className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors border border-transparent hover:border-zinc-700 shrink-0"
+                                  title={`Reset ${cat.name} to default chime`}
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
                       })}
-                    </div>
-                  </div>
-
-                  {/* Sample Custom Sounds (Ready to Use) */}
-                  <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-indigo-400" />
-                        <h4 className="text-xs font-semibold text-zinc-200">Sample Custom Sounds (Ready to Use)</h4>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25 font-medium">
-                          Cloudflare R2
-                        </span>
-                      </div>
-                      <span className="text-[11px] text-zinc-500">Click to select or ▶ to preview</span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                      {SAMPLE_CUSTOM_SOUNDS.map((sample) => {
-                        const isSelected = (notifPrefs.soundPreset || 'ting') === 'custom' && notifPrefs.soundUrl === sample.url;
-                        const isAuditioning = auditioningPreset === sample.id;
-
-                        return (
-                          <div
-                            key={sample.id}
-                            onClick={() => handleSelectSampleSound(sample)}
-                            className={`group relative p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between gap-2.5 ${
-                              isSelected
-                                ? 'bg-indigo-600/15 border-indigo-500/60 text-zinc-100 shadow-md shadow-indigo-500/5'
-                                : 'bg-zinc-800/40 border-zinc-800/90 hover:border-zinc-700/80 hover:bg-zinc-800/70 text-zinc-300'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0 pr-1">
-                                <div className="flex items-center gap-1.5">
-                                  <p className="text-xs font-semibold truncate text-zinc-100">{sample.name}</p>
-                                  {isSelected && (
-                                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium shrink-0">
-                                      Active
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[10px] text-zinc-400 mt-0.5 line-clamp-1">{sample.description}</p>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={(e) => handleAuditionSample(sample, e)}
-                                className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors shadow-xs ${
-                                  isSelected
-                                    ? 'bg-indigo-500 text-white hover:bg-indigo-400'
-                                    : 'bg-zinc-700/80 group-hover:bg-zinc-600 text-zinc-200'
-                                }`}
-                                title={`Audition ${sample.name}`}
-                              >
-                                {isAuditioning ? (
-                                  <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
-                                ) : (
-                                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-                                )}
-                              </button>
-                            </div>
-
-                            <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[10px]">
-                              <span className="text-zinc-500 font-mono">0ms delay</span>
-                              <span className={`font-medium ${isSelected ? 'text-indigo-400' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
-                                {isSelected ? '✓ Selected' : 'Click to use'}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Custom MP3 Upload & Optimizer Strip */}
-                  <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Music className="w-4 h-4 text-indigo-400" />
-                        <h4 className="text-xs font-semibold text-zinc-200">Custom MP3 Upload & Audio Compressor</h4>
-                        {notifPrefs.soundUrl && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 font-medium">
-                            Custom File Active
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-zinc-400">
-                        Upload any MP3, WAV, OGG, or M4A. The audio engine automatically normalizes, trims to 3s, and converts it into a uniform ~50 KB alert so it loads instantaneously with zero lag.
-                      </p>
-                      {audioConversionStats && (
-                        <div className="text-[11px] text-indigo-400 font-mono flex items-center gap-1.5 pt-0.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Audio Optimized: {audioConversionStats}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 cursor-pointer transition-colors border border-zinc-700/60 shadow-xs">
-                        {isUploadingSound ? (
-                          <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
-                        ) : (
-                          <UploadCloud className="w-3.5 h-3.5 text-zinc-300" />
-                        )}
-                        <span>{isUploadingSound ? 'Converting...' : notifPrefs.soundUrl ? 'Change Audio' : 'Upload MP3'}</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac"
-                          onChange={handleSoundFileChange}
-                          disabled={isUploadingSound}
-                        />
-                      </label>
-
-                      {notifPrefs.soundUrl && (
-                        <button
-                          type="button"
-                          onClick={handleDeleteSound}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors cursor-pointer border border-transparent hover:border-rose-500/20"
-                          title="Revert to default crystal ting"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Reset</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Security & R2 Details Badge */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-[11px] text-zinc-500 border-t border-zinc-800/60">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span>Secured with AES-256-GCM encryption at rest & SHA-256 protected R2 link</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-zinc-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
-                      <span>Uniform audio conversion: clamped to 3s & normalized to minimal MB</span>
                     </div>
                   </div>
                 </div>

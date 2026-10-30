@@ -46,11 +46,32 @@ const rosterSelect = {
 // Also decrypt confettiUrl and soundUrl if encrypted at rest.
 function serializeUser<T extends { credits?: bigint | null; confettiUrl?: string | null; notificationPreferences?: any }>(user: T) {
   let notificationPreferences = user.notificationPreferences;
-  if (notificationPreferences && typeof notificationPreferences === 'object' && notificationPreferences.soundUrl) {
+  if (notificationPreferences && typeof notificationPreferences === 'object') {
     notificationPreferences = {
       ...notificationPreferences,
       soundUrl: decryptText(notificationPreferences.soundUrl),
+      uploadedSoundUrl: decryptText(notificationPreferences.uploadedSoundUrl),
     };
+    if (Array.isArray(notificationPreferences.uploadedSounds)) {
+      notificationPreferences.uploadedSounds = notificationPreferences.uploadedSounds.map((s: any) => ({
+        ...s,
+        url: decryptText(s.url),
+      }));
+    }
+    if (notificationPreferences.typeSounds && typeof notificationPreferences.typeSounds === 'object') {
+      const typeSounds: any = {};
+      for (const [key, val] of Object.entries(notificationPreferences.typeSounds)) {
+        if (val && typeof val === 'object') {
+          typeSounds[key] = {
+            ...val,
+            soundUrl: decryptText((val as any).soundUrl),
+          };
+        } else {
+          typeSounds[key] = val;
+        }
+      }
+      notificationPreferences.typeSounds = typeSounds;
+    }
   }
   return {
     ...user,

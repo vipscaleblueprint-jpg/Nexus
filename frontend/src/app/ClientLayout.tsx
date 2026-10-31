@@ -218,6 +218,12 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('task_activity', (data: any) => {
       window.dispatchEvent(new CustomEvent('task_activity', { detail: data }));
+      if (data?.activity?.type === 'status_change' && data?.taskId && data?.activity?.newStatus) {
+        if (!data.activity.subtaskId) {
+          useAppStore.getState().updateTask({ id: data.taskId, status: data.activity.newStatus } as any);
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { id: data.taskId, status: data.activity.newStatus } } }));
+        }
+      }
     });
 
     s.on('task:comment_added', (payload: any) => {
@@ -230,6 +236,15 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('task:comment_deleted', (payload: any) => {
       window.dispatchEvent(new CustomEvent('task:comment_deleted', { detail: payload }));
+      notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+        if (typeof res.unreadCount === 'number') {
+          setUnreadNotifications(res.unreadCount);
+        }
+      }).catch(() => {});
+    });
+
+    s.on('task:comment_reaction', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('task:comment_reaction', { detail: payload }));
     });
 
     s.on('task:checklist_created', (payload: any) => {

@@ -213,7 +213,9 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       }),
       Indent,
       ListKeymap,
-      Link.configure({
+      Link.extend({
+        inclusive: false,
+      }).configure({
         openOnClick: false,
         protocols: ['mention'],
         defaultProtocol: 'https',
@@ -656,7 +658,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     insertMention: (name: string, matchLength: number, userId: string) => {
       if (!editor) return;
       const { from } = editor.state.selection;
-      // We insert a link with href mention://userId
+      // We insert a link with href mention://userId and clear link mark for subsequent typed text
       editor.chain().focus().deleteRange({ from: from - matchLength, to: from })
         .insertContent([
           {
@@ -664,8 +666,10 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             text: `@${name}`,
             marks: [{ type: 'link', attrs: { href: `mention://${userId}` } }]
           },
-          { type: 'text', text: ' ' }
-        ]).run();
+          { type: 'text', text: ' ', marks: [] }
+        ])
+        .unsetLink()
+        .run();
     },
     insertImages: (files: File[]) => insertImages(files),
     insertEmoji: (emoji: string) => {

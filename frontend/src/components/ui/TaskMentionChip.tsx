@@ -5,7 +5,7 @@ import { AlignLeft, CheckCircle2, Flag, Shield, Users2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { loadTask } from '@/lib/taskBatchLoader';
 import { getStatusColor } from '@/components/editor/nodes/TaskMentionNode';
-import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
 import { getPriorityConfig } from '@/lib/priority';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import { sanitizeHtml } from '@/components/docs/docTransfer';

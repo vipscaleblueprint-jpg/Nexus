@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
-import { toNotificationPreview } from '../utils/mentionNotification';
+import { toNotificationPreview, extractMentionedUserIds } from '../utils/mentionNotification';
 
 // GET /api/notifications
 export async function getNotifications(req: Request, res: Response) {
@@ -28,6 +28,7 @@ export async function getNotifications(req: Request, res: Response) {
     const forMeCondition: any[] = [
       { type: { equals: 'MENTION', mode: 'insensitive' } },
       { type: { equals: 'REACTION', mode: 'insensitive' } },
+      { type: { equals: 'REPLY', mode: 'insensitive' } },
       { title: { contains: 'mentioned you', mode: 'insensitive' } },
       { title: { contains: 'assigned you', mode: 'insensitive' } },
       { title: { contains: 'unassigned you', mode: 'insensitive' } },
@@ -96,9 +97,9 @@ export async function getNotifications(req: Request, res: Response) {
 
     const hasMore = take !== undefined ? (skip || 0) + notifications.length < total : false;
 
-    // Prune orphaned comment and mention notifications whose comment was deleted from TaskComment
+    // Prune orphaned comment, reply, reaction, and mention notifications whose comment was deleted from TaskComment
     const commentNotifs = notifications.filter(
-      n => (n.type === 'MENTION' || n.type === 'COMMENT' || n.type === 'REACTION') && n.taskId
+      n => (n.type === 'MENTION' || n.type === 'COMMENT' || n.type === 'REACTION' || n.type === 'REPLY' || (n.title || '').toLowerCase().includes('comment') || (n.title || '').toLowerCase().includes('replied')) && n.taskId
     );
 
     let activeNotifications = notifications;
@@ -109,7 +110,16 @@ export async function getNotifications(req: Request, res: Response) {
       const taskIds = Array.from(new Set(commentNotifs.map(n => n.taskId!)));
       const existingComments = await prisma.taskComment.findMany({
         where: { taskId: { in: taskIds } },
-        select: { id: true, taskId: true, userId: true, content: true, subtaskId: true },
+        select: {
+          id: true,
+          taskId: true,
+          userId: true,
+          content: true,
+          subtaskId: true,
+          parentCommentId: true,
+          createdAt: true,
+          reactions: { select: { userId: true, emoji: true } },
+        },
       });
 
       const orphanedNotifIds: string[] = [];
@@ -117,18 +127,48 @@ export async function getNotifications(req: Request, res: Response) {
 
       commentNotifs.forEach(n => {
         const preview = n.content?.trim();
+        const nTime = new Date(n.createdAt).getTime();
+        const isSubtask = (n.title || '').toLowerCase().includes('subtask');
+
         const matched = existingComments.find(c => {
           if (c.taskId !== n.taskId) return false;
+
+          // If title explicitly references subtask, require comment to be on subtask
+          if (isSubtask && !c.subtaskId) return false;
+
           if (n.type === 'REACTION') {
-            // For reactions, the comment belongs to the recipient of the notification (n.userId)
+            // For reactions, the comment belongs to recipient (n.userId) and actor reacted
             if (c.userId !== n.userId) return false;
+            if (n.actorId && !c.reactions.some(r => r.userId === n.actorId)) return false;
           } else {
+            // For comments/replies/mentions, actor is the comment author
             if (n.actorId && c.userId !== n.actorId) return false;
           }
-          if (!preview) return true;
-          const cPreview = toNotificationPreview(c.content);
-          return cPreview === preview || c.content.includes(preview) || preview.includes(cPreview);
+
+          if (n.type === 'REPLY' && !c.parentCommentId) {
+            return false;
+          }
+
+          if (n.type === 'MENTION') {
+            const mentionedUsers = extractMentionedUserIds(c.content);
+            if (!mentionedUsers.includes(n.userId)) return false;
+          }
+
+          if (preview) {
+            const cPreview = toNotificationPreview(c.content);
+            const isExact = cPreview === preview;
+            const isTruncated = preview.endsWith('…') && cPreview.startsWith(preview.slice(0, -1));
+            if (!isExact && !isTruncated) return false;
+          }
+
+          // Timestamp proximity: comment and notification are created in the same request.
+          // Allow up to 24h drift, preventing matching against months-old comments.
+          const cTime = new Date(c.createdAt).getTime();
+          if (Math.abs(nTime - cTime) > 24 * 60 * 60 * 1000) return false;
+
+          return true;
         });
+
         if (!matched) {
           orphanedNotifIds.push(n.id);
         } else {

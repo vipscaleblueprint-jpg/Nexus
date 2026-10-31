@@ -13,6 +13,7 @@ import { NotificationBell } from "./NotificationBell";
 const PAGE_TITLES: Record<string, string> = {
   "/": "Nexus Workspace",
   "/team": "Member Directory",
+  "/role-map": "Role Map",
   "/settings": "Account Settings",
   "/settings/users": "Admin Settings",
 };
@@ -184,6 +185,15 @@ export function Header() {
                   className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
                 >
                   <span className="truncate text-indigo-400">API Settings</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    router.push("/role-map");
+                  }}
+                  className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                >
+                  <span className="truncate text-[var(--accent)] font-medium">View Role Map</span>
                 </button>
 
                 {activeUser.systemRole === "ADMIN" && (

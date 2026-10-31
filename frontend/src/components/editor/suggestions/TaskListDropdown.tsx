@@ -1,6 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useState, useCallback, useMemo, useRef } from 'react';
 import { CornerDownLeft, Layout, Search, Filter, Folder, ListTodo, X, ChevronRight, Hash, CircleDashed } from 'lucide-react';
-import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
 import { getStatusColor, FREQUENCY_LABELS } from './taskSuggestion';
 import { useAppStore } from '@/lib/store';
 import * as Popover from '@radix-ui/react-popover';

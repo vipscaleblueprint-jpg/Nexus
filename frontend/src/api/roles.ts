@@ -22,3 +22,39 @@ export const updateRole = (id: string, data: { name: string; color?: string }): 
     body: JSON.stringify(data),
   });
 };
+
+export interface RoleMember {
+  id: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  employmentType: string;
+  starRating: number;
+  systemRole: string;
+  teamName: string | null;
+  roles: string[];
+}
+
+export interface RoleMapEntry {
+  id: string;
+  name: string;
+  type: 'workspace' | 'teamrole' | 'custom';
+  color: string | null;
+  teamId?: string | null;
+  teamName?: string | null;
+  memberCount: number;
+  members: RoleMember[];
+}
+
+export interface RoleMapResponse {
+  success: boolean;
+  roles: RoleMapEntry[];
+  unassignedMembers: RoleMember[];
+  totalRoles: number;
+  totalMembers: number;
+}
+
+export const getRoleMap = (): Promise<RoleMapResponse> => {
+  return apiClient<RoleMapResponse>('/api/roles/map', { method: 'GET' });
+};
+

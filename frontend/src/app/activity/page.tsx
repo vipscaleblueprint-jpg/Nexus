@@ -498,9 +498,31 @@ function ActivityFeedContent() {
       useAppStore.getState().setUnreadNotifications(0);
     };
 
+    const onCommentDeleted = (e: any) => {
+      const commentId = e?.detail?.commentId;
+      if (commentId) {
+        setNotifications((prev) => prev.filter((n: any) => {
+          const cId = n.commentId || n.details?.commentId;
+          return cId !== commentId;
+        }));
+        setAuditLogs((prev) => prev.filter((l: any) => {
+          const cId = l.details?.commentId || l.id;
+          return cId !== commentId;
+        }));
+        setMyAuditLogs((prev) => prev.filter((l: any) => {
+          const cId = l.details?.commentId || l.id;
+          return cId !== commentId;
+        }));
+      }
+      onNew();
+    };
+
     window.addEventListener('notification_received', onNew);
     window.addEventListener('task_activity', onNew);
     window.addEventListener('task:comment_added', onNew);
+    window.addEventListener('task:comment_updated', onNew);
+    window.addEventListener('task:comment_deleted', onCommentDeleted);
+    window.addEventListener('task:updated', onNew);
     window.addEventListener('clear_activity_task', onClear);
     window.addEventListener('notification_read', onRead);
     window.addEventListener('notifications_all_read', onAllRead);
@@ -512,6 +534,9 @@ function ActivityFeedContent() {
       window.removeEventListener('notification_received', onNew);
       window.removeEventListener('task_activity', onNew);
       window.removeEventListener('task:comment_added', onNew);
+      window.removeEventListener('task:comment_updated', onNew);
+      window.removeEventListener('task:comment_deleted', onCommentDeleted);
+      window.removeEventListener('task:updated', onNew);
       window.removeEventListener('clear_activity_task', onClear);
       window.removeEventListener('notification_read', onRead);
       window.removeEventListener('notifications_all_read', onAllRead);
@@ -832,8 +857,7 @@ function ActivityFeedContent() {
 
       if (cat === 'audits') {
         if (type !== 'AUDIT_ITEM_CHECKED') return false;
-        // Never shows audits on tasks not assigned to you
-        return isAssigned;
+        return isAssigned || item.rawItem?.userId === currentUser?.id || item.actorId === currentUser?.id;
       }
 
       if (cat === 'assigned') {

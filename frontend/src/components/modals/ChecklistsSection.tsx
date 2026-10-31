@@ -92,19 +92,40 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
       setAddingItemTo(null);
       return;
     }
+    const text = newItemText.trim();
+    const tempId = `temp-${Date.now()}`;
+    const optimisticItem: ChecklistItem = {
+      id: tempId,
+      checklistId,
+      text,
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+    const optimisticChecklists = checklists.map(c => {
+      if (c.id === checklistId) {
+        return { ...c, items: [...(c.items || []), optimisticItem] };
+      }
+      return c;
+    });
+    onUpdateChecklists(optimisticChecklists);
+    setNewItemText('');
+    setAddingItemTo(null);
+
     try {
-      const res = await tasksApi.createChecklistItem(task.id, checklistId, { text: newItemText });
-      const updated = checklists.map(c => {
+      const res = await tasksApi.createChecklistItem(task.id, checklistId, { text });
+      const reconciled = optimisticChecklists.map(c => {
         if (c.id === checklistId) {
-          return { ...c, items: [...(c.items || []), res.item] };
+          return {
+            ...c,
+            items: (c.items || []).map(i => i.id === tempId ? res.item : i),
+          };
         }
         return c;
       });
-      onUpdateChecklists(updated);
-      setNewItemText('');
-      setAddingItemTo(null);
+      onUpdateChecklists(reconciled);
     } catch (e) {
       console.error(e);
+      onUpdateChecklists(checklists);
     }
   };
 

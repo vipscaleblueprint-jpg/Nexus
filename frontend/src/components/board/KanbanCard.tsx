@@ -7,7 +7,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck } from 'lucide-react';
 import { getTaskAuditStatus } from '@/lib/auditChecklist';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus } from '@/lib/taskTokens';
 import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';

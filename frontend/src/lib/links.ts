@@ -141,6 +141,110 @@ export function decodeEmojiHexTokens(text: string): string {
   });
 }
 
+function escapeRegex(str: string) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Normalizes mention links: if text inside <a href="mention://..."> extends beyond the @username,
+ * pulls the trailing text outside the <a> tag so only the user mention chip is linked.
+ * Also flattens any accidental nested mention links.
+ */
+export function normalizeMentionLinks(content: string): string {
+  if (!content || !content.includes('mention://')) return content;
+
+  // 1. Flatten any accidental nested mention links: <a href="mention://id1"><a href="mention://id2">@Name</a></a> -> <a href="mention://id1">@Name</a>
+  let cleaned = content.replace(
+    /<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>\s*<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>([\s\S]*?)<\/a>\s*<\/a>/gi,
+    (_full, id1, id2, inner) => {
+      const chosenId = id1 && !id1.startsWith('unknown') ? id1 : id2;
+      return `<a href="mention://${chosenId}">${inner}</a>`;
+    }
+  );
+
+  // 2. Pull trailing text outside the anchor
+  return cleaned.replace(
+    /(<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>)([\s\S]*?)(<\/a>)/gi,
+    (_full, openTag, _userId, innerText, closeTag) => {
+      const mentionMatch = innerText.match(/^(\s*@[^\s<]+)([\s\S]*)$/);
+      if (mentionMatch) {
+        const mentionLabel = mentionMatch[1];
+        const trailingText = mentionMatch[2];
+        if (trailingText) {
+          return `${openTag}${mentionLabel}${closeTag}${trailingText}`;
+        }
+      }
+      return `${openTag}${innerText}${closeTag}`;
+    }
+  );
+}
+
+/**
+ * Converts plain text @mentions (like @Pau2x or @Cherilyn) outside existing HTML tags
+ * and anchors into <a href="mention://..."> links so they render as interactive UserMentionChips.
+ */
+export function linkifyPlainMentions(
+  htmlOrText: string,
+  workspaceUsers: { id: string; name?: string; email?: string }[] = []
+): string {
+  if (!htmlOrText || !htmlOrText.includes('@')) return htmlOrText;
+
+  // Split into HTML tags and text nodes
+  const tagRegex = /(<[^>]+>)/g;
+  const parts = htmlOrText.split(tagRegex);
+  let inAnchor = false;
+
+  // Sort users by name length descending so multi-word or longer names match first
+  const sortedUsers = [...workspaceUsers]
+    .filter(u => u?.name && u?.id)
+    .sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+
+  const processed = parts.map((part) => {
+    if (part.startsWith('<')) {
+      if (/^<a\b/i.test(part) || /^<span\b[^>]*\bdata-type=["']mention["']/i.test(part)) inAnchor = true;
+      if (/^<\/(a|span)>/i.test(part)) inAnchor = false;
+      return part;
+    }
+
+    if (inAnchor || !part.includes('@')) {
+      return part;
+    }
+
+    let text = part;
+    const tokens: string[] = [];
+
+    const makeToken = (href: string, label: string) => {
+      const idx = tokens.length;
+      tokens.push(`<a href="${href}">${label}</a>`);
+      return `__NEXUS_MENTION_${idx}__`;
+    };
+
+    // First replace known workspace users using placeholders so subsequent passes never re-match
+    for (const u of sortedUsers) {
+      if (!u.name) continue;
+      const escaped = escapeRegex(u.name);
+      // Match @Name with boundaries
+      const userRegex = new RegExp(`(?<=^|\\s|\\()@${escaped}(?=[\\s,.:;!?'")<]|$)`, 'gi');
+      if (userRegex.test(text)) {
+        text = text.replace(userRegex, () => makeToken(`mention://${u.id}`, `@${u.name}`));
+      }
+    }
+
+    // Next match any remaining @[a-zA-Z0-9_-]+ (generic or not-yet-indexed mentions)
+    const genericRegex = /(?<=^|\s|\()@([a-zA-Z0-9_-]+)(?=[\s,.:;!?'")<]|$)/g;
+    text = text.replace(genericRegex, (_match, name) => makeToken(`mention://unknown?name=${name}`, `@${name}`));
+
+    // Finally restore all tokens
+    if (tokens.length > 0) {
+      text = text.replace(/__NEXUS_MENTION_(\d+)__/g, (_, idx) => tokens[Number(idx)]);
+    }
+
+    return text;
+  });
+
+  return processed.join('');
+}
+
 /**
  * Comment HTML from the editor can begin with an inline-placed image. Markdown only treats a line
  * as raw HTML when it opens with a block tag, so an <img> first would turn the rest into markdown;
@@ -150,6 +254,7 @@ export function decodeEmojiHexTokens(text: string): string {
 export function commentHtmlForMarkdown(content: string): string {
   if (!content) return '';
   let decoded = decodeEmojiHexTokens(content);
+  decoded = normalizeMentionLinks(decoded);
 
   // Normalize TipTap task items: ensure inputs inside data-checked="true" have checked="checked",
   // and inputs inside data-checked="false" do not have checked attribute so ReactMarkdown
@@ -175,6 +280,70 @@ export function commentHtmlForMarkdown(content: string): string {
   }
 
   return /^\s*<img\b/i.test(decoded) ? `<p></p>${decoded}` : decoded;
+}
+
+const DANGEROUS_TAGS = new Set([
+  'script',
+  'iframe',
+  'object',
+  'embed',
+  'applet',
+  'base',
+  'meta',
+  'link',
+  'style',
+  'form',
+  'button',
+  'textarea',
+  'select',
+  'option',
+]);
+
+function sanitizeNode(parent: Parent) {
+  const next: typeof parent.children = [];
+  for (const child of parent.children) {
+    if (child.type === 'element') {
+      const tag = child.tagName.toLowerCase();
+      if (DANGEROUS_TAGS.has(tag)) {
+        continue;
+      }
+
+      if (child.properties) {
+        for (const key of Object.keys(child.properties)) {
+          if (/^on/i.test(key)) {
+            delete child.properties[key];
+          }
+        }
+        if (typeof child.properties.href === 'string') {
+          const href = child.properties.href.trim().toLowerCase();
+          if (href.startsWith('javascript:') || href.startsWith('vbscript:')) {
+            delete child.properties.href;
+          }
+        }
+        if (typeof child.properties.src === 'string') {
+          const src = child.properties.src.trim().toLowerCase();
+          if (src.startsWith('javascript:') || src.startsWith('vbscript:')) {
+            delete child.properties.src;
+          }
+        }
+      }
+
+      sanitizeNode(child);
+    }
+    next.push(child);
+  }
+  parent.children = next;
+}
+
+/**
+ * Rehype plugin: strips dangerous HTML elements (<script>, <iframe>, <object>, <form>, etc.)
+ * and dangerous event handler attributes (onerror, onload, onclick, javascript: hrefs)
+ * from comments rendered via rehype-raw.
+ */
+export function rehypeSanitizeComment() {
+  return (tree: Root) => {
+    sanitizeNode(tree);
+  };
 }
 
 /**

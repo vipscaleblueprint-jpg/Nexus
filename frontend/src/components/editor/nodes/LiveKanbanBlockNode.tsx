@@ -1,4 +1,4 @@
-import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/lib/taskTokens';
 import { CheckCircle2 } from 'lucide-react';
 import { canTransitionTaskStatus } from '@/lib/permissions';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';

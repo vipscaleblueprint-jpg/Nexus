@@ -28,12 +28,25 @@ export function readCookie(cookieHeader: string | undefined, name: string): stri
   return undefined;
 }
 
+/** Sanitizes and validates a JWT string format before processing. */
+export function sanitizeToken(raw: string | undefined | null): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  // Standard JWT is three base64url segments separated by dots, max reasonable length ~4096
+  if (trimmed.length > 4096) return null;
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
 /** The user of a valid, non-revoked access token, or null. Shared by the HTTP and WebSocket auth checks. */
 export async function verifyAccessToken(token: string | undefined): Promise<AuthenticatedUserPayload | null> {
-  if (!token) return null;
-  if (await isTokenBlacklisted(token)) return null;
+  const sanitized = sanitizeToken(token);
+  if (!sanitized) return null;
+  if (await isTokenBlacklisted(sanitized)) return null;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload & { iat?: number };
+    const decoded = jwt.verify(sanitized, JWT_SECRET) as AuthenticatedUserPayload & { iat?: number };
     const revokedAt = await getUserRevokedAt(decoded.id);
     if (revokedAt && decoded.iat && decoded.iat < revokedAt) {
       return null;
@@ -49,13 +62,17 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
   if (req.user) return next();
 
   // Read token from HttpOnly cookie first, or fallback to Authorization header
-  let token = req.cookies?.accessToken;
+  let rawToken = req.cookies?.accessToken;
 
-  if (!token) {
+  if (!rawToken) {
     const authHeader = req.headers['authorization'];
-    token = authHeader && authHeader.split(' ')[1];
+    if (typeof authHeader === 'string') {
+      const match = authHeader.match(/^Bearer\s+([A-Za-z0-9._-]+)$/i);
+      rawToken = match ? match[1] : undefined;
+    }
   }
 
+  const token = sanitizeToken(rawToken);
   if (!token) {
     return res.status(401).json({ error: 'Authentication token required' });
   }
@@ -97,11 +114,15 @@ export function requireLoginExcept(publicSections: string[]) {
 
 export async function optionalAuthenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   if (req.user) return next();
-  let token = req.cookies?.accessToken;
-  if (!token) {
+  let rawToken = req.cookies?.accessToken;
+  if (!rawToken) {
     const authHeader = req.headers['authorization'];
-    token = authHeader && authHeader.split(' ')[1];
+    if (typeof authHeader === 'string') {
+      const match = authHeader.match(/^Bearer\s+([A-Za-z0-9._-]+)$/i);
+      rawToken = match ? match[1] : undefined;
+    }
   }
+  const token = sanitizeToken(rawToken);
   if (!token) return next();
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUserPayload;

@@ -28,3 +28,17 @@ export async function canUserSetAssignees(userId: string | null | undefined): Pr
   if (user.systemRole === 'ADMIN') return true;
   return (user.roles || []).some((r) => PROJECT_MANAGER_OR_SENIOR_ROLE.test((r || '').trim()));
 }
+
+/**
+ * Only Admins, Team Leads / PMs / Seniors, and the task Creator may delete tasks.
+ */
+export function canUserDeleteTask(
+  user: { id: string; systemRole?: string; roles?: string[] } | null | undefined,
+  taskCreatorId: string | null | undefined
+): boolean {
+  if (!user) return true; // Service account / internal caller
+  if (user.systemRole === 'ADMIN') return true;
+  if (taskCreatorId && user.id === taskCreatorId) return true;
+  return (user.roles || []).some((r) => /lead|project\s*manager|^pm$|\bsenior\b/i.test((r || '').trim()));
+}
+

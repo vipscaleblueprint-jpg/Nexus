@@ -126,19 +126,6 @@ const CommentMarkdown = React.memo(function CommentMarkdown({
   );
 });
 
-export const CustomCircleDotted = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="9" strokeDasharray="1 6" />
-  </svg>
-);
-
-export const CustomCircleDot = ({ className, style }: { className?: string, style?: React.CSSProperties }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-    <circle cx="12" cy="12" r="9" />
-    <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
-  </svg>
-);
-
 const CommentSkeleton = () => (
   <div className="space-y-4 animate-pulse mt-4">
     {[1, 2, 3].map(i => (
@@ -174,237 +161,49 @@ interface Props {
   targetSubtaskId?: string | null;
   scrollToComments?: boolean;
 }
+import {
+  CustomCircleDotted,
+  CustomCircleDot,
+  ALL_STATUSES,
+  isClosedStatus,
+  sortStatusesWithClosedAndKycAtEnd,
+  activityCache,
+  prefetchTaskActivities,
+  prefetchSubtaskActivities,
+  STATUS_COLORS,
+  getAssigneeAvatarColor,
+  roleKey,
+  normalizeRoleName,
+  matchesRole,
+  hasRole,
+  withoutRole,
+  normalizeRoles,
+  resolveUsersFromRoleRestrictions,
+  ACTIVITY_CACHE_TTL_MS,
+  type ActivityCacheEntry,
+} from '@/lib/taskTokens';
 
-export const ALL_STATUSES = [
-  'DAILY',
-  'WEEKLY',
-  'MONTHLY',
-  'PENDING',
-  'IN PROGRESS',
-  'REVISION',
-  'WAITING',
-  'IN REVIEW',
-  'CHECKING',
-  'CRM',
-  'ON-HOLD',
-  'CLOSED',
-  'KYC',
-  'PIN BOARD',
-];
-
-export const isClosedStatus = (status: any): boolean => {
-  if (!status) return false;
-  const name = (typeof status === 'string' ? status : (status.name || status.status || status.title || '')).trim().toUpperCase();
-  const group = (typeof status === 'object' && status.groupName ? status.groupName.trim().toLowerCase() : '');
-  return name === 'CLOSED' || name === 'DONE' || name === 'COMPLETED' || group === 'closed' || group === 'closed task';
+export {
+  CustomCircleDotted,
+  CustomCircleDot,
+  ALL_STATUSES,
+  isClosedStatus,
+  sortStatusesWithClosedAndKycAtEnd,
+  activityCache,
+  prefetchTaskActivities,
+  prefetchSubtaskActivities,
+  STATUS_COLORS,
+  getAssigneeAvatarColor,
+  roleKey,
+  normalizeRoleName,
+  matchesRole,
+  hasRole,
+  withoutRole,
+  normalizeRoles,
+  resolveUsersFromRoleRestrictions,
+  ACTIVITY_CACHE_TTL_MS,
+  type ActivityCacheEntry,
 };
-
-export const sortStatusesWithClosedAndKycAtEnd = (statuses: any[]) => {
-  const moveToEnd = ['ON-HOLD', 'KYC', 'PIN BOARD', 'PIN_BOARD', 'PINBOARD', 'CLOSED'];
-  const nonEnd = statuses.filter(s => !moveToEnd.includes((typeof s === 'string' ? s : (s.name || s.status || s.title || '')).toUpperCase().trim()));
-  const ends = statuses.filter(s => moveToEnd.includes((typeof s === 'string' ? s : (s.name || s.status || s.title || '')).toUpperCase().trim())).sort((a, b) => {
-    const orderMap: Record<string, number> = {
-      'ON-HOLD': 1,
-      'KYC': 2,
-      'PIN BOARD': 3,
-      'PIN_BOARD': 3,
-      'PINBOARD': 3,
-      'CLOSED': 4,
-    };
-    const aName = (typeof a === 'string' ? a : (a.name || a.status || a.title || '')).toUpperCase().trim();
-    const bName = (typeof b === 'string' ? b : (b.name || b.status || b.title || '')).toUpperCase().trim();
-    return (orderMap[aName] || 99) - (orderMap[bName] || 99);
-  });
-  return [...nonEnd, ...ends];
-};
-
-// ---------------------------------------------------------------------------
-// Module-level in-memory cache for task activities & comments.
-// Lives outside the component so it persists across modal open/close cycles
-// within the same browser session. Cleared on page refresh.
-// TTL: 60 seconds — stale entries trigger a silent background refresh.
-// ---------------------------------------------------------------------------
-interface ActivityCacheEntry {
-  activities: any[];
-  comments: any[];
-  timestamp: number;
-}
-export const activityCache = new Map<string, ActivityCacheEntry>();
-const ACTIVITY_CACHE_TTL_MS = 60_000; // 60 seconds
-
-// Exported so KanbanCard can prime the cache on hover (prefetch)
-export function prefetchTaskActivities(taskId: string): void {
-  const cached = activityCache.get(taskId);
-  const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
-  if (cacheAge < ACTIVITY_CACHE_TTL_MS) return; // already fresh, skip
-
-  // Fire-and-forget — result stored in cache so modal opens with data ready
-  Promise.all([
-    tasksApi.getActivities(taskId).catch(() => null),
-    tasksApi.getComments(taskId).catch(() => null),
-  ]).then(([actRes, commentRes]) => {
-    if (actRes?.activities && commentRes?.comments) {
-      activityCache.set(taskId, {
-        activities: actRes.activities,
-        comments: commentRes.comments,
-        timestamp: Date.now(),
-      });
-    }
-  }).catch(() => {/* prefetch errors are silent */});
-}
-
-// Exported so SubtasksSection can prime the subtask cache on hover (prefetch)
-export function prefetchSubtaskActivities(parentTaskId: string, subtaskId: string, subtaskTitle?: string): void {
-  const cacheKey = `subtask:${subtaskId}`;
-  const cached = activityCache.get(cacheKey);
-  const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
-  if (cacheAge < ACTIVITY_CACHE_TTL_MS) return; // already fresh, skip
-
-  Promise.all([
-    tasksApi.getActivities(parentTaskId).catch(() => null),
-    tasksApi.getComments(parentTaskId, subtaskId).catch(() => null),
-  ]).then(([actRes, commentRes]) => {
-    if (actRes?.activities && commentRes?.comments) {
-      const currentTitle = subtaskTitle || '';
-      const filtered = actRes.activities.filter(
-        (a: any) => a.subtaskId === subtaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase())
-      );
-      activityCache.set(cacheKey, {
-        activities: filtered,
-        comments: commentRes.comments,
-        timestamp: Date.now(),
-      });
-    }
-  }).catch(() => {/* prefetch errors are silent */});
-}
-
-export const STATUS_COLORS: Record<string, string> = {
-  'KYC': 'bg-[#3A8F55] text-white',
-  'PIN BOARD': 'bg-[#1F8A6E] text-white',
-  'DAILY': 'bg-[#2F7BD0] text-white',
-  'WEEKLY': 'bg-[#2F7BD0] text-white',
-  'MONTHLY': 'bg-[#2F7BD0] text-white',
-  'PENDING': 'bg-[#D29A2A] text-white',
-  'IN PROGRESS': 'bg-[#D04A7C] text-white',
-  'REVISION': 'bg-[#5B6BD6] text-white',
-  'WAITING': 'bg-[#D9534F] text-white',
-  'IN REVIEW': 'bg-[#D97B3A] text-white',
-  'CHECKING': 'bg-[#A35DB8] text-white',
-  'CRM': 'bg-[#22A3AE] text-white',
-  'CLOSED': 'bg-[#2FA37A] text-white',
-  'ON-HOLD': 'bg-[#8A8F98] text-white',
-
-  // Fallback for capitalized formats
-  'Kyc': 'bg-[#3A8F55] text-white',
-  'Pin Board': 'bg-[#1F8A6E] text-white',
-  'Daily': 'bg-[#2F7BD0] text-white',
-  'Weekly': 'bg-[#2F7BD0] text-white',
-  'Monthly': 'bg-[#2F7BD0] text-white',
-  'Pending': 'bg-[#D29A2A] text-white',
-  'In Progress': 'bg-[#D04A7C] text-white',
-  'Revision': 'bg-[#5B6BD6] text-white',
-  'Waiting': 'bg-[#D9534F] text-white',
-  'In Review': 'bg-[#D97B3A] text-white',
-  'Checking': 'bg-[#A35DB8] text-white',
-  'Crm': 'bg-[#22A3AE] text-white',
-  'Closed': 'bg-[#2FA37A] text-white',
-  'On-Hold': 'bg-[#8A8F98] text-white',
-};
-
-export function getAssigneeAvatarColor(name: string) {
-  const colors = [
-    'bg-orange-500',
-    'bg-blue-600',
-    'bg-emerald-600',
-    'bg-amber-500',
-    'bg-violet-600',
-    'bg-rose-600',
-    'bg-cyan-600',
-    'bg-indigo-600',
-    'bg-teal-600',
-    'bg-fuchsia-600',
-  ];
-  let hash = 0;
-  for (let i = 0; i < (name || '').length; i++) {
-    hash = (name || '').charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
-}
-
-// Role restrictions can arrive in any casing (Galaxy sends "DEVELOPER", the team role is "Developer"),
-// or variations ("Instruction Audits" vs "Instruction Auditor"), so every comparison goes through matchesRole.
-export const roleKey = (role: string) => (role || '').trim().toLowerCase();
-
-export function normalizeRoleName(role: string): string {
-  if (!role) return '';
-  return role
-    .trim()
-    .toLowerCase()
-    .replace(/\baudits\b/g, 'audit')
-    .replace(/\bauditors\b/g, 'audit')
-    .replace(/\bauditor\b/g, 'audit')
-    .replace(/s\b/g, '');
-}
-
-export function matchesRole(userRole: string, targetRole: string): boolean {
-  if (!userRole || !targetRole) return false;
-  const u = userRole.trim().toLowerCase();
-  const t = targetRole.trim().toLowerCase();
-  if (u === t) return true;
-  return normalizeRoleName(u) === normalizeRoleName(t);
-}
-
-export function hasRole(roles: string[], name: string): boolean {
-  return (roles || []).some((r) => matchesRole(r, name));
-}
-
-export function withoutRole(roles: string[], name: string): string[] {
-  return (roles || []).filter((r) => !matchesRole(r, name));
-}
-
-/** One entry per role regardless of casing, spelled like its TeamRole when there is one. */
-export function normalizeRoles(roles: string[], teams?: any[]): string[] {
-  const canonical = new Map<string, string>();
-  (teams || []).forEach((team: any) =>
-    (team.teamRoles || []).forEach((tr: any) => {
-      canonical.set(roleKey(tr.name), tr.name);
-      canonical.set(normalizeRoleName(tr.name), tr.name);
-    })
-  );
-  const out = new Map<string, string>();
-  roles.forEach((r) => {
-    const key = normalizeRoleName(r) || roleKey(r);
-    if (!out.has(key)) {
-      out.set(key, canonical.get(key) ?? canonical.get(roleKey(r)) ?? r);
-    }
-  });
-  return [...out.values()];
-}
-
-export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[], teams?: any[]): any[] {
-  if (!roles || roles.length === 0) return [];
-  const teamNameToTeamId = new Map<string, string>();
-  (teams || []).forEach((team: any) => {
-    if (team?.name && team?.id) {
-      teamNameToTeamId.set(team.name.toLowerCase().trim(), team.id);
-    }
-  });
-
-  return (users || []).filter((u: any) => {
-    const userRoles = (u.roles || []) as string[];
-    const userTeamId = u.teamId || u.team?.id;
-    return roles.some((role: string) => {
-      // 1. Direct role match on user's assigned roles
-      if (userRoles.some((ur: string) => matchesRole(ur, role))) return true;
-      // 2. Generic systemRole match (e.g. role is "ADMIN" and user is ADMIN)
-      if (u.systemRole && matchesRole(u.systemRole, role)) return true;
-      // 3. Whole-team match (only if the role matches the entire team's name, e.g. "Dev Team")
-      const matchedTeamId = teamNameToTeamId.get(role.toLowerCase().trim());
-      if (matchedTeamId && userTeamId === matchedTeamId) return true;
-      return false;
-    });
-  });
-}
 
 function LazyMarkdownImage({ src, alt, onPreview, isReply }: { src: string; alt?: string; onPreview: (src: string) => void; isReply?: boolean }) {
   return (
@@ -476,6 +275,7 @@ const isActivityVisible = (act: any): boolean => {
   if (t === 'create_subtask') return true;
   if (t === 'team_role_change') return true;
   if (t === 'attachment') return true;
+  if (t === 'due_date_change') return true;
   if (t === 'audit_item_checked' || t === 'checklist_item_checked' || t === 'audit_item_unchecked' || t === 'checklist_item_unchecked') return true;
   return false;
 };
@@ -539,6 +339,7 @@ const mergeIncomingActivity = (prev: any[], incoming: any) => {
         if (incoming.type === 'priority_change' && a.newPriority === incoming.newPriority) return false;
         if (incoming.type === 'assignment' && sameNameSet(a.assigneeName, incoming.assigneeName)) return false;
         if (incoming.type === 'title_change' && a.newTitle === incoming.newTitle) return false;
+        if (incoming.type === 'team_role_change') return false;
       }
       return true;
     });
@@ -549,6 +350,7 @@ const mergeIncomingActivity = (prev: any[], incoming: any) => {
     : incoming.type === 'assignment' ? 'optimistic-assign'
     : incoming.type === 'priority_change' ? 'optimistic-priority'
     : incoming.type === 'title_change' ? 'optimistic-title'
+    : incoming.type === 'team_role_change' ? 'optimistic-role'
     : null;
 
   if (typePrefix) {
@@ -558,6 +360,7 @@ const mergeIncomingActivity = (prev: any[], incoming: any) => {
       if (incoming.type === 'assignment') return sameNameSet(a.assigneeName, incoming.assigneeName);
       if (incoming.type === 'status_change') return a.newStatus === incoming.newStatus && (a.subtaskTitle || '') === (incoming.subtaskTitle || '');
       if (incoming.type === 'priority_change') return a.newPriority === incoming.newPriority;
+      if (incoming.type === 'team_role_change') return (a.subtaskTitle || '') === (incoming.subtaskTitle || '');
       return true;
     });
 
@@ -867,6 +670,11 @@ export function TaskDetailModalContent({
     return () => window.removeEventListener('open-task-detail', handleOpenDetailInContent);
   }, [task?.subtasks]);
 
+  const taskRef = useRef(task);
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
+
   const [localStatus, setLocalStatus] = useState<string>(task?.status || 'Pending');
   const lastStatusUpdateTimestampRef = useRef<number>(0);
   const localStatusRef = useRef<string>(localStatus);
@@ -885,10 +693,13 @@ export function TaskDetailModalContent({
       const incoming = e.detail?.task;
       if (!incoming) return;
       if (task && incoming.id === task.id) {
-        if (Date.now() - lastStatusUpdateTimestampRef.current > 1500 && incoming.status !== undefined) {
+        if (incoming.status !== undefined) {
           setLocalStatus(incoming.status);
           if (taskRef.current) {
             taskRef.current.status = incoming.status;
+          }
+          if (onUpdateTaskRef.current && taskRef.current) {
+            onUpdateTaskRef.current({ ...taskRef.current, status: incoming.status });
           }
         }
         if (incoming.subtasks !== undefined && taskRef.current) {
@@ -927,6 +738,17 @@ export function TaskDetailModalContent({
       if (!data || !task || data.taskId !== task.id) return;
       if (data.activity) {
         setActivities((prev) => mergeIncomingActivity(prev, data.activity));
+        if (data.activity.type === 'status_change' && data.activity.newStatus) {
+          if (!data.activity.subtaskId && !data.activity.subtaskTitle) {
+            setLocalStatus(data.activity.newStatus);
+            if (taskRef.current) {
+              taskRef.current.status = data.activity.newStatus;
+            }
+            if (onUpdateTaskRef.current && taskRef.current) {
+              onUpdateTaskRef.current({ ...taskRef.current, status: data.activity.newStatus });
+            }
+          }
+        }
       }
     };
     window.addEventListener('task_activity', handleWindowTaskActivity);
@@ -1390,8 +1212,9 @@ export function TaskDetailModalContent({
         return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} isReply={isReply} />;
       }
       if (href.startsWith('mention://')) {
-        const userId = href.replace('mention://', '');
-        return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
+        const rawUserId = href.replace('mention://', '');
+        const cleanUserId = rawUserId.startsWith('unknown') ? 'unknown' : rawUserId;
+        return <UserMentionChip userId={cleanUserId}>{rest.children}</UserMentionChip>;
       }
       const nexus = parseNexusTaskLink(href);
       if (nexus) {
@@ -2002,11 +1825,6 @@ export function TaskDetailModalContent({
     }
   };
 
-  const taskRef = useRef(task);
-  useEffect(() => {
-    taskRef.current = task;
-  }, [task]);
-
   // Socket & Window: listen for editing lock, description updates, comments, and checklists
   useEffect(() => {
     if (!task) return;
@@ -2043,6 +1861,17 @@ export function TaskDetailModalContent({
         if (isSubtask && data.activity.subtaskTitle && data.activity.subtaskTitle !== currentTask.title) return;
 
         setActivities(prev => mergeIncomingActivity(prev, data.activity));
+        if (data.activity?.type === 'status_change' && data.activity?.newStatus) {
+          if (!data.activity.subtaskId && !data.activity.subtaskTitle && !isSubtask) {
+            setLocalStatus(data.activity.newStatus);
+            if (taskRef.current) {
+              taskRef.current.status = data.activity.newStatus;
+            }
+            if (onUpdateTaskRef.current && taskRef.current) {
+              onUpdateTaskRef.current({ ...taskRef.current, status: data.activity.newStatus });
+            }
+          }
+        }
       }
     };
 
@@ -2055,7 +1884,7 @@ export function TaskDetailModalContent({
 
     // ── Real-time comment delivery ──────────────────────────────────────────
     // After bootstrap, new comments arrive via socket only — no polling needed.
-    const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string }) => {
+    const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string; activity?: any }) => {
       const currentTask = taskRef.current;
       if (!currentTask) return;
       const targetId = (currentTask as any).parentTaskId || currentTask.id;
@@ -2063,8 +1892,12 @@ export function TaskDetailModalContent({
 
       // If viewing a subtask, only show comments for this subtask
       const isSubtask = !!(currentTask as any).parentTaskId;
-      if (isSubtask && payload.subtaskId !== currentTask.id) return;
+      if (isSubtask && payload.subtaskId && payload.subtaskId !== currentTask.id) return;
       if (!isSubtask && payload.subtaskId) return;
+
+      if (payload.activity) {
+        setActivities(prev => mergeIncomingActivity(prev, payload.activity));
+      }
 
       setRichComments(prev => {
         // If it's a reply to a comment
@@ -2372,10 +2205,25 @@ export function TaskDetailModalContent({
       }
     };
 
+    const handleCommentReaction = (payload: { taskId: string; subtaskId?: string | null; commentId: string; reactions: any[] }) => {
+      const currentTask = taskRef.current;
+      if (!currentTask || payload.taskId !== currentTask.id || payload.subtaskId) return;
+      setRichComments(prev =>
+        prev.map(c => {
+          if (c.id === payload.commentId) return { ...c, reactions: payload.reactions };
+          return {
+            ...c,
+            replies: c.replies?.map((r: any) => r.id === payload.commentId ? { ...r, reactions: payload.reactions } : r)
+          };
+        })
+      );
+    };
+
     if (socket) {
       socket.on('task:comment_added', handleCommentAdded);
       socket.on('task:comment_updated', handleCommentUpdated);
       socket.on('task:comment_deleted', handleCommentDeleted);
+      socket.on('task:comment_reaction', handleCommentReaction);
       socket.on('task:checklist_created', handleChecklistCreated);
       socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
       socket.on('task:checklist_item_created', handleChecklistItemCreated);
@@ -2386,6 +2234,7 @@ export function TaskDetailModalContent({
     const onWinCommentAdded = (e: any) => handleCommentAdded(e.detail);
     const onWinCommentUpdated = (e: any) => handleCommentUpdated(e.detail);
     const onWinCommentDeleted = (e: any) => handleCommentDeleted(e.detail);
+    const onWinCommentReaction = (e: any) => handleCommentReaction(e.detail);
     const onWinChecklistCreated = (e: any) => handleChecklistCreated(e.detail);
     const onWinChecklistItemUpdated = (e: any) => handleChecklistItemUpdated(e.detail);
     const onWinChecklistItemCreated = (e: any) => handleChecklistItemCreated(e.detail);
@@ -2395,6 +2244,7 @@ export function TaskDetailModalContent({
     window.addEventListener('task:comment_added', onWinCommentAdded);
     window.addEventListener('task:comment_updated', onWinCommentUpdated);
     window.addEventListener('task:comment_deleted', onWinCommentDeleted);
+    window.addEventListener('task:comment_reaction', onWinCommentReaction);
     window.addEventListener('task:checklist_created', onWinChecklistCreated);
     window.addEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
     window.addEventListener('task:checklist_item_created', onWinChecklistItemCreated);
@@ -2410,6 +2260,7 @@ export function TaskDetailModalContent({
         socket.off('task:comment_added', handleCommentAdded);
         socket.off('task:comment_updated', handleCommentUpdated);
         socket.off('task:comment_deleted', handleCommentDeleted);
+        socket.off('task:comment_reaction', handleCommentReaction);
         socket.off('task:checklist_created', handleChecklistCreated);
         socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
         socket.off('task:checklist_item_created', handleChecklistItemCreated);
@@ -2419,6 +2270,7 @@ export function TaskDetailModalContent({
       window.removeEventListener('task:comment_added', onWinCommentAdded);
       window.removeEventListener('task:comment_updated', onWinCommentUpdated);
       window.removeEventListener('task:comment_deleted', onWinCommentDeleted);
+      window.removeEventListener('task:comment_reaction', onWinCommentReaction);
       window.removeEventListener('task:checklist_created', onWinChecklistCreated);
       window.removeEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
       window.removeEventListener('task:checklist_item_created', onWinChecklistItemCreated);
@@ -2933,11 +2785,32 @@ export function TaskDetailModalContent({
     useAppStore.getState().updateTask(updatedTask);
     window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
 
+    // Optimistically log team role change
+    const optimisticRoleId = `optimistic-role-${Date.now()}`;
+    const optimisticRoleActivity = {
+      id: optimisticRoleId,
+      type: 'team_role_change',
+      author: currentUser?.name || 'Someone',
+      roles: next,
+      subtaskTitle: (task as any).parentTaskId ? task.title : undefined,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticRoleActivity]);
+
     const parentId = (task as any).parentTaskId || (task as any).taskId;
     if (parentId) {
-      tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any).catch(console.error);
+      tasksApi.updateSubtask(parentId, task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any)
+        .catch(err => {
+          console.error(err);
+          setActivities(prev => prev.filter(a => a.id !== optimisticRoleId));
+        });
     } else {
-      tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any).catch(console.error);
+      tasksApi.updateTask(task.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any)
+        .catch(err => {
+          console.error(err);
+          setActivities(prev => prev.filter(a => a.id !== optimisticRoleId));
+        });
     }
 
     if (transitionToAssignee) {
@@ -2970,6 +2843,8 @@ export function TaskDetailModalContent({
     } else {
       task.priority = p;
     }
+    useAppStore.getState().updateTask({ ...task, priority: p });
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { ...task, priority: p } } }));
     setIsPriorityOpen(false);
 
     // Optimistically append activity immediately
@@ -3012,6 +2887,18 @@ export function TaskDetailModalContent({
     window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
     setIsDateOpen(false);
 
+    // Optimistically log due date change
+    const optimisticId = `optimistic-date-${Date.now()}`;
+    const optimisticActivity = {
+      id: optimisticId,
+      type: 'due_date_change',
+      author: currentUser?.name || 'Someone',
+      dueDate: dateStr,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticActivity]);
+
     try {
       const parentId = (task as any).parentTaskId || (task as any).taskId;
       if (parentId) {
@@ -3025,6 +2912,7 @@ export function TaskDetailModalContent({
       }
       toast.success(date ? 'Due date updated' : 'Due date cleared');
     } catch (err: any) {
+      setActivities(prev => prev.filter(a => a.id !== optimisticId));
       toast.error(err.message || 'Failed to update due date');
     }
   };
@@ -3301,6 +3189,8 @@ export function TaskDetailModalContent({
             targetCommentId={targetCommentId}
             targetCommentText={targetCommentText}
             scrollToComments={scrollToComments}
+            activityWidth={activityWidth}
+            onActivityWidthChange={setActivityWidth}
           />
         </div>
       )}
@@ -4808,6 +4698,28 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
+                              if (act.type === 'due_date_change') {
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                      {act.subtaskTitle ? (
+                                        <>
+                                          {act.dueDate ? `set due date of subtask ${act.subtaskTitle} to ${new Date(act.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : `cleared due date of subtask ${act.subtaskTitle}`}
+                                        </>
+                                      ) : (
+                                        <>
+                                          {act.dueDate ? `set due date to ${new Date(act.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : 'cleared due date'}
+                                        </>
+                                      )}
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
+                                  </div>
+                                );
+                              }
                               if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked' || act.type === 'audit_item_unchecked' || act.type === 'checklist_item_unchecked') {
                                 const isAudit = act.type.startsWith('audit_') || act.isAudit;
                                 const isUnchecked = act.type.includes('unchecked');
@@ -5276,6 +5188,8 @@ export function SubtaskDetailView({
   targetCommentId,
   targetCommentText,
   scrollToComments,
+  activityWidth: propActivityWidth,
+  onActivityWidthChange,
 }: {
   subtask: any;
   parentTask: any;
@@ -5294,6 +5208,8 @@ export function SubtaskDetailView({
   targetCommentId?: string | null;
   targetCommentText?: string | null;
   scrollToComments?: boolean;
+  activityWidth?: number;
+  onActivityWidthChange?: (width: number) => void;
 }) {
   const router = useRouter();
 
@@ -5418,6 +5334,7 @@ export function SubtaskDetailView({
   }, [subtask.status, subtask.completed]);
 
   const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const [isDateOpen, setIsDateOpen] = useState(false);
   const [localTitle, setLocalTitle] = useState(subtask.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const subtaskTitleTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -5784,8 +5701,9 @@ export function SubtaskDetailView({
         return <LazyMarkdownImage src={href} alt="attachment" onPreview={setLightboxImage} isReply={isReply} />;
       }
       if (href.startsWith('mention://')) {
-        const userId = href.replace('mention://', '');
-        return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
+        const rawUserId = href.replace('mention://', '');
+        const cleanUserId = rawUserId.startsWith('unknown') ? 'unknown' : rawUserId;
+        return <UserMentionChip userId={cleanUserId}>{rest.children}</UserMentionChip>;
       }
       const nexus = parseNexusTaskLink(href);
       if (nexus) {
@@ -5890,7 +5808,17 @@ export function SubtaskDetailView({
     }
   };
 
-  const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 380);
+  const [activityWidth, setActivityWidth] = useState(propActivityWidth || (mode === 'full' ? 450 : 380));
+
+  useEffect(() => {
+    if (propActivityWidth && propActivityWidth !== activityWidth) {
+      setActivityWidth(propActivityWidth);
+      if (subtaskActivityPanelRef.current) {
+        subtaskActivityPanelRef.current.style.width = `${propActivityWidth}px`;
+      }
+    }
+  }, [propActivityWidth]);
+
   const isResizingRef = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(300);
@@ -6008,7 +5936,7 @@ export function SubtaskDetailView({
   };
 
   useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = (e: MouseEvent) => {
       if (!isResizingRef.current) return;
       const delta = resizeStartX.current - e.clientX;
       const newWidth = resizeStartWidth.current + delta;
@@ -6018,14 +5946,18 @@ export function SubtaskDetailView({
         }
       }
     };
-        const handleMouseUp = () => {
-      if (subtaskActivityPanelRef.current) {
+    const handleMouseUp = () => {
+      if (isResizingRef.current && subtaskActivityPanelRef.current) {
         const currentWidth = parseInt(subtaskActivityPanelRef.current.style.width, 10);
         if (!isNaN(currentWidth)) {
           setActivityWidth(currentWidth);
+          if (onActivityWidthChange) {
+            onActivityWidthChange(currentWidth);
+          }
         }
       }
       isResizingRef.current = false;
+      document.body.style.cursor = 'default';
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -6034,13 +5966,14 @@ export function SubtaskDetailView({
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, []);
+  }, [onActivityWidthChange]);
 
   const startResizing = (e: React.MouseEvent) => {
     e.preventDefault();
     resizeStartX.current = e.clientX;
     resizeStartWidth.current = activityWidth;
-    isResizingRef.current = true; document.body.style.cursor = 'col-resize';
+    isResizingRef.current = true;
+    document.body.style.cursor = 'col-resize';
   };
 
   useEffect(() => {
@@ -6079,8 +6012,9 @@ export function SubtaskDetailView({
       const currentParentTask = parentTaskRef.current;
 
       const isForThisSubtask =
-        data.taskId === currentParentTask?.id &&
+        (data.taskId === currentParentTask?.id || data.taskId === currentSubtask?.id) &&
         (data.activity?.subtaskId === currentSubtask?.id ||
+          data.taskId === currentSubtask?.id ||
           (data.activity?.subtaskTitle && currentSubtask?.title &&
             data.activity.subtaskTitle.toLowerCase() === currentSubtask.title.toLowerCase()));
 
@@ -6110,12 +6044,19 @@ export function SubtaskDetailView({
       }
     };
 
-    const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string }) => {
+    const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string; activity?: any }) => {
       const currentParentTask = parentTaskRef.current;
       const currentSubtask = subtaskRef.current;
       if (!currentParentTask || !currentSubtask) return;
-      if (payload.taskId !== currentParentTask.id) return;
-      if (payload.subtaskId !== currentSubtask.id) return;
+
+      const isForThisSubtask =
+        (payload.subtaskId && payload.subtaskId === currentSubtask.id) ||
+        (!payload.subtaskId && payload.taskId === currentSubtask.id);
+      if (!isForThisSubtask) return;
+
+      if (payload.activity) {
+        setActivities(prev => mergeIncomingActivity(prev, payload.activity));
+      }
 
       setRichComments(prev => {
         if (payload.comment.parentCommentId) {
@@ -6204,6 +6145,39 @@ export function SubtaskDetailView({
         const cached = activityCache.get(cacheKey);
         if (cached?.comments) {
           cached.comments = cached.comments.filter((c: any) => c.id !== payload.commentId);
+        }
+      }
+    };
+
+    const handleCommentReaction = (payload: { taskId: string; subtaskId?: string | null; commentId: string; reactions: any[] }) => {
+      if (!payload || !payload.commentId || !payload.reactions) return;
+      const currentParentTask = parentTaskRef.current;
+      const currentSubtask = subtaskRef.current;
+      const isParentMatch = currentParentTask && (payload.taskId === currentParentTask.id || payload.taskId === (currentParentTask as any).parentTaskId);
+      const isSubtaskMatch = currentSubtask && (payload.subtaskId === currentSubtask.id || payload.taskId === currentSubtask.id);
+      if (!isParentMatch && !isSubtaskMatch) return;
+
+      setRichComments(prev =>
+        prev.map(c => {
+          if (c.id === payload.commentId) return { ...c, reactions: payload.reactions };
+          return {
+            ...c,
+            replies: c.replies?.map((r: any) => r.id === payload.commentId ? { ...r, reactions: payload.reactions } : r)
+          };
+        })
+      );
+
+      if (currentSubtask) {
+        const cacheKey = `subtask:${currentSubtask.id}`;
+        const cached = activityCache.get(cacheKey);
+        if (cached?.comments) {
+          cached.comments = cached.comments.map((c: any) => {
+            if (c.id === payload.commentId) return { ...c, reactions: payload.reactions };
+            return {
+              ...c,
+              replies: c.replies?.map((r: any) => r.id === payload.commentId ? { ...r, reactions: payload.reactions } : r)
+            };
+          });
         }
       }
     };
@@ -6321,6 +6295,7 @@ export function SubtaskDetailView({
       socket.on('task:comment_added', handleCommentAdded);
       socket.on('task:comment_updated', handleCommentUpdated);
       socket.on('task:comment_deleted', handleCommentDeleted);
+      socket.on('task:comment_reaction', handleCommentReaction);
       socket.on('task:checklist_created', handleChecklistCreated);
       socket.on('task:checklist_item_updated', handleChecklistItemUpdated);
       socket.on('task:checklist_item_created', handleChecklistItemCreated);
@@ -6328,18 +6303,22 @@ export function SubtaskDetailView({
       socket.on('task:checklist_deleted', handleChecklistDeleted);
     }
 
+    const onWinTaskActivity = (e: any) => handleActivity(e.detail);
     const onWinCommentAdded = (e: any) => handleCommentAdded(e.detail);
     const onWinCommentUpdated = (e: any) => handleCommentUpdated(e.detail);
     const onWinCommentDeleted = (e: any) => handleCommentDeleted(e.detail);
+    const onWinCommentReaction = (e: any) => handleCommentReaction(e.detail);
     const onWinChecklistCreated = (e: any) => handleChecklistCreated(e.detail);
     const onWinChecklistItemUpdated = (e: any) => handleChecklistItemUpdated(e.detail);
     const onWinChecklistItemCreated = (e: any) => handleChecklistItemCreated(e.detail);
     const onWinChecklistItemDeleted = (e: any) => handleChecklistItemDeleted(e.detail);
     const onWinChecklistDeleted = (e: any) => handleChecklistDeleted(e.detail);
 
+    window.addEventListener('task_activity', onWinTaskActivity);
     window.addEventListener('task:comment_added', onWinCommentAdded);
     window.addEventListener('task:comment_updated', onWinCommentUpdated);
     window.addEventListener('task:comment_deleted', onWinCommentDeleted);
+    window.addEventListener('task:comment_reaction', onWinCommentReaction);
     window.addEventListener('task:checklist_created', onWinChecklistCreated);
     window.addEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
     window.addEventListener('task:checklist_item_created', onWinChecklistItemCreated);
@@ -6355,15 +6334,18 @@ export function SubtaskDetailView({
         socket.off('task:comment_added', handleCommentAdded);
         socket.off('task:comment_updated', handleCommentUpdated);
         socket.off('task:comment_deleted', handleCommentDeleted);
+        socket.off('task:comment_reaction', handleCommentReaction);
         socket.off('task:checklist_created', handleChecklistCreated);
         socket.off('task:checklist_item_updated', handleChecklistItemUpdated);
         socket.off('task:checklist_item_created', handleChecklistItemCreated);
         socket.off('task:checklist_item_deleted', handleChecklistItemDeleted);
         socket.off('task:checklist_deleted', handleChecklistDeleted);
       }
+      window.removeEventListener('task_activity', onWinTaskActivity);
       window.removeEventListener('task:comment_added', onWinCommentAdded);
       window.removeEventListener('task:comment_updated', onWinCommentUpdated);
       window.removeEventListener('task:comment_deleted', onWinCommentDeleted);
+      window.removeEventListener('task:comment_reaction', onWinCommentReaction);
       window.removeEventListener('task:checklist_created', onWinChecklistCreated);
       window.removeEventListener('task:checklist_item_updated', onWinChecklistItemUpdated);
       window.removeEventListener('task:checklist_item_created', onWinChecklistItemCreated);
@@ -6584,9 +6566,24 @@ export function SubtaskDetailView({
     };
     syncSubtaskToParent(updatedSubtask);
 
+    // Optimistically log team role change
+    const optimisticRoleId = `optimistic-role-${Date.now()}`;
+    const optimisticRoleActivity = {
+      id: optimisticRoleId,
+      type: 'team_role_change',
+      author: currentUser?.name || 'Someone',
+      roles: next,
+      subtaskTitle: subtaskRef.current?.title,
+      subtaskId: subtask.id,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticRoleActivity]);
+
     tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeRoleRestrictions: next, assigneeIds: validIds } as any)
       .catch((err: any) => {
         console.error("Failed to update subtask role restriction", err);
+        setActivities(prev => prev.filter(a => a.id !== optimisticRoleId));
       });
 
     if (transitionToAssignee) {
@@ -6610,10 +6607,58 @@ export function SubtaskDetailView({
   };
 
   const handleUpdatePriority = (newPriority: string | null) => {
+    const oldPriority = subtaskRef.current?.priority;
     const updatedSubtask = { ...subtaskRef.current, priority: newPriority };
     syncSubtaskToParent(updatedSubtask);
-    tasksApi.updateSubtask(parentTask.id, subtask.id, { priority: newPriority } as any).catch(console.error);
     setIsPriorityOpen(false);
+
+    // Optimistically log priority change
+    const optimisticPriorityId = `optimistic-priority-${Date.now()}`;
+    const optimisticPriorityActivity = {
+      id: optimisticPriorityId,
+      type: 'priority_change',
+      author: currentUser?.name || 'Someone',
+      oldPriority,
+      newPriority,
+      subtaskTitle: subtaskRef.current?.title,
+      subtaskId: subtask.id,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticPriorityActivity]);
+
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { priority: newPriority } as any)
+      .catch((err: any) => {
+        console.error("Failed to update subtask priority", err);
+        setActivities(prev => prev.filter(a => a.id !== optimisticPriorityId));
+      });
+  };
+
+  const handleUpdateDueDate = (date: Date | undefined) => {
+    const dateStr = date ? date.toISOString() : null;
+    const updatedSubtask = { ...subtaskRef.current, dueDate: dateStr };
+    syncSubtaskToParent(updatedSubtask);
+    setIsDateOpen(false);
+
+    // Optimistically log due date change
+    const optimisticDateId = `optimistic-date-${Date.now()}`;
+    const optimisticDateActivity = {
+      id: optimisticDateId,
+      type: 'due_date_change',
+      author: currentUser?.name || 'Someone',
+      dueDate: dateStr,
+      subtaskTitle: subtaskRef.current?.title,
+      subtaskId: subtask.id,
+      date: new Date(),
+      user: currentUser,
+    };
+    setActivities(prev => [...prev, optimisticDateActivity]);
+
+    tasksApi.updateSubtask(parentTask.id, subtask.id, { dueDate: dateStr } as any)
+      .catch((err: any) => {
+        console.error("Failed to update subtask due date", err);
+        setActivities(prev => prev.filter(a => a.id !== optimisticDateId));
+      });
   };
 
   const handleStartEditing = () => {
@@ -7842,6 +7887,55 @@ export function SubtaskDetailView({
                   </Popover.Portal>
                 </Popover.Root>
               </div>
+
+              {/* Dates / Due Date Row */}
+              <div className="flex items-center gap-3 min-h-[32px]">
+                <div className="flex items-center gap-2 w-28 shrink-0">
+                  <Calendar className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                  <span className="text-[12px] text-zinc-500">Dates</span>
+                </div>
+                <Popover.Root open={isDateOpen && canEditTask} onOpenChange={setIsDateOpen}>
+                  <Popover.Trigger asChild>
+                    <div
+                      title={subtask.completed ? 'Locked' : (subtask.dueDate ? new Date(subtask.dueDate).toLocaleDateString() : 'Set Due Date')}
+                      className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-colors ${
+                        subtask.completed
+                          ? 'bg-zinc-800/40 cursor-not-allowed opacity-60 text-zinc-400'
+                          : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-300'
+                      }`}
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                      <span>
+                        {subtask.dueDate
+                          ? new Date(subtask.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                          : 'Set Due Date'}
+                      </span>
+                    </div>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content className="z-[100000] p-2.5 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none w-[230px]" side="bottom" align="start" sideOffset={4}>
+                      <div className="kanban-date-picker">
+                        <div className="flex justify-between items-center mb-2 px-1">
+                          <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
+                          {subtask.dueDate && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUpdateDueDate(undefined); }}
+                              className="text-[10px] text-red-400/80 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition-colors"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                        <DayPicker
+                          mode="single"
+                          selected={subtask.dueDate ? new Date(subtask.dueDate) : undefined}
+                          onSelect={handleUpdateDueDate}
+                        />
+                      </div>
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
+              </div>
             </div>
 
             {/* Description */}
@@ -8007,8 +8101,18 @@ export function SubtaskDetailView({
           </div >
         </div >
 
+        {/* Resizer */}
+        <div
+          className="w-1 bg-zinc-800/30 hover:bg-indigo-500 cursor-col-resize shrink-0 transition-colors z-10"
+          onMouseDown={startResizing}
+        />
+
         {/* Right Panel: Activity Log */}
-        <div className="w-[380px] bg-card flex flex-col border-l border-zinc-800/60 shrink-0 z-10">
+        <div
+          ref={subtaskActivityPanelRef}
+          style={{ width: activityWidth }}
+          className="flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 z-10"
+        >
           <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
             <div className="flex gap-3">
@@ -8463,6 +8567,20 @@ export function SubtaskDetailView({
                                 </div>
                               );
                             }
+                            if (act.type === 'due_date_change') {
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
+                                    {act.dueDate ? `set due date to ${new Date(act.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : 'cleared due date'}
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
                             if (act.type === 'audit_item_checked' || act.type === 'checklist_item_checked' || act.type === 'audit_item_unchecked' || act.type === 'checklist_item_unchecked') {
                               const isAudit = act.type.startsWith('audit_') || act.isAudit;
                               const isUnchecked = act.type.includes('unchecked');
@@ -8624,7 +8742,7 @@ export function SubtaskDetailView({
             </div>
           </div>
 
-          <div className="p-4 bg-card border-t border-zinc-800/60 shrink-0">
+          <div className="p-5 border-t border-zinc-800/60 shrink-0 bg-card flex flex-col gap-2">
             <div className="relative">
               {stagedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2.5 mb-2">
@@ -8999,14 +9117,15 @@ export function TaskDetailModal(props: Props) {
                 merged.checklists = [...mergedChecklists, ...pendingChecklists];
               }
 
-              // The Kanban board status (props.task.status / prev.status) is canonical when the modal opens.
-              // Background getTask is used only to enrich secondary details (comments, checklists, attachments, etc.)
-              // and must not revert the live status unless the user explicitly changed it in this session.
-              if (canonicalStatus && !locallyEditedKeysRef.current.has('status')) {
+              // If the user modified status locally during this modal session, preserve their local change.
+              // Otherwise, take the authoritative status from the server response so external updates are reflected.
+              if (locallyEditedKeysRef.current.has('status') && prev.status) {
+                merged.status = prev.status;
+              } else if (res.task.status) {
                 const matchInList = props.listStatuses?.find(
-                  (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === canonicalStatus.trim().toUpperCase()
+                  (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === res.task.status.trim().toUpperCase()
                 );
-                merged.status = matchInList ? (matchInList.name || matchInList.title || matchInList.status) : canonicalStatus;
+                merged.status = matchInList ? (matchInList.name || matchInList.title || matchInList.status) : res.task.status;
               }
               return merged;
             });
@@ -9040,22 +9159,27 @@ export function TaskDetailModal(props: Props) {
   useEffect(() => {
     const handleTaskUpdated = (e: any) => {
       const incoming = e.detail?.task;
-      if (!incoming || !fullTask || incoming.id !== fullTask.id) return;
+      const targetId = fullTask?.id || props.task?.id;
+      if (!incoming || !targetId || incoming.id !== targetId) return;
       for (const key of Object.keys(incoming)) {
         locallyEditedKeysRef.current.add(key);
       }
-      setFullTask(prev => prev ? { ...prev, ...incoming } : prev);
+      setFullTask(prev => {
+        if (!prev) return incoming;
+        return { ...prev, ...incoming };
+      });
     };
     window.addEventListener('task:updated', handleTaskUpdated);
     return () => window.removeEventListener('task:updated', handleTaskUpdated);
-  }, [fullTask?.id]);
+  }, [fullTask?.id, props.task?.id]);
 
   useEffect(() => {
-    if (!fullTask?.id) return;
+    const targetId = fullTask?.id || props.task?.id;
+    if (!targetId) return;
     const handleSocketTaskUpdated = (incoming: any) => {
-      if (incoming && incoming.id === fullTask.id) {
+      if (incoming && incoming.id === targetId) {
         setFullTask(prev => {
-          if (!prev) return prev;
+          if (!prev) return incoming;
           let status = incoming.status !== undefined ? incoming.status : prev.status;
           if (status && props.listStatuses) {
             const matchInList = props.listStatuses.find(
@@ -9068,7 +9192,7 @@ export function TaskDetailModal(props: Props) {
       }
     };
     const handleSocketTaskMovePreview = (data: { taskId: string; status: string }) => {
-      if (data && data.taskId === fullTask.id && data.status) {
+      if (data && data.taskId === targetId && data.status) {
         let status = data.status;
         if (props.listStatuses) {
           const matchInList = props.listStatuses.find(
@@ -9091,7 +9215,30 @@ export function TaskDetailModal(props: Props) {
         props.socket.off('task_move_preview', handleSocketTaskMovePreview);
       }
     };
-  }, [props.socket, fullTask?.id, props.listStatuses]);
+  }, [props.socket, fullTask?.id, props.task?.id, props.listStatuses]);
+
+  useEffect(() => {
+    const handleWindowTaskActivity = (e: any) => {
+      const data = e.detail;
+      const targetId = fullTask?.id || props.task?.id;
+      if (!data || !targetId || data.taskId !== targetId) return;
+      if (data.activity?.type === 'status_change' && data.activity.newStatus && !data.activity.subtaskId) {
+        setFullTask(prev => {
+          if (!prev) return prev;
+          let status = data.activity.newStatus;
+          if (props.listStatuses) {
+            const matchInList = props.listStatuses.find(
+              (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === status.trim().toUpperCase()
+            );
+            if (matchInList) status = matchInList.name || matchInList.title || matchInList.status;
+          }
+          return { ...prev, status };
+        });
+      }
+    };
+    window.addEventListener('task_activity', handleWindowTaskActivity);
+    return () => window.removeEventListener('task_activity', handleWindowTaskActivity);
+  }, [fullTask?.id, props.task?.id, props.listStatuses]);
 
   useEffect(() => {
     if (!props.isOpen) return;
@@ -9099,7 +9246,7 @@ export function TaskDetailModal(props: Props) {
       const { taskId, subtaskId, task: providedTask } = e.detail || {};
       if (!taskId) return;
       if (props.onUpdateTask && providedTask) {
-        props.onUpdateTask(providedTask);
+        setTimeout(() => props.onUpdateTask?.(providedTask), 0);
       }
       if (providedTask && providedTask.id === taskId) {
         setFullTask(providedTask);
@@ -9145,7 +9292,9 @@ export function TaskDetailModal(props: Props) {
     if (updatedTask.assignees) locallyEditedKeysRef.current.add('assignees');
     if (updatedTask.assigneeIds) locallyEditedKeysRef.current.add('assigneeIds');
     setFullTask(updatedTask);
-    if (props.onUpdateTask) props.onUpdateTask(updatedTask);
+    if (props.onUpdateTask) {
+      setTimeout(() => props.onUpdateTask?.(updatedTask), 0);
+    }
   };
 
   if (!mounted || typeof document === 'undefined') return null;

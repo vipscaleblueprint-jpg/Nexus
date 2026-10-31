@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { invalidateCache } from '../services/redisService';
+import { getAggregatedRoleMap } from '../services/roleMapService';
 
 export const getRoles = async (req: Request, res: Response) => {
   try {
@@ -50,6 +52,7 @@ export const createRole = async (req: Request, res: Response) => {
       },
     });
 
+    await invalidateCache('role-map:data');
     res.status(201).json(role);
   } catch (error: any) {
     req.log.error({ error }, 'Error creating role');
@@ -82,6 +85,7 @@ export const deleteRole = async (req: Request, res: Response) => {
       where: { id },
     });
 
+    await invalidateCache('role-map:data');
     res.status(204).send();
   } catch (error: any) {
     req.log.error({ error }, 'Error deleting role');
@@ -114,6 +118,7 @@ export const updateRole = async (req: Request, res: Response) => {
       },
     });
 
+    await invalidateCache('role-map:data');
     res.json(updatedRole);
   } catch (error: any) {
     req.log.error({ error }, 'Error updating role');
@@ -123,3 +128,14 @@ export const updateRole = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to update role' });
   }
 };
+
+export const getRoleMap = async (req: Request, res: Response) => {
+  try {
+    const roleMap = await getAggregatedRoleMap();
+    res.json(roleMap);
+  } catch (error: any) {
+    req.log.error({ error }, 'Error fetching role map');
+    res.status(500).json({ error: 'Failed to fetch role map' });
+  }
+};
+

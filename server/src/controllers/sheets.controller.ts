@@ -31,6 +31,7 @@ import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
+import { toNotificationPreview } from '../utils/mentionNotification';
 
 interface LinkedTarget {
   taskId: string;
@@ -349,17 +350,6 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
       select: { id: true, title: true, status: true, assigneeId: true, listId: true, updatedAt: true },
     });
 
-    // Cascade main task status change to all child subtasks
-    const normalizedStatus = (listStatus?.name ?? wanted).toUpperCase();
-    const isClosedOrCompleted = ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes(normalizedStatus);
-    await prisma.subtask.updateMany({
-      where: { taskId: target.taskId },
-      data: {
-        status: normalizedStatus,
-        completed: isClosedOrCompleted,
-      },
-    });
-
     if (before?.status !== updated.status) {
       const actor = await getOrCreateVipScaleUser();
       const authorName = 'VIPScale';
@@ -597,7 +587,7 @@ export const handleSheetComment = async (req: Request, res: Response) => {
     // Rows posted before the switch still hold a ClickUp comment id (all digits) in column AF.
     const legacyClickUpId = /^\d+$/.test(commentId) ? commentId : '';
     const clickUpCommentId = str(body.clickup_comment_id) || legacyClickUpId;
-    const select = { id: true, taskId: true, subtaskId: true, externalId: true, task: { select: { listId: true } } };
+    const select = { id: true, taskId: true, subtaskId: true, externalId: true, userId: true, content: true, task: { select: { listId: true } } };
     const existing = UUID.test(commentId)
       ? await prisma.taskComment.findUnique({ where: { id: commentId }, select })
       : legacyClickUpId
@@ -609,7 +599,57 @@ export const handleSheetComment = async (req: Request, res: Response) => {
       if (!existing) {
         return res.status(200).json({ success: true, id: commentId, clickup_comment_id: legacyClickUpId || null, skipped: 'comment not found' });
       }
+
+      const childReplies = await prisma.taskComment.findMany({
+        where: { parentCommentId: existing.id },
+        select: { id: true, userId: true, content: true },
+      });
+      const allDeletedComments = [existing, ...childReplies];
+      const allDeletedCommentIds = allDeletedComments.map(c => c.id);
+
       await prisma.taskComment.delete({ where: { id: existing.id } });
+
+      try {
+        const previews = allDeletedComments.map(c => toNotificationPreview(c.content)).filter(Boolean);
+        const actorIds = Array.from(new Set(allDeletedComments.map(c => c.userId)));
+        const matchingNotifs = await prisma.taskNotification.findMany({
+          where: {
+            taskId: existing.taskId,
+            type: { in: ['MENTION', 'COMMENT', 'REPLY', 'REACTION'] },
+            OR: [
+              { actorId: { in: actorIds }, content: { in: previews } },
+              { userId: { in: actorIds }, content: { in: previews } },
+            ],
+          },
+          select: { id: true, userId: true },
+        });
+
+        if (matchingNotifs.length > 0) {
+          await prisma.taskNotification.deleteMany({
+            where: { id: { in: matchingNotifs.map(n => n.id) } },
+          });
+          matchingNotifs.forEach(n => {
+            io.to(`user:${n.userId}`).emit('notification_cleared', { id: n.id });
+            io.to(`user:${n.userId}`).emit('notification_received');
+          });
+        }
+
+        const commentIdFilters = allDeletedCommentIds.flatMap(id => [
+          { details: { path: ['commentId'], equals: id } },
+          { details: { path: ['parentCommentId'], equals: id } },
+        ]);
+        if (commentIdFilters.length > 0) {
+          await prisma.auditLog.deleteMany({
+            where: {
+              action: { in: ['COMMENT', 'REPLY'] },
+              OR: commentIdFilters,
+            },
+          }).catch(() => {});
+        }
+      } catch (cleanErr) {
+        console.error('[sheets:deleteComment] Cleanup error:', cleanErr);
+      }
+
       io.to(`list:${existing.task.listId}`).emit('task:comment_deleted', { taskId: existing.taskId, subtaskId: existing.subtaskId, commentId: existing.id });
       io.emit('task:comment_deleted', { taskId: existing.taskId, subtaskId: existing.subtaskId, commentId: existing.id });
       await invalidateCache(`task:${existing.taskId}`);
@@ -700,9 +740,33 @@ export const handleSheetComment = async (req: Request, res: Response) => {
       },
       include: commentInclude,
     });
-    io.emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment });
-    io.to(`list:${target.listId}`).emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment });
-    await invalidateCache(`task:${target.taskId}`);
+
+    const log = await prisma.auditLog.create({
+      data: {
+        action: 'COMMENT',
+        entity: 'TASK',
+        entityId: target.taskId,
+        userId: author.id,
+        details: { text: content.trim(), commentId: comment.id, subtaskId: target.subtaskId || null, source: 'sheets' },
+      },
+    }).catch(() => null);
+
+    const activity = {
+      id: log ? log.id : comment.id,
+      commentId: comment.id,
+      type: 'comment',
+      author: author?.name || body.name || 'VIPScale',
+      text: content.trim(),
+      date: comment.createdAt,
+      user: author,
+      subtaskId: target.subtaskId || null,
+    };
+
+    io.emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment, activity });
+    io.to(`list:${target.listId}`).emit('task:comment_added', { taskId: target.taskId, subtaskId: target.subtaskId, comment, activity });
+    io.emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
+    io.to(`list:${target.listId}`).emit('task_activity', { listId: target.listId, taskId: target.taskId, activity });
+    await invalidateCache(`task:${target.taskId}`, `task:activities:${target.taskId}`);
     await dropCommentCache(target.taskId, target.subtaskId);
     return res.status(200).json({
       success: true,

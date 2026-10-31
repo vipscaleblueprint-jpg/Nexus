@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { BlockEditor } from '../ui/BlockEditor';
 import { CommentContent } from '../ui/CommentContent';
 import { Subtask, Task, Priority } from '@/lib/types';
@@ -14,7 +13,7 @@ import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 import { useAppStore } from '@/lib/store';
-import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, prefetchSubtaskActivities, isClosedStatus } from './TaskDetailModal';
+import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, prefetchSubtaskActivities, isClosedStatus } from '@/lib/taskTokens';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';

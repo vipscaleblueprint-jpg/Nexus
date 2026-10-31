@@ -1,4 +1,4 @@
-import { STATUS_COLORS } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS } from '@/lib/taskTokens';
 import { ReactRenderer } from '@tiptap/react';
 import tippy from 'tippy.js';
 import { TaskListDropdown } from './TaskListDropdown';

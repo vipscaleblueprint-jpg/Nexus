@@ -1,4 +1,4 @@
-import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/lib/taskTokens';
 import { canTransitionTaskStatus } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';

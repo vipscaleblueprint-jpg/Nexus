@@ -28,7 +28,8 @@ import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { arrayMove } from '@dnd-kit/sortable';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
-import { TaskDetailModal, STATUS_COLORS, isClosedStatus } from '@/components/modals/TaskDetailModal';
+import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { STATUS_COLORS, isClosedStatus } from '@/lib/taskTokens';
 import { motion } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
@@ -324,14 +325,20 @@ export default function BoardPage() {
       if (actualTaskId !== lastUrlTaskId.current) {
         lastUrlTaskId.current = actualTaskId;
         if (actualTaskId) {
-          const taskToOpen = list.tasks.find((t: any) => t.id === actualTaskId);
+          let taskToOpen = list.tasks.find((t: any) => t.id === actualTaskId);
+          if (!taskToOpen) {
+            taskToOpen = list.tasks.find((t: any) => (t.subtasks || []).some((st: any) => st.id === actualTaskId));
+          }
           if (taskToOpen) {
             setSelectedTask(taskToOpen);
           }
         }
       } else if (actualTaskId) {
         // If task in list.tasks has an updated status, keep selectedTask in sync
-        const matching = list.tasks.find((t: any) => t.id === actualTaskId);
+        let matching = list.tasks.find((t: any) => t.id === actualTaskId);
+        if (!matching) {
+          matching = list.tasks.find((t: any) => (t.subtasks || []).some((st: any) => st.id === actualTaskId));
+        }
         if (matching) {
           setSelectedTask((prev: any) => {
             if (prev && prev.id === matching.id && prev.status !== matching.status) {
@@ -425,6 +432,25 @@ export default function BoardPage() {
         };
       });
       setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+    });
+
+    // Real-time: task activity (status changes, external automations, etc.)
+    s.on('task_activity', (data: any) => {
+      window.dispatchEvent(new CustomEvent('task_activity', { detail: data }));
+      if (data?.activity?.type === 'status_change' && data?.taskId && data?.activity?.newStatus) {
+        if (!data.activity.subtaskId) {
+          setList((prev: any) => {
+            if (!prev || !prev.tasks) return prev;
+            return {
+              ...prev,
+              tasks: prev.tasks.map((t: any) => (t.id === data.taskId ? { ...t, status: data.activity.newStatus } : t)),
+            };
+          });
+          setSelectedTask((prev: any) => (prev?.id === data.taskId ? { ...prev, status: data.activity.newStatus } : prev));
+          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { id: data.taskId, status: data.activity.newStatus } } }));
+        }
+      }
     });
 
     // Real-time: task deleted by another user
@@ -573,10 +599,13 @@ export default function BoardPage() {
           return t;
         });
         if (modifiedTask) {
-          useAppStore.getState().updateTask(modifiedTask);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: modifiedTask } }));
-          }
+          const taskToSync = modifiedTask;
+          queueMicrotask(() => {
+            useAppStore.getState().updateTask(taskToSync);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: taskToSync } }));
+            }
+          });
         }
         return { ...prev, tasks: newTasks };
       });
@@ -662,10 +691,13 @@ export default function BoardPage() {
           return t;
         });
         if (modifiedTask) {
-          useAppStore.getState().updateTask(modifiedTask);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: modifiedTask } }));
-          }
+          const taskToSync = modifiedTask;
+          queueMicrotask(() => {
+            useAppStore.getState().updateTask(taskToSync);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: taskToSync } }));
+            }
+          });
         }
         return { ...prev, tasks: newTasks };
       });
@@ -996,17 +1028,19 @@ export default function BoardPage() {
           onUpdateTask={async (updatedTask) => {
             // Sync board and modal state
             localTaskEditsRef.current.set(updatedTask.id, Date.now());
-            setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
             useAppStore.getState().updateTask(updatedTask);
-            setList((prev: any) => ({
-              ...prev,
-              tasks: prev?.tasks ? prev.tasks.map((t: any) => {
-                if (t.id === updatedTask.id) {
-                  return { ...t, ...updatedTask };
-                }
-                return t;
-              }) : []
-            }));
+            setTimeout(() => {
+              setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
+              setList((prev: any) => ({
+                ...prev,
+                tasks: prev?.tasks ? prev.tasks.map((t: any) => {
+                  if (t.id === updatedTask.id) {
+                    return { ...t, ...updatedTask };
+                  }
+                  return t;
+                }) : []
+              }));
+            }, 0);
           }}
         />
       )}

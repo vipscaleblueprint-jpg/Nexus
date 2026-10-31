@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { createLogger, errMsg } from '../config/logger';
@@ -176,6 +177,7 @@ async function postToTools(body: unknown): Promise<boolean> {
       method: 'POST',
       headers: toolsHeaders(),
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
       log.warn(`Tools sync rejected (${res.status}): ${await res.text().catch(() => '')}`);
@@ -254,7 +256,14 @@ function diffAssistantAgainstUser(
     switch (field) {
       case 'name': {
         const name = assistant.name?.trim();
-        if (name && name !== user.name) data.name = name;
+        // Do not downgrade a full name in Nexus with a single first name from tools
+        if (
+          name &&
+          name !== user.name &&
+          !(user.name.trim().toLowerCase().startsWith(name.toLowerCase() + ' ') && user.name.trim().split(/\s+/).length > name.split(/\s+/).length)
+        ) {
+          data.name = name;
+        }
         break;
       }
       case 'star': {
@@ -340,7 +349,7 @@ export async function applyAssistantToNexus(
     if (assistant.is_active === false) return 'skipped';
 
     // New assistant: create the Nexus account so they can be assigned work.
-    const password = await bcrypt.hash(Math.random().toString(36), 10);
+    const password = await bcrypt.hash(randomBytes(32).toString('hex'), 10);
     await prisma.user.create({
       data: {
         email,
@@ -380,7 +389,10 @@ export async function reconcileWithTools() {
 
   const stillPending = await flushPendingPushes();
 
-  const res = await fetch(`${toolsBaseUrl()}/api/assistants`, { headers: toolsHeaders() });
+  const res = await fetch(`${toolsBaseUrl()}/api/assistants`, {
+    headers: toolsHeaders(),
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!res.ok) throw new Error(`Failed to fetch assistants from tools: ${res.status} ${res.statusText}`);
   const data = await res.json();
   if (!data.success || !Array.isArray(data.assistants)) {

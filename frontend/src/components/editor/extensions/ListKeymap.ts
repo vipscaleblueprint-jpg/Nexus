@@ -1,4 +1,5 @@
 import { Extension, type Editor } from '@tiptap/core';
+import { Selection } from '@tiptap/pm/state';
 
 /**
  * Handles the Enter key when inside a list item (ordered list, bullet list, or task list).
@@ -83,6 +84,9 @@ export const handleListEnter = (editor: Editor): boolean => {
  * - If inside a nested list item (level >= 2): un-nests back to parent list.
  * - If inside an empty list item (taskItem or listItem): lifts the item out of the list into a paragraph
  *   with indent: 0, instead of deleting the line and jumping backward to previous item [Image 2].
+ * - If at offset 0 of the first list item: lifts the item out of the list into a normal paragraph (removing the check/bullet).
+ * - If on an empty paragraph immediately following a list: deletes the empty paragraph and focuses the end of the
+ *   previous list item, preventing ProseMirror's default joinBackward from pulling the block into the list and resurrecting the checkmark.
  */
 export const handleListBackspace = (editor: Editor): boolean => {
   if (!editor || editor.isDestroyed) return false;
@@ -162,12 +166,48 @@ export const handleListBackspace = (editor: Editor): boolean => {
       }
     }
 
+    // If at the start of the first item in the list, lift it out into a normal paragraph (removing the bullet/check)
+    if ($from.index(itemDepth - 1) === 0 && editor.can().liftListItem(itemType)) {
+      editor.commands.liftListItem(itemType);
+      const newFrom = editor.state.selection.$from;
+      if (newFrom.parent.isTextblock && (newFrom.parent.attrs.indent || 0) > 0) {
+        try {
+          editor.commands.updateAttributes(newFrom.parent.type.name, { indent: 0 });
+        } catch {}
+      }
+      return true;
+    }
+
     return false;
   }
 
   // 2. If NOT inside a list item, but in an indented textblock (indent > 0):
   if (currentBlock.isTextblock && (currentBlock.attrs.indent || 0) > 0) {
     return editor.commands.outdent();
+  }
+
+  // 3. If NOT inside a list item, check if cursor is in an empty block directly following a list
+  const isWhitespaceOnly =
+    currentBlock.isTextblock &&
+    currentBlock.textContent.trim().length === 0;
+
+  if (isWhitespaceOnly && $from.depth >= 1) {
+    const parent = $from.node($from.depth - 1);
+    const index = $from.index($from.depth - 1);
+    if (index > 0) {
+      const prevSibling = parent.child(index - 1);
+      const prevName = prevSibling.type.name;
+      if (prevName === 'taskList' || prevName === 'bulletList' || prevName === 'orderedList') {
+        const fromPos = $from.before($from.depth);
+        const toPos = $from.after($from.depth);
+        const tr = state.tr;
+        tr.delete(fromPos, toPos);
+        const newSelection = Selection.near(tr.doc.resolve(fromPos), -1);
+        tr.setSelection(newSelection);
+        editor.view.dispatch(tr.scrollIntoView());
+        return true;
+      }
+    }
   }
 
   return false;

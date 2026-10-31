@@ -13,6 +13,7 @@ import {
   updateSubtask,
   getAssignableGroups,
   getRoles,
+  getExternalRoleMap,
   createRole,
   updateRole,
   deleteRole,
@@ -68,8 +69,9 @@ router.delete('/comment/:commentId', deleteComment);
 router.post('/tasks/:taskId/subtasks', createSubtask);
 router.patch('/tasks/:taskId/subtasks/:subtaskId', updateSubtask);
 
-// Roles Management
+// Roles Management & Map
 router.get('/roles', getRoles);
+router.get('/role-map', getExternalRoleMap);
 router.post('/roles', createRole);
 router.patch('/roles/:id', updateRole);
 router.delete('/roles/:id', deleteRole);

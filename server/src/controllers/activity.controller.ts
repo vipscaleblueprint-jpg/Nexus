@@ -85,7 +85,7 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     } else if (category === 'audits') {
       actionWhere = { action: { in: ['AUDIT_ITEM_CHECKED', 'AUDIT_ITEM_UNCHECKED'] } };
     } else if (category === 'assigned') {
-      actionWhere = { action: 'ASSIGNMENT' };
+      actionWhere = { action: { in: ['ASSIGNMENT', 'UNASSIGNMENT', 'TEAM_ROLE_CHANGE'] } };
     }
 
     const auditWhere: any = {
@@ -106,10 +106,42 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     ]);
 
     // Batch enrich task & subtask titles for the page's logs only
+    // Filter out and purge any audit logs for comments or replies that have been deleted
+    let validLogs = rawLogs;
+    const commentLogs = rawLogs.filter((l: any) => l.action === 'COMMENT' || l.action === 'REPLY');
+    if (commentLogs.length > 0) {
+      const commentIds = Array.from(new Set(commentLogs.map((l: any) => l.details?.commentId).filter(Boolean)));
+      if (commentIds.length > 0) {
+        const existingComments = await prisma.taskComment.findMany({
+          where: { id: { in: commentIds } },
+          select: { id: true },
+        });
+        const existingCommentIdSet = new Set(existingComments.map(c => c.id));
+        const orphanedLogIds: string[] = [];
+
+        validLogs = rawLogs.filter((log: any) => {
+          if (log.action === 'COMMENT' || log.action === 'REPLY') {
+            const cId = log.details?.commentId;
+            if (cId && !existingCommentIdSet.has(cId)) {
+              orphanedLogIds.push(log.id);
+              return false;
+            }
+          }
+          return true;
+        });
+
+        if (orphanedLogIds.length > 0) {
+          prisma.auditLog.deleteMany({
+            where: { id: { in: orphanedLogIds } },
+          }).catch(err => console.error('Failed to cleanup orphaned comment audit logs:', err));
+        }
+      }
+    }
+
     const taskIds = new Set<string>();
     const subtaskIds = new Set<string>();
 
-    for (const log of rawLogs) {
+    for (const log of validLogs) {
       const entityStr = (log as any).entity?.toLowerCase();
       if (entityStr === 'task') taskIds.add((log as any).entityId);
       else if (entityStr === 'subtask') subtaskIds.add((log as any).entityId);
@@ -127,7 +159,7 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     const taskMap = new Map(tasks.map(t => [t.id, t]));
     const subtaskMap = new Map(subtasks.map(s => [s.id, s]));
 
-    const enrichedLogs = rawLogs.map((log: any) => {
+    const enrichedLogs = validLogs.map((log: any) => {
       const entityStr = log.entity?.toLowerCase();
       let entityTitle: string | null = null;
       let resolvedTaskId: string = log.entityId;

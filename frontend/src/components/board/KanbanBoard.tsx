@@ -334,6 +334,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   // Optimistic handler for task status changes from card dropdown
   const handleTaskMoveFromCard = useCallback((taskId: string, newStatus: string) => {
     const nowIso = new Date().toISOString();
+    recentTaskMovesRef.current.set(taskId, { status: newStatus, timestamp: Date.now() });
     setLocalTasks((prev) => {
       const newTasks = [...prev];
       const idx = newTasks.findIndex(t => t.id === taskId);
@@ -382,6 +383,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
   // Track dragging state in a ref so it doesn't trigger effect runs
   const isDraggingRef = useRef(false);
+  const dragStartTaskRef = useRef<Task | null>(null);
+  const recentTaskMovesRef = useRef<Map<string, { status: string; timestamp: number }>>(new Map());
   const [pendingAction, setPendingAction] = useState<{ type: 'status' | 'group', name: string, groupName?: string } | null>(null);
   const pendingStatusUpdateRef = useRef<number>(0);
   // Snapshot of localStatuses at drag start — used to rollback on cancel
@@ -421,7 +424,22 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     const isDragging = isDraggingRef.current;
 
     if (!isDragging) {
-      setLocalTasks(tasks);
+      const now = Date.now();
+      const mergedTasks = tasks.map((t) => {
+        const pending = recentTaskMovesRef.current.get(t.id);
+        if (pending) {
+          if (t.status === pending.status) {
+            recentTaskMovesRef.current.delete(t.id);
+            return t;
+          }
+          if (now - pending.timestamp < 3500) {
+            return { ...t, status: pending.status };
+          }
+          recentTaskMovesRef.current.delete(t.id);
+        }
+        return t;
+      });
+      setLocalTasks(mergedTasks);
 
       // Only resync statuses from server if we didn't JUST optimistically update them
       if (!isStatusUpdatePending) {
@@ -435,26 +453,72 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
   }, [tasks, listStatuses]);
 
-  // Real-time synchronization: listen for task:updated events from modals, socket, or other views
+  // Real-time synchronization: listen for task:updated and task_activity events from modals, socket, or external webhooks
   useEffect(() => {
     const handleWindowTaskUpdated = (e: any) => {
       const incoming = e.detail?.task;
       if (!incoming?.id) return;
-      setLocalTasks((prev) => {
-        let matched = false;
-        const next = prev.map((t) => {
-          if (t.id === incoming.id) {
-            matched = true;
-            return { ...t, ...incoming };
-          }
-          return t;
+      if (incoming.status) {
+        const pending = recentTaskMovesRef.current.get(incoming.id);
+        if (pending && incoming.status === pending.status) {
+          recentTaskMovesRef.current.delete(incoming.id);
+        }
+      }
+      queueMicrotask(() => {
+        setLocalTasks((prev) => {
+          let matched = false;
+          const next = prev.map((t) => {
+            if (t.id === incoming.id) {
+              matched = true;
+              return { ...t, ...incoming };
+            }
+            return t;
+          });
+          return matched ? next : prev;
         });
-        return matched ? next : prev;
       });
     };
 
+    const handleWindowTaskActivity = (e: any) => {
+      const data = e.detail;
+      if (!data?.taskId || !data?.activity) return;
+      if (data.activity.type === 'status_change' && data.activity.newStatus) {
+        if (!data.activity.subtaskId) {
+          const pending = recentTaskMovesRef.current.get(data.taskId);
+          if (pending && data.activity.newStatus === pending.status) {
+            recentTaskMovesRef.current.delete(data.taskId);
+          }
+        }
+        queueMicrotask(() => {
+          setLocalTasks((prev) => {
+            if (data.activity.subtaskId) {
+              const isClosed = ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED'].includes(data.activity.newStatus.toUpperCase());
+              return prev.map((t) => {
+                if (t.id === data.taskId && t.subtasks) {
+                  return {
+                    ...t,
+                    subtasks: t.subtasks.map((st) =>
+                      st.id === data.activity.subtaskId
+                        ? { ...st, status: data.activity.newStatus, completed: isClosed }
+                        : st
+                    ),
+                  };
+                }
+                return t;
+              });
+            }
+            return prev.map((t) => (t.id === data.taskId ? { ...t, status: data.activity.newStatus } : t));
+          });
+        });
+      }
+    };
+
     window.addEventListener('task:updated', handleWindowTaskUpdated);
-    return () => window.removeEventListener('task:updated', handleWindowTaskUpdated);
+    window.addEventListener('task_activity', handleWindowTaskActivity);
+    return () => {
+      window.removeEventListener('task:updated', handleWindowTaskUpdated);
+      window.removeEventListener('task_activity', handleWindowTaskActivity);
+    };
   }, []);
   // Keyed by group name / status name (group ids are regenerated on every mount).
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
@@ -925,6 +989,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
     const task = latestTasksRef.current.find((t) => t.id === active.id) || localTasks.find((t) => t.id === active.id) || tasks.find((t) => t.id === active.id);
     if (task) {
+      dragStartTaskRef.current = task;
       // Check task-level edit restriction (teamAssignAccessRole)
       const editCheck = canUserEditTask(task, currentUser);
       if (!editCheck.allowed) {
@@ -1209,13 +1274,14 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
 
     const activeId = active.id as string;
-    const originalTask = latestTasksRef.current.find((t) => t.id === activeId) || localTasks.find((t) => t.id === activeId) || activeTask;
+    const originalTask = dragStartTaskRef.current || latestTasksRef.current.find((t) => t.id === activeId) || localTasks.find((t) => t.id === activeId) || activeTask;
 
     // Clear drag state
     isDraggingRef.current = false;
     setActiveTask(null);
 
     if (!originalTask) {
+      dragStartTaskRef.current = null;
       return;
     }
 
@@ -1224,6 +1290,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     if (!editCheck.allowed) {
       toast.error(editCheck.reason || 'You do not have permission to edit this task.');
       setLocalTasks(tasks);
+      dragStartTaskRef.current = null;
       return;
     }
 
@@ -1231,6 +1298,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     const check = canUserMoveTask(originalTask, listStatuses, currentUser, workspaceRoles);
     if (!check.allowed) {
       toast.error(check.reason || 'You do not have permission to move tasks from this status');
+      dragStartTaskRef.current = null;
       return;
     }
 
@@ -1245,7 +1313,10 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       }
     }
 
-    if (!finalStatus) return;
+    if (!finalStatus) {
+      dragStartTaskRef.current = null;
+      return;
+    }
 
     if (finalStatus !== originalTask.status) {
       const transitionCheck = canTransitionTaskStatus(originalTask, finalStatus);
@@ -1260,15 +1331,18 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
           uncheckedAudits: transitionCheck.uncheckedAudits,
           openSubtasks: transitionCheck.openSubtasks,
         });
+        dragStartTaskRef.current = null;
         return;
       }
     }
 
     if (finalStatus !== originalTask.status) {
       const nowIso = new Date().toISOString();
-      // Optimistic update locally on top of the latest tasks (in case we missed websocket updates while dragging)
-      setLocalTasks(() => {
-        const newTasks = [...latestTasksRef.current];
+      recentTaskMovesRef.current.set(activeId, { status: finalStatus, timestamp: Date.now() });
+
+      // Optimistic update locally on top of the latest local tasks
+      setLocalTasks((prev) => {
+        const newTasks = [...prev];
         const idx = newTasks.findIndex(t => t.id === activeId);
         if (idx > -1) {
           newTasks[idx] = { ...newTasks[idx], status: finalStatus, updatedAt: nowIso };
@@ -1282,11 +1356,12 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       // Reordered within the same column
       onTaskReorder(activeId, over.id as string);
     }
+    dragStartTaskRef.current = null;
   };
-
 
   const handleDragCancel = () => {
     isDraggingRef.current = false;
+    dragStartTaskRef.current = null;
     setActiveTask(null);
     setActiveGroup(null);
     setActiveColumn(null);

@@ -8,6 +8,7 @@ import {
   Clock,
   ArrowRight,
   Check,
+  AtSign,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format, isToday, isYesterday } from "date-fns";
@@ -15,7 +16,7 @@ import { notificationsApi, TaskNotification } from "@/api/notifications";
 import { useAppStore } from "@/lib/store";
 import { fetchListStatuses } from "@/lib/listStatusCache";
 import { ActivityCard } from "@/components/ui/ActivityCard";
-import { prefetchTaskActivities } from "@/components/modals/TaskDetailModal";
+import { prefetchTaskActivities } from "@/lib/taskTokens";
 
 type TabType = "all" | "mentions";
 
@@ -213,11 +214,27 @@ export function NotificationBell() {
       setUnreadCount(0);
     };
 
+    const handleCommentDeleted = (e: any) => {
+      const commentId = e.detail?.commentId;
+      if (commentId) {
+        setNotifications((prev) =>
+          prev.filter((n: any) => {
+            const cId = n.commentId || n.details?.commentId;
+            return cId !== commentId;
+          })
+        );
+      }
+      if (isOpen) {
+        loadNotifications(1, activeTab);
+      }
+    };
+
     window.addEventListener("notification_received", handleActivity);
     window.addEventListener("notification_read", handleRead);
     window.addEventListener("notifications_all_read", handleAllRead);
     window.addEventListener("notification_cleared", handleCleared);
     window.addEventListener("notifications_all_cleared", handleAllCleared);
+    window.addEventListener("task:comment_deleted", handleCommentDeleted);
 
     return () => {
       window.removeEventListener("notification_received", handleActivity);
@@ -225,6 +242,7 @@ export function NotificationBell() {
       window.removeEventListener("notifications_all_read", handleAllRead);
       window.removeEventListener("notification_cleared", handleCleared);
       window.removeEventListener("notifications_all_cleared", handleAllCleared);
+      window.removeEventListener("task:comment_deleted", handleCommentDeleted);
     };
   }, [isOpen, activeTab, loadNotifications, setUnreadCount]);
 
@@ -504,7 +522,7 @@ export function NotificationBell() {
           if (n.task?.id) {
             prefetchTaskActivities(n.task.id);
             const isCommentNotif =
-              n.type === "MENTION" || n.type === "COMMENT" || n.type === "REACTION" || (n.title || "").includes("comment");
+              n.type === "MENTION" || n.type === "COMMENT" || n.type === "REACTION" || n.type === "REPLY" || (n.title || "").includes("comment") || (n.title || "").includes("replied");
             const cId = (n as any).commentId || (n as any).details?.commentId;
             const sId = (n as any).subtaskId || (n as any).details?.subtaskId;
             let commentQuery = "";
@@ -583,13 +601,14 @@ export function NotificationBell() {
                 <button
                   type="button"
                   onClick={() => handleTabChange("mentions")}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                     activeTab === "mentions"
                       ? "bg-card text-foreground shadow-xs font-semibold"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  @ Mentions
+                  <AtSign className="w-3 h-3 text-blue-400 shrink-0" />
+                  <span>Mentions</span>
                 </button>
               </div>
             </div>
@@ -606,12 +625,16 @@ export function NotificationBell() {
                 </div>
               ) : displayList.length === 0 ? (
                 <div className="p-8 text-center flex flex-col items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-full bg-zinc-800/60 flex items-center justify-center">
-                    <Bell className="w-5 h-5 text-muted-foreground" />
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${activeTab === "mentions" ? "bg-blue-500/10 text-blue-400" : "bg-zinc-800/60 text-muted-foreground"}`}>
+                    {activeTab === "mentions" ? (
+                      <AtSign className="w-5 h-5 text-blue-400" />
+                    ) : (
+                      <Bell className="w-5 h-5 text-muted-foreground" />
+                    )}
                   </div>
                   <p className="text-xs font-medium text-muted-foreground">
                     {activeTab === "mentions"
-                      ? "No @mentions yet"
+                      ? "No mentions yet"
                       : "You're all caught up!"}
                   </p>
                 </div>

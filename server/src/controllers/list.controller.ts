@@ -6,7 +6,10 @@ import { compareTaskOrder } from '../services/taskOrderService';
 // GET /api/lists - Redis Cache-Aside
 export async function listLists(req: Request, res: Response) {
   try {
-    const cachedLists = await getCache<any[]>('lists:all');
+    const isShallow = req.query.shallow === 'true' || req.query.excludeTasks === 'true';
+    const cacheKey = isShallow ? 'lists:all:shallow' : 'lists:all';
+
+    const cachedLists = await getCache<any[]>(cacheKey);
     if (cachedLists) {
       return res.json({ lists: cachedLists, cached: true });
     }
@@ -14,21 +17,29 @@ export async function listLists(req: Request, res: Response) {
     const lists = await prisma.list.findMany({
       include: {
         statuses: { orderBy: { order: 'asc' } },
-        tasks: {
-          include: {
-            subtasks: {
-              include: { checklists: { include: { items: true } } }
-            },
-            checklists: { include: { items: true } },
-            comments: { select: { id: true } },
-            attachments: { select: { id: true } },
-            assignee: { select: { id: true, name: true, email: true } },
-          },
-        },
+        ...(isShallow
+          ? {
+              _count: {
+                select: { tasks: true },
+              },
+            }
+          : {
+              tasks: {
+                include: {
+                  subtasks: {
+                    include: { checklists: { include: { items: true } } },
+                  },
+                  checklists: { include: { items: true } },
+                  comments: { select: { id: true } },
+                  attachments: { select: { id: true } },
+                  assignee: { select: { id: true, name: true, email: true } },
+                },
+              },
+            }),
       },
     });
 
-    await setCache('lists:all', lists, 300);
+    await setCache(cacheKey, lists, 300);
 
     return res.json({ lists, cached: false });
   } catch (err: any) {

@@ -22,7 +22,9 @@ const formatEnum = (value?: string) =>
  * The card is portalled above the task modal (z-[99999]) so it works in both modal and full-page mode.
  */
 export function UserMentionChip({ userId, children }: UserMentionChipProps) {
-  const user = useAppStore(state => state.workspaceUsersIndex[userId]);
+  const userFromIndex = useAppStore(state => state.workspaceUsersIndex[userId]);
+  const workspaceUsers = useAppStore(state => state.workspaceUsers);
+  const currentUser = useAppStore(state => state.currentUser);
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -45,49 +47,110 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
     timerRef.current = setTimeout(() => setOpen(false), HOVER_CLOSE_DELAY);
   };
 
-  const chipClass = 'bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded select-none inline-flex items-center mx-0.5 align-baseline [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border [.theme-light_&]:border-blue-200/60';
+  // Strip leading '@' for clean pill display (avatar already signifies a user mention)
+  const stripLeadingAt = (text: React.ReactNode): React.ReactNode => {
+    if (typeof text === 'string') {
+      return text.replace(/^\s*@/, '');
+    }
+    if (Array.isArray(text) && text.length > 0 && typeof text[0] === 'string') {
+      return [text[0].replace(/^\s*@/, ''), ...text.slice(1)];
+    }
+    return text;
+  };
 
-  // Unknown or not-yet-loaded user: keep the original static chip
+  // Split children if text extends beyond the mention name (e.g. "@Pau2x to double check")
+  let mentionText: React.ReactNode = children;
+  let trailingText: React.ReactNode = null;
+
+  if (typeof children === 'string') {
+    const match = children.match(/^(\s*@[^\s<]+)([\s\S]*)$/);
+    if (match) {
+      mentionText = match[1];
+      trailingText = match[2];
+    }
+  }
+
+  const cleanMentionName = stripLeadingAt(mentionText);
+  const user = userFromIndex || (
+    typeof cleanMentionName === 'string' && cleanMentionName.trim()
+      ? workspaceUsers.find(u => u.name && u.name.trim().toLowerCase() === cleanMentionName.trim().toLowerCase())
+      : undefined
+  );
+  const displayName = user?.name || cleanMentionName || 'User';
+
+  // Check if this mention is directed to the logged in user
+  const isMe = Boolean(
+    currentUser?.id &&
+    (userId === currentUser.id ||
+      user?.id === currentUser.id ||
+      (user?.name && currentUser.name && user.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase()))
+  );
+
+  const chipClass = isMe
+    ? 'bg-blue-600/25 hover:bg-blue-600/35 text-blue-200 border border-blue-500/40 font-semibold px-1.5 py-0.5 rounded select-none inline-flex items-center gap-1 mx-0.5 align-baseline shadow-xs ring-1 ring-blue-500/30 [.theme-light_&]:bg-blue-100 [.theme-light_&]:text-blue-800 [.theme-light_&]:border-blue-300'
+    : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 font-semibold px-1.5 py-0.5 rounded select-none inline-flex items-center gap-1 mx-0.5 align-baseline [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border [.theme-light_&]:border-blue-200/60';
+
+  // Unknown or not-yet-loaded user: keep the static chip with micro-icon and trailing text separated
   if (!user) {
-    return <span className={`${chipClass} cursor-default`}>{children}</span>;
+    return (
+      <>
+        <span className={`${chipClass} cursor-default`}>
+          <span className="w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-300 text-[9px] font-bold inline-flex items-center justify-center shrink-0 -ml-0.5 select-none">
+            @
+          </span>
+          <span>{cleanMentionName}</span>
+        </span>
+        {trailingText}
+      </>
+    );
   }
 
   const avatar = user.imageUrl || user.avatarUrl;
   const initials = (user.name || '?').split(' ').map(p => p[0]).join('').substring(0, 2).toUpperCase();
   const roles = (user.roles || []).filter(Boolean);
 
+  const microAvatar = avatar ? (
+    <img src={avatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover shrink-0 -ml-0.5 select-none" />
+  ) : (
+    <span className="w-3.5 h-3.5 rounded-full bg-blue-500/25 text-blue-300 text-[8.5px] font-bold inline-flex items-center justify-center shrink-0 -ml-0.5 select-none">
+      {initials}
+    </span>
+  );
+
   return (
-    <Popover.Root
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setPinned(false);
-      }}
-    >
-      <Popover.Trigger asChild>
-        <span
-          role="button"
-          tabIndex={0}
-          className={`${chipClass} cursor-pointer hover:bg-blue-500/30 transition-colors focus:outline-none focus:ring-1 focus:ring-indigo-500/20`}
-          onMouseEnter={scheduleOpen}
-          onMouseLeave={scheduleClose}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            clearTimer();
-            setPinned(true);
-            setOpen(true);
-            if (user) {
-              triggerMentionConfetti(user, { x: e.clientX, y: e.clientY });
-            }
-          }}
-        >
-          {children}
-        </span>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="top"
+    <>
+      <Popover.Root
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) setPinned(false);
+        }}
+      >
+        <Popover.Trigger asChild>
+          <span
+            role="button"
+            tabIndex={0}
+            className={`${chipClass} cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-indigo-500/20`}
+            onMouseEnter={scheduleOpen}
+            onMouseLeave={scheduleClose}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              clearTimer();
+              setPinned(true);
+              setOpen(true);
+              if (user) {
+                triggerMentionConfetti(user, { x: e.clientX, y: e.clientY });
+              }
+            }}
+          >
+            {microAvatar}
+            <span>{displayName}</span>
+          </span>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            side="top"
           align="start"
           sideOffset={6}
           collisionPadding={8}
@@ -170,5 +233,7 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
+    {trailingText}
+  </>
   );
 }

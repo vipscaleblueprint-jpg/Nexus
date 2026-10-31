@@ -10,7 +10,7 @@ import { logger, createLogger, errMsg } from './config/logger';
 import { httpLogger } from './middleware/logging.middleware';
 import { serverTiming, getInFlightRequests } from './middleware/serverTiming.middleware';
 import { startRuntimeMetrics } from './config/runtimeMetrics';
-import { rateLimiter, botBlocker, corsOptions } from './middleware/security.middleware';
+import { rateLimiter, botBlocker, corsOptions, securityHeaders } from './middleware/security.middleware';
 import { requireLoginExcept, verifyAccessToken, readCookie } from './middleware/auth.middleware';
 import { authRouter } from './routes/auth.routes';
 import { userRouter } from './routes/user.routes';
@@ -121,6 +121,7 @@ if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
 }
 
 // Global Security, Logging & CORS Middlewares
+app.use(securityHeaders);
 app.use(serverTiming);
 app.use(httpLogger);
 app.use(cors(corsOptions));
@@ -133,8 +134,12 @@ app.use(cookieParser());
 app.use('/api', requireLoginExcept(['health', 'auth', 'external', 'webhooks', 'emojis']));
 // Login, signup and password-reset bodies are tiny: anonymous callers don't get the 50 MB limit
 app.use('/api/auth', express.json({ limit: '100kb' }), express.urlencoded({ limit: '100kb', extended: true }));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Document pages and task comments can contain large base64 image pastes; allocate 50mb for them
+app.use('/api/spaces', express.json({ limit: '50mb' }), express.urlencoded({ limit: '50mb', extended: true }));
+app.use('/api/tasks', express.json({ limit: '50mb' }), express.urlencoded({ limit: '50mb', extended: true }));
+// Standard routes get a safe 10mb ceiling
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Health Check API
 app.get('/api/health', (req, res) => {
@@ -178,7 +183,10 @@ app.use('/api/emojis', emojiRouter);
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   req.log.error({ err }, `Unhandled request error: ${errMsg(err)}`);
   if (res.headersSent) return;
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+  const isProd = process.env.NODE_ENV === 'production';
+  const status = typeof err.status === 'number' && err.status >= 400 && err.status < 600 ? err.status : 500;
+  const message = isProd && status === 500 ? 'Internal server error' : (err.message || 'Internal server error');
+  res.status(status).json({ error: message });
 });
 
 const io = new Server(server, {
@@ -187,10 +195,17 @@ const io = new Server(server, {
 
 const socketLog = createLogger('socket.io');
 
-// Sockets need the same login as the HTTP API (the accessToken cookie, sent with the handshake via withCredentials).
+// Sockets need the same login as the HTTP API (the accessToken cookie, sent with the handshake via withCredentials,
+// or an explicit token passed in socket.handshake.auth.token / Authorization header).
 // Without this anyone could connect, join any user/list/doc room, and receive every global broadcast.
 io.use(async (socket, next) => {
-  const user = await verifyAccessToken(readCookie(socket.request.headers.cookie, 'accessToken'));
+  const cookieToken = readCookie(socket.request.headers.cookie, 'accessToken');
+  const authHeader = socket.handshake.headers.authorization;
+  const headerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined;
+  const handshakeToken = (socket.handshake.auth as any)?.token;
+  const rawToken = cookieToken || handshakeToken || headerToken;
+
+  const user = await verifyAccessToken(rawToken);
   if (!user) return next(new Error('Unauthorized'));
   socket.data.user = user;
   next();

@@ -270,6 +270,7 @@ export async function googleCallback(req: Request, res: Response) {
   try {
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
+      signal: AbortSignal.timeout(10_000),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         code,
@@ -287,6 +288,7 @@ export async function googleCallback(req: Request, res: Response) {
 
     const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      signal: AbortSignal.timeout(10_000),
     });
 
     const googleUser = await userRes.json();

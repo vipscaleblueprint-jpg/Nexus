@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import bcrypt from 'bcryptjs';
-import { timingSafeEqual } from 'crypto';
+import { timingSafeEqual, randomBytes } from 'crypto';
 import { io } from '../server';
 import { hashApiKey } from '../utils/apiKey';
 import { invalidateCache, redis } from '../services/redisService';
@@ -20,6 +20,7 @@ import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
 import { autoAssignAudits } from '../services/auditAutoAssign';
+import { getAggregatedRoleMap } from '../services/roleMapService';
 
 
 async function getOrCreateVipScaleUser() {
@@ -28,7 +29,7 @@ async function getOrCreateVipScaleUser() {
   });
 
   if (!vipScaleUser) {
-    const password = await bcrypt.hash(Math.random().toString(36), 10);
+    const password = await bcrypt.hash(randomBytes(32).toString('hex'), 10);
     vipScaleUser = await prisma.user.create({
       data: {
         name: 'VIPSCALE',
@@ -911,12 +912,26 @@ export async function updateTask(req: Request, res: Response) {
 
     // Main task update
     const existingTask = target.task;
+    let finalStatus = status;
+    if (status !== undefined && existingTask?.listId) {
+      const listStatus = await prisma.listStatus.findFirst({
+        where: {
+          listId: existingTask.listId,
+          name: { equals: String(status).trim(), mode: 'insensitive' }
+        },
+        select: { name: true }
+      });
+      if (listStatus) {
+        finalStatus = listStatus.name;
+      }
+    }
+
     const task = await prisma.task.update({
       where: { id: target.taskId },
       data: {
         ...(title !== undefined && { title }),
         ...(description !== undefined && { description }),
-        ...(status !== undefined && { status }),
+        ...(finalStatus !== undefined && { status: finalStatus }),
         ...(priority !== undefined && { priority }),
         ...(assigneeId !== undefined && { assigneeId }),
       },
@@ -925,19 +940,6 @@ export async function updateTask(req: Request, res: Response) {
         assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
       }
     });
-
-    // Cascade main task status to all child subtasks
-    if (status !== undefined) {
-      const normalizedStatus = String(status).toUpperCase();
-      const isDoneStatus = ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes(normalizedStatus);
-      await prisma.subtask.updateMany({
-        where: { taskId: task.id },
-        data: {
-          status: normalizedStatus,
-          completed: isDoneStatus,
-        }
-      });
-    }
 
     // Re-fetch populated task with updated subtasks for broadcast
     const updatedFullTask = await prisma.task.findUnique({
@@ -971,7 +973,7 @@ export async function updateTask(req: Request, res: Response) {
     ).catch(() => {});
 
     // Audit log & activity feed broadcast when status changed
-    if (status !== undefined && status !== existingTask.status) {
+    if (finalStatus !== undefined && finalStatus !== existingTask.status) {
       try {
         const actor = apiKey.user || await getOrCreateVipScaleUser();
         const authorName = 'VIPScale';
@@ -981,7 +983,7 @@ export async function updateTask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: task.id,
             userId: actor.id,
-            details: { oldStatus: existingTask.status, newStatus: status, source: 'external' },
+            details: { oldStatus: existingTask.status, newStatus: finalStatus, source: 'external' },
           }
         });
         const activity = {
@@ -989,7 +991,7 @@ export async function updateTask(req: Request, res: Response) {
           type: 'status_change',
           author: authorName,
           oldStatus: existingTask.status,
-          newStatus: status,
+          newStatus: finalStatus,
           date: log.createdAt,
           user: { ...actor, name: authorName },
         };
@@ -1000,7 +1002,7 @@ export async function updateTask(req: Request, res: Response) {
 
         // Send task notifications to relevant workspace users (assignees, auditors, PMs)
         const rawUsersToNotify = await getStatusChangeRecipients(
-          status,
+          finalStatus,
           { ...task, teamId: task.teamId },
           actor.id
         );
@@ -1114,6 +1116,24 @@ export async function postActivity(req: Request, res: Response) {
       }
     });
 
+    try {
+      const user = apiKey.user || await getOrCreateVipScaleUser();
+      const activity = {
+        id: auditLog.id,
+        type: action.toLowerCase(),
+        author: user.name || 'VIPScale',
+        details: auditLog.details,
+        date: auditLog.createdAt,
+        user,
+      };
+      io.emit('task_activity', { listId: target.task?.listId, taskId: target.taskId, activity });
+      if (target.task?.listId) {
+        io.to(`list:${target.task.listId}`).emit('task_activity', { listId: target.task.listId, taskId: target.taskId, activity });
+      }
+    } catch (actErr) {
+      console.error('[external.postActivity] emit error:', actErr);
+    }
+
     return res.json({ message: 'Activity logged successfully', auditLog });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1209,12 +1229,46 @@ export async function postComment(req: Request, res: Response) {
       return res.json({ message: 'Comment posted successfully', comment, deduplicated: true });
     }
 
+    const actor = apiKey.user || comment.user || await getOrCreateVipScaleUser();
+    const authorName = actor?.name || 'VIPScale';
+    const log = await prisma.auditLog.create({
+      data: {
+        action: 'COMMENT',
+        entity: 'TASK',
+        entityId: finalTaskId,
+        userId: apiKey.userId,
+        details: { text: content.trim(), commentId: comment.id, subtaskId: finalSubtaskId || null, source: 'external' },
+      },
+    }).catch(() => null);
+
+    const activity = {
+      id: log ? log.id : comment.id,
+      commentId: comment.id,
+      type: 'comment',
+      author: authorName,
+      text: content.trim(),
+      date: comment.createdAt,
+      user: actor,
+      subtaskId: finalSubtaskId || null,
+    };
+
     // Invalidate Redis comment caches and task caches
-    await invalidateCache(`task:${finalTaskId}`, ...(finalSubtaskId ? [`task:${finalSubtaskId}`] : []));
+    await invalidateCache(
+      `task:${finalTaskId}`,
+      `task:activities:${finalTaskId}`,
+      ...(finalSubtaskId ? [`task:${finalSubtaskId}`] : [])
+    );
     await dropCommentCache(finalTaskId, finalSubtaskId);
 
     // Realtime update for the frontend
-    io.emit('task:comment_added', { taskId: finalTaskId, subtaskId: finalSubtaskId, comment });
+    io.emit('task:comment_added', { taskId: finalTaskId, subtaskId: finalSubtaskId, comment, activity });
+    if (target.task?.listId) {
+      io.to(`list:${target.task.listId}`).emit('task:comment_added', { taskId: finalTaskId, subtaskId: finalSubtaskId, comment, activity });
+    }
+    io.emit('task_activity', { listId: target.task?.listId, taskId: finalTaskId, activity });
+    if (target.task?.listId) {
+      io.to(`list:${target.task.listId}`).emit('task_activity', { listId: target.task.listId, taskId: finalTaskId, activity });
+    }
 
     return res.json({
       message: 'Comment posted successfully',
@@ -1316,6 +1370,14 @@ export async function deleteComment(req: Request, res: Response) {
       return res.status(403).json({ error: 'You do not have permission to delete this comment' });
     }
 
+    // Find any child replies before deleting the parent comment (since cascade will delete them in DB)
+    const childReplies = await prisma.taskComment.findMany({
+      where: { parentCommentId: commentId },
+      select: { id: true, userId: true, content: true, taskId: true, subtaskId: true },
+    });
+    const allDeletedComments = [existingComment, ...childReplies];
+    const allDeletedCommentIds = allDeletedComments.map(c => c.id);
+
     await prisma.taskComment.delete({
       where: { id: commentId }
     });
@@ -1330,13 +1392,23 @@ export async function deleteComment(req: Request, res: Response) {
 
     // Clean up associated TaskNotification and AuditLog records
     try {
-      const preview = toNotificationPreview(existingComment.content);
+      const previews = allDeletedComments.map(c => toNotificationPreview(c.content)).filter(Boolean);
+      const actorIds = Array.from(new Set(allDeletedComments.map(c => c.userId)));
+
       const matchingNotifs = await prisma.taskNotification.findMany({
         where: {
           taskId: existingComment.taskId,
-          actorId: existingComment.userId,
-          type: { in: ['MENTION', 'COMMENT'] },
-          content: preview,
+          type: { in: ['MENTION', 'COMMENT', 'REPLY', 'REACTION'] },
+          OR: [
+            {
+              actorId: { in: actorIds },
+              content: { in: previews },
+            },
+            {
+              userId: { in: actorIds },
+              content: { in: previews },
+            },
+          ],
         },
         select: { id: true, userId: true },
       });
@@ -1346,17 +1418,23 @@ export async function deleteComment(req: Request, res: Response) {
           where: { id: { in: matchingNotifs.map(n => n.id) } },
         });
         matchingNotifs.forEach(n => {
+          io.to(`user:${n.userId}`).emit('notification_cleared', { id: n.id });
           io.to(`user:${n.userId}`).emit('notification_received');
         });
       }
 
-      await prisma.auditLog.deleteMany({
-        where: {
-          entityId: existingComment.taskId,
-          action: { in: ['COMMENT', 'REPLY'] },
-          details: { path: ['commentId'], equals: commentId },
-        },
-      }).catch(() => {});
+      const commentIdFilters = allDeletedCommentIds.flatMap(id => [
+        { details: { path: ['commentId'], equals: id } },
+        { details: { path: ['parentCommentId'], equals: id } },
+      ]);
+      if (commentIdFilters.length > 0) {
+        await prisma.auditLog.deleteMany({
+          where: {
+            action: { in: ['COMMENT', 'REPLY'] },
+            OR: commentIdFilters,
+          },
+        }).catch(() => {});
+      }
     } catch (cleanErr) {
       console.error('[external:deleteComment] Cleanup error:', cleanErr);
     }
@@ -1442,8 +1520,43 @@ export async function updateSubtask(req: Request, res: Response) {
         ...(completed !== undefined && { completed }),
         ...(priority !== undefined && { priority }),
         ...(assigneeId !== undefined && { assigneeId }),
+      },
+      include: {
+        User: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true } },
       }
     });
+
+    io.emit('subtask_updated', { taskId, subtask: updated });
+    const fullParent = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
+        subtasks: {
+          include: {
+            User: { select: { id: true, name: true, avatarUrl: true } },
+            assignees: { select: { id: true, name: true, avatarUrl: true } },
+          }
+        }
+      }
+    });
+    if (fullParent) {
+      io.emit('task:updated', fullParent);
+      if (fullParent.listId) {
+        io.to(`list:${fullParent.listId}`).emit('task:updated', fullParent);
+      }
+    }
+
+    invalidateCache(
+      `task:${taskId}`,
+      `task:${updated.id}`,
+      `task:activities:${taskId}`,
+      'tasks:all',
+      'lists:all',
+      'dashboard:all',
+      'spaces:all'
+    ).catch(() => {});
 
     return res.json({ message: 'Subtask updated successfully', subtask: updated });
   } catch (err: any) {
@@ -1659,6 +1772,22 @@ export async function deleteRole(req: Request, res: Response) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/external/role-map
+// Returns the aggregated role map with members for external integrations (VIPScale)
+// ---------------------------------------------------------------------------
+export async function getExternalRoleMap(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const roleMap = await getAggregatedRoleMap();
+    return res.json(roleMap);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to fetch role map' });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // External Users Management
 // ---------------------------------------------------------------------------
 export async function getExternalUsers(req: Request, res: Response) {
@@ -1772,7 +1901,7 @@ export async function createExternalInvitation(req: Request, res: Response) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + (expiresInDays || 7));
 
-    const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const token = randomBytes(24).toString('hex');
 
     const invite = await prisma.invitation.create({
       data: {

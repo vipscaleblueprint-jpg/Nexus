@@ -144,6 +144,18 @@ export function botBlocker(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+/** Standard HTTP Security Headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS) */
+export function securityHeaders(_req: Request, res: Response, next: NextFunction) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+}
+
 // Strict CORS Middleware Configuration
 const corsOrigin = requireEnv('CORS_ORIGIN');
 export const corsOptions: cors.CorsOptions = {

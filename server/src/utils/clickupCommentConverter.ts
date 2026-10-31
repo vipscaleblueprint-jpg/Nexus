@@ -136,7 +136,7 @@ export async function fetchImageBuffer(
     }
 
     if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-      const res = await fetch(imageUrl);
+      const res = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) });
       if (!res.ok) {
         console.error(`[ClickUp] fetchImageBuffer failed (${res.status}) for ${imageUrl}`);
         return null;

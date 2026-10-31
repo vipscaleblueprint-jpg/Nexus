@@ -36,6 +36,7 @@ async function clickupFetch(
     try {
       res = await fetch(`${CLICKUP_API_BASE}${path}`, {
         ...options,
+        signal: options.signal ?? AbortSignal.timeout(15_000),
         headers: {
           Authorization: apiKey,
           'Content-Type': 'application/json',
@@ -619,6 +620,7 @@ export async function uploadClickUpTaskAttachment(
       try {
         res = await fetch(`${CLICKUP_API_BASE}/task/${cleanTaskId}/attachment`, {
           method: 'POST',
+          signal: AbortSignal.timeout(30_000),
           headers: {
             Authorization: apiKey,
           },

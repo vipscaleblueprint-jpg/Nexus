@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Film } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { commentHtmlForMarkdown, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink } from '@/lib/links';
+import { commentHtmlForMarkdown, linkifyPlainMentions, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, rehypeSanitizeComment, parseNexusTaskLink } from '@/lib/links';
 import { extractImagesFromContent } from '@/lib/commentImages';
 import { UserMentionChip } from './UserMentionChip';
 import { TaskMentionChip } from './TaskMentionChip';
@@ -137,7 +137,9 @@ function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
     );
   }
   if (target.startsWith('mention://')) {
-    return <UserMentionChip userId={target.replace('mention://', '')}>{children}</UserMentionChip>;
+    const rawUserId = target.replace('mention://', '');
+    const cleanUserId = rawUserId.startsWith('unknown') ? 'unknown' : rawUserId;
+    return <UserMentionChip userId={cleanUserId}>{children}</UserMentionChip>;
   }
   const nexus = parseNexusTaskLink(target);
   if (nexus) {
@@ -215,9 +217,10 @@ export function CommentContent({
   autoLoadImages = false,
 }: CommentContentProps) {
   const hasLoadedUsers = useAppStore(state => state.hasLoadedUsers);
+  const workspaceUsers = useAppStore(state => state.workspaceUsers);
 
   useEffect(() => {
-    if (hasLoadedUsers || usersRequested || !content.includes('mention://')) return;
+    if (hasLoadedUsers || usersRequested || (!content.includes('mention://') && !content.includes('@'))) return;
     usersRequested = true;
     const { hydrateUsersFromCache, loadUsers } = useAppStore.getState();
     hydrateUsersFromCache();
@@ -232,16 +235,20 @@ export function CommentContent({
     autoLoadImages,
   }), [onPreviewImage, contentImages, autoLoadImages]);
 
+  const linkedContent = useMemo(() => {
+    return linkifyPlainMentions(content, workspaceUsers);
+  }, [content, workspaceUsers]);
+
   return (
     <div className={`select-text [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] ${className}`}>
       <CommentMediaContext.Provider value={mediaContextValue}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify]}
+          rehypePlugins={[rehypeRaw, rehypeSanitizeComment, rehypeUnknownTagsToText, rehypeLinkify]}
           components={staticMarkdownComponents}
           urlTransform={keepMentionUrls}
         >
-          {commentHtmlForMarkdown(content)}
+          {commentHtmlForMarkdown(linkedContent)}
         </ReactMarkdown>
       </CommentMediaContext.Provider>
     </div>

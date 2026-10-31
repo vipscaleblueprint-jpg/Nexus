@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
+import type { AuthRequest } from '../types';
 import { randomUUID } from 'crypto';
 import { prisma } from '../config/prisma';
+import { logger } from '../config/logger';
 import { getR2PresignedUrl } from '../services/r2Service';
 import { getCache, setCache, invalidateCache, getCacheGeneration } from '../services/redisService';
 import { redis } from '../config/redis';
@@ -35,7 +37,7 @@ import { convertCommentHtmlToClickUp, fetchImageBuffer } from '../utils/clickupC
 import { isNexusAuditChecklist, isAiAuditChecklist, getAiPickedAudits, requiresClosedSubtasks, requiresCompletedAudits, normalizeAuditName } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
-import { canUserSetAssignees, getAssignDeniedMessage } from '../utils/assignPermission';
+import { canUserSetAssignees, getAssignDeniedMessage, canUserDeleteTask } from '../utils/assignPermission';
 import { updatePageBlocks } from '../services/pageContentService';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 import {
@@ -147,8 +149,13 @@ const listTasksInFlight = new Map<string, Promise<any[]>>();
 // GET /api/tasks - Redis Cache-Aside
 export async function listTasks(req: Request, res: Response) {
   try {
-    const { listId, assigneeId, status, lightweight } = req.query as Record<string, string | undefined>;
-    const cacheKey = `tasks:all:${listId || 'all'}:${assigneeId || 'all'}:${status || 'all'}:${lightweight || 'false'}`;
+    const { listId, assigneeId, status, lightweight, limit, take, skip, page } = req.query as Record<string, string | undefined>;
+    const parsedTake = limit ? parseInt(limit, 10) : take ? parseInt(take, 10) : undefined;
+    const validTake = parsedTake && !isNaN(parsedTake) && parsedTake > 0 ? parsedTake : undefined;
+    const parsedSkip = page && validTake ? (Math.max(1, parseInt(page, 10)) - 1) * validTake : skip ? parseInt(skip, 10) : undefined;
+    const validSkip = parsedSkip && !isNaN(parsedSkip) && parsedSkip >= 0 ? parsedSkip : undefined;
+
+    const cacheKey = `tasks:all:${listId || 'all'}:${assigneeId || 'all'}:${status || 'all'}:${lightweight || 'false'}:${validTake || 'all'}:${validSkip || '0'}`;
 
     const cachedTasks = await getCache<any[]>(cacheKey);
     if (cachedTasks) {
@@ -160,7 +167,7 @@ export async function listTasks(req: Request, res: Response) {
     const inFlightKey = `${cacheKey}@${generation}`;
     let pending = listTasksInFlight.get(inFlightKey);
     if (!pending) {
-      pending = queryListTasks({ listId, assigneeId, status, lightweight }, cacheKey, generation).finally(() => {
+      pending = queryListTasks({ listId, assigneeId, status, lightweight, take: validTake, skip: validSkip }, cacheKey, generation).finally(() => {
         listTasksInFlight.delete(inFlightKey);
       });
       listTasksInFlight.set(inFlightKey, pending);
@@ -174,7 +181,21 @@ export async function listTasks(req: Request, res: Response) {
 }
 
 async function queryListTasks(
-  { listId, assigneeId, status, lightweight }: Record<string, string | undefined>,
+  {
+    listId,
+    assigneeId,
+    status,
+    lightweight,
+    take,
+    skip,
+  }: {
+    listId?: string;
+    assigneeId?: string;
+    status?: string;
+    lightweight?: string;
+    take?: number;
+    skip?: number;
+  },
   cacheKey: string,
   generation: string,
 ) {
@@ -192,6 +213,8 @@ async function queryListTasks(
             }
           : {}),
       },
+      ...(take !== undefined ? { take } : {}),
+      ...(skip !== undefined ? { skip } : {}),
           include: lightweight === 'true' 
         ? {
             assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
@@ -212,7 +235,7 @@ async function queryListTasks(
         : taskInclude,
       orderBy: { createdAt: 'desc' },
     });
-    console.log(`[API] listTasks db query: ${((Date.now() - startedAt) / 1000).toFixed(3)}s (${tasks.length} tasks)`);
+    logger.debug({ duration: ((Date.now() - startedAt) / 1000).toFixed(3), count: tasks.length }, '[API] listTasks db query');
 
     // Lightweight all-tasks query: cache for 5 minutes. With 1200+ tasks this query
     // takes 12–20s cold — the cache is the primary performance mechanism here.
@@ -227,9 +250,12 @@ export async function getTask(req: Request, res: Response) {
     const taskId = req.params.id;
     const cacheKey = `task:${taskId}`;
 
-    const cachedTask = await getCache<any>(cacheKey);
-    if (cachedTask) {
-      return res.json({ task: cachedTask, cached: true });
+    const cachedData = await getCache<any>(cacheKey);
+    if (cachedData) {
+      if (cachedData.task) {
+        return res.json({ task: cachedData.task, subtask: cachedData.subtask || null, cached: true });
+      }
+      return res.json({ task: cachedData, cached: true });
     }
 
     const generation = getCacheGeneration(cacheKey);
@@ -294,9 +320,15 @@ export async function getTask(req: Request, res: Response) {
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
     res.json({ task, subtask: foundSubtask, cached: false });
-    // Cache under the actual task ID, not the requested ID (in case it was a subtask ID) — after responding,
-    // since the modal waits on this request
+    // Cache under the task ID
     setCache(`task:${task.id}`, task, 300, generation).catch(() => {});
+    // When a subtask was requested or found, cache under the subtask ID with both task and subtask
+    if (foundSubtask) {
+      setCache(`task:${taskId}`, { task, subtask: foundSubtask }, 300, generation).catch(() => {});
+      if (foundSubtask.id !== taskId) {
+        setCache(`task:${foundSubtask.id}`, { task, subtask: foundSubtask }, 300, generation).catch(() => {});
+      }
+    }
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -1153,10 +1185,21 @@ export async function updateTask(req: Request, res: Response) {
 export async function deleteTask(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
+    const authReq = req as AuthRequest;
+
     const taskToDelete = await prisma.task.findUnique({
       where: { id: taskId },
-      select: { listId: true, externalId: true },
+      select: { listId: true, externalId: true, creatorId: true },
     });
+
+    if (!taskToDelete) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (!canUserDeleteTask(authReq.user, taskToDelete.creatorId)) {
+      return res.status(403).json({ error: 'You are not authorized to delete this task. Only Admins, Team Leads, and the task Creator may delete it.' });
+    }
+
     await prisma.task.delete({ where: { id: taskId } });
 
     io.emit('task:deleted', { id: taskId });
@@ -1375,8 +1418,9 @@ export async function createTaskComment(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
     const { content, userId, listId, mentionedUserIds, parentCommentId, subtaskId } = req.body;
-    const authReq = req as any;
-    const effectiveUserId = userId || authReq.user?.id || (await prisma.user.findFirst())?.id;
+    const authReq = req as AuthRequest;
+    // Prioritize authenticated user session over req.body.userId to prevent impersonation
+    const effectiveUserId = authReq.user?.id || userId;
 
     if (!effectiveUserId) {
       return res.status(400).json({ error: 'User ID is required' });
@@ -1466,14 +1510,9 @@ export async function createTaskComment(req: Request, res: Response) {
     // Also invalidate the activity cache since a new comment writes an AuditLog
     invalidateCache(`task:activities:${taskId}`).catch(() => {});
 
-    if (listId) {
-      io.to(`list:${listId}`).emit('task:comment_added', payload);
-      // Broadcast globally (room members included) so the Activity page, which isn't in list rooms, refreshes live
-      io.emit('task_activity', { listId, taskId, activity });
-    } else {
-      io.emit('task:comment_added', payload);
-      io.emit('task_activity', { taskId, activity });
-    }
+    // Broadcast globally so all active views (Activity page, modal, board, dashboard) receive comment in real time
+    io.emit('task:comment_added', payload);
+    io.emit('task_activity', { listId: listId || undefined, taskId, activity });
 
     // Notifications after the broadcast (their own notification_received emits follow each write), so the
     // comment shows for everyone without waiting on the notification queries.
@@ -1487,35 +1526,89 @@ export async function createTaskComment(req: Request, res: Response) {
         isSubtask: Boolean(subtaskId),
       });
 
-      // Notify task assignees about the comment (if they weren't mentioned)
+      // 1. If this is a reply, notify the author of the parent comment
+      if (parentCommentId) {
+        const parentComment = await prisma.taskComment.findUnique({
+          where: { id: parentCommentId },
+          select: { id: true, userId: true, content: true },
+        });
+        if (parentComment?.userId && parentComment.userId !== effectiveUserId && !mentionIds.includes(parentComment.userId)) {
+          const allowed = await shouldUserReceiveNotification(parentComment.userId, 'comments');
+          if (allowed) {
+            let itemTitle = 'task';
+            if (subtaskId) {
+              const subRec = await prisma.subtask.findUnique({ where: { id: subtaskId }, select: { title: true } });
+              if (subRec?.title) itemTitle = subRec.title;
+            } else {
+              const taskRec = await prisma.task.findUnique({ where: { id: taskId }, select: { title: true } });
+              if (taskRec?.title) itemTitle = taskRec.title;
+            }
+
+            await prisma.taskNotification.create({
+              data: {
+                userId: parentComment.userId,
+                actorId: effectiveUserId,
+                taskId,
+                type: 'REPLY',
+                title: `${user?.name || 'Someone'} replied to your comment on ${subtaskId ? 'subtask' : 'task'} ${itemTitle}`,
+                content: toNotificationPreview(content),
+              },
+            });
+
+            io.to(`user:${parentComment.userId}`).emit('notification_received', {
+              type: 'REPLY',
+              taskId,
+              commentId: comment.id,
+              parentCommentId,
+              subtaskId: subtaskId || null,
+            });
+          }
+        }
+      }
+
+      // 2. Notify task and subtask assignees about the comment/reply (if they weren't mentioned and didn't already receive reply notification)
       const taskData = await prisma.task.findUnique({
         where: { id: taskId },
         select: { title: true, assignees: { select: { id: true } } }
       });
+      let subtaskAssignees: { id: string }[] = [];
+      let itemTitle = taskData?.title || 'task';
+
+      if (subtaskId) {
+        const subRec = await prisma.subtask.findUnique({
+          where: { id: subtaskId },
+          select: { title: true, assignees: { select: { id: true } }, assigneeId: true }
+        });
+        if (subRec?.title) itemTitle = subRec.title;
+        if (subRec?.assignees) subtaskAssignees = subRec.assignees;
+        if (subRec?.assigneeId && !subtaskAssignees.some(a => a.id === subRec.assigneeId)) {
+          subtaskAssignees.push({ id: subRec.assigneeId });
+        }
+      }
+
       if (taskData) {
-        const rawAssigneesToNotify = taskData.assignees
-          .map((a: any) => a.id)
-          .filter((id: any) => id !== effectiveUserId && !mentionIds.includes(id));
+        const combinedAssigneeIds = Array.from(new Set([
+          ...taskData.assignees.map((a: any) => a.id),
+          ...subtaskAssignees.map((a: any) => a.id),
+        ]));
+
+        const rawAssigneesToNotify = combinedAssigneeIds
+          .filter((id: string) => id !== effectiveUserId && !mentionIds.includes(id));
 
         const assigneesToNotify = await filterUsersByNotificationPreference(rawAssigneesToNotify, 'comments');
 
         if (assigneesToNotify.length > 0) {
-          let itemTitle = taskData.title;
-          if (subtaskId) {
-            const subRec = await prisma.subtask.findUnique({ where: { id: subtaskId }, select: { title: true } });
-            if (subRec?.title) itemTitle = subRec.title;
-          }
           await prisma.taskNotification.createMany({
-            data: assigneesToNotify.map((id: any) => ({
+            data: assigneesToNotify.map((id: string) => ({
               userId: id,
               actorId: effectiveUserId,
               taskId,
-              type: 'COMMENT',
-              title: `${user?.name || 'Someone'} commented on ${subtaskId ? 'subtask' : 'task'} ${itemTitle}`,
+              type: parentCommentId ? 'REPLY' : 'COMMENT',
+              title: `${user?.name || 'Someone'} ${parentCommentId ? 'replied to a comment' : 'commented'} on ${subtaskId ? 'subtask' : 'task'} ${itemTitle}`,
               content: toNotificationPreview(content),
             })),
           });
-          assigneesToNotify.forEach((id: any) => {
+          assigneesToNotify.forEach((id: string) => {
             io.to(`user:${id}`).emit('notification_received');
           });
         }
@@ -1610,6 +1703,7 @@ export async function updateTaskComment(req: Request, res: Response) {
   try {
     const { id: taskId, commentId } = req.params;
     const { content, listId } = req.body;
+    const authReq = req as AuthRequest;
     
     if (!content || !content.trim()) {
       return res.status(400).json({ error: 'Content cannot be empty' });
@@ -1617,8 +1711,33 @@ export async function updateTaskComment(req: Request, res: Response) {
 
     const previous = await prisma.taskComment.findUnique({
       where: { id: commentId },
-      select: { content: true, externalId: true },
+      select: { content: true, externalId: true, userId: true },
     });
+
+    if (!previous) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    // Helper: detect if an edit only toggles checklist items (collaborative instruction audits / checkboxes)
+    const normalizeChecklistText = (str: string) =>
+      str
+        .replace(/data-checked="(?:true|false)"/gi, '')
+        .replace(/checked(?:="checked")?/gi, '')
+        .replace(/<input[^>]*>/gi, '')
+        .replace(/\[[ xX]\]/g, '')
+        .replace(/\s+/g, '')
+        .trim();
+    const isChecklistToggle = normalizeChecklistText(previous.content) === normalizeChecklistText(content.trim());
+
+    // Only comment author or a system ADMIN can edit comment text, but teammates can toggle checklist items
+    if (
+      authReq.user &&
+      previous.userId !== authReq.user.id &&
+      authReq.user.systemRole !== 'ADMIN' &&
+      !isChecklistToggle
+    ) {
+      return res.status(403).json({ error: 'You are not authorized to edit this comment' });
+    }
 
     const comment = await prisma.taskComment.update({
       where: { id: commentId },
@@ -1640,11 +1759,8 @@ export async function updateTaskComment(req: Request, res: Response) {
     if (comment.subtaskId) {
       redis.del(`comments:list:${taskId}:sub:${comment.subtaskId}`).catch(() => {});
     }
-    if (listId) {
-      io.to(`list:${listId}`).emit('task:comment_updated', payload);
-    } else {
-      io.emit('task:comment_updated', payload);
-    }
+    // Broadcast globally to all active views and modals
+    io.emit('task:comment_updated', payload);
 
     // Mirror comment update to ClickUp asynchronously
     if (previous?.externalId) {
@@ -1688,10 +1804,28 @@ export async function deleteTaskComment(req: Request, res: Response) {
   try {
     const { id: taskId, commentId } = req.params;
     const { listId } = req.body; 
+    const authReq = req as AuthRequest;
 
     const existingComment = await prisma.taskComment.findUnique({
       where: { id: commentId },
     });
+
+    if (!existingComment) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    // Only comment author or a system ADMIN can delete this comment
+    if (authReq.user && existingComment.userId !== authReq.user.id && authReq.user.systemRole !== 'ADMIN') {
+      return res.status(403).json({ error: 'You are not authorized to delete this comment' });
+    }
+
+    // Find any child replies before deleting the parent comment (since cascade will delete them in DB)
+    const childReplies = await prisma.taskComment.findMany({
+      where: { parentCommentId: commentId },
+      select: { id: true, userId: true, content: true, taskId: true, subtaskId: true },
+    });
+    const allDeletedComments = [existingComment, ...childReplies];
+    const allDeletedCommentIds = allDeletedComments.map(c => c.id);
 
     await prisma.taskComment.delete({
       where: { id: commentId },
@@ -1706,38 +1840,53 @@ export async function deleteTaskComment(req: Request, res: Response) {
     }
 
     // Clean up associated TaskNotification and AuditLog records
-    if (existingComment) {
-      try {
-        const preview = toNotificationPreview(existingComment.content);
-        const matchingNotifs = await prisma.taskNotification.findMany({
-          where: {
-            taskId: existingComment.taskId,
-            actorId: existingComment.userId,
-            type: { in: ['MENTION', 'COMMENT'] },
-            content: preview,
-          },
-          select: { id: true, userId: true },
+    try {
+      const previews = allDeletedComments.map(c => toNotificationPreview(c.content)).filter(Boolean);
+      const actorIds = Array.from(new Set(allDeletedComments.map(c => c.userId)));
+
+      const matchingNotifs = await prisma.taskNotification.findMany({
+        where: {
+          taskId: existingComment.taskId,
+          type: { in: ['MENTION', 'COMMENT', 'REPLY', 'REACTION'] },
+          OR: [
+            {
+              actorId: { in: actorIds },
+              content: { in: previews },
+            },
+            {
+              // For reactions, recipient was the comment author
+              userId: { in: actorIds },
+              content: { in: previews },
+            },
+          ],
+        },
+        select: { id: true, userId: true },
+      });
+
+      if (matchingNotifs.length > 0) {
+        await prisma.taskNotification.deleteMany({
+          where: { id: { in: matchingNotifs.map(n => n.id) } },
         });
+        matchingNotifs.forEach(n => {
+          io.to(`user:${n.userId}`).emit('notification_cleared', { id: n.id });
+          io.to(`user:${n.userId}`).emit('notification_received');
+        });
+      }
 
-        if (matchingNotifs.length > 0) {
-          await prisma.taskNotification.deleteMany({
-            where: { id: { in: matchingNotifs.map(n => n.id) } },
-          });
-          matchingNotifs.forEach(n => {
-            io.to(`user:${n.userId}`).emit('notification_received');
-          });
-        }
-
+      const commentIdFilters = allDeletedCommentIds.flatMap(id => [
+        { details: { path: ['commentId'], equals: id } },
+        { details: { path: ['parentCommentId'], equals: id } },
+      ]);
+      if (commentIdFilters.length > 0) {
         await prisma.auditLog.deleteMany({
           where: {
-            entityId: taskId,
             action: { in: ['COMMENT', 'REPLY'] },
-            details: { path: ['commentId'], equals: commentId },
+            OR: commentIdFilters,
           },
         }).catch(() => {});
-      } catch (cleanErr) {
-        console.error('[deleteTaskComment] Notification/Audit cleanup error:', cleanErr);
       }
+    } catch (cleanErr) {
+      console.error('[deleteTaskComment] Notification/Audit cleanup error:', cleanErr);
     }
 
     // Delete from ClickUp asynchronously
@@ -1758,11 +1907,8 @@ export async function deleteTaskComment(req: Request, res: Response) {
     if (existingComment?.subtaskId) {
       redis.del(`comments:list:${taskId}:sub:${existingComment.subtaskId}`).catch(() => {});
     }
-    if (listId) {
-      io.to(`list:${listId}`).emit('task:comment_deleted', payload);
-    } else {
-      io.emit('task:comment_deleted', payload);
-    }
+    // Broadcast globally to all active views and modals
+    io.emit('task:comment_deleted', payload);
 
     return res.json({ success: true });
   } catch (err: any) {
@@ -1775,8 +1921,9 @@ export async function toggleCommentReaction(req: Request, res: Response) {
   try {
     const { commentId } = req.params;
     const { userId, emoji } = req.body;
-    const authReq = req as any;
-    const effectiveUserId = userId || authReq.user?.id || (await prisma.user.findFirst())?.id;
+    const authReq = req as AuthRequest;
+    // Prioritize authenticated user session over req.body.userId to prevent impersonation
+    const effectiveUserId = authReq.user?.id || userId;
 
     if (!effectiveUserId || !emoji) {
       return res.status(400).json({ error: 'userId and emoji are required' });
@@ -1799,49 +1946,63 @@ export async function toggleCommentReaction(req: Request, res: Response) {
       include: { user: { select: { id: true, name: true } } },
     });
 
-    // If reaction was added, notify comment author in background (fire-and-forget)
-    if (!existing) {
-      (async () => {
-        const comment = await prisma.taskComment.findUnique({
-          where: { id: commentId },
-          select: {
-            id: true,
-            userId: true,
-            content: true,
-            taskId: true,
-            subtaskId: true,
-            task: { select: { title: true } },
-            subtask: { select: { title: true } },
-          },
-        });
+    const commentRecord = await prisma.taskComment.findUnique({
+      where: { id: commentId },
+      select: {
+        id: true,
+        userId: true,
+        content: true,
+        taskId: true,
+        subtaskId: true,
+        task: { select: { title: true } },
+        subtask: { select: { title: true } },
+      },
+    });
 
-        if (comment && comment.userId && comment.userId !== effectiveUserId) {
-          const allowed = await shouldUserReceiveNotification(comment.userId, 'comments');
+    if (commentRecord) {
+      // Invalidate comments Redis list cache for task / subtask
+      const redisCommentKey = `comments:list:${commentRecord.taskId}${commentRecord.subtaskId ? `:sub:${commentRecord.subtaskId}` : ''}`;
+      redis.del(redisCommentKey).catch(() => {});
+
+      // Broadcast reaction to all connected clients in real time
+      io.emit('task:comment_reaction', {
+        taskId: commentRecord.taskId,
+        subtaskId: commentRecord.subtaskId || null,
+        commentId,
+        reactions,
+      });
+    }
+
+    // If reaction was added, notify comment author in background (fire-and-forget)
+    if (!existing && commentRecord) {
+      (async () => {
+        if (commentRecord.userId && commentRecord.userId !== effectiveUserId) {
+          const allowed = await shouldUserReceiveNotification(commentRecord.userId, 'comments');
           if (allowed) {
             const actor = await prisma.user.findUnique({
               where: { id: effectiveUserId },
               select: { name: true },
             });
             const actorName = actor?.name || 'Someone';
-            const targetTitle = comment.subtask?.title || comment.task?.title || 'task';
-            const contextType = comment.subtaskId ? 'subtask' : 'task';
+            const targetTitle = commentRecord.subtask?.title || commentRecord.task?.title || 'task';
+            const contextType = commentRecord.subtaskId ? 'subtask' : 'task';
 
             await prisma.taskNotification.create({
               data: {
-                userId: comment.userId,
+                userId: commentRecord.userId,
                 actorId: effectiveUserId,
-                taskId: comment.taskId,
+                taskId: commentRecord.taskId,
                 type: 'REACTION',
                 title: `${actorName} reacted ${emoji} to your comment on ${contextType} ${targetTitle}`,
-                content: toNotificationPreview(comment.content),
+                content: toNotificationPreview(commentRecord.content),
               },
             });
 
-            io.to(`user:${comment.userId}`).emit('notification_received', {
+            io.to(`user:${commentRecord.userId}`).emit('notification_received', {
               type: 'REACTION',
-              taskId: comment.taskId,
-              commentId: comment.id,
-              subtaskId: comment.subtaskId,
+              taskId: commentRecord.taskId,
+              commentId: commentRecord.id,
+              subtaskId: commentRecord.subtaskId,
             });
           }
         }
@@ -2272,7 +2433,8 @@ export async function createSubtask(req: Request, res: Response) {
         team: { select: { id: true, name: true, color: true } }
       } as any
     });
-    await invalidateCache(`task:${taskId}`);
+    await invalidateCache(`task:${taskId}`, `task:${subtask.id}`);
+    io.emit('subtask_created', { taskId, subtask });
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 
@@ -2331,7 +2493,7 @@ export async function createSubtask(req: Request, res: Response) {
           subtaskTitle: title,
           date: new Date().toISOString(),
         };
-        io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
+        io.emit('task_activity', { listId: task.listId, taskId, activity: act });
       }
     }
 
@@ -2649,13 +2811,14 @@ export async function updateSubtask(req: Request, res: Response) {
     }
 
     let statusActivity: any = null;
-    await invalidateCache(`task:${taskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(() => {});
+    await invalidateCache(`task:${taskId}`, `task:${subtaskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(() => {});
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 
       select: { id: true, listId: true, subtasks: taskInclude.subtasks }
     });
     if (task) {
+      io.emit('subtask_updated', { taskId, subtask });
       io.emit('task:updated', task);
       // After the emit: the dashboard's all-tasks list carries subtasks, so a reload must not serve the old copy
       invalidateCache('tasks:all').catch(() => {});
@@ -2676,7 +2839,7 @@ export async function updateSubtask(req: Request, res: Response) {
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
           };
-          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
+          io.emit('task_activity', { listId: task.listId, taskId, activity: act });
         }
         statusActivity = null;
         if (status !== undefined) {
@@ -2690,7 +2853,7 @@ export async function updateSubtask(req: Request, res: Response) {
             date: new Date().toISOString(),
           };
           statusActivity = act;
-          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
+          io.emit('task_activity', { listId: task.listId, taskId, activity: act });
         }
         if (priority !== undefined) {
           const act = {
@@ -2702,7 +2865,18 @@ export async function updateSubtask(req: Request, res: Response) {
             subtaskTitle: subtask.title,
             date: new Date().toISOString(),
           };
-          io.to(`list:${task.listId}`).emit('task_activity', { taskId, activity: act });
+          io.emit('task_activity', { listId: task.listId, taskId, activity: act });
+        }
+        if (assigneeRoleRestrictions !== undefined) {
+          const act = {
+            id: (Date.now() + 3).toString(),
+            type: 'team_role_change',
+            author: authorName,
+            roles: assigneeRoleRestrictions,
+            subtaskTitle: subtask.title,
+            date: new Date().toISOString(),
+          };
+          io.emit('task_activity', { listId: task.listId, taskId, activity: act });
         }
       }
     }
@@ -2761,9 +2935,26 @@ export async function updateSubtask(req: Request, res: Response) {
 export async function deleteSubtask(req: Request, res: Response) {
   try {
     const { id: taskId, subtaskId } = req.params;
+    const authReq = req as AuthRequest;
     
-    // Fetch first to get externalId
-    const subtask = await prisma.subtask.findUnique({ where: { id: subtaskId }, select: { externalId: true } });
+    // Fetch first to get externalId and parent task creatorId
+    const subtask = await prisma.subtask.findUnique({
+      where: { id: subtaskId },
+      select: {
+        externalId: true,
+        assigneeId: true,
+        task: { select: { creatorId: true } },
+      },
+    });
+
+    if (!subtask) {
+      return res.status(404).json({ error: 'Subtask not found' });
+    }
+
+    const isSubtaskAssignee = authReq.user && subtask.assigneeId === authReq.user.id;
+    if (!isSubtaskAssignee && !canUserDeleteTask(authReq.user, subtask.task?.creatorId)) {
+      return res.status(403).json({ error: 'You are not authorized to delete this subtask. Only Admins, Team Leads, the subtask Assignee, or the task Creator may delete it.' });
+    }
     
     await prisma.subtask.delete({ where: { id: subtaskId } });
     await invalidateCache(`task:${taskId}`);
@@ -2779,7 +2970,7 @@ export async function deleteSubtask(req: Request, res: Response) {
     // --- ClickUp Sync ---
     (async () => {
       try {
-        let cuSubtaskId = subtask?.externalId;
+        let cuSubtaskId: string | null | undefined = subtask?.externalId;
         if (!cuSubtaskId) {
           cuSubtaskId = cuSubtaskIdMap.get(subtaskId);
         }

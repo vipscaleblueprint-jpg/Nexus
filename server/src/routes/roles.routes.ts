@@ -1,11 +1,12 @@
 import { Router } from 'express';
-import { getRoles, createRole, deleteRole, updateRole } from '../controllers/roles.controller';
+import { getRoles, createRole, deleteRole, updateRole, getRoleMap } from '../controllers/roles.controller';
 import { authenticateToken, requireSystemRole } from '../middleware/auth.middleware';
 
 const router = Router();
 
-// Only authenticated users can view roles
+// Only authenticated users can view roles and role map
 router.get('/', authenticateToken, getRoles);
+router.get('/map', authenticateToken, getRoleMap);
 
 // Only admins can create, update and delete roles
 router.post('/', authenticateToken, requireSystemRole('ADMIN'), createRole);

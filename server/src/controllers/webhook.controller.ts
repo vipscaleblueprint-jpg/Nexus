@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
-import { timingSafeEqual } from 'crypto';
+import { timingSafeEqual, randomBytes } from 'crypto';
 import { Priority } from '@prisma/client';
 import { prisma } from '../config/prisma';
+import { logger } from '../config/logger';
 import bcrypt from 'bcryptjs';
 import { io } from '../server';
 import { invalidateCache, removeRefreshToken, revokeUserSessions } from '../services/redisService';
@@ -25,7 +26,7 @@ export async function getOrCreateVipScaleUser() {
   });
 
   if (!vipScaleUser) {
-    const password = await bcrypt.hash(Math.random().toString(36), 10);
+    const password = await bcrypt.hash(randomBytes(32).toString('hex'), 10);
     vipScaleUser = await prisma.user.create({
       data: {
         name: 'VIP Scale',
@@ -55,14 +56,14 @@ export const requireApiKey = (req: Request, res: Response) => {
     // "not set", "wrong value", and "right value with stray whitespace"
     // without a live diff between the two deployments' dashboards.
     const receivedStr = Array.isArray(apiKey) ? apiKey[0] : apiKey;
-    console.warn('[requireApiKey] rejected request', {
+    logger.warn({
       path: req.originalUrl,
       hasExpected: !!expected,
       expectedLength: expected?.length ?? 0,
       hasReceived: !!receivedStr,
       receivedLength: receivedStr?.length ?? 0,
       trimmedMatch: !!expected && !!receivedStr && expected.trim() === receivedStr.trim(),
-    });
+    }, '[requireApiKey] rejected request');
     res.status(401).json({ error: 'Unauthorized' });
     return false;
   }
@@ -116,7 +117,8 @@ export const syncClients = async (req: Request, res: Response) => {
     const response = await fetch(`${toolsUrl}/api/clients`, {
       headers: {
         'x-api-key': process.env.VIPSCALE_API_KEY || ''
-      }
+      },
+      signal: AbortSignal.timeout(30_000)
     });
 
     if (!response.ok) {

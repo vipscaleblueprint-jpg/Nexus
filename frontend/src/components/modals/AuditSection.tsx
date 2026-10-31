@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, User, Check, Plus, Trash2 } from 'lucide-rea
 import * as Popover from '@radix-ui/react-popover';
 import { isNexusAuditChecklist, getRequiredAudits, getAiPickedAudits, ALL_AUDIT_OPTIONS, isAuditorFor } from '@/lib/auditChecklist';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
-import { getAssigneeAvatarColor } from './TaskDetailModal';
+import { getAssigneeAvatarColor } from '@/lib/taskTokens';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';

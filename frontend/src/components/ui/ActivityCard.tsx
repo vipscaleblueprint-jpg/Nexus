@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   Smile,
+  AtSign,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { CommentContent } from '@/components/ui/CommentContent';
@@ -202,7 +203,13 @@ export function ActivityCard({
 
   // Determine micro-badge icon
   let MicroIcon = MessageSquare;
-  if (normType === 'UNASSIGNMENT' || (normType === 'ASSIGNMENT' && title.includes('unassigned'))) {
+  if (
+    normType === 'MENTION' ||
+    title.toLowerCase().includes('mentioned you') ||
+    title.toLowerCase().includes('mentioned')
+  ) {
+    MicroIcon = AtSign;
+  } else if (normType === 'UNASSIGNMENT' || (normType === 'ASSIGNMENT' && title.includes('unassigned'))) {
     MicroIcon = UserMinus;
   } else if (normType === 'ASSIGNMENT' || isAuditAssignment) {
     MicroIcon = UserPlus;
@@ -226,8 +233,7 @@ export function ActivityCard({
     MicroIcon = Smile;
   } else if (
     normType === 'COMMENT' ||
-    normType === 'REPLY' ||
-    normType === 'MENTION'
+    normType === 'REPLY'
   ) {
     MicroIcon = MessageSquare;
   }
@@ -297,16 +303,29 @@ export function ActivityCard({
     let pillsNode: React.ReactNode = null;
     let badgeNode: React.ReactNode = null;
 
+    const isSomeoneMentioned = !isMention && !isYouMentioned && hasMention;
+    const rawMentionMatches = Array.from(contentText.matchAll(/(?:^|\s)@([a-zA-Z0-9_\-]+)/g)).map(m => m[1]);
+    const firstMentionedUser = rawMentionMatches[0] || (Array.isArray(details?.mentionedUsers) && details.mentionedUsers[0]?.name);
+
     if (isMention) {
       badgeNode = (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border select-none ${mentionClass}`}>
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border select-none ${mentionClass} shadow-xs`}>
+          <AtSign className="size-2.5 stroke-[2.4] text-blue-400 [.theme-light_&]:text-blue-700" />
           Mentioned you
         </span>
       );
     } else if (isYouMentioned) {
       badgeNode = (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border select-none ${mentionClass}`}>
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border select-none ${mentionClass} shadow-xs`}>
+          <AtSign className="size-2.5 stroke-[2.4] text-indigo-400 [.theme-light_&]:text-indigo-700" />
           You mentioned
+        </span>
+      );
+    } else if (isSomeoneMentioned) {
+      badgeNode = (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border select-none bg-zinc-800/80 text-zinc-300 border-zinc-700/60 shadow-xs [.theme-light_&]:bg-zinc-100 [.theme-light_&]:text-zinc-700 [.theme-light_&]:border-zinc-300">
+          <AtSign className="size-2.5 stroke-[2.4] text-zinc-400 [.theme-light_&]:text-zinc-600" />
+          {firstMentionedUser ? `Mentions ${firstMentionedUser.replace(/^@/, '')}` : 'Mentions teammate'}
         </span>
       );
     }
@@ -540,10 +559,26 @@ export function ActivityCard({
       return { titleNode, statusPills: null, mentionBadge: badgeNode };
     }
 
-    // 7. Comment
+    // 7. Mention
+    if (isMention || normType === 'MENTION') {
+      const titleNode = (
+        <span className="leading-snug">
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> mentioned you on </span>
+          {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
+          <span className={taskClass}>{effectiveTaskTitle}</span>
+          {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (
+            <span className={actionClass}> in {taskTitle}</span>
+          )}
+        </span>
+      );
+
+      return { titleNode, statusPills: null, mentionBadge: badgeNode };
+    }
+
+    // 8. Comment
     if (
       normType === 'COMMENT' ||
-      normType === 'MENTION' ||
       title.toLowerCase().includes('commented on')
     ) {
       const titleNode = (

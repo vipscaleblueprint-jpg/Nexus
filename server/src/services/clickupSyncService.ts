@@ -11,6 +11,7 @@
  */
 
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import { Priority } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { redis } from '../config/redis';
@@ -364,7 +365,7 @@ async function getOrCreateClickUpUser() {
   const email = 'clickup@system.local';
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) return existing;
-  const password = await bcrypt.hash(Math.random().toString(36), 10);
+  const password = await bcrypt.hash(randomBytes(32).toString('hex'), 10);
   return prisma.user.create({ data: { name: 'ClickUp', email, password } });
 }
 

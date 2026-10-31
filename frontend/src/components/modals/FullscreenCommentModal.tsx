@@ -198,8 +198,9 @@ export function FullscreenCommentModal({
         );
       }
       if (href.startsWith('mention://')) {
-        const userId = href.replace('mention://', '');
-        return <UserMentionChip userId={userId}>{rest.children}</UserMentionChip>;
+        const rawUserId = href.replace('mention://', '');
+        const cleanUserId = rawUserId.startsWith('unknown') ? 'unknown' : rawUserId;
+        return <UserMentionChip userId={cleanUserId}>{rest.children}</UserMentionChip>;
       }
       const nexus = parseNexusTaskLink(href);
       if (nexus) {

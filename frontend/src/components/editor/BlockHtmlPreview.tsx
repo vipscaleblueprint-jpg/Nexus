@@ -9,7 +9,7 @@
 import React, { memo, useMemo } from 'react';
 import { AlignLeft, CheckCircle2, Flag, Shield, Users2 } from 'lucide-react';
 import { BLOCK_EDITOR_CONTENT_CLASS } from '@/components/ui/BlockEditor';
-import { CustomCircleDot, CustomCircleDotted } from '@/components/modals/TaskDetailModal';
+import { CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
 import { getStatusColor } from '@/components/editor/nodes/TaskMentionNode';
 import { getPriorityConfig } from '@/lib/priority';
 import { parseNexusTaskLink } from '@/lib/links';

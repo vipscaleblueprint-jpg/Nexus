@@ -616,7 +616,7 @@ export function NotificationBell() {
             {/* List Body with Slim Scrollbar & Infinite Scroll */}
             <div
               onScroll={handleScroll}
-              className="overflow-y-auto overflow-x-hidden flex-1 p-3 space-y-3 custom-scrollbar max-h-[500px] bg-card/40"
+              className="overflow-y-auto overflow-x-hidden flex-1 p-2.5 space-y-2.5 custom-scrollbar max-h-[500px] bg-card/40"
             >
               {isLoading && notifications.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground text-xs flex flex-col items-center gap-2">
@@ -642,7 +642,7 @@ export function NotificationBell() {
                 <>
                   {/* 1. NEW / UNREAD SECTION */}
                   {unreadItems.length > 0 && (
-                    <div className="space-y-2">
+                    <div className="space-y-1.5">
                       <div className="px-1 pt-0.5 pb-0.5 flex items-center justify-between select-none">
                         <h4 className="text-[11px] font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
                           <span>New</span>
@@ -653,7 +653,7 @@ export function NotificationBell() {
                         </span>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         {unreadItems.map((n) => renderCard(n, false, false))}
                       </div>
                     </div>
@@ -661,14 +661,14 @@ export function NotificationBell() {
 
                   {/* 2. RECENTLY READ SECTION */}
                   {recentlyReadItems.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="px-1 pt-1.5 pb-0.5 flex items-center select-none">
+                    <div className="space-y-1.5">
+                      <div className="px-1 pt-1 pb-0.5 flex items-center select-none">
                         <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                           Recently Read
                         </h4>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         {recentlyReadItems.map((n) => renderCard(n, true, false))}
                       </div>
                     </div>
@@ -676,14 +676,14 @@ export function NotificationBell() {
 
                   {/* 3. OLD DATA GROUPED BY DAY */}
                   {Object.entries(oldItemsGrouped).map(([groupName, items]) => (
-                    <div key={groupName} className="space-y-2">
-                      <div className="px-1 pt-1.5 pb-0.5 flex items-center select-none">
+                    <div key={groupName} className="space-y-1.5">
+                      <div className="px-1 pt-1 pb-0.5 flex items-center select-none">
                         <h4 className="text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wider">
                           {groupName}
                         </h4>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         {items.map((n) => renderCard(n, true, true))}
                       </div>
                     </div>

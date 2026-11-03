@@ -220,6 +220,22 @@ export function normalizeRoles(roles: string[], teams?: any[]): string[] {
   return [...out.values()];
 }
 
+/**
+ * Checks if a user is an automated system or service bot account (e.g. VIP Scale, VIPSCALE, ClickUp).
+ * These accounts are used for webhooks, external integrations, and mirror authoring, and should
+ * never be displayed in assignee pickers or assigned to tasks/subtasks.
+ */
+export function isSystemUser(user: any): boolean {
+  if (!user) return false;
+  const email = (typeof user.email === 'string' ? user.email : '').toLowerCase().trim();
+  if (email.endsWith('@system.local') || email.includes('system.local')) return true;
+  const name = (typeof user.name === 'string' ? user.name : '').toLowerCase().trim();
+  if (name === 'vip scale' || name === 'vipscale' || name === 'clickup') {
+    return true;
+  }
+  return false;
+}
+
 export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[], teams?: any[]): any[] {
   if (!roles || roles.length === 0) return [];
   const teamNameToTeamId = new Map<string, string>();
@@ -230,6 +246,7 @@ export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[]
   });
 
   return (users || []).filter((u: any) => {
+    if (isSystemUser(u)) return false;
     const userRoles = (u.roles || []) as string[];
     const userTeamId = u.teamId || u.team?.id;
     return roles.some((role: string) => {

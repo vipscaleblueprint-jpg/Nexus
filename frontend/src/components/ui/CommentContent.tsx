@@ -240,7 +240,7 @@ export function CommentContent({
   }, [content, workspaceUsers]);
 
   return (
-    <div className={`select-text [&_p:empty:not(:first-child):not(:last-child)]:min-h-[1.6em] ${className}`}>
+    <div className={`select-text [&_p:empty:not(:first-child):not(:last-child)]:min-h-[0.8em] [&_p]:my-0.5 [&_p]:leading-snug [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_img]:my-0 [&_img]:inline-block ${className}`}>
       <CommentMediaContext.Provider value={mediaContextValue}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}

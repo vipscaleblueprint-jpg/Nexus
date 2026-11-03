@@ -1304,7 +1304,7 @@ function ActivityFeedContent() {
                   </h3>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {unreadItems.map((item) => (
                     <ActivityCard
                       key={item.id}
@@ -1351,7 +1351,7 @@ function ActivityFeedContent() {
                   </h3>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {recentlySeenItems.map((item) => (
                     <ActivityCard
                       key={item.id}
@@ -1399,7 +1399,7 @@ function ActivityFeedContent() {
                   </h3>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {items.map((item) => (
                     <ActivityCard
                       key={item.id}

@@ -1,4 +1,4 @@
-import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/lib/taskTokens';
+import { STATUS_COLORS, CustomCircleDotted, CustomCircleDot, ALL_STATUSES, resolveUsersFromRoleRestrictions, sortStatusesWithClosedAndKycAtEnd, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
 import { canTransitionTaskStatus } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
@@ -109,10 +109,11 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const dbTeams = workspaceTeams;
 
   const assignableUsers = React.useMemo(() => {
+    const nonSystemUsers = (workspaceUsers || []).filter((u: any) => !isSystemUser(u));
     if (!taskData?.assigneeRoleRestrictions || taskData.assigneeRoleRestrictions.length === 0) {
-      return workspaceUsers;
+      return nonSystemUsers;
     }
-    return resolveUsersFromRoleRestrictions(taskData.assigneeRoleRestrictions, workspaceUsers, workspaceTeams);
+    return resolveUsersFromRoleRestrictions(taskData.assigneeRoleRestrictions, nonSystemUsers, workspaceTeams);
   }, [taskData?.assigneeRoleRestrictions, workspaceUsers, workspaceTeams]);
   
   const listStatuses = React.useMemo(() => {

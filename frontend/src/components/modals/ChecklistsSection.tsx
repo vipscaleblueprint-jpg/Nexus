@@ -4,6 +4,7 @@ import { tasksApi } from '@/api/tasks';
 import { Plus, ChevronDown, ChevronRight, User, Trash2, X, MoreHorizontal, Maximize2, Check, ListTodo, Pencil } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
+import { isSystemUser } from '@/lib/taskTokens';
 
 interface ChecklistsSectionProps {
   task: Task;
@@ -344,7 +345,7 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
                                 <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center"><X className="w-3 h-3" /></div>
                                 Unassigned
                               </button>
-                              {users.map(u => (
+                              {users.filter(u => !isSystemUser(u)).map(u => (
                                 <button 
                                   key={u.id}
                                   className="w-full text-left px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 rounded flex items-center gap-2 cursor-pointer"

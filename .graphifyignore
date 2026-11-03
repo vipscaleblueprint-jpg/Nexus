@@ -10,3 +10,7 @@ build/
 *.pem
 *.key
 graphify_check/
+scratch/
+scripts/scratch/
+frontend/scripts/scratch/
+.agents/skills/security-reference/

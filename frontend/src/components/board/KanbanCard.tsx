@@ -7,7 +7,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck } from 'lucide-react';
 import { getTaskAuditStatus } from '@/lib/auditChecklist';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus } from '@/lib/taskTokens';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
 import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -375,10 +375,11 @@ const CardContent = memo(({
 
   // Role-based filter matching TaskDetailModal 1-to-1
   const assignableUsers = useMemo(() => {
+    const nonSystemUsers = (workspaceUsers || []).filter((u: any) => !isSystemUser(u));
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
-      return workspaceUsers;
+      return nonSystemUsers;
     }
-    return resolveUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams);
+    return resolveUsersFromRoleRestrictions(localRoleRestrictions, nonSystemUsers, workspaceTeams);
   }, [workspaceUsers, workspaceTeams, localRoleRestrictions]);
 
   const handleAssigneeToggle = async (user: any) => {

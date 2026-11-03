@@ -87,18 +87,18 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
   );
 
   const chipClass = isMe
-    ? 'bg-blue-600/25 hover:bg-blue-600/35 text-blue-200 border border-blue-500/40 font-semibold px-1.5 py-0.5 rounded select-none inline-flex items-center gap-1 mx-0.5 align-baseline shadow-xs ring-1 ring-blue-500/30 [.theme-light_&]:bg-blue-100 [.theme-light_&]:text-blue-800 [.theme-light_&]:border-blue-300'
-    : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 font-semibold px-1.5 py-0.5 rounded select-none inline-flex items-center gap-1 mx-0.5 align-baseline [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border [.theme-light_&]:border-blue-200/60';
+    ? 'bg-blue-600/25 hover:bg-blue-600/35 text-blue-200 border border-blue-500/40 font-semibold px-1.5 py-0 h-5 text-xs rounded select-none inline-flex items-center gap-1 mx-0.5 align-baseline shadow-xs ring-1 ring-blue-500/30 leading-none shrink-0 [.theme-light_&]:bg-blue-100 [.theme-light_&]:text-blue-800 [.theme-light_&]:border-blue-300'
+    : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 font-semibold px-1.5 py-0 h-5 text-xs rounded select-none inline-flex items-center gap-1 mx-0.5 align-baseline leading-none shrink-0 [.theme-light_&]:bg-blue-50 [.theme-light_&]:text-blue-700 [.theme-light_&]:border [.theme-light_&]:border-blue-200/60';
 
   // Unknown or not-yet-loaded user: keep the static chip with micro-icon and trailing text separated
   if (!user) {
     return (
       <>
         <span className={`${chipClass} cursor-default`}>
-          <span className="w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-300 text-[9px] font-bold inline-flex items-center justify-center shrink-0 -ml-0.5 select-none">
+          <span className="w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-300 text-[9px] font-bold inline-flex items-center justify-center shrink-0 -ml-0.5 select-none leading-none">
             @
           </span>
-          <span>{cleanMentionName}</span>
+          <span className="leading-none">{cleanMentionName}</span>
         </span>
         {trailingText}
       </>
@@ -110,9 +110,9 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
   const roles = (user.roles || []).filter(Boolean);
 
   const microAvatar = avatar ? (
-    <img src={avatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover shrink-0 -ml-0.5 select-none" />
+    <img src={avatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover shrink-0 -ml-0.5 select-none my-0 inline-block align-middle" />
   ) : (
-    <span className="w-3.5 h-3.5 rounded-full bg-blue-500/25 text-blue-300 text-[8.5px] font-bold inline-flex items-center justify-center shrink-0 -ml-0.5 select-none">
+    <span className="w-3.5 h-3.5 rounded-full bg-blue-500/25 text-blue-300 text-[8.5px] font-bold inline-flex items-center justify-center shrink-0 -ml-0.5 select-none leading-none align-middle">
       {initials}
     </span>
   );

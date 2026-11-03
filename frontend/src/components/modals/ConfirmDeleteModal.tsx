@@ -10,6 +10,7 @@ interface ConfirmDeleteModalProps {
   onConfirm: () => Promise<void>;
   title: string;
   itemName: string;
+  description?: string;
 }
 
 export function ConfirmDeleteModal({
@@ -18,6 +19,7 @@ export function ConfirmDeleteModal({
   onConfirm,
   title,
   itemName,
+  description,
 }: ConfirmDeleteModalProps) {
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -73,7 +75,7 @@ export function ConfirmDeleteModal({
             Are you sure you want to delete <span className="font-bold text-white">"{itemName}"</span>?
           </p>
           <p className="mt-2 text-zinc-500 text-xs">
-            This action cannot be undone. All nested contents will also be permanently deleted.
+            {description || 'This action cannot be undone. All nested contents will also be permanently deleted.'}
           </p>
         </div>
 

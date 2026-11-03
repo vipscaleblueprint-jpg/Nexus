@@ -179,6 +179,7 @@ import {
   withoutRole,
   normalizeRoles,
   resolveUsersFromRoleRestrictions,
+  isSystemUser,
   ACTIVITY_CACHE_TTL_MS,
   type ActivityCacheEntry,
 } from '@/lib/taskTokens';
@@ -201,6 +202,7 @@ export {
   withoutRole,
   normalizeRoles,
   resolveUsersFromRoleRestrictions,
+  isSystemUser,
   ACTIVITY_CACHE_TTL_MS,
   type ActivityCacheEntry,
 };
@@ -1341,10 +1343,11 @@ export function TaskDetailModalContent({
   const canAssignMember = canAssignTask && hasTeamRole;
 
   const assignableUsers = React.useMemo(() => {
+    const nonSystemUsers = (workspaceUsers || []).filter((u: any) => !isSystemUser(u));
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
-      return workspaceUsers;
+      return nonSystemUsers;
     }
-    return resolveUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams);
+    return resolveUsersFromRoleRestrictions(localRoleRestrictions, nonSystemUsers, workspaceTeams);
   }, [workspaceUsers, workspaceTeams, localRoleRestrictions]);
 
 
@@ -5251,10 +5254,11 @@ export function SubtaskDetailView({
   }, [subtask?.assigneeRoleRestrictions]);
 
   const subtaskAssignableUsers = React.useMemo(() => {
+    const nonSystemUsers = (workspaceUsers || []).filter((u: any) => !isSystemUser(u));
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
-      return workspaceUsers || [];
+      return nonSystemUsers;
     }
-    return resolveUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers || [], workspaceTeams || []);
+    return resolveUsersFromRoleRestrictions(localRoleRestrictions, nonSystemUsers, workspaceTeams || []);
   }, [localRoleRestrictions, workspaceUsers, workspaceTeams]);
 
   const [richComments, setRichComments] = useState<any[]>([]);

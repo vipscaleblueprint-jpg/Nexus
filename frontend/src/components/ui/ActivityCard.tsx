@@ -178,7 +178,7 @@ export function ActivityCard({
   const [canExpand, setCanExpand] = useState(false);
   const contentWrapperRef = useRef<HTMLDivElement>(null);
 
-  const maxHeight = compact ? 120 : 160;
+  const maxHeight = compact ? 56 : 76;
 
   useEffect(() => {
     const el = contentWrapperRef.current;
@@ -616,7 +616,7 @@ export function ActivityCard({
     <div
       onClick={onClick}
       className={`group/card relative flex items-start cursor-pointer rounded-xl transition-all duration-150 border ${
-        compact ? 'p-3 gap-2.5' : 'p-3.5 sm:p-4 gap-3 sm:gap-3.5'
+        compact ? 'p-2.5 gap-2' : 'p-3 sm:p-3.5 gap-2.5 sm:gap-3'
       } ${
         !isRead
           ? 'bg-[var(--notif-unread-bg)] border-[var(--notif-unread-border)] shadow-[var(--notif-unread-shadow)] ring-1 ring-[var(--notif-unread-ring)] hover:border-[var(--notif-unread-hover-border)] hover:shadow-[var(--notif-unread-hover-shadow)]'
@@ -632,7 +632,7 @@ export function ActivityCard({
             src={actorAvatar}
             alt=""
             className={`${
-              compact ? 'size-8' : 'size-9 sm:size-9'
+              compact ? 'size-7' : 'size-8 sm:size-8'
             } rounded-full object-cover shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs`}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
@@ -645,7 +645,7 @@ export function ActivityCard({
         ) : null}
         <div
           className={`${
-            compact ? 'size-8 text-xs' : 'size-9 text-xs sm:text-sm'
+            compact ? 'size-7 text-[11px]' : 'size-8 text-xs'
           } rounded-full ${avatarBg} text-white on-solid flex items-center justify-center font-medium shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs select-none`}
           style={{ display: actorAvatar ? 'none' : 'flex' }}
         >
@@ -653,10 +653,10 @@ export function ActivityCard({
         </div>
 
         {/* Micro-badge icon in bottom-right corner of avatar */}
-        <div className={`absolute -bottom-0.5 -right-0.5 size-4 rounded-full ${!isRead ? 'bg-[var(--notif-unread-bg)]' : 'bg-card'} border border-border text-muted-foreground flex items-center justify-center shadow-xs ${
+        <div className={`absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full ${!isRead ? 'bg-[var(--notif-unread-bg)]' : 'bg-card'} border border-border text-muted-foreground flex items-center justify-center shadow-xs ${
           isGreyed ? 'opacity-70' : ''
         }`}>
-          <MicroIcon className="size-2.5 stroke-[2.2]" />
+          <MicroIcon className="size-2 stroke-[2.2]" />
         </div>
       </div>
 
@@ -688,7 +688,7 @@ export function ActivityCard({
 
         {/* Sub-row for badges (Status pills, Mentions) */}
         {(statusPills || mentionBadge) && (
-          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
             {mentionBadge}
             {statusPills}
           </div>
@@ -696,33 +696,33 @@ export function ActivityCard({
 
         {/* Comment quote box with height limit & See more toggle */}
         {content && (
-          <div className="mt-2.5">
+          <div className={compact ? 'mt-1.5' : 'mt-2'}>
             <div
               ref={contentWrapperRef}
               style={{ maxHeight: !isExpanded && canExpand ? maxHeight : undefined }}
-              className={`relative px-3 py-2.5 rounded-xl border font-normal leading-relaxed transition-all duration-200 ${
+              className={`relative rounded-xl border font-normal transition-all duration-200 ${
+                compact ? 'px-2.5 py-1.5 text-xs leading-normal' : 'px-3 py-2 text-xs sm:text-sm leading-relaxed'
+              } ${
                 isGreyed
                   ? 'bg-background/40 dark:bg-black/30 border-border/40 text-zinc-400 dark:text-zinc-400'
                   : !isRead
                   ? 'bg-[var(--notif-quote-bg)] border-[var(--notif-quote-border)] text-foreground shadow-2xs'
                   : 'bg-background/60 border-border text-foreground'
-              } ${
-                compact ? 'text-xs' : 'text-sm'
               } ${!isExpanded && canExpand ? 'overflow-hidden' : ''}`}
             >
               <CommentContent
                 content={content}
                 className={`${
-                  compact ? 'text-xs' : 'text-sm'
+                  compact ? 'text-xs' : 'text-xs sm:text-sm'
                 } ${
                   isGreyed ? 'text-zinc-400 dark:text-zinc-400' : 'text-foreground'
-                } max-w-full prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline`}
+                } max-w-full prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline [&_img]:my-0 [&_img]:inline-block`}
                 onPreviewImage={onPreviewImage}
               />
 
               {/* Bottom gradient fade when truncated */}
               {!isExpanded && canExpand && (
-                <div className={`absolute bottom-0 left-0 right-0 h-10 ${
+                <div className={`absolute bottom-0 left-0 right-0 h-6 ${
                   isGreyed
                     ? 'bg-gradient-to-t from-background/95 dark:from-zinc-950/95 via-background/60 dark:via-zinc-950/60 to-transparent'
                     : !isRead
@@ -740,13 +740,13 @@ export function ActivityCard({
                   e.stopPropagation();
                   setIsExpanded(!isExpanded);
                 }}
-                className="mt-1 text-[11px] font-medium text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 hover:underline inline-flex items-center gap-1 cursor-pointer select-none"
+                className="mt-0.5 text-[10px] font-medium text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 hover:underline inline-flex items-center gap-1 cursor-pointer select-none"
               >
                 <span>{isExpanded ? 'See less' : 'See more'}</span>
                 {isExpanded ? (
-                  <ChevronUp className="w-3 h-3" />
+                  <ChevronUp className="w-2.5 h-2.5" />
                 ) : (
-                  <ChevronDown className="w-3 h-3" />
+                  <ChevronDown className="w-2.5 h-2.5" />
                 )}
               </button>
             )}

@@ -4,6 +4,7 @@ import { Priority, Task } from '@/lib/types';
 import { usersApi } from '@/api/users';
 
 import { useAppStore } from '@/lib/store';
+import { isSystemUser } from '@/lib/taskTokens';
 
 interface Props {
   isOpen: boolean;
@@ -225,7 +226,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
             optional 
             value={assignee?.name}
             placeholder="Select assignees"
-            options={users}
+            options={(users || []).filter((u: any) => !isSystemUser(u))}
             onSelect={(u: any) => setAssignee({ id: u.id, name: u.name })}
           />
 

@@ -13,7 +13,7 @@ import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { isNexusAuditChecklist } from '@/lib/auditChecklist';
 import { useAppStore } from '@/lib/store';
-import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, prefetchSubtaskActivities, isClosedStatus } from '@/lib/taskTokens';
+import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, prefetchSubtaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
 import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -448,7 +448,7 @@ function SubtaskRow({
   }, [subtask?.assigneeRoleRestrictions]);
 
   const assignableUsers = useMemo(() => {
-    const wsUsers = users || [];
+    const wsUsers = (users || []).filter((u: any) => !isSystemUser(u));
     const wsTeams = teams || [];
     if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
       return wsUsers;

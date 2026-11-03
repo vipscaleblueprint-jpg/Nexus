@@ -80,6 +80,8 @@ Flexible user profiles and multi-tier functional role assignments:
 
 ## 🏗️ Architecture & Database Model
 
+For deep-dive architectural specifications, service topologies, and data flows, see [[architecture|Architecture Overview]]. For the complete topic guides, see [[index|Memory Index]].
+
 ```
 Space
  ├── Folder

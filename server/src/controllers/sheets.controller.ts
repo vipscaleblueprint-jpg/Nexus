@@ -188,7 +188,7 @@ async function findByNexusLink(link: unknown, explicitSubtaskId?: string): Promi
  * The Nexus user a sheet refers to: "Leo" from the file name "Leo - MA Daily Schedule".
  * Exact name first, then a unique first-name match ("Leo" → "Leo Feulatriz").
  */
-async function findUserByName(raw: unknown): Promise<{ id: string; name: string } | null> {
+export async function findUserByName(raw: unknown): Promise<{ id: string; name: string } | null> {
   const name = typeof raw === 'string' ? raw.split(/\s+-\s+|\s+MA Daily Schedule/i)[0].trim() : '';
   if (!name) return null;
   const exact = await prisma.user.findFirst({

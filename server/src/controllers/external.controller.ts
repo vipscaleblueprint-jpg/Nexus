@@ -21,6 +21,7 @@ import { filterUsersByNotificationPreference } from '../utils/notificationPrefer
 import { toNotificationPreview } from '../utils/mentionNotification';
 import { autoAssignAudits } from '../services/auditAutoAssign';
 import { getAggregatedRoleMap } from '../services/roleMapService';
+import { findUserByName } from './sheets.controller';
 
 
 async function getOrCreateVipScaleUser() {
@@ -855,15 +856,27 @@ export async function updateTask(req: Request, res: Response) {
       // Audit log & activity feed when subtask status changed
       if (normalizedStatus !== undefined && normalizedStatus !== existingSubtask.status) {
         try {
-          const actor = apiKey.user || await getOrCreateVipScaleUser();
-          const authorName = 'VIPScale';
+          const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
+          const resolvedMover = rawMoverName ? await findUserByName(rawMoverName) : null;
+          const fallbackActor = apiKey.user || await getOrCreateVipScaleUser();
+          const actor = resolvedMover || fallbackActor;
+          const authorName = resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale');
           const log = await prisma.auditLog.create({
             data: {
               action: 'STATUS_CHANGE',
               entity: 'TASK',
               entityId: target.taskId,
               userId: actor.id,
-              details: { oldStatus: existingSubtask.status, newStatus: normalizedStatus, subtaskTitle: updatedSub.title, source: 'external' },
+              details: {
+                oldStatus: existingSubtask.status,
+                newStatus: normalizedStatus,
+                subtaskTitle: updatedSub.title,
+                subtaskId: updatedSub.id,
+                source: 'external',
+                movedByName: authorName,
+                movedById: resolvedMover?.id || null,
+                isMaUpdate: Boolean(rawMoverName),
+              },
             }
           });
           const activity = {
@@ -998,15 +1011,25 @@ export async function updateTask(req: Request, res: Response) {
     // Audit log & activity feed broadcast when status changed
     if (finalStatus !== undefined && finalStatus !== existingTask.status) {
       try {
-        const actor = apiKey.user || await getOrCreateVipScaleUser();
-        const authorName = 'VIPScale';
+        const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
+        const resolvedMover = rawMoverName ? await findUserByName(rawMoverName) : null;
+        const fallbackActor = apiKey.user || await getOrCreateVipScaleUser();
+        const actor = resolvedMover || fallbackActor;
+        const authorName = resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale');
         const log = await prisma.auditLog.create({
           data: {
             action: 'STATUS_CHANGE',
             entity: 'TASK',
             entityId: task.id,
             userId: actor.id,
-            details: { oldStatus: existingTask.status, newStatus: finalStatus, source: 'external' },
+            details: {
+              oldStatus: existingTask.status,
+              newStatus: finalStatus,
+              source: 'external',
+              movedByName: authorName,
+              movedById: resolvedMover?.id || null,
+              isMaUpdate: Boolean(rawMoverName),
+            },
           }
         });
         const activity = {

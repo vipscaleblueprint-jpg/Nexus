@@ -214,6 +214,8 @@ export interface Task {
   };
   createdAt: string;
   updatedAt?: string;
+  inProgressMovedBy?: { id: string; name: string; avatarUrl?: string | null } | null;
+  maUpdaterIds?: string[];
 }
 
 export interface Subtask {

@@ -36,12 +36,28 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
   const [isExpanded, setIsExpanded] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isShaking, setIsShaking] = useState(false);
+  const [shakingAuditItem, setShakingAuditItem] = useState<string | null>(null);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [highlightedAudits, setHighlightedAudits] = useState<string[] | null>(null);
   const [auditToDelete, setAuditToDelete] = useState<string | null>(null);
   const highlightTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const selfAuditShakeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const canManageAudits = isProjectManagerOrAdmin(currentUser);
+
+  const isSelfAuditBlocked = useMemo(() => {
+    if (!currentUser?.id) return false;
+    if (task.inProgressMovedBy?.id === currentUser.id) return true;
+    if (task.maUpdaterIds?.includes(currentUser.id)) return true;
+    if (
+      task.inProgressMovedBy?.name &&
+      currentUser.name &&
+      task.inProgressMovedBy.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase()
+    ) {
+      return true;
+    }
+    return false;
+  }, [currentUser?.id, currentUser?.name, task.inProgressMovedBy, task.maUpdaterIds]);
 
   useEffect(() => {
     const handleHighlight = (e: any) => {
@@ -755,12 +771,15 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
             {/* Checklist Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/80 bg-zinc-900/40">
               <div className="font-medium text-sm text-zinc-200 flex items-center justify-between w-full">
-                <span>Audit Items</span>
-                <span className="text-xs text-zinc-500 font-normal">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span>Audit Items</span>
+                </div>
+                <span className="text-xs text-zinc-500 font-normal shrink-0">
                   {completedCount} of {requiredAuditItems.length}
                 </span>
               </div>
             </div>
+
 
             {/* Empty state when all audits are removed by a PM */}
             {requiredAuditItems.length === 0 ? (
@@ -815,12 +834,18 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                     }
                   }
 
+                  if (isSelfAuditBlocked) {
+                    canCheck = false;
+                  }
+
                   const displayLabel = text === 'UI UX Audit' ? 'UI/UX Audit' : text;
 
                   return (
                     <div 
                       key={idx} 
                       className={`flex items-center justify-between py-1.5 px-2 group/item rounded-lg transition-colors ${
+                        shakingAuditItem === text ? 'animate-shake' : ''
+                      } ${
                         isItemNeeded
                           ? 'bg-zinc-800/40 border border-emerald-500/30 shadow-sm my-0.5'
                           : 'hover:bg-accent/30'
@@ -828,7 +853,9 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <button 
-                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${!canCheck || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${
+                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                            !canCheck && !isSelfAuditBlocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                          } ${
                             isCompleted
                               ? 'bg-emerald-500 border-emerald-500 text-white'
                               : isItemNeeded
@@ -836,12 +863,31 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                               : 'border-zinc-600 bg-zinc-800/40 hover:border-zinc-400 hover:bg-zinc-800'
                           }`}
                           onClick={() => {
+                            if (isSelfAuditBlocked) {
+                              setShakingAuditItem(text);
+                              setIsShaking(true);
+                              if (selfAuditShakeTimerRef.current) {
+                                clearTimeout(selfAuditShakeTimerRef.current);
+                              }
+                              selfAuditShakeTimerRef.current = setTimeout(() => {
+                                setShakingAuditItem(null);
+                                setIsShaking(false);
+                              }, 700);
+                              toast.error("You're not allowed to check an audit that you've created duh! 🙄");
+                              return;
+                            }
                             if (canCheck) {
                               handleToggleItem(text, item);
                             }
                           }}
-                          title={!canCheck ? `Only ${requiredRole || 'Admins'} can check this item` : "Click to check audit"}
-                          disabled={isProcessing || !canCheck}
+                          title={
+                            isSelfAuditBlocked
+                              ? "You're not allowed to check an audit that you've created duh! 🙄"
+                              : !canCheck
+                              ? `Only ${requiredRole || 'Admins'} can check this item`
+                              : "Click to check audit"
+                          }
+                          disabled={isProcessing || (!canCheck && !isSelfAuditBlocked)}
                         >
                           {isCompleted && <Check className="w-2.5 h-2.5" />}
                         </button>

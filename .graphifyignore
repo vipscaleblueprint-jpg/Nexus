@@ -14,3 +14,7 @@ scratch/
 scripts/scratch/
 frontend/scripts/scratch/
 .agents/skills/security-reference/
+server/scratch*
+*.pdf
+*.csv
+*.xlsx

@@ -245,6 +245,60 @@ async function queryListTasks(
 }
 
 // GET /api/tasks/:id - Redis Cache-Aside
+export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
+  inProgressMovedBy: { id: string; name: string; avatarUrl?: string | null } | null;
+  maUpdaterIds: string[];
+}> {
+  try {
+    const logs = await prisma.auditLog.findMany({
+      where: {
+        entity: 'TASK',
+        entityId: taskId,
+        OR: [
+          { action: 'STATUS_CHANGE' },
+          { action: 'COMMENT' },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 60,
+      include: {
+        user: { select: { id: true, name: true, avatarUrl: true } },
+      },
+    });
+
+    let inProgressMovedBy: { id: string; name: string; avatarUrl?: string | null } | null = null;
+    const maUpdaterIds = new Set<string>();
+
+    for (const log of logs) {
+      const details = (log.details as any) || {};
+      const newStatus = String(details.newStatus || '').toUpperCase().replace(/[^A-Z]/g, '');
+
+      if (log.action === 'STATUS_CHANGE' && newStatus === 'INPROGRESS' && !inProgressMovedBy) {
+        if (details.movedById && details.movedByName) {
+          inProgressMovedBy = { id: details.movedById, name: details.movedByName, avatarUrl: null };
+          maUpdaterIds.add(details.movedById);
+        } else if (log.user && log.user.name && !log.user.name.toUpperCase().includes('VIPSCALE')) {
+          inProgressMovedBy = { id: log.user.id, name: log.user.name, avatarUrl: log.user.avatarUrl };
+          maUpdaterIds.add(log.user.id);
+        }
+      }
+
+      if (details.isMaUpdate || details.source === 'sheets') {
+        if (details.movedById) maUpdaterIds.add(details.movedById);
+        if (log.userId) maUpdaterIds.add(log.userId);
+      }
+    }
+
+    if (inProgressMovedBy?.id) {
+      maUpdaterIds.add(inProgressMovedBy.id);
+    }
+
+    return { inProgressMovedBy, maUpdaterIds: Array.from(maUpdaterIds) };
+  } catch (err) {
+    console.error('[getTaskMoverAndUpdaters error]:', err);
+    return { inProgressMovedBy: null, maUpdaterIds: [] };
+  }
+}
 export async function getTask(req: Request, res: Response) {
   try {
     const taskId = req.params.id;
@@ -319,7 +373,10 @@ export async function getTask(req: Request, res: Response) {
 
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    res.json({ task, subtask: foundSubtask, cached: false });
+    const { inProgressMovedBy, maUpdaterIds } = await getTaskMoverAndUpdaters(task.id);
+    const enrichedTask = { ...task, inProgressMovedBy, maUpdaterIds };
+
+    res.json({ task: enrichedTask, subtask: foundSubtask, cached: false });
     // Cache under the task ID
     setCache(`task:${task.id}`, task, 300, generation).catch(() => {});
     // When a subtask was requested or found, cache under the subtask ID with both task and subtask
@@ -3240,6 +3297,14 @@ export async function createChecklistItem(req: Request, res: Response) {
     if (completed !== undefined) {
       data.completed = Boolean(completed);
       if (completed && userId) {
+        if (isAuditChecklistName(checklist?.name)) {
+          const { inProgressMovedBy, maUpdaterIds } = await getTaskMoverAndUpdaters(taskId);
+          if (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId)) {
+            return res.status(403).json({
+              error: 'You cannot audit this task because you created an MA update for it. Please have another team member with the required audit role perform this audit.',
+            });
+          }
+        }
         data.checkedById = userId;
       }
     }
@@ -3518,6 +3583,19 @@ export async function updateChecklistItem(req: Request, res: Response) {
     if (completed !== undefined) {
       data.completed = completed;
       if (completed && userId) {
+        const checkItem = await prisma.checklistItem.findUnique({
+          where: { id: itemId },
+          select: { checklist: { select: { name: true, taskId: true } } },
+        });
+        const targetTaskId = checkItem?.checklist?.taskId || req.params.id;
+        if (isAuditChecklistName(checkItem?.checklist?.name) && targetTaskId) {
+          const { inProgressMovedBy, maUpdaterIds } = await getTaskMoverAndUpdaters(targetTaskId);
+          if (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId)) {
+            return res.status(403).json({
+              error: 'You cannot audit this task because you created an MA update for it. Please have another team member with the required audit role perform this audit.',
+            });
+          }
+        }
         data.checkedById = userId;
       } else if (!completed) {
         data.checkedById = null;

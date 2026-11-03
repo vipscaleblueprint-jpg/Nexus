@@ -236,6 +236,13 @@ export const handleSheetUpdate = async (req: Request, res: Response) => {
   }
 };
 
+function isClosedStatus(status: string | null | undefined): boolean {
+  if (!status) return false;
+  const s = status.toUpperCase().replace(/[^A-Z]/g, '');
+  const closedStatuses = ['CLOSED', 'COMPLETE', 'DONE', 'COMPLETED', 'RESOLVED', 'CANCELLED'];
+  return closedStatuses.includes(s);
+}
+
 function isProtectedStatus(status: string | null | undefined): boolean {
   if (!status) return false;
   const s = status.toUpperCase().replace(/[^A-Z]/g, '');
@@ -265,14 +272,25 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
     });
     if (!beforeSub) return res.status(404).json({ error: 'Subtask not found' });
 
-    // Guard: never downgrade a subtask that is in review, waiting, closed, etc. back to IN PROGRESS
+    // Guard 1: never reopen a completed/closed subtask back to IN REVIEW or IN PROGRESS
+    if (isClosedStatus(beforeSub.status) && (status === 'IN PROGRESS' || status.includes('REVIEW'))) {
+      return res.status(200).json({
+        success: true,
+        updated: false,
+        reason: `Subtask is already ${beforeSub.status}; skipped auto-update to ${status}`,
+        subtask: beforeSub,
+        clickup_link: null,
+      });
+    }
+
+    // Guard 2: never downgrade a subtask that is in review, waiting, closed, etc. back to IN PROGRESS
     if (status === 'IN PROGRESS' && isProtectedStatus(beforeSub.status)) {
       return res.status(200).json({
         success: true,
         updated: false,
         reason: `Subtask is already ${beforeSub.status}; skipped auto-start to IN PROGRESS`,
         subtask: beforeSub,
-        clickup_link: target.clickUpLink,
+        clickup_link: null,
       });
     }
 
@@ -333,14 +351,27 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
     const before = await prisma.task.findUnique({ where: { id: target.taskId }, select: { id: true, status: true, title: true, teamId: true, assigneeId: true } });
     if (!before) return res.status(404).json({ error: 'Task not found' });
 
-    // Guard: never downgrade a task that is in review, waiting, closed, etc. back to IN PROGRESS
-    if (wanted.toUpperCase() === 'IN PROGRESS' && isProtectedStatus(before.status)) {
+    const normWanted = wanted.toUpperCase().replace(/[^A-Z]/g, '');
+
+    // Guard 1: never reopen a completed/closed task back to IN REVIEW or IN PROGRESS
+    if (isClosedStatus(before.status) && (normWanted === 'INPROGRESS' || normWanted.includes('REVIEW'))) {
+      return res.status(200).json({
+        success: true,
+        updated: false,
+        reason: `Task is already ${before.status}; skipped auto-update to ${wanted}`,
+        task: before,
+        clickup_link: null,
+      });
+    }
+
+    // Guard 2: never downgrade a task that is in review, waiting, closed, etc. back to IN PROGRESS
+    if (normWanted === 'INPROGRESS' && isProtectedStatus(before.status)) {
       return res.status(200).json({
         success: true,
         updated: false,
         reason: `Task is already ${before.status}; skipped auto-start to IN PROGRESS`,
         task: before,
-        clickup_link: target.clickUpLink,
+        clickup_link: null,
       });
     }
 

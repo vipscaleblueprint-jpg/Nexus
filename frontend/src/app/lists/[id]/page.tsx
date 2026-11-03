@@ -439,7 +439,7 @@ export default function BoardPage() {
     s.on('task_activity', (data: any) => {
       window.dispatchEvent(new CustomEvent('task_activity', { detail: data }));
       if (data?.activity?.type === 'status_change' && data?.taskId && data?.activity?.newStatus) {
-        if (!data.activity.subtaskId) {
+        if (!data.activity.subtaskId && !data.activity.subtaskTitle) {
           setList((prev: any) => {
             if (!prev || !prev.tasks) return prev;
             return {

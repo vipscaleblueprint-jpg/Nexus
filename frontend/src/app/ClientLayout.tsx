@@ -219,7 +219,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     s.on('task_activity', (data: any) => {
       window.dispatchEvent(new CustomEvent('task_activity', { detail: data }));
       if (data?.activity?.type === 'status_change' && data?.taskId && data?.activity?.newStatus) {
-        if (!data.activity.subtaskId) {
+        if (!data.activity.subtaskId && !data.activity.subtaskTitle) {
           useAppStore.getState().updateTask({ id: data.taskId, status: data.activity.newStatus } as any);
           window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { id: data.taskId, status: data.activity.newStatus } } }));
         }

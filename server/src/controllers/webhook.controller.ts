@@ -641,6 +641,17 @@ export const handleGalaxyStatus = async (req: Request, res: Response) => {
     const task = await prisma.task.findUnique({ where: { externalId: task_link } });
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
+    const isClosed = ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes((task.status || '').toUpperCase().replace(/[^A-Z]/g, ''));
+    const normNew = String(new_status).toUpperCase().replace(/[^A-Z]/g, '');
+    if (isClosed && (normNew === 'INPROGRESS' || normNew.includes('REVIEW')) && !req.body.forceReopen) {
+      return res.status(200).json({
+        success: true,
+        updated: false,
+        reason: `Task is already ${task.status}; skipped update to ${new_status}`,
+        task
+      });
+    }
+
     // Validate status exists for the list
     const listStatus = await prisma.listStatus.findFirst({
       where: { listId: task.listId, name: { equals: new_status, mode: 'insensitive' } }

@@ -5884,6 +5884,7 @@ export function SubtaskDetailView({
       date: new Date().toISOString(),
       user: currentUser,
       subtaskTitle: subtask.title,
+      subtaskId: subtask.id,
     };
     setActivities(prev => [...prev, optimisticActivity]);
 
@@ -9222,7 +9223,7 @@ export function TaskDetailModal(props: Props) {
       const data = e.detail;
       const targetId = fullTask?.id || props.task?.id;
       if (!data || !targetId || data.taskId !== targetId) return;
-      if (data.activity?.type === 'status_change' && data.activity.newStatus && !data.activity.subtaskId) {
+      if (data.activity?.type === 'status_change' && data.activity.newStatus && !data.activity.subtaskId && !data.activity.subtaskTitle) {
         setFullTask(prev => {
           if (!prev) return prev;
           let status = data.activity.newStatus;

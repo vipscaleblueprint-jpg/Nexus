@@ -1,0 +1,12 @@
+# Graphify ignore configuration
+.obsidian/
+.git/
+node_modules/
+dist/
+build/
+.next/
+*.env
+.env*
+*.pem
+*.key
+graphify_check/

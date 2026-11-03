@@ -820,6 +820,16 @@ export async function updateTask(req: Request, res: Response) {
     if (target.isSubtask && target.subtask) {
       const existingSubtask = target.subtask;
       const normalizedStatus = status !== undefined ? String(status).toUpperCase() : undefined;
+      const isClosedExisting = ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes((existingSubtask.status || '').toUpperCase().replace(/[^A-Z]/g, ''));
+      if (normalizedStatus && isClosedExisting && (normalizedStatus === 'IN PROGRESS' || normalizedStatus.includes('REVIEW')) && !req.body.forceReopen) {
+        return res.json({
+          message: `Subtask is already ${existingSubtask.status}; skipped update to ${normalizedStatus}`,
+          updated: false,
+          task: existingSubtask,
+          isSubtask: true
+        });
+      }
+
       const isCompleted = completed !== undefined 
         ? Boolean(completed) 
         : normalizedStatus !== undefined 
@@ -923,6 +933,19 @@ export async function updateTask(req: Request, res: Response) {
       });
       if (listStatus) {
         finalStatus = listStatus.name;
+      }
+    }
+
+    if (finalStatus !== undefined && existingTask?.status) {
+      const isClosedExisting = ['CLOSED', 'COMPLETED', 'COMPLETE', 'DONE'].includes(String(existingTask.status).toUpperCase().replace(/[^A-Z]/g, ''));
+      const normFinal = String(finalStatus).toUpperCase().replace(/[^A-Z]/g, '');
+      if (isClosedExisting && (normFinal === 'INPROGRESS' || normFinal.includes('REVIEW')) && !req.body.forceReopen) {
+        return res.json({
+          message: `Task is already ${existingTask.status}; skipped update to ${finalStatus}`,
+          updated: false,
+          task: existingTask,
+          isSubtask: false
+        });
       }
     }
 

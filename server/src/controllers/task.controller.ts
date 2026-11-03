@@ -2147,6 +2147,7 @@ export async function getTaskActivities(req: Request, res: Response) {
           oldStatus: details.oldStatus,
           newStatus: details.newStatus,
           subtaskTitle: details.subtaskTitle,
+          subtaskId: details.subtaskId,
           date: log.createdAt,
           user: log.user ? { ...log.user, name: authorName } : log.user,
         };
@@ -2170,6 +2171,7 @@ export async function getTaskActivities(req: Request, res: Response) {
           added: details.added,
           removed: details.removed,
           subtaskTitle: details.subtaskTitle,
+          subtaskId: details.subtaskId,
           date: log.createdAt,
           user: log.user,
         };
@@ -2182,6 +2184,7 @@ export async function getTaskActivities(req: Request, res: Response) {
           oldPriority: details.oldPriority,
           newPriority: details.newPriority,
           subtaskTitle: details.subtaskTitle,
+          subtaskId: details.subtaskId,
           date: log.createdAt,
           user: log.user,
         };
@@ -2194,6 +2197,7 @@ export async function getTaskActivities(req: Request, res: Response) {
           oldTitle: details.oldTitle,
           newTitle: details.newTitle,
           subtaskTitle: details.subtaskTitle,
+          subtaskId: details.subtaskId,
           date: log.createdAt,
           user: log.user,
         };
@@ -2205,6 +2209,7 @@ export async function getTaskActivities(req: Request, res: Response) {
           author: log.user?.name || 'Someone',
           roles: details.roles,
           subtaskTitle: details.subtaskTitle,
+          subtaskId: details.subtaskId,
           date: log.createdAt,
           user: log.user,
         };
@@ -2690,7 +2695,7 @@ export async function updateSubtask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { assignees: (subtask as any).assignees ? (subtask as any).assignees.map((u: any) => u.name) : ((subtask as any).User ? [(subtask as any).User.name] : []), subtaskTitle: subtask.title, added: subtaskAdded, removed: subtaskRemoved }
+            details: { assignees: (subtask as any).assignees ? (subtask as any).assignees.map((u: any) => u.name) : ((subtask as any).User ? [(subtask as any).User.name] : []), subtaskTitle: subtask.title, subtaskId: subtask.id, added: subtaskAdded, removed: subtaskRemoved }
           }
         });
 
@@ -2746,7 +2751,7 @@ export async function updateSubtask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { oldStatus: oldSubtaskStatus, newStatus: status, subtaskTitle: subtask.title }
+            details: { oldStatus: oldSubtaskStatus, newStatus: status, subtaskTitle: subtask.title, subtaskId: subtask.id }
           }
         });
 
@@ -2793,7 +2798,7 @@ export async function updateSubtask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { oldPriority: oldSubtaskPriority, newPriority: priority, subtaskTitle: subtask.title }
+            details: { oldPriority: oldSubtaskPriority, newPriority: priority, subtaskTitle: subtask.title, subtaskId: subtask.id }
           }
         });
       }
@@ -2804,7 +2809,7 @@ export async function updateSubtask(req: Request, res: Response) {
             entity: 'TASK',
             entityId: taskId,
             userId: actingUserId,
-            details: { roles: assigneeRoleRestrictions, subtaskTitle: subtask.title }
+            details: { roles: assigneeRoleRestrictions, subtaskTitle: subtask.title, subtaskId: subtask.id }
           }
         });
       }
@@ -2815,7 +2820,7 @@ export async function updateSubtask(req: Request, res: Response) {
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 
-      select: { id: true, listId: true, subtasks: taskInclude.subtasks }
+      select: { id: true, listId: true, status: true, subtasks: taskInclude.subtasks }
     });
     if (task) {
       io.emit('subtask_updated', { taskId, subtask });
@@ -2837,6 +2842,7 @@ export async function updateSubtask(req: Request, res: Response) {
             added: subtaskAdded,
             removed: subtaskRemoved,
             subtaskTitle: subtask.title,
+            subtaskId: subtask.id,
             date: new Date().toISOString(),
           };
           io.emit('task_activity', { listId: task.listId, taskId, activity: act });
@@ -2850,6 +2856,7 @@ export async function updateSubtask(req: Request, res: Response) {
             oldStatus: oldSubtaskStatus,
             newStatus: status,
             subtaskTitle: subtask.title,
+            subtaskId: subtask.id,
             date: new Date().toISOString(),
           };
           statusActivity = act;
@@ -2863,6 +2870,7 @@ export async function updateSubtask(req: Request, res: Response) {
             oldPriority: oldSubtaskPriority,
             newPriority: priority,
             subtaskTitle: subtask.title,
+            subtaskId: subtask.id,
             date: new Date().toISOString(),
           };
           io.emit('task_activity', { listId: task.listId, taskId, activity: act });
@@ -2874,6 +2882,7 @@ export async function updateSubtask(req: Request, res: Response) {
             author: authorName,
             roles: assigneeRoleRestrictions,
             subtaskTitle: subtask.title,
+            subtaskId: subtask.id,
             date: new Date().toISOString(),
           };
           io.emit('task_activity', { listId: task.listId, taskId, activity: act });

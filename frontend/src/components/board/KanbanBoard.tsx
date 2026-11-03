@@ -483,7 +483,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       const data = e.detail;
       if (!data?.taskId || !data?.activity) return;
       if (data.activity.type === 'status_change' && data.activity.newStatus) {
-        if (!data.activity.subtaskId) {
+        const isSubtaskActivity = Boolean(data.activity.subtaskId || data.activity.subtaskTitle);
+        if (!isSubtaskActivity) {
           const pending = recentTaskMovesRef.current.get(data.taskId);
           if (pending && data.activity.newStatus === pending.status) {
             recentTaskMovesRef.current.delete(data.taskId);
@@ -491,17 +492,19 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
         }
         queueMicrotask(() => {
           setLocalTasks((prev) => {
-            if (data.activity.subtaskId) {
+            if (isSubtaskActivity) {
               const isClosed = ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED'].includes(data.activity.newStatus.toUpperCase());
               return prev.map((t) => {
                 if (t.id === data.taskId && t.subtasks) {
                   return {
                     ...t,
-                    subtasks: t.subtasks.map((st) =>
-                      st.id === data.activity.subtaskId
+                    subtasks: t.subtasks.map((st) => {
+                      const matches = (data.activity.subtaskId && st.id === data.activity.subtaskId) ||
+                        (data.activity.subtaskTitle && st.title && st.title.toLowerCase() === data.activity.subtaskTitle.toLowerCase());
+                      return matches
                         ? { ...st, status: data.activity.newStatus, completed: isClosed }
-                        : st
-                    ),
+                        : st;
+                    }),
                   };
                 }
                 return t;

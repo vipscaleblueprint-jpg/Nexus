@@ -28,7 +28,8 @@ import {
   createExternalTeam,
   createExternalTeamRole,
   createExternalList,
-  getAssistantsLastTasks
+  getAssistantsLastTasks,
+  triggerShiftAudits
 } from '../controllers/external.controller';
 
 const router = Router();
@@ -58,6 +59,7 @@ router.get('/tasks', getTasks);
 router.post('/tasks', createTask);
 router.get('/tasks/:taskId', getTask);
 router.patch('/tasks/:taskId', updateTask);
+router.post('/audits/assign-shifts', triggerShiftAudits);
 
 // Task Activity & Comments
 router.post('/activity', postActivity);

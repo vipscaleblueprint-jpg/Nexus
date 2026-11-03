@@ -32,7 +32,7 @@ import { emojiRouter } from './routes/emoji.routes';
 // Import workers to initialize them
 import './workers/task.worker';
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
-import { JOURNAL_CATCH_UP_JOB } from './workers/dailyRollover.worker';
+import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
@@ -55,6 +55,35 @@ const server = http.createServer(app);
     repeat: { every: 5 * 60 * 1000 },
     jobId: 'journal-catch-up',
     attempts: 1, // the next scheduled run is the retry
+    removeOnFail: 50,
+  });
+
+  // Shift audit assignments (Manila UTC+8):
+  // 8:00 AM Morning Shift Auto-Assign Sweep
+  await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: 'AM' }, {
+    repeat: {
+      pattern: '0 8 * * *',
+      tz: 'Asia/Manila',
+    },
+    jobId: 'shift-audit-am',
+    removeOnFail: 50,
+  });
+
+  // 5:00 PM Night Shift Add & Update Sweep
+  await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: 'PM_NIGHT' }, {
+    repeat: {
+      pattern: '0 17 * * *',
+      tz: 'Asia/Manila',
+    },
+    jobId: 'shift-audit-pm-night',
+    removeOnFail: 50,
+  });
+
+  // Catch-up sweep every 5 minutes for tasks currently IN REVIEW
+  await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, {}, {
+    repeat: { every: 5 * 60 * 1000 },
+    jobId: 'shift-audit-catch-up',
+    attempts: 1,
     removeOnFail: 50,
   });
 

@@ -19,7 +19,8 @@ import {
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { autoAssignAudits } from '../services/auditAutoAssign';
+import { autoAssignAudits, sweepInReviewTasksForShiftAudits } from '../services/auditAutoAssign';
+import { isReviewStatus } from '../utils/auditChecklist';
 import { getAggregatedRoleMap } from '../services/roleMapService';
 import { findUserByName } from './sheets.controller';
 
@@ -711,7 +712,7 @@ export async function createTask(req: Request, res: Response) {
       }
     }
 
-    if (!req.body.skipAutoAudit) {
+    if (!req.body.skipAutoAudit && isReviewStatus(task.status)) {
       await autoAssignAudits(task.id, vipScaleUser.id).catch((err) => console.error('External task: audit auto-assign failed:', err));
     }
 
@@ -1119,6 +1120,12 @@ export async function updateTask(req: Request, res: Response) {
       }
     }
 
+    if (status && status !== existingTask.status && isReviewStatus(status)) {
+      autoAssignAudits(task.id).catch((err) =>
+        console.error('[external.updateTask] audit shift assign failed:', err)
+      );
+    }
+
     return res.json({ message: 'Task updated successfully', task: broadcastPayload, isSubtask: false });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1127,6 +1134,28 @@ export async function updateTask(req: Request, res: Response) {
 
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// POST /api/external/audits/assign-shifts
+// Manually or via n8n triggers the shift audit assignment
+// ---------------------------------------------------------------------------
+export async function triggerShiftAudits(req: Request, res: Response) {
+  try {
+    const apiKey = await authenticateApiKey(req, res);
+    if (!apiKey) return;
+
+    const { taskId, shift } = req.body;
+    if (taskId) {
+      const result = await autoAssignAudits(taskId, null, { shift, force: true });
+      return res.json({ taskId, ...result });
+    }
+
+    const result = await sweepInReviewTasksForShiftAudits(shift);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // POST /api/external/activity
 // Logs an audit entry against a task or subtask (shows in the activity feed)
 // ---------------------------------------------------------------------------

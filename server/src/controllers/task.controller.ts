@@ -34,7 +34,7 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { convertCommentHtmlToClickUp, fetchImageBuffer } from '../utils/clickupCommentConverter';
-import { isNexusAuditChecklist, isAiAuditChecklist, getAiPickedAudits, requiresClosedSubtasks, requiresCompletedAudits, normalizeAuditName } from '../utils/auditChecklist';
+import { isNexusAuditChecklist, isAiAuditChecklist, getAiPickedAudits, requiresClosedSubtasks, requiresCompletedAudits, normalizeAuditName, isReviewStatus } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { canUserSetAssignees, getAssignDeniedMessage, canUserDeleteTask } from '../utils/assignPermission';
@@ -539,7 +539,8 @@ export async function createTask(req: Request, res: Response) {
       });
     })().catch((err) => console.error('createTask: assignment notifications failed:', err));
 
-    autoAssignAudits(task.id, (req as any).user?.id || creatorId).catch((err) =>
+    // Audits assigned per shift when moved to IN REVIEW
+    if (isReviewStatus(task.status)) autoAssignAudits(task.id, (req as any).user?.id || creatorId).catch((err) =>
       console.error('createTask: audit auto-assign failed:', err)
     );
 
@@ -1055,6 +1056,12 @@ export async function updateTask(req: Request, res: Response) {
               });
             }
 
+            if (isReviewStatus(status)) {
+              autoAssignAudits(taskId, actingUserId).catch((err) =>
+                console.error('updateTask: audit shift assign failed:', err)
+              );
+            }
+
             activity = {
               id: log.id,
               type: 'status_change',
@@ -1246,7 +1253,7 @@ export async function deleteTask(req: Request, res: Response) {
 
     const taskToDelete = await prisma.task.findUnique({
       where: { id: taskId },
-      select: { listId: true, externalId: true, creatorId: true },
+      select: { title: true, listId: true, externalId: true, creatorId: true },
     });
 
     if (!taskToDelete) {
@@ -1258,6 +1265,18 @@ export async function deleteTask(req: Request, res: Response) {
     }
 
     await prisma.task.delete({ where: { id: taskId } });
+
+    if (authReq.user?.id) {
+      prisma.auditLog.create({
+        data: {
+          action: 'DELETE_TASK',
+          entity: 'TASK',
+          entityId: taskId,
+          userId: authReq.user.id,
+          details: { taskTitle: taskToDelete.title },
+        },
+      }).catch(console.error);
+    }
 
     io.emit('task:deleted', { id: taskId });
 
@@ -1441,6 +1460,12 @@ export async function moveTask(req: Request, res: Response) {
             };
             // Global broadcast so the Activity page and dashboards refresh too (list-room members receive it as well)
             io.emit('task_activity', { listId: roomListId, taskId: id, activity });
+
+            if (isReviewStatus(status)) {
+              autoAssignAudits(id, actingUserId).catch((err) =>
+                console.error('moveTask: audit shift assign failed:', err)
+              );
+            }
 
             // Notify role-based recipients + assignees so the change shows in their feed
             const rawUsersToNotify = await getStatusChangeRecipients(status, currentTask, actingUserId);
@@ -2281,11 +2306,23 @@ export async function getTaskActivities(req: Request, res: Response) {
           user: log.user,
         };
       }
+      if (log.action === 'DELETE_SUBTASK') {
+        return {
+          id: log.id,
+          type: 'delete_subtask',
+          author: log.user?.name || 'Someone',
+          subtaskTitle: details.subtaskTitle,
+          date: log.createdAt,
+          user: log.user,
+        };
+      }
       if (
         log.action === 'AUDIT_ITEM_CHECKED' ||
         log.action === 'CHECKLIST_ITEM_CHECKED' ||
         log.action === 'AUDIT_ITEM_UNCHECKED' ||
-        log.action === 'CHECKLIST_ITEM_UNCHECKED'
+        log.action === 'CHECKLIST_ITEM_UNCHECKED' ||
+        log.action === 'AUDIT_ITEM_DELETED' ||
+        log.action === 'CHECKLIST_ITEM_DELETED'
       ) {
         return {
           id: log.id,
@@ -3007,6 +3044,8 @@ export async function deleteSubtask(req: Request, res: Response) {
     const subtask = await prisma.subtask.findUnique({
       where: { id: subtaskId },
       select: {
+        id: true,
+        title: true,
         externalId: true,
         assigneeId: true,
         task: { select: { creatorId: true } },
@@ -3024,6 +3063,40 @@ export async function deleteSubtask(req: Request, res: Response) {
     
     await prisma.subtask.delete({ where: { id: subtaskId } });
     await invalidateCache(`task:${taskId}`);
+    await invalidateCache(`task:activities:${taskId}`).catch(console.error);
+
+    // Record activity log for subtask deletion
+    const actingUserId = authReq.user?.id;
+    if (actingUserId) {
+      const actorUser = await prisma.user.findUnique({
+        where: { id: actingUserId },
+        select: { id: true, name: true, avatarUrl: true, email: true },
+      });
+      const actorName = actorUser?.name || 'Someone';
+      const log = await prisma.auditLog.create({
+        data: {
+          action: 'DELETE_SUBTASK',
+          entity: 'TASK',
+          entityId: taskId,
+          userId: actingUserId,
+          details: {
+            subtaskId,
+            subtaskTitle: subtask.title,
+          },
+        },
+      });
+
+      const act = {
+        id: log.id,
+        type: 'delete_subtask',
+        author: actorName,
+        subtaskTitle: subtask.title,
+        subtaskId,
+        date: log.createdAt.toISOString(),
+        user: actorUser,
+      };
+      io.to(`task:${taskId}`).emit('task:activity', act);
+    }
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 
@@ -3380,7 +3453,62 @@ export async function createChecklistItem(req: Request, res: Response) {
     // --- Background Operations: AuditLog & Notifications (Immediate), ClickUp Sync (Isolated) ---
     (async () => {
       try {
-        if (text && text.startsWith('!')) return; // Internal Nexus exclusion marker
+        if (text && text.startsWith('!')) {
+          // Internal Nexus exclusion marker -> user excluded/removed an audit!
+          const cleanAuditText = text.replace(/^!\s*/, '');
+          const cl = item.checklist || checklist;
+          const targetTask = cl?.task || cl?.subtask?.task;
+          const actualTaskId = targetTask?.id || targetTaskId;
+          if (actualTaskId && userId) {
+            const recentLog = await prisma.auditLog.findFirst({
+              where: {
+                entity: 'TASK',
+                entityId: actualTaskId,
+                action: 'AUDIT_ITEM_DELETED',
+                createdAt: { gte: new Date(Date.now() - 5000) },
+              },
+            });
+            if (!recentLog) {
+              const actor = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true, name: true, avatarUrl: true, email: true },
+              });
+              const actorName = actor?.name || 'Someone';
+              const log = await prisma.auditLog.create({
+                data: {
+                  action: 'AUDIT_ITEM_DELETED',
+                  entity: 'TASK',
+                  entityId: actualTaskId,
+                  userId,
+                  details: {
+                    isAudit: true,
+                    itemId: item.id,
+                    itemName: cleanAuditText,
+                    checklistId: cl?.id || checklistId,
+                    checklistName: cl?.name || 'Audit',
+                    subtaskTitle: cl?.subtask?.title,
+                    subtaskId: cl?.subtaskId,
+                  },
+                },
+              });
+
+              const activity = {
+                id: log.id,
+                type: 'audit_item_deleted',
+                author: actorName,
+                itemName: cleanAuditText,
+                checklistName: cl?.name || 'Audit',
+                isAudit: true,
+                subtaskTitle: cl?.subtask?.title,
+                date: log.createdAt.toISOString(),
+                user: actor,
+              };
+              io.to(`task:${actualTaskId}`).emit('task:activity', activity);
+              invalidateCache(`task:activities:${actualTaskId}`).catch(console.error);
+            }
+          }
+          return;
+        }
         const cl = item.checklist || checklist;
 
         // 1. AuditLog & Role Notifications on Item Check (completed === true)
@@ -3835,22 +3963,34 @@ export async function updateChecklistItem(req: Request, res: Response) {
 export async function deleteChecklistItem(req: Request, res: Response) {
   try {
     const { itemId } = req.params;
+    const authReq = req as AuthRequest;
     const item = await prisma.checklistItem.findUnique({
       where: { id: itemId },
       select: {
+        id: true,
         text: true,
         externalId: true,
         checklistId: true,
-        checklist: { select: { externalId: true, taskId: true, subtaskId: true } },
+        checklist: {
+          select: {
+            id: true,
+            name: true,
+            externalId: true,
+            taskId: true,
+            subtaskId: true,
+            subtask: { select: { title: true, taskId: true } },
+          },
+        },
       },
     });
 
-    const targetTaskId = item?.checklist?.taskId || req.params.id;
+    const targetTaskId = item?.checklist?.taskId || item?.checklist?.subtask?.taskId || req.params.id;
     const targetSubtaskId = item?.checklist?.subtaskId || null;
 
     if (!item) {
       if (targetTaskId) {
         invalidateCache(`task:${targetTaskId}`).catch(console.error);
+        invalidateCache(`task:activities:${targetTaskId}`).catch(console.error);
       }
       return res.json({ success: true, message: 'Item already deleted' });
     }
@@ -3859,9 +3999,54 @@ export async function deleteChecklistItem(req: Request, res: Response) {
 
     if (targetTaskId) {
       invalidateCache(`task:${targetTaskId}`).catch(console.error);
+      invalidateCache(`task:activities:${targetTaskId}`).catch(console.error);
     }
     if (targetSubtaskId) {
       invalidateCache(`task:${targetSubtaskId}`).catch(console.error);
+      invalidateCache(`task:activities:${targetSubtaskId}`).catch(console.error);
+    }
+
+    // Activity log for checklist/audit item deletion (ignore exclusion markers like "!Audit")
+    const actingUserId = authReq.user?.id;
+    if (actingUserId && targetTaskId && item?.text && !item.text.startsWith('!')) {
+      const isAudit = isAuditItem(item.checklist?.name, item.text, item.checklist?.externalId);
+      const actorUser = await prisma.user.findUnique({
+        where: { id: actingUserId },
+        select: { id: true, name: true, avatarUrl: true, email: true },
+      });
+      const actorName = actorUser?.name || 'Someone';
+      const actionType = isAudit ? 'AUDIT_ITEM_DELETED' : 'CHECKLIST_ITEM_DELETED';
+
+      const log = await prisma.auditLog.create({
+        data: {
+          action: actionType,
+          entity: 'TASK',
+          entityId: targetTaskId,
+          userId: actingUserId,
+          details: {
+            isAudit,
+            itemId: item.id,
+            itemName: item.text,
+            checklistId: item.checklistId,
+            checklistName: item.checklist?.name,
+            subtaskTitle: item.checklist?.subtask?.title,
+            subtaskId: item.checklist?.subtaskId,
+          },
+        },
+      });
+
+      const activity = {
+        id: log.id,
+        type: isAudit ? 'audit_item_deleted' : 'checklist_item_deleted',
+        author: actorName,
+        itemName: item.text,
+        checklistName: item.checklist?.name,
+        isAudit,
+        subtaskTitle: item.checklist?.subtask?.title,
+        date: log.createdAt.toISOString(),
+        user: actorUser,
+      };
+      io.to(`task:${targetTaskId}`).emit('task:activity', activity);
     }
 
     io.emit('task:checklist_item_deleted', {

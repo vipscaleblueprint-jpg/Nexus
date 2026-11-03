@@ -5,7 +5,8 @@ import { Subtask, Task, Priority } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
-import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck, Shield, Lock, UserPlus, Clock, Loader2 } from 'lucide-react';
+import { Check, CheckCircle2, CircleDot, Plus, User, Flag, Calendar, X, ChevronLeft, ChevronRight, MessageSquare, ListChecks, ArrowUpRight, ExternalLink, AlignLeft, CheckSquare, Send, CircleDashed, ChevronUp, ChevronDown, ShieldCheck, Shield, Lock, UserPlus, Clock, Loader2, Trash2 } from 'lucide-react';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
@@ -393,6 +394,7 @@ function SubtaskRow({
   isCollapsed: isCollapsedProp,
   onToggleCollapse,
   onSetCollapsed,
+  onDeleteSubtask,
 }: {
   subtask: Subtask;
   users?: any[];
@@ -411,6 +413,7 @@ function SubtaskRow({
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   onSetCollapsed?: (val: boolean) => void;
+  onDeleteSubtask?: (subtask: Subtask) => void;
 }) {
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
@@ -1231,6 +1234,20 @@ function SubtaskRow({
             </>
           )}
 
+        {/* Delete Subtask Button */}
+        {onDeleteSubtask && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteSubtask(subtask);
+            }}
+            className="w-6 h-6 flex items-center justify-center hover:bg-rose-500/10 rounded-md text-zinc-500 hover:text-rose-400 transition-all duration-200 shrink-0 cursor-pointer opacity-0 group-hover:opacity-100"
+            title="Delete subtask"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
         {/* Collapse Toggle Button */}
         <button 
           onClick={() => onToggleCollapse ? onToggleCollapse() : setIsCollapsed(!isCollapsed)} 
@@ -1898,6 +1915,21 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   const [isSubmittingSubtask, setIsSubmittingSubtask] = useState(false);
   const [showAllSubtasks, setShowAllSubtasks] = useState(false);
   const [expandedSubtaskIds, setExpandedSubtaskIds] = useState<Set<string>>(new Set());
+  const [subtaskToDelete, setSubtaskToDelete] = useState<Subtask | null>(null);
+
+  const handleDeleteSubtask = async (st: Subtask) => {
+    try {
+      await tasksApi.deleteSubtask(task.id, st.id);
+      const updatedSubtasks = (localSubtasks || []).filter((s) => s.id !== st.id);
+      setLocalSubtasks(updatedSubtasks);
+      const updatedParent = { ...task, subtasks: updatedSubtasks };
+      onUpdateTask(updatedParent);
+      useAppStore.getState().updateTask(updatedParent);
+      toast.success('Subtask deleted');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete subtask');
+    }
+  };
 
   // Local optimistic state — seeded from task.subtasks
   const [localSubtasks, setLocalSubtasks] = useState<Subtask[]>(task.subtasks || []);
@@ -2126,6 +2158,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               isCollapsed={!expandedSubtaskIds.has(subtask.id)}
               onToggleCollapse={() => handleToggleRow(subtask.id)}
               onSetCollapsed={(val) => handleSetRow(subtask.id, !val)}
+              onDeleteSubtask={setSubtaskToDelete}
             />
           ))}
           </div>
@@ -2167,6 +2200,23 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
 
 
       </div>
+
+      {subtaskToDelete && (
+        <ConfirmDeleteModal
+          isOpen={!!subtaskToDelete}
+          onClose={() => setSubtaskToDelete(null)}
+          onConfirm={async () => {
+            if (subtaskToDelete) {
+              const target = subtaskToDelete;
+              setSubtaskToDelete(null);
+              await handleDeleteSubtask(target);
+            }
+          }}
+          title="Delete Subtask"
+          itemName={subtaskToDelete.title}
+          description="Are you sure you want to delete this subtask? All checklists, comments, and attachments on this subtask will be permanently removed."
+        />
+      )}
 
     </>
   );

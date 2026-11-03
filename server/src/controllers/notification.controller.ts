@@ -32,6 +32,8 @@ export async function getNotifications(req: Request, res: Response) {
       { title: { contains: 'mentioned you', mode: 'insensitive' } },
       { title: { contains: 'assigned you', mode: 'insensitive' } },
       { title: { contains: 'unassigned you', mode: 'insensitive' } },
+      { type: { equals: 'CHECKLIST_ITEM_ASSIGNED', mode: 'insensitive' } },
+      { title: { contains: 'You were assigned', mode: 'insensitive' } },
       { title: { contains: 'replied to your comment', mode: 'insensitive' } },
       { title: { contains: 'reacted', mode: 'insensitive' } },
       {

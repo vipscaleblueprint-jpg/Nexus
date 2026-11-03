@@ -274,11 +274,12 @@ const isActivityVisible = (act: any): boolean => {
   if (t === 'assignment' || t === 'unassignment' || t === 'add_follower' || t === 'remove_follower' || t === 'followers_change') return true;
   if (t === 'title_change') return true;
   if (t === 'priority_change') return true;
-  if (t === 'create_subtask') return true;
+  if (t === 'create_subtask' || t === 'delete_subtask') return true;
   if (t === 'team_role_change') return true;
   if (t === 'attachment') return true;
   if (t === 'due_date_change') return true;
   if (t === 'audit_item_checked' || t === 'checklist_item_checked' || t === 'audit_item_unchecked' || t === 'checklist_item_unchecked') return true;
+  if (t === 'audit_item_deleted' || t === 'checklist_item_deleted') return true;
   return false;
 };
 
@@ -545,6 +546,30 @@ export function TaskDetailModalContent({
   }, [editingCommentId]);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
+  const [isTaskMenuOpen, setIsTaskMenuOpen] = useState(false);
+  const [isDeleteTaskModalOpen, setIsDeleteTaskModalOpen] = useState(false);
+  const removeTask = useAppStore((s) => s.removeTask);
+
+  const handleDeleteTask = async () => {
+    if (!task) return;
+    try {
+      await tasksApi.deleteTask(task.id);
+      removeTask(task.id);
+      toast.success('Task deleted');
+      onClose();
+      if (mode === 'full') {
+        const fromPath = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null;
+        if (fromPath) {
+          router.push(fromPath);
+        } else {
+          router.push(task.listId ? `/lists/${task.listId}` : '/');
+        }
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete task');
+      throw err;
+    }
+  };
   const [editCommentText, setEditCommentText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
@@ -3312,6 +3337,36 @@ export function TaskDetailModalContent({
                 <ExternalLink className="w-4 h-4" />
               </button>
             )}
+            <Popover.Root open={isTaskMenuOpen} onOpenChange={setIsTaskMenuOpen}>
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
+                  title="Task options"
+                >
+                  <MoreHorizontal className="w-5 h-5" />
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  className="z-[100000] w-44 rounded-lg bg-popover border border-border p-1 shadow-xl outline-none"
+                  align="end"
+                  sideOffset={6}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsTaskMenuOpen(false);
+                      setIsDeleteTaskModalOpen(true);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded flex items-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>Delete Task</span>
+                  </button>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
             <button
               onClick={() => {
                 onClose();
@@ -4165,6 +4220,7 @@ export function TaskDetailModalContent({
                   users={workspaceUsers || []}
                   checklists={task.checklists || []}
                   currentUser={currentUser}
+                  socket={socket}
                   onUpdateChecklists={(checklists) => {
                     const updatedTask = { ...(taskRef.current || task), checklists };
                     if (taskRef.current) taskRef.current = updatedTask;
@@ -4462,11 +4518,7 @@ export function TaskDetailModalContent({
                         </div>
                         {/* Reply input */}
                         {!isReply && replyingToId === comment.id && (
-                          <CommentReplyInput
-                            commentId={comment.id}
-                            workspaceUsers={workspaceUsers}
-                            currentUser={currentUser}
-                            onSubmit={async (content, mentionIds) => {
+                          <CommentReplyInput                            onSubmit={async (content, mentionIds) => {
                               await handleSubmitReply(comment.id, content, mentionIds);
                             }}
                             onCancel={() => setReplyingToId(null)}
@@ -4664,6 +4716,21 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
+                              if (act.type === 'delete_subtask') {
+                                const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                      deleted subtask <span className="text-zinc-200 font-medium px-1">"{act.subtaskTitle}"</span>
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
+                                  </div>
+                                );
+                              }
                               if (act.type === 'team_role_change') {
                                 return (
                                   <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
@@ -4738,6 +4805,27 @@ export function TaskDetailModalContent({
                                         <>{actionWord} {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span> on subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
                                       ) : (
                                         <>{actionWord} {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span></>
+                                      )}
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
+                                  </div>
+                                );
+                              }
+                              if (act.type === 'audit_item_deleted' || act.type === 'checklist_item_deleted') {
+                                const isAudit = act.type.startsWith('audit_') || act.isAudit;
+                                const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                                const itemName = act.itemName || act.details?.itemName || act.details?.text || act.details?.itemText || 'item';
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                      {act.subtaskTitle && !((task as any)?.parentTaskId) ? (
+                                        <>deleted {isAudit ? 'audit' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span> on subtask <span className="text-zinc-300 font-medium px-1">{act.subtaskTitle}</span></>
+                                      ) : (
+                                        <>deleted {isAudit ? 'audit' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span></>
                                       )}
                                     </div>
                                     <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
@@ -5158,6 +5246,16 @@ export function TaskDetailModalContent({
           itemName="this comment"
         />
       )}
+      {isDeleteTaskModalOpen && task && (
+        <ConfirmDeleteModal
+          isOpen={isDeleteTaskModalOpen}
+          onClose={() => setIsDeleteTaskModalOpen(false)}
+          onConfirm={handleDeleteTask}
+          title="Delete Task"
+          itemName={task.title}
+          description="Are you sure you want to delete this task? All subtasks, comments, and attachments will be permanently removed."
+        />
+      )}
       <ActionErrorModal
         isOpen={!!actionError}
         onClose={() => setActionError(null)}
@@ -5270,6 +5368,33 @@ export function SubtaskDetailView({
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
+  const [isSubtaskMenuOpen, setIsSubtaskMenuOpen] = useState(false);
+  const [isDeleteSubtaskModalOpen, setIsDeleteSubtaskModalOpen] = useState(false);
+
+  const handleDeleteSubtask = async () => {
+    if (!subtask?.id || !parentTask?.id) return;
+    try {
+      await tasksApi.deleteSubtask(parentTask.id, subtask.id);
+      if (onUpdateTask) {
+        const updatedSubtasks = (parentTask.subtasks || []).filter((st: any) => st.id !== subtask.id);
+        onUpdateTask({ ...parentTask, subtasks: updatedSubtasks });
+      }
+      toast.success('Subtask deleted');
+      if (mode === 'full') {
+        const fromPath = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null;
+        if (fromPath) {
+          router.push(fromPath);
+        } else {
+          router.push(`/tasks/${parentTask.id}`);
+        }
+      } else {
+        onClose();
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete subtask');
+      throw err;
+    }
+  };
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
   const [emojiPickerAnchor, setEmojiPickerAnchor] = useState<HTMLElement | null>(null);
   const [commentEmojiAnchor, setCommentEmojiAnchor] = useState<HTMLElement | null>(null);
@@ -7312,6 +7437,36 @@ export function SubtaskDetailView({
               <ExternalLink className="w-4 h-4" />
             </button>
           )}
+          <Popover.Root open={isSubtaskMenuOpen} onOpenChange={setIsSubtaskMenuOpen}>
+            <Popover.Trigger asChild>
+              <button
+                type="button"
+                className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer mr-1"
+                title="Subtask options"
+              >
+                <MoreHorizontal className="w-5 h-5" />
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                className="z-[100000] w-44 rounded-lg bg-popover border border-border p-1 shadow-xl outline-none"
+                align="end"
+                sideOffset={6}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSubtaskMenuOpen(false);
+                    setIsDeleteSubtaskModalOpen(true);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>Delete Subtask</span>
+                </button>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
           <button
             onClick={() => {
               if (onCloseModal) {
@@ -8072,6 +8227,7 @@ export function SubtaskDetailView({
                   users={workspaceUsers || []}
                   checklists={subtask.checklists || []}
                   currentUser={currentUser}
+                  socket={socket}
                   onUpdateChecklists={(checklists) => {
                     const updatedSubtask = { ...subtaskRef.current, checklists };
                     syncSubtaskToParent(updatedSubtask);
@@ -8371,11 +8527,7 @@ export function SubtaskDetailView({
 
                       {/* Reply input */}
                       {!isReply && replyingToId === c.id && (
-                        <CommentReplyInput
-                          commentId={c.id}
-                          workspaceUsers={workspaceUsers || []}
-                          currentUser={currentUser}
-                          onSubmit={async (content, mentionIds) => {
+                        <CommentReplyInput                          onSubmit={async (content, mentionIds) => {
                             await handleSubmitReply(c.id, content, mentionIds);
                           }}
                           onCancel={() => setReplyingToId(null)}
@@ -8543,6 +8695,21 @@ export function SubtaskDetailView({
                                 </div>
                               );
                             }
+                            if (act.type === 'delete_subtask') {
+                              const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                    deleted subtask <span className="text-zinc-200 font-medium px-1">"{act.subtaskTitle}"</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
                             if (act.type === 'team_role_change') {
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
@@ -8598,6 +8765,23 @@ export function SubtaskDetailView({
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
                                     {actionWord} {isAudit ? 'audit item' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            if (act.type === 'audit_item_deleted' || act.type === 'checklist_item_deleted') {
+                              const isAudit = act.type.startsWith('audit_') || act.isAudit;
+                              const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                              const itemName = act.itemName || act.details?.itemName || act.details?.text || act.details?.itemText || 'item';
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                    deleted {isAudit ? 'audit' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span>
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}
@@ -8989,6 +9173,16 @@ export function SubtaskDetailView({
           itemName="this comment"
         />
       )}
+      {isDeleteSubtaskModalOpen && subtask && (
+        <ConfirmDeleteModal
+          isOpen={isDeleteSubtaskModalOpen}
+          onClose={() => setIsDeleteSubtaskModalOpen(false)}
+          onConfirm={handleDeleteSubtask}
+          title="Delete Subtask"
+          itemName={subtask.title}
+          description="Are you sure you want to delete this subtask? All checklists, comments, and attachments on this subtask will be permanently removed."
+        />
+      )}
       {/* Fullscreen Comment Modal */}
       <FullscreenCommentModal
         isOpen={!!activeFullscreenComment}
@@ -9093,9 +9287,11 @@ export function TaskDetailModal(props: Props) {
                     if (prevItem && prevItem.completed !== undefined) {
                       return {
                         ...serverItem,
-                        completed: prevItem.completed || serverItem.completed,
-                        checkedById: prevItem.checkedById || serverItem.checkedById,
-                        checkedBy: prevItem.checkedBy || serverItem.checkedBy,
+                        completed: prevItem.completed,
+                        checkedById: prevItem.completed ? (prevItem.checkedById || serverItem.checkedById) : null,
+                        checkedBy: prevItem.completed ? (prevItem.checkedBy || serverItem.checkedBy) : null,
+
+
                       };
                     }
                     return serverItem;

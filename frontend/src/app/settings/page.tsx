@@ -1475,15 +1475,6 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  {isMaxSoundsReached && (
-                    <div className="flex items-center gap-2.5 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
-                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span className="flex-1 font-medium">
-                        You have reached your maximum limit of 4 custom notification sounds. Delete an uploaded sound to add a new one.
-                      </span>
-                    </div>
-                  )}
-
                   {/* Volume Slider & Sound Presets Grid */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-1">
                     {/* Volume Slider */}
@@ -1522,7 +1513,7 @@ export default function SettingsPage() {
                     <div className="lg:col-span-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold text-zinc-200">Alert Sound Presets</span>
-                        <span className="text-[11px] text-zinc-500">Click to set as default or ▶ to preview</span>
+                        <span className="text-[11px] text-zinc-500">Click preset to select &bull; Audition with play button</span>
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -1577,15 +1568,9 @@ export default function SettingsPage() {
                   <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="space-y-1 min-w-0 pr-2">
-                        <div className="flex items-center gap-2.5 flex-wrap">
-                          <div className="flex items-center gap-2">
-                            <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
-                            <h4 className="text-sm font-semibold text-zinc-100">Custom Sound Library</h4>
-                          </div>
-                          <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-zinc-800/90 border border-zinc-700/70 text-zinc-300 flex items-center gap-1.5 shrink-0">
-                            <Music className="w-3 h-3 text-indigo-400" />
-                            <span>Uploaded: <strong className={isMaxSoundsReached ? 'text-amber-400 font-bold' : 'text-zinc-100'}>{customUploadedCount} / 4</strong></span>
-                          </span>
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
+                          <h4 className="text-sm font-semibold text-zinc-100">Custom Sound Library</h4>
                         </div>
                         <p className="text-xs text-zinc-400 leading-relaxed">
                           Upload up to 4 custom audio files (MP3, WAV, OGG, M4A) or choose from ready-to-use sample sounds.
@@ -1642,12 +1627,22 @@ export default function SettingsPage() {
 
                     {/* My Uploaded Sounds Dropdown & Detail Section */}
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-zinc-300">My Uploaded Audio ({userUploadedSounds.length} / 4)</span>
-                          <span className="text-[10px] text-zinc-500">Select an audio file from the dropdown to preview, set default, or delete</span>
+                      <div className="flex items-center justify-between text-xs pb-0.5">
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-medium text-zinc-200">Uploaded Audio</span>
+                          <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 border border-zinc-700/60 whitespace-nowrap">
+                            {userUploadedSounds.length} / 4
+                          </span>
                         </div>
-                        <span className="hidden sm:inline text-zinc-500">Click ▶ to preview</span>
+                        {userUploadedSounds.length > 0 ? (
+                          <span className="text-[11px] text-zinc-500 hidden sm:inline">
+                            Select a sound below to audition, set default, or delete
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-zinc-500 hidden sm:inline">
+                            Up to 4 custom audio files
+                          </span>
+                        )}
                       </div>
 
                       {userUploadedSounds.length > 0 ? (
@@ -1769,9 +1764,9 @@ export default function SettingsPage() {
 
                     {/* Ready-to-Use Sample Sounds Sub-grid */}
                     <div className="space-y-2 pt-2 border-t border-zinc-800/60">
-                      <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                        <span className="font-semibold text-zinc-300">Ready-to-Use Sample Sounds</span>
-                        <span>Click ▶ to preview</span>
+                      <div className="flex items-center justify-between text-xs pb-0.5">
+                        <span className="font-medium text-zinc-200">Ready-to-Use Sample Sounds</span>
+                        <span className="text-[11px] text-zinc-500 hidden sm:inline">Audition sample sounds</span>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">

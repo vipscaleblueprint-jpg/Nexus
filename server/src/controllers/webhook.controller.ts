@@ -11,7 +11,7 @@ import { updatePageBlocks } from '../services/pageContentService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
-import { aiAuditExternalId } from '../utils/auditChecklist';
+import { aiAuditExternalId, isReviewStatus } from '../utils/auditChecklist';
 import { autoAssignAudits } from '../services/auditAutoAssign';
 
 const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
@@ -495,7 +495,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         console.error('Failed to save AI-picked audits:', err);
       }
     }
-    await autoAssignAudits(newTask.id, creator.id).catch((err) => console.error('Galaxy task: audit auto-assign failed:', err));
+
 
     // n8n adds the task's ClickUp subtasks and checklists after it replies to Galaxy,
     // so pull this client's list shortly to bring them in.
@@ -684,6 +684,10 @@ export const handleGalaxyStatus = async (req: Request, res: Response) => {
         };
         io.emit('task_activity', { listId: task.listId, taskId: task.id, activity });
       }).catch(console.error);
+    }
+
+    if (task.status !== updatedTask.status && isReviewStatus(updatedTask.status)) {
+      autoAssignAudits(task.id).catch((err) => console.error('Galaxy status: audit shift assign failed:', err));
     }
 
     io.emit('task:updated', updatedTask);

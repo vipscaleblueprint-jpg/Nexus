@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle } from 'lucide-react';
+import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -23,6 +23,7 @@ import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist'
 
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
+import { draftsApi, TaskDraft } from '@/api/drafts';
 import { fetchListStatuses } from '@/lib/listStatusCache';
 import { SubtasksSection } from './SubtasksSection';
 import { ChecklistsSection } from './ChecklistsSection';
@@ -524,6 +525,52 @@ export function TaskDetailModalContent({
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const drafts = useAppStore((state) => state.drafts);
+  const upsertDraft = useAppStore((state) => state.upsertDraft);
+  const removeDraftsByTask = useAppStore((state) => state.removeDraftsByTask);
+
+  const [draftSaveStatus, setDraftSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [restoredDraftId, setRestoredDraftId] = useState<string | null>(null);
+  const [showRestoredText, setShowRestoredText] = useState(false);
+  const restoredTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const draftDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Restore pre-saved draft from store if user had unsent draft
+  useEffect(() => {
+    if (!task?.id) return;
+    const existingDraft = drafts.find((d) => d.taskId === task.id && !d.subtaskId);
+    if (existingDraft?.comment && (!comment || isBlankCommentHtml(comment))) {
+      setComment(existingDraft.comment);
+      setRestoredDraftId(existingDraft.id);
+      setShowRestoredText(true);
+      if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+      restoredTimerRef.current = setTimeout(() => {
+        setShowRestoredText(false);
+      }, 3500);
+
+      setTimeout(() => {
+        commentEditorRef.current?.setContent?.(existingDraft.comment);
+      }, 50);
+    }
+  }, [task?.id, drafts]);
+
+  const handleDiscardDraft = useCallback(async () => {
+    setComment('');
+    setRestoredDraftId(null);
+    setShowRestoredText(false);
+    setDraftSaveStatus('idle');
+    if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+    commentEditorRef.current?.clear?.();
+    if (task?.id) {
+      try {
+        await draftsApi.deleteDraftByTask(task.id);
+        removeDraftsByTask(task.id);
+        window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: task.id } }));
+        toast.success('Draft discarded');
+      } catch {}
+    }
+  }, [task?.id, removeDraftsByTask]);
+
 
   // Auto-scroll the bottom of the comment being edited into view so the user doesn't have to scroll down manually
   useEffect(() => {
@@ -3027,6 +3074,11 @@ export function TaskDetailModalContent({
       scrollToLatestComment();
 
       setComment('');
+      draftsApi.deleteDraftByTask(targetId, subtaskId).catch(() => {});
+      removeDraftsByTask(targetId, subtaskId);
+      setDraftSaveStatus('idle');
+      setRestoredDraftId(null);
+      window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: targetId } }));
       setTimeout(() => {
         const el = document.getElementById('main-task-comment');
         if (el) el.style.height = '80px';
@@ -5109,12 +5161,56 @@ export function TaskDetailModalContent({
                           </div>
                         </div>
                       )}
+                      {showRestoredText && (
+                        <div className="flex items-center justify-between px-1.5 py-0.5 text-xs text-zinc-400 mb-1 transition-opacity animate-in fade-in duration-200">
+                          <span className="text-[11px] text-zinc-400 font-medium">Restored</span>
+                          <button
+                            type="button"
+                            onClick={handleDiscardDraft}
+                            className="text-[11px] text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
+                          >
+                            Discard
+                          </button>
+                        </div>
+                      )}
                       <CommentEditor
                         ref={commentEditorRef}
                         id="main-task-comment"
                         value={comment}
                         onChange={(html, text, cursorPosition, textBefore) => {
                           setComment(html);
+
+                          if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+                          draftDebounceTimerRef.current = setTimeout(async () => {
+                            if (!task?.id) return;
+                            if (!isBlankCommentHtml(html) && html.trim().length > 0) {
+                              setDraftSaveStatus('saving');
+                              try {
+                                const res = await draftsApi.saveDraft({
+                                  id: `task:${task.id}`,
+                                  taskId: task.id,
+                                  taskTitle: task.title,
+                                  comment: html,
+                                  type: 'comment',
+                                });
+                                if (res?.draft) {
+                                  upsertDraft(res.draft);
+                                  setDraftSaveStatus('saved');
+                                  window.dispatchEvent(new CustomEvent('draft:updated', { detail: { draft: res.draft } }));
+                                }
+                              } catch {
+                                setDraftSaveStatus('idle');
+                              }
+                            } else {
+                              try {
+                                await draftsApi.deleteDraftByTask(task.id);
+                                removeDraftsByTask(task.id);
+                                setDraftSaveStatus('idle');
+                                setRestoredDraftId(null);
+                                window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: task.id } }));
+                              } catch {}
+                            }
+                          }, 1200);
 
                           // Mention logic
                           const textBeforeCursor = textBefore !== undefined
@@ -5185,13 +5281,22 @@ export function TaskDetailModalContent({
                           </div>
                         }
                         footerEnd={
-                          <ComposerSendButton
-                            onClick={handleAddComment}
-                            disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
-                            title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
-                          >
-                            {isSubmittingComment ? 'Sending…' : 'Send'}
-                          </ComposerSendButton>
+                          <div className="flex items-center gap-2">
+                            {draftSaveStatus === 'saving' && (
+                              <span className="text-[11px] text-zinc-400 whitespace-nowrap shrink-0 flex items-center gap-1.5 animate-pulse select-none">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <span>Saving draft...</span>
+                              </span>
+                            )}
+
+                            <ComposerSendButton
+                              onClick={handleAddComment}
+                              disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
+                              title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                            >
+                              {isSubmittingComment ? 'Sending…' : 'Send'}
+                            </ComposerSendButton>
+                          </div>
                         }
                       />
                       {commentEmojiAnchor && (
@@ -5370,6 +5475,51 @@ export function SubtaskDetailView({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const drafts = useAppStore((state) => state.drafts);
+  const upsertDraft = useAppStore((state) => state.upsertDraft);
+  const removeDraftsByTask = useAppStore((state) => state.removeDraftsByTask);
+
+  const [draftSaveStatus, setDraftSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [restoredDraftId, setRestoredDraftId] = useState<string | null>(null);
+  const [showRestoredText, setShowRestoredText] = useState(false);
+  const restoredTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const draftDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Restore subtask draft
+  useEffect(() => {
+    if (!parentTask?.id || !subtask?.id) return;
+    const existingDraft = drafts.find((d) => d.taskId === parentTask.id && d.subtaskId === subtask.id);
+    if (existingDraft?.comment && (!comment || isBlankCommentHtml(comment))) {
+      setComment(existingDraft.comment);
+      setRestoredDraftId(existingDraft.id);
+      setShowRestoredText(true);
+      if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+      restoredTimerRef.current = setTimeout(() => {
+        setShowRestoredText(false);
+      }, 3500);
+
+      setTimeout(() => {
+        commentEditorRef.current?.setContent?.(existingDraft.comment);
+      }, 50);
+    }
+  }, [parentTask?.id, subtask?.id, drafts]);
+
+  const handleDiscardDraft = useCallback(async () => {
+    setComment('');
+    setRestoredDraftId(null);
+    setShowRestoredText(false);
+    setDraftSaveStatus('idle');
+    if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+    commentEditorRef.current?.clear?.();
+    if (parentTask?.id && subtask?.id) {
+      try {
+        await draftsApi.deleteDraftByTask(parentTask.id, subtask.id);
+        removeDraftsByTask(parentTask.id, subtask.id);
+        window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
+        toast.success('Draft discarded');
+      } catch {}
+    }
+  }, [parentTask?.id, subtask?.id, removeDraftsByTask]);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
   const [isSubtaskMenuOpen, setIsSubtaskMenuOpen] = useState(false);
   const [isDeleteSubtaskModalOpen, setIsDeleteSubtaskModalOpen] = useState(false);
@@ -7058,6 +7208,11 @@ export function SubtaskDetailView({
       scrollToLatestComment();
 
       setComment('');
+      draftsApi.deleteDraftByTask(parentTask.id, subtask.id).catch(() => {});
+      removeDraftsByTask(parentTask.id, subtask.id);
+      setDraftSaveStatus('idle');
+      setRestoredDraftId(null);
+      window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
       setTimeout(() => {
         const el = document.getElementById('subtask-comment');
         if (el) el.style.height = '80px';
@@ -9066,12 +9221,58 @@ export function SubtaskDetailView({
                         </div>
                       </div>
                     )}
+                    {showRestoredText && (
+                      <div className="flex items-center justify-between px-1.5 py-0.5 text-xs text-zinc-400 mb-1 transition-opacity animate-in fade-in duration-200">
+                        <span className="text-[11px] text-zinc-400 font-medium">Restored</span>
+                        <button
+                          type="button"
+                          onClick={handleDiscardDraft}
+                          className="text-[11px] text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    )}
                     <CommentEditor
                       ref={commentEditorRef}
                       id="subtask-comment"
                       value={comment}
                       onChange={(html, text, cursorPosition, textBefore) => {
                         setComment(html);
+
+                        if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+                        draftDebounceTimerRef.current = setTimeout(async () => {
+                          if (!parentTask?.id || !subtask?.id) return;
+                          if (!isBlankCommentHtml(html) && html.trim().length > 0) {
+                            setDraftSaveStatus('saving');
+                            try {
+                              const res = await draftsApi.saveDraft({
+                                id: `task:${parentTask.id}:sub:${subtask.id}`,
+                                taskId: parentTask.id,
+                                taskTitle: parentTask.title,
+                                subtaskId: subtask.id,
+                                subtaskTitle: subtask.title,
+                                comment: html,
+                                type: 'comment',
+                              });
+                              if (res?.draft) {
+                                upsertDraft(res.draft);
+                                setDraftSaveStatus('saved');
+                                window.dispatchEvent(new CustomEvent('draft:updated', { detail: { draft: res.draft } }));
+                              }
+                            } catch {
+                              setDraftSaveStatus('idle');
+                            }
+                          } else {
+                            try {
+                              await draftsApi.deleteDraftByTask(parentTask.id, subtask.id);
+                              removeDraftsByTask(parentTask.id, subtask.id);
+                              setDraftSaveStatus('idle');
+                              setRestoredDraftId(null);
+                              window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
+                            } catch {}
+                          }
+                        }, 1200);
                         
                         // Mention logic
                         const textBeforeCursor = textBefore !== undefined
@@ -9142,13 +9343,22 @@ export function SubtaskDetailView({
                         </div>
                       }
                       footerEnd={
-                        <ComposerSendButton
-                          onClick={handleAddComment}
-                          disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
-                          title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
-                        >
-                          {isSubmittingComment ? 'Sending…' : 'Send'}
-                        </ComposerSendButton>
+                        <div className="flex items-center gap-2">
+                          {draftSaveStatus === 'saving' && (
+                            <span className="text-[11px] text-zinc-400 whitespace-nowrap shrink-0 flex items-center gap-1.5 animate-pulse select-none">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>Saving draft...</span>
+                            </span>
+                          )}
+
+                          <ComposerSendButton
+                            onClick={handleAddComment}
+                            disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
+                            title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                          >
+                            {isSubmittingComment ? 'Sending…' : 'Send'}
+                          </ComposerSendButton>
+                        </div>
                       }
                     />
                     {commentEmojiAnchor && (

@@ -87,6 +87,8 @@ export interface CommentEditorRef {
   toggleTaskList: () => void;
   toggleBulletList: () => void;
   toggleOrderedList: () => void;
+  setContent: (content: string) => void;
+  clear: () => void;
 }
 
 // The line-move shortcut as the user's keyboard labels it (Option on a Mac)
@@ -696,11 +698,27 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       if (!editor || editor.isDestroyed) return;
       editor.chain().focus().toggleOrderedList().run();
     },
+    setContent: (content: string) => {
+      if (!editor || editor.isDestroyed) return;
+      editor.commands.setContent(content || '');
+    },
+    clear: () => {
+      if (!editor || editor.isDestroyed) return;
+      editor.commands.clearContent();
+    },
   }));
 
   React.useEffect(() => {
-    if (editor && value === '' && editor.getHTML() !== '<p></p>') {
-      editor.commands.setContent('');
+    if (!editor || editor.isDestroyed) return;
+    if (value === '') {
+      if (editor.getHTML() !== '<p></p>') {
+        editor.commands.setContent('');
+      }
+    } else {
+      const currentHtml = editor.getHTML();
+      if ((currentHtml === '<p></p>' || currentHtml === '' || editor.getText().trim() === '') && value.trim()) {
+        editor.commands.setContent(value);
+      }
     }
   }, [value, editor]);
 

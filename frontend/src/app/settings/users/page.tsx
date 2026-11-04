@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Users,
   Mail,
@@ -20,7 +20,8 @@ import {
   ChevronUp,
   ChevronDown,
   Filter,
-  Shield
+  Shield,
+  Clock
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { usersApi } from '@/api/users';
@@ -33,6 +34,7 @@ import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { SettingsSkeleton, MemberSkeleton } from '@/components/ui/Skeleton';
 import { ClickUpStatusPanel } from '@/components/layout/ClickUpStatusPanel';
+import { AuditShiftsTab } from '@/components/settings/AuditShiftsTab';
 
 const ROLE_COLORS: Record<string, string> = {
   PM: 'bg-violet-500/20 text-violet-300 border-violet-500/30',
@@ -213,6 +215,11 @@ function MemberCard({
 
 export default function UsersSettingsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams?.get('tab');
+  const [activeTab, setActiveTab] = useState<'users' | 'shifts'>(
+    tabParam === 'shifts' || tabParam === 'audit-shifts' ? 'shifts' : 'users'
+  );
   const { currentUser } = useAppStore();
 
   const [users, setUsers] = useState<User[]>([]);
@@ -407,51 +414,93 @@ export default function UsersSettingsPage() {
   return (
     <div className="p-8 w-full max-w-7xl mx-auto space-y-8 font-sans">
       
-      {/* Header and Search */}
+      {/* Header and Tab Switcher */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 border-b border-zinc-800/80 pb-6">
-        <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <Users className="w-5 h-5 text-zinc-400" />
-            Users & Roles
-          </h1>
-          <p className="text-zinc-500 text-sm mt-0.5">Manage workspace members, invitations, and custom roles.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {process.env.NODE_ENV === 'development' && (
-            <>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-xl font-bold text-white flex items-center gap-2">
+              <Shield className="w-5 h-5 text-indigo-400" />
+              Admin Settings
+            </h1>
+
+            {/* Segmented Tab Switcher */}
+            <div className="inline-flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 shadow-inner">
               <button
-                onClick={handleClearCache}
-                disabled={clearingCache}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Dev only: wipes every cache:* entry in Redis"
+                type="button"
+                onClick={() => setActiveTab('users')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === 'users'
+                    ? 'bg-zinc-800 text-white shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
               >
-                <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${clearingCache ? 'animate-spin' : ''}`} />
-                <span>{clearingCache ? 'Clearing...' : 'Clear Cache (Dev)'}</span>
+                <Users className="w-3.5 h-3.5" />
+                <span>Users & Roles</span>
               </button>
               <button
-                onClick={handleSyncUsers}
-                disabled={syncingUsers}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Dev only: pulls assistants from VIPScale and upserts them into Nexus"
+                type="button"
+                onClick={() => setActiveTab('shifts')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === 'shifts'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
               >
-                <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${syncingUsers ? 'animate-spin' : ''}`} />
-                <span>{syncingUsers ? 'Syncing...' : 'Sync Users (Dev)'}</span>
+                <Clock className="w-3.5 h-3.5" />
+                <span>Audit Shifts</span>
+              </button>
+            </div>
+          </div>
+          <p className="text-zinc-500 text-sm mt-0.5">
+            {activeTab === 'users'
+              ? 'Manage workspace members, invitations, and custom roles.'
+              : 'Configure shift schedules and auto-assigned auditors for in-review tasks.'}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {activeTab === 'users' && (
+            <>
+              {process.env.NODE_ENV === 'development' && (
+                <>
+                  <button
+                    onClick={handleClearCache}
+                    disabled={clearingCache}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Dev only: wipes every cache:* entry in Redis"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${clearingCache ? 'animate-spin' : ''}`} />
+                    <span>{clearingCache ? 'Clearing...' : 'Clear Cache (Dev)'}</span>
+                  </button>
+                  <button
+                    onClick={handleSyncUsers}
+                    disabled={syncingUsers}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Dev only: pulls assistants from VIPScale and upserts them into Nexus"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${syncingUsers ? 'animate-spin' : ''}`} />
+                    <span>{syncingUsers ? 'Syncing...' : 'Sync Users (Dev)'}</span>
+                  </button>
+                </>
+              )}
+              {/* ClickUp sync status and Pull, for admins (the profile menu only shows it to the DEV role). */}
+              <ClickUpStatusPanel />
+              <button
+                onClick={() => setIsRoleModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50"
+              >
+                <Shield className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Role Management</span>
               </button>
             </>
           )}
-          {/* ClickUp sync status and Pull, for admins (the profile menu only shows it to the DEV role). */}
-          <ClickUpStatusPanel />
-          <button
-            onClick={() => setIsRoleModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-colors shadow cursor-pointer border border-zinc-700/50"
-          >
-            <Shield className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Role Management</span>
-          </button>
         </div>
       </div>
 
-      <div className="space-y-8">
+      {activeTab === 'shifts' ? (
+        <AuditShiftsTab onRefreshUsers={loadData} />
+      ) : (
+        <div className="space-y-8">
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
             <div className="flex items-center gap-3 w-full sm:w-auto">
               <div className="relative group">
@@ -876,6 +925,7 @@ export default function UsersSettingsPage() {
         )}
       </div>
       </div>
+      )}
 
       <RoleManagementModal 
         isOpen={isRoleModalOpen} 

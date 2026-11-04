@@ -9,16 +9,19 @@ import {
   ArrowRight,
   Check,
   AtSign,
+  FileEdit,
+  Trash2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { format, isToday, isYesterday } from "date-fns";
+import { format, isToday, isYesterday, formatDistanceToNow } from "date-fns";
+import { draftsApi, TaskDraft } from "@/api/drafts";
 import { notificationsApi, TaskNotification } from "@/api/notifications";
 import { useAppStore } from "@/lib/store";
 import { fetchListStatuses } from "@/lib/listStatusCache";
 import { ActivityCard } from "@/components/ui/ActivityCard";
 import { prefetchTaskActivities } from "@/lib/taskTokens";
 
-type TabType = "all" | "mentions";
+type TabType = "all" | "mentions" | "drafts";
 
 function extractSubtaskTitle(title: string): string | undefined {
   if (!title || !title.toLowerCase().includes("subtask")) return undefined;
@@ -30,6 +33,9 @@ export function NotificationBell() {
   const router = useRouter();
   const unreadCount = useAppStore((state) => state.unreadNotifications);
   const setUnreadCount = useAppStore((state) => state.setUnreadNotifications);
+  const drafts = useAppStore((state) => state.drafts);
+  const removeDraft = useAppStore((state) => state.removeDraft);
+  const loadDrafts = useAppStore((state) => state.loadDrafts);
 
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("all");
@@ -85,12 +91,18 @@ export function NotificationBell() {
         setIsLoadingMore(true);
       }
 
+      if (tab === "drafts") {
+        setIsLoading(false);
+        setIsLoadingMore(false);
+        return;
+      }
+
       try {
         const res = await notificationsApi.getNotifications({
           tab: "primary",
           page: pageNum,
           limit: 15,
-          filter: tab,
+          filter: tab === "mentions" ? "mentions" : "all",
         });
 
         const freshItems = res.notifications || [];
@@ -262,6 +274,10 @@ export function NotificationBell() {
   const handleTabChange = (newTab: TabType) => {
     if (newTab === activeTab) return;
     setActiveTab(newTab);
+    if (newTab === "drafts") {
+      loadDrafts();
+      return;
+    }
     setNotifications([]);
     setPage(1);
     setHasMore(false);
@@ -472,6 +488,7 @@ export function NotificationBell() {
     setIsOpen(nextOpen);
 
     if (nextOpen) {
+      loadDrafts();
       // Record any currently unread items as new for this session so glowing blue border and dot remain visible
       const existingUnread = notifications.filter((n) => !n.isRead);
       if (existingUnread.length > 0) {
@@ -541,6 +558,79 @@ export function NotificationBell() {
     );
   };
 
+  const handleDeleteDraft = async (draftId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await draftsApi.deleteDraft(draftId);
+      removeDraft(draftId);
+      window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { id: draftId } }));
+    } catch (err) {
+      console.error('Failed to delete draft', err);
+    }
+  };
+
+  const renderDraftCard = (d: TaskDraft) => {
+    const rawPreview = d.comment || d.description || '';
+    const cleanPreview = rawPreview.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Empty draft';
+    const relativeTime = (() => {
+      try {
+        return formatDistanceToNow(new Date(d.updatedAt), { addSuffix: true });
+      } catch {
+        return 'recently';
+      }
+    })();
+
+    return (
+      <div
+        key={d.id}
+        onClick={() => {
+          setIsOpen(false);
+          const subtaskParam = d.subtaskId ? `&subtask=${encodeURIComponent(d.subtaskId)}` : '';
+          router.push(`/activity?category=drafts&task=${d.taskId}${subtaskParam}`);
+        }}
+        className="group relative p-2.5 rounded-lg border border-border/70 hover:border-amber-500/50 bg-card hover:bg-zinc-800/40 transition-all cursor-pointer flex flex-col gap-1.5 shadow-xs"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="p-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/25 shrink-0">
+              <FileEdit className="w-3 h-3" />
+            </span>
+            <span className="text-xs font-semibold text-foreground truncate">
+              {d.taskTitle || 'Untitled Task'}
+            </span>
+            {d.subtaskTitle && (
+              <span className="text-[10px] text-zinc-400 bg-zinc-800/60 px-1.5 py-0.2 rounded border border-border/40 truncate">
+                {d.subtaskTitle}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] font-medium text-amber-400/90 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">
+              Draft
+            </span>
+            <button
+              type="button"
+              onClick={(e) => handleDeleteDraft(d.id, e)}
+              className="p-1 rounded hover:bg-zinc-700/60 text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
+              title="Discard draft"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+
+        <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed pl-6">
+          {cleanPreview}
+        </p>
+
+        <div className="flex items-center justify-between text-[10px] text-zinc-500 pl-6 pt-0.5">
+          <span className="flex items-center gap-1 text-zinc-400"><Check className="w-3 h-3 text-emerald-500/70" /><span>Auto-saved</span></span>
+          <span>{relativeTime}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
@@ -601,6 +691,23 @@ export function NotificationBell() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleTabChange("drafts")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer inline-flex items-center gap-1.5 ${
+                    activeTab === "drafts"
+                      ? "bg-card text-foreground shadow-xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <FileEdit className="w-3 h-3 text-amber-400 shrink-0" />
+                  <span>Drafts</span>
+                  {drafts.length > 0 && (
+                    <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      {drafts.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleTabChange("mentions")}
                   className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                     activeTab === "mentions"
@@ -619,7 +726,23 @@ export function NotificationBell() {
               onScroll={handleScroll}
               className="overflow-y-auto overflow-x-hidden flex-1 p-2.5 space-y-2.5 custom-scrollbar max-h-[500px] bg-card/40"
             >
-              {isLoading && notifications.length === 0 ? (
+{activeTab === "drafts" ? (
+                drafts.length === 0 ? (
+                  <div className="p-8 text-center flex flex-col items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-amber-500/10 text-amber-400">
+                      <FileEdit className="w-5 h-5" />
+                    </div>
+                    <p className="text-xs font-semibold text-zinc-300">No drafts saved</p>
+                    <p className="text-[11px] text-zinc-500 max-w-[240px]">
+                      Drafts you start in tasks will be saved automatically so you never lose your progress.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {drafts.map(renderDraftCard)}
+                  </div>
+                )
+              ) : isLoading && notifications.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground text-xs flex flex-col items-center gap-2">
                   <div className="w-5 h-5 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
                   Loading notifications...

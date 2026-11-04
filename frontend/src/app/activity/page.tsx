@@ -23,8 +23,11 @@ import {
   UserPlus,
   Search,
   X,
+  FileEdit,
+  Trash2,
 } from 'lucide-react';
-import { format, isToday, isYesterday } from 'date-fns';
+import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns';
+import { draftsApi, TaskDraft } from '@/api/drafts';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
 import { tasksApi } from '@/api/tasks';
@@ -35,7 +38,7 @@ import { ActivityCard } from '@/components/ui/ActivityCard';
 import { isSystemUser } from '@/lib/taskTokens';
 
 type ViewMode = 'for_me' | 'show_all';
-type Category = 'all' | 'assigned' | 'status' | 'checklists' | 'audits' | 'comments';
+type Category = 'all' | 'assigned' | 'status' | 'checklists' | 'audits' | 'comments' | 'drafts';
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = [
   { value: 'for_me', label: 'For Me', description: 'All your notifications' },
@@ -166,6 +169,9 @@ function ActivityFeedContent() {
     workspaceRoles,
     workspaceUsers,
     loadUsers,
+    drafts,
+    removeDraft,
+    loadDrafts,
   } = useAppStore();
   const hadSelectedTask = useRef(false);
   const lastUrlTaskId = useRef<string | null>(null);
@@ -190,7 +196,36 @@ function ActivityFeedContent() {
     }
   }, [currentUser]);
 
-  const [category, setCategory] = useState<Category>('all');
+  const [category, setCategory] = useState<Category>(() => {
+    if (typeof window !== 'undefined') {
+      const cat = new URLSearchParams(window.location.search).get('category');
+      if (cat === 'drafts') return 'drafts';
+    }
+    return 'all';
+  });
+  // When in 'for_me' view mode, include the 'Drafts' tab. Hide it in 'show_all'.
+  const activeCategories = useMemo(() => {
+    if (viewMode === 'for_me') {
+      return [
+        ...CATEGORIES,
+        { value: 'drafts' as Category, label: 'Drafts', icon: FileEdit },
+      ];
+    }
+    return CATEGORIES;
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode === 'show_all' && category === 'drafts') {
+      setCategory('all');
+    }
+  }, [viewMode, category]);
+
+  useEffect(() => {
+    const cat = searchParams?.get('category');
+    if (cat === 'drafts' && viewMode === 'for_me') {
+      setCategory('drafts');
+    }
+  }, [searchParams, viewMode]);
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
@@ -300,6 +335,11 @@ function ActivityFeedContent() {
   }, []);
 
   const fetchData = async (silent = false) => {
+    if (category === 'drafts') {
+      await loadDrafts();
+      setLoading(false);
+      return;
+    }
     const hasData = notifications.length > 0 || auditLogs.length > 0 || !!feedCache?.notifications.length;
     if (!silent && !hasData) setLoading(true);
     try {
@@ -1132,6 +1172,7 @@ function ActivityFeedContent() {
       audits: 0,
       assigned: 0,
       comments: 0,
+      drafts: drafts.length,
     };
 
     allNormalizedItems.forEach((item) => {
@@ -1491,7 +1532,7 @@ function ActivityFeedContent() {
 
       {/* Category Tabs with Unread Badges */}
       <div className="px-3 sm:px-8 border-b border-border mb-4 sm:mb-6 flex items-center gap-3 sm:gap-8 overflow-x-auto scrollbar-none">
-        {CATEGORIES.map((cat) => {
+        {activeCategories.map((cat) => {
           const isActive = category === cat.value;
           const unreadCount = tabUnreadCounts[cat.value] || 0;
 
@@ -1530,7 +1571,127 @@ function ActivityFeedContent() {
         }}
         className="flex-1 overflow-y-auto px-3 sm:px-8 pr-2 custom-scrollbar space-y-6 sm:space-y-8 pb-8"
       >
-        {loading ? (
+{category === 'drafts' ? (
+          <div className="space-y-4 pb-10">
+            <div className="flex items-center justify-between py-2 border-b border-border/60">
+              <div>
+                <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+                  <FileEdit className="size-4 text-amber-400" />
+                  <span>Saved Task Drafts</span>
+                  {drafts.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold">
+                      {drafts.length}
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Auto-saved drafts. If your session ends or a crash occurs, continue editing right where you left off.
+                </p>
+              </div>
+            </div>
+
+            {drafts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 text-zinc-500">
+                <div className="w-12 h-12 rounded-full bg-zinc-800/60 flex items-center justify-center mb-3">
+                  <FileEdit className="size-6 opacity-40 text-amber-400" />
+                </div>
+                <p className="text-sm font-medium text-zinc-300">No saved drafts</p>
+                <p className="text-xs text-zinc-500 mt-1 max-w-sm text-center">
+                  Start typing in any task comment or details and it will be saved automatically so you never lose your progress.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {drafts.map((d) => {
+                  const rawPreview = d.comment || d.description || '';
+                  const cleanPreview =
+                    rawPreview.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Empty draft';
+                  const relativeTime = (() => {
+                    try {
+                      return formatDistanceToNow(new Date(d.updatedAt), { addSuffix: true });
+                    } catch {
+                      return 'recently';
+                    }
+                  })();
+
+                  return (
+                    <div
+                      key={d.id}
+                      onClick={() => {
+                        if (d.subtaskId) {
+                          setTargetCommentInfo({ id: null, text: null, subtaskId: d.subtaskId });
+                        }
+                        handleOpenTask(d.taskId);
+                      }}
+                      className="group relative p-4 rounded-xl border border-border/80 hover:border-amber-500/50 bg-card hover:bg-zinc-800/30 transition-all cursor-pointer flex flex-col justify-between gap-3 shadow-xs"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-semibold text-foreground group-hover:text-amber-300 transition-colors truncate">
+                              {d.taskTitle || 'Untitled Task'}
+                            </h4>
+                            {d.subtaskTitle && (
+                              <span className="inline-block mt-1 text-[11px] font-medium text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded border border-border/40">
+                                Subtask: {d.subtaskTitle}
+                              </span>
+                            )}
+                          </div>
+                          <span className="shrink-0 text-[10px] font-medium text-zinc-400 bg-zinc-800/80 border border-border px-2 py-0.5 rounded-md flex items-center gap-1">
+                            <Check className="w-3 h-3 text-emerald-500/70" />
+                            <span>Auto-saved</span>
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-zinc-400 line-clamp-3 leading-relaxed bg-zinc-900/60 border border-border/40 p-2.5 rounded-lg font-mono text-[11.5px]">
+                          {cleanPreview}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-border/40 text-xs">
+                        <span className="text-[11px] text-zinc-500">Saved {relativeTime}</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await draftsApi.deleteDraft(d.id);
+                                removeDraft(d.id);
+                                toast.success('Draft discarded');
+                                window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { id: d.id } }));
+                              } catch {
+                                toast.error('Failed to discard draft');
+                              }
+                            }}
+                            className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-800/80 rounded-md transition-colors cursor-pointer"
+                            title="Discard draft"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (d.subtaskId) {
+                                setTargetCommentInfo({ id: null, text: null, subtaskId: d.subtaskId });
+                              }
+                              handleOpenTask(d.taskId);
+                            }}
+                            className="px-3 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-semibold border border-amber-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>Continue Editing</span>
+                            <ChevronRight className="size-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : loading ? (
           <div className="flex items-center justify-center h-40">
             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
@@ -1687,7 +1848,7 @@ function ActivityFeedContent() {
       </div>
 
       {/* Persistent Bottom Pagination Bar */}
-      {total > 0 && (
+      {category !== 'drafts' && total > 0 && (
         <div className="border-t border-border bg-background/95 backdrop-blur-sm shrink-0 mb-16 sm:mb-0">
           {/* Mobile Layout (< 640px) */}
           <div className="flex flex-col gap-2 px-3 py-2.5 sm:hidden">

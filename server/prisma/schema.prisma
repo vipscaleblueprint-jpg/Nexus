@@ -670,3 +670,22 @@ enum NotificationType {
   DIRECT_MESSAGE
   CHANNEL_MESSAGE
 }
+
+model AuditShiftConfig {
+  id           String   @id @default(uuid())
+  shiftKey     String   @unique
+  name         String
+  startHour    Int
+  startMinute  Int      @default(0)
+  endHour      Int
+  endMinute    Int      @default(0)
+  auditorNames String[] @default([])
+  auditorIds   String[] @default([])
+  isActive     Boolean  @default(true)
+  order        Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([shiftKey])
+  @@index([isActive])
+}

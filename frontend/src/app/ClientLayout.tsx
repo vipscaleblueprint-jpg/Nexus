@@ -12,6 +12,7 @@ import { authApi } from '@/api';
 import { notificationsApi } from '@/api/notifications';
 import { ToastContainer } from '@/components/ui/ToastContainer';
 import { MentionConfetti } from '@/components/ui/MentionConfetti';
+import { DraftBeggingReminder } from '@/components/ui/DraftBeggingReminder';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
@@ -90,6 +91,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     setAuthStatus,
     resetStore,
     setUnreadNotifications,
+    loadDrafts,
     isMobileSidebarOpen,
     setMobileSidebarOpen,
   } = useAppStore();
@@ -144,6 +146,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
           // Fetch fresh spaces
           lastSpacesFetchRef.current = Date.now();
           loadSpaces();
+          loadDrafts();
 
           notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
             setUnreadNotifications(res.unreadCount ?? res.notifications.filter((n) => !n.isRead).length);
@@ -352,7 +355,15 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('spaces:reordered'));
     });
 
+    const handleDraftEvent = () => {
+      useAppStore.getState().loadDrafts();
+    };
+    window.addEventListener('draft:updated', handleDraftEvent);
+    window.addEventListener('draft:deleted', handleDraftEvent);
+
     return () => {
+      window.removeEventListener('draft:updated', handleDraftEvent);
+      window.removeEventListener('draft:deleted', handleDraftEvent);
       s.disconnect();
     };
   }, [currentUser?.id, setUnreadNotifications, resetStore]);
@@ -407,6 +418,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       <MobileBottomNav />
       <ToastContainer />
       <MentionConfetti />
+      <DraftBeggingReminder />
     </div>
   );
 }

@@ -20,18 +20,121 @@ const AUDIT_ROLE_MATCHERS: Record<string, (role: string) => boolean> = {
 
 export type ShiftType = 'AM' | 'PM_AFTERNOON' | 'PM_NIGHT' | 'OFF_SHIFT';
 
+export interface DbShiftConfig {
+  id: string;
+  shiftKey: string;
+  name: string;
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
+  auditorNames: string[];
+  auditorIds: string[];
+  isActive: boolean;
+  order: number;
+}
+
+export const DEFAULT_SHIFTS: DbShiftConfig[] = [
+  {
+    id: 'default-am',
+    shiftKey: 'AM',
+    name: 'Morning Shift',
+    startHour: 8,
+    startMinute: 0,
+    endHour: 12,
+    endMinute: 0,
+    auditorNames: ['Aaron', 'Darlene', 'Mimi', 'Bea', 'Blessie'],
+    auditorIds: [],
+    isActive: true,
+    order: 1,
+  },
+  {
+    id: 'default-pm-afternoon',
+    shiftKey: 'PM_AFTERNOON',
+    name: 'Afternoon Shift',
+    startHour: 12,
+    startMinute: 0,
+    endHour: 17,
+    endMinute: 0,
+    auditorNames: ['Aaron', 'Darlene', 'Mimi', 'Bea', 'Blessie', 'Cherilyn', 'Gie'],
+    auditorIds: [],
+    isActive: true,
+    order: 2,
+  },
+  {
+    id: 'default-pm-night',
+    shiftKey: 'PM_NIGHT',
+    name: 'Night Shift',
+    startHour: 17,
+    startMinute: 0,
+    endHour: 1,
+    endMinute: 0,
+    auditorNames: ['Cherilyn', 'Gie', 'Pau2x', 'Hannah', 'Gwyneth'],
+    auditorIds: [],
+    isActive: true,
+    order: 3,
+  },
+];
+
+let cachedShifts: DbShiftConfig[] | null = null;
+let lastCacheTime = 0;
+const CACHE_TTL_MS = 60 * 1000; // 1 minute in-memory cache
+
 /**
- * Shift definitions in Manila Time (UTC+8):
- * - AM (Morning Shift): 08:00 - 12:00 -> Aaron, Darlene, Mimi, Bea, Blessie
- * - PM Afternoon Shift: 12:00 - 17:00 -> Aaron, Darlene, Mimi, Bea, Blessie, Cherilyn, Gie
- * - PM Night Shift: 17:00 - 01:00 (next day) -> Cherilyn, Gie, Pau2x (Gwyneth), Hannah
- * - Off-Shift: 01:00 - 08:00 -> No shift assignments; tasks wait until 8 AM morning shift
+ * Invalidates the shift configuration cache (both in-memory and Redis).
  */
-const SHIFT_AUDITORS: Record<Exclude<ShiftType, 'OFF_SHIFT'>, string[]> = {
-  AM: ['Aaron', 'Darlene', 'Mimi', 'Bea', 'Blessie'],
-  PM_AFTERNOON: ['Aaron', 'Darlene', 'Mimi', 'Bea', 'Blessie', 'Cherilyn', 'Gie'],
-  PM_NIGHT: ['Cherilyn', 'Gie', 'Pau2x', 'Hannah', 'Gwyneth'],
-};
+export function invalidateAuditShiftsCache(): void {
+  cachedShifts = null;
+  lastCacheTime = 0;
+  invalidateCache('cache:audit_shifts').catch(() => {});
+}
+
+/**
+ * Retrieves active shift configurations from the database with in-memory caching and graceful fallback.
+ */
+export async function getDbShiftConfigs(): Promise<DbShiftConfig[]> {
+  const now = Date.now();
+  if (cachedShifts && now - lastCacheTime < CACHE_TTL_MS) {
+    return cachedShifts;
+  }
+
+  try {
+    const dbConfigs = await (prisma as any).auditShiftConfig.findMany({
+      where: { isActive: true },
+      orderBy: { order: 'asc' },
+    });
+
+    if (dbConfigs && dbConfigs.length > 0) {
+      cachedShifts = dbConfigs as DbShiftConfig[];
+      lastCacheTime = now;
+      return cachedShifts;
+    }
+  } catch (err) {
+    // If DB read fails, fall back to default configs
+  }
+
+  return DEFAULT_SHIFTS;
+}
+
+/**
+ * Evaluates whether a shift is currently running based on hour and minute (handling overnight ranges).
+ */
+export function isShiftActive(
+  shift: { startHour: number; startMinute?: number; endHour: number; endMinute?: number },
+  hour: number,
+  minute: number
+): boolean {
+  const currentMins = hour * 60 + minute;
+  const startMins = shift.startHour * 60 + (shift.startMinute || 0);
+  const endMins = shift.endHour * 60 + (shift.endMinute || 0);
+
+  if (startMins <= endMins) {
+    return currentMins >= startMins && currentMins < endMins;
+  } else {
+    // Overnight shift (e.g. 17:00 to 01:00)
+    return currentMins >= startMins || currentMins < endMins;
+  }
+}
 
 /**
  * Retrieves the current hour and minute in Manila Time (UTC+8).
@@ -50,38 +153,59 @@ export function getManilaHourAndMinute(date: Date = new Date()): { hour: number;
 }
 
 /**
- * Determines the active shift in Manila Time.
+ * Asynchronously determines the active shift in Manila Time from database configurations.
  */
-export function getCurrentManilaShift(date: Date = new Date()): ShiftType {
-  const { hour } = getManilaHourAndMinute(date);
-  // 08:00 to 11:59 -> AM Morning shift
-  if (hour >= 8 && hour < 12) {
-    return 'AM';
+export async function getActiveManilaShift(date: Date = new Date()): Promise<string> {
+  const configs = await getDbShiftConfigs();
+  const { hour, minute } = getManilaHourAndMinute(date);
+
+  for (const s of configs) {
+    if (isShiftActive(s, hour, minute)) {
+      return s.shiftKey;
+    }
   }
-  // 12:00 to 16:59 -> PM Afternoon shift (Cherilyn and Gie start at 12pm)
-  if (hour >= 12 && hour < 17) {
-    return 'PM_AFTERNOON';
-  }
-  // 17:00 to 00:59 -> PM Night shift (until 1:00 AM)
-  if (hour >= 17 || hour < 1) {
-    return 'PM_NIGHT';
-  }
-  // 01:00 to 07:59 -> Off-shift
+
   return 'OFF_SHIFT';
 }
 
 /**
- * Verifies if a user is part of the designated shift based on name or email.
+ * Synchronous shift resolver (uses cached DB shifts if loaded, or defaults).
+ */
+export function getCurrentManilaShift(date: Date = new Date(), configs?: DbShiftConfig[]): ShiftType | string {
+  const targetConfigs = configs || cachedShifts || DEFAULT_SHIFTS;
+  const { hour, minute } = getManilaHourAndMinute(date);
+
+  for (const s of targetConfigs) {
+    if (s.isActive && isShiftActive(s, hour, minute)) {
+      return s.shiftKey;
+    }
+  }
+
+  return 'OFF_SHIFT';
+}
+
+/**
+ * Verifies if a user is part of the designated shift based on ID, name, or email.
  */
 export function isUserInShift(
-  user: { name?: string | null; email?: string | null },
-  shift: ShiftType
+  user: { id?: string; name?: string | null; email?: string | null },
+  shiftKey: string,
+  configs?: DbShiftConfig[]
 ): boolean {
-  if (shift === 'OFF_SHIFT') return false;
-  const allowed = SHIFT_AUDITORS[shift];
+  if (shiftKey === 'OFF_SHIFT') return false;
+  const targetConfigs = configs || cachedShifts || DEFAULT_SHIFTS;
+  const shift = targetConfigs.find((s) => s.shiftKey === shiftKey);
+  if (!shift) return false;
+
+  // 1. Direct ID match
+  if (user.id && shift.auditorIds && shift.auditorIds.includes(user.id)) {
+    return true;
+  }
+
+  // 2. Name or email substring match
   const name = (user.name || '').trim().toLowerCase();
   const email = (user.email || '').trim().toLowerCase();
-  return allowed.some((target) => {
+  return (shift.auditorNames || []).some((target) => {
     const t = target.toLowerCase();
     return name.includes(t) || email.includes(t);
   });
@@ -89,7 +213,7 @@ export function isUserInShift(
 
 export interface AutoAssignOptions {
   force?: boolean;
-  shift?: ShiftType;
+  shift?: ShiftType | string;
   isSweep?: boolean;
 }
 
@@ -138,9 +262,10 @@ export async function autoAssignAudits(
     return { success: false, assignedCount: 0 };
   }
 
-  const currentShift = options?.shift || getCurrentManilaShift();
+  const shiftConfigs = await getDbShiftConfigs();
+  const currentShift = options?.shift || (await getActiveManilaShift());
   if (currentShift === 'OFF_SHIFT') {
-    // During off-hours (1 AM - 8 AM), hold until the 8 AM morning shift
+    // During off-hours, hold until the morning shift
     return { success: false, assignedCount: 0 };
   }
 
@@ -166,12 +291,12 @@ export async function autoAssignAudits(
   });
   if (required.length === 0) return { success: true, assignedCount: 0 };
 
-  // Fetch active users and filter to active shift auditors
+  // Fetch active users and filter to active shift auditors from DB configs
   const allUsers = await prisma.user.findMany({
     where: { isActive: true },
     select: { id: true, name: true, email: true, roles: true },
   });
-  const shiftAuditors = allUsers.filter((u) => isUserInShift(u, currentShift));
+  const shiftAuditors = allUsers.filter((u) => isUserInShift(u, currentShift, shiftConfigs));
 
   // Align with audit restrictions: exclude task assignees, inProgress mover, and MA updaters for this iteration
   const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
@@ -257,7 +382,7 @@ export async function autoAssignAudits(
 
   if (assigned.length === 0) return { success: true, assignedCount: 0 };
 
-  // Per gotchas: invalidate task cache before notifying and broadcasting
+  // Invalidate task cache before notifying and broadcasting
   await invalidateCache(`task:${task.id}`);
 
   const checklists = await prisma.checklist.findMany({
@@ -288,12 +413,12 @@ export async function autoAssignAudits(
 
 /**
  * Sweeps all tasks currently in review and assigns/adds the active shift auditors.
- * Used by 8 AM and 5 PM cron triggers, catch-up intervals, and external webhooks.
+ * Used by cron triggers, catch-up intervals, and external webhooks.
  */
 export async function sweepInReviewTasksForShiftAudits(
-  targetShift?: ShiftType
+  targetShift?: ShiftType | string
 ): Promise<{ checkedTasks: number; updatedTasks: number }> {
-  const shift = targetShift || getCurrentManilaShift();
+  const shift = targetShift || (await getActiveManilaShift());
   if (shift === 'OFF_SHIFT') return { checkedTasks: 0, updatedTasks: 0 };
 
   const inReviewTasks = await prisma.task.findMany({

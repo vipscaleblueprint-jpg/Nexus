@@ -28,6 +28,8 @@ import teamRouter from './routes/team.routes';
 import clickupRoutes from './routes/clickup.routes';
 import activityRoutes from './routes/activity.routes';
 import { emojiRouter } from './routes/emoji.routes';
+import draftRoutes from './routes/draft.routes';
+import { auditShiftRouter } from './routes/auditShift.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -217,6 +219,9 @@ app.use('/api/teams', teamRouter);
 app.use('/api/clickup', clickupRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/emojis', emojiRouter);
+app.use('/api/drafts', draftRoutes);
+app.use('/api/admin/audit-shifts', auditShiftRouter);
+app.use('/api/audit-shifts', auditShiftRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -3,6 +3,7 @@ import { User, Space, Task, WorkspaceRole } from './types';
 import { spacesApi, tasksApi } from '@/api';
 import { getRoles } from '@/api/roles';
 import { usersApi } from '@/api/users';
+import { draftsApi, TaskDraft } from '@/api/drafts';
 
 const SPACES_CACHE_KEY = 'nexus_spaces_cache';
 const TASKS_CACHE_KEY = 'nexus_tasks_cache';
@@ -208,6 +209,14 @@ interface AppState {
   activeDashboardTab: string | null;
   setActiveDashboardTab: (tab: string | null) => void;
 
+  // Drafts
+  drafts: TaskDraft[];
+  setDrafts: (drafts: TaskDraft[]) => void;
+  upsertDraft: (draft: TaskDraft) => void;
+  removeDraft: (draftId: string) => void;
+  removeDraftsByTask: (taskId: string, subtaskId?: string | null) => void;
+  loadDrafts: () => Promise<TaskDraft[]>;
+
   // UI State
   isSidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -254,6 +263,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pageTitle: null,
       modalTitle: null,
       activeDashboardTab: null,
+      drafts: [],
       isMobileSidebarOpen: false,
       activeMobileTask: null,
       isGalaxyFilterActive: false,
@@ -484,6 +494,41 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   activeDashboardTab: null,
   setActiveDashboardTab: (activeDashboardTab) => set({ activeDashboardTab }),
+
+  drafts: [],
+  setDrafts: (drafts) => set({ drafts }),
+  upsertDraft: (draft) =>
+    set((state) => {
+      const existingIndex = state.drafts.findIndex((d) => d.id === draft.id);
+      if (existingIndex >= 0) {
+        const next = [...state.drafts];
+        next[existingIndex] = draft;
+        return { drafts: next };
+      }
+      return { drafts: [draft, ...state.drafts] };
+    }),
+  removeDraft: (draftId) =>
+    set((state) => ({
+      drafts: state.drafts.filter((d) => d.id !== draftId),
+    })),
+  removeDraftsByTask: (taskId, subtaskId) =>
+    set((state) => ({
+      drafts: state.drafts.filter((d) => {
+        if (d.taskId !== taskId) return true;
+        if (subtaskId !== undefined && subtaskId !== null) return d.subtaskId !== subtaskId;
+        return false;
+      }),
+    })),
+  loadDrafts: async () => {
+    try {
+      const res = await draftsApi.getDrafts();
+      const list = res.drafts || [];
+      set({ drafts: list });
+      return list;
+    } catch {
+      return [];
+    }
+  },
 
   isSidebarCollapsed: typeof window !== 'undefined'
     ? (() => {

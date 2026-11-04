@@ -544,9 +544,10 @@ export function NotificationBell() {
             const cId = (n as any).commentId || (n as any).details?.commentId;
             const sId = (n as any).subtaskId || (n as any).details?.subtaskId;
             let commentQuery = "";
+            // Any subtask notification (not just comments) should open the subtask itself
+            if (sId) commentQuery += `&subtask=${encodeURIComponent(sId)}`;
             if (isCommentNotif) {
               if (cId) commentQuery += `&comment=${encodeURIComponent(cId)}`;
-              if (sId) commentQuery += `&subtask=${encodeURIComponent(sId)}`;
               if (n.content) commentQuery += `&commentText=${encodeURIComponent(n.content)}`;
             }
             router.push(`/activity?task=${n.task.id}${commentQuery}`);

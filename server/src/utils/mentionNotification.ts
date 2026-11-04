@@ -48,8 +48,10 @@ export async function notifyMentionedUsers(params: {
   taskId: string;
   content: string;
   isSubtask?: boolean;
+  subtaskId?: string | null;
 }): Promise<string[]> {
-  const { userIds, actorId, actorName, taskId, content, isSubtask } = params;
+  const { userIds, actorId, actorName, taskId, content, subtaskId } = params;
+  const isSubtask = params.isSubtask ?? Boolean(subtaskId);
   const candidates = Array.from(new Set(userIds)).filter(id => id && id !== actorId);
   if (candidates.length === 0) return [];
 
@@ -67,6 +69,7 @@ export async function notifyMentionedUsers(params: {
       userId: id,
       actorId,
       taskId,
+      subtaskId: subtaskId || null,
       type: 'MENTION',
       title: `${actorName || 'Someone'} mentioned you in ${where}`,
       content: toNotificationPreview(content),

@@ -547,10 +547,15 @@ export function ActivityCard({
       normType === 'REPLY' ||
       title.toLowerCase().includes('replied to your comment')
     ) {
+      // REPLY notifications go both to the parent comment's author ("replied to your comment")
+      // and to task/subtask assignees ("replied to a comment") — only the former is "your".
+      const isReplyToMe = title.toLowerCase().includes('replied to your comment');
       const titleNode = (
         <span className="leading-snug">
           <span className={actorClass}>{actorName}</span>
-          <span className={actionClass}> replied to your comment on </span>
+          <span className={actionClass}>
+            {isReplyToMe ? ' replied to your comment on ' : ' replied to a comment on '}
+          </span>
           {effectiveIsSubtask && <span className={actionClass}>subtask </span>}
           <span className={taskClass}>{effectiveTaskTitle}</span>
           {effectiveIsSubtask && taskTitle && taskTitle !== effectiveTaskTitle && (

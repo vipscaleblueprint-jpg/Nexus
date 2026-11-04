@@ -320,6 +320,8 @@ function ActivityFeedContent() {
     text?: string | null;
     subtaskId?: string | null;
   } | null>(null);
+  // Subtask to open for non-comment activity (status, assignment, checklist on a subtask)
+  const [openSubtaskId, setOpenSubtaskId] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -428,6 +430,22 @@ function ActivityFeedContent() {
       n?.type === 'MENTION' ||
       Boolean(n?.details?.commentId);
 
+    // Resolve the subtask this activity is about, for every activity type (not just comments).
+    // Audit logs on a subtask carry its id as entityId; notifications get subtaskId from the server.
+    const rawObj = typeof n === 'object' ? n : null;
+    const isSubtaskEntity = (o: any) => String(o?.entity || '').toLowerCase() === 'subtask';
+    const sId: string | null =
+      rawObj?.details?.subtaskId ||
+      rawObj?.subtaskId ||
+      item?.rawItem?.subtaskId ||
+      (isSubtaskEntity(rawObj) ? rawObj?.entityId : null) ||
+      (isSubtaskEntity(item?.rawItem) ? item?.rawItem?.entityId : null) ||
+      (typeof n === 'string' && typeof window !== 'undefined'
+        ? new URL(window.location.href).searchParams.get('subtask')
+        : null) ||
+      null;
+    setOpenSubtaskId(sId);
+
     if (isComment) {
       const cId =
         n?.details?.commentId ||
@@ -435,7 +453,6 @@ function ActivityFeedContent() {
         item?.rawItem?.commentId ||
         (typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('comment') : null);
       const cText = item?.content || n?.details?.text || n?.content || null;
-      const sId = n?.details?.subtaskId || n?.subtaskId || item?.rawItem?.subtaskId || null;
       setTargetCommentInfo({ id: cId, text: cText, subtaskId: sId });
     } else {
       setTargetCommentInfo(null);
@@ -466,6 +483,8 @@ function ActivityFeedContent() {
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href);
         url.searchParams.set('task', taskId);
+        if (sId) url.searchParams.set('subtask', sId);
+        else url.searchParams.delete('subtask');
         if (isComment) {
           const cId = n?.details?.commentId || n?.commentId;
           if (cId) url.searchParams.set('comment', cId);
@@ -484,8 +503,12 @@ function ActivityFeedContent() {
         if (typeof window !== 'undefined') {
           const url = new URL(window.location.href);
           url.searchParams.set('task', res.task.id);
-          if (res.subtask) {
-            url.searchParams.set('subtask', res.subtask.id);
+          const resolvedSubtaskId = sId || res.subtask?.id || null;
+          if (resolvedSubtaskId) {
+            url.searchParams.set('subtask', resolvedSubtaskId);
+            if (!sId) setOpenSubtaskId(resolvedSubtaskId);
+          } else {
+            url.searchParams.delete('subtask');
           }
           if (isComment) {
             const cId = n?.details?.commentId || n?.commentId;
@@ -1999,6 +2022,7 @@ function ActivityFeedContent() {
             lastUrlTaskId.current = null;
             setSelectedTask(null);
             setTargetCommentInfo(null);
+            setOpenSubtaskId(null);
             if (typeof window !== 'undefined') {
               const url = new URL(window.location.href);
               url.searchParams.delete('task');
@@ -2011,7 +2035,7 @@ function ActivityFeedContent() {
           task={selectedTask}
           targetCommentId={targetCommentInfo?.id}
           targetCommentText={targetCommentInfo?.text}
-          targetSubtaskId={targetCommentInfo?.subtaskId}
+          targetSubtaskId={targetCommentInfo?.subtaskId || openSubtaskId}
           scrollToComments={Boolean(targetCommentInfo)}
           workspaceRoles={workspaceRoles}
           onUpdateTask={(updatedTask) => {

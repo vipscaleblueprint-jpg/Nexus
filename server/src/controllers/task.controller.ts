@@ -248,6 +248,7 @@ async function queryListTasks(
 export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
   inProgressMovedBy: { id: string; name: string; avatarUrl?: string | null } | null;
   maUpdaterIds: string[];
+  maUpdaterNames: string[];
 }> {
   try {
     const logs = await prisma.auditLog.findMany({
@@ -257,6 +258,7 @@ export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
         OR: [
           { action: 'STATUS_CHANGE' },
           { action: 'COMMENT' },
+          { action: 'MA_UPDATE' },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -268,35 +270,62 @@ export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
 
     let inProgressMovedBy: { id: string; name: string; avatarUrl?: string | null } | null = null;
     const maUpdaterIds = new Set<string>();
+    const maUpdaterNames = new Set<string>();
 
     for (const log of logs) {
       const details = (log.details as any) || {};
       const newStatus = String(details.newStatus || '').toUpperCase().replace(/[^A-Z]/g, '');
 
+      // REVISION RESET BOUNDARY:
+      // Status change to REVISION stops the scan for the current round.
+      // All logs before this revision belong to the previous round.
+      if (log.action === 'STATUS_CHANGE' && newStatus === 'REVISION') {
+        break;
+      }
+
       if (log.action === 'STATUS_CHANGE' && newStatus === 'INPROGRESS' && !inProgressMovedBy) {
         if (details.movedById && details.movedByName) {
           inProgressMovedBy = { id: details.movedById, name: details.movedByName, avatarUrl: null };
           maUpdaterIds.add(details.movedById);
+          maUpdaterNames.add(details.movedByName);
         } else if (log.user && log.user.name && !log.user.name.toUpperCase().includes('VIPSCALE')) {
           inProgressMovedBy = { id: log.user.id, name: log.user.name, avatarUrl: log.user.avatarUrl };
           maUpdaterIds.add(log.user.id);
+          maUpdaterNames.add(log.user.name);
         }
       }
 
       if (details.isMaUpdate || details.source === 'sheets') {
         if (details.movedById) maUpdaterIds.add(details.movedById);
+        if (details.movedByName) maUpdaterNames.add(details.movedByName);
+        if (Array.isArray(details.maUpdaterIds)) {
+          details.maUpdaterIds.forEach((uid: string) => uid && maUpdaterIds.add(uid));
+        }
+        if (Array.isArray(details.maUpdaterNames)) {
+          details.maUpdaterNames.forEach((name: string) => name && maUpdaterNames.add(name));
+        }
         if (log.userId) maUpdaterIds.add(log.userId);
+        if (log.user?.name && !log.user.name.toUpperCase().includes('VIPSCALE')) {
+          maUpdaterNames.add(log.user.name);
+        }
       }
     }
 
     if (inProgressMovedBy?.id) {
       maUpdaterIds.add(inProgressMovedBy.id);
     }
+    if (inProgressMovedBy?.name) {
+      maUpdaterNames.add(inProgressMovedBy.name);
+    }
 
-    return { inProgressMovedBy, maUpdaterIds: Array.from(maUpdaterIds) };
+    return {
+      inProgressMovedBy,
+      maUpdaterIds: Array.from(maUpdaterIds),
+      maUpdaterNames: Array.from(maUpdaterNames),
+    };
   } catch (err) {
     console.error('[getTaskMoverAndUpdaters error]:', err);
-    return { inProgressMovedBy: null, maUpdaterIds: [] };
+    return { inProgressMovedBy: null, maUpdaterIds: [], maUpdaterNames: [] };
   }
 }
 export async function getTask(req: Request, res: Response) {
@@ -373,8 +402,8 @@ export async function getTask(req: Request, res: Response) {
 
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    const { inProgressMovedBy, maUpdaterIds } = await getTaskMoverAndUpdaters(task.id);
-    const enrichedTask = { ...task, inProgressMovedBy, maUpdaterIds };
+    const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
+    const enrichedTask = { ...task, inProgressMovedBy, maUpdaterIds, maUpdaterNames };
 
     res.json({ task: enrichedTask, subtask: foundSubtask, cached: false });
     // Cache under the task ID
@@ -3371,10 +3400,14 @@ export async function createChecklistItem(req: Request, res: Response) {
       data.completed = Boolean(completed);
       if (completed && userId) {
         if (isAuditChecklistName(checklist?.name)) {
-          const { inProgressMovedBy, maUpdaterIds } = await getTaskMoverAndUpdaters(taskId);
-          if (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId)) {
+          const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId);
+          const reqUser = (req as any).user;
+          const reqUserName = reqUser?.name?.trim().toLowerCase();
+          const isBlocked = (userId && (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId))) ||
+            (reqUserName && maUpdaterNames.some((n: string) => n && n.trim().toLowerCase() === reqUserName));
+          if (isBlocked) {
             return res.status(403).json({
-              error: 'You cannot audit this task because you created an MA update for it. Please have another team member with the required audit role perform this audit.',
+              error: 'You cannot audit this task because you or your group contributed to this task iteration. Please have another team member with the required audit role perform this audit.',
             });
           }
         }
@@ -3717,10 +3750,14 @@ export async function updateChecklistItem(req: Request, res: Response) {
         });
         const targetTaskId = checkItem?.checklist?.taskId || req.params.id;
         if (isAuditChecklistName(checkItem?.checklist?.name) && targetTaskId) {
-          const { inProgressMovedBy, maUpdaterIds } = await getTaskMoverAndUpdaters(targetTaskId);
-          if (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId)) {
+          const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(targetTaskId);
+          const reqUser = (req as any).user;
+          const reqUserName = reqUser?.name?.trim().toLowerCase();
+          const isBlocked = (userId && (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId))) ||
+            (reqUserName && maUpdaterNames.some((n: string) => n && n.trim().toLowerCase() === reqUserName));
+          if (isBlocked) {
             return res.status(403).json({
-              error: 'You cannot audit this task because you created an MA update for it. Please have another team member with the required audit role perform this audit.',
+              error: 'You cannot audit this task because you or your group contributed to this task iteration. Please have another team member with the required audit role perform this audit.',
             });
           }
         }

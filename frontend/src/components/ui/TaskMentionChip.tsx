@@ -101,14 +101,7 @@ export function TaskMentionChip({
   let roleRestrictions: string[] = taskData?.assigneeRoleRestrictions || [];
 
   const isClosed = ['CLOSED', 'DONE'].includes((statusName || '').toUpperCase());
-  const chipBg = isSubtask
-    ? 'bg-[var(--task-chip-sub)] hover:bg-[var(--task-chip-sub)]/80'
-    : 'bg-[var(--task-chip)] hover:bg-[var(--task-chip)]/80';
-  const chipRing = isSubtask ? 'border-[var(--task-chip-sub)]' : 'border-[var(--task-chip)]';
-
-  const titleClass = `cursor-pointer border-b pb-[1px] transition-all duration-300 align-middle ${
-    isTitleHovered ? 'border-zinc-500' : 'border-transparent'
-  } ${isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'}`;
+  const effectiveIsComment = isComment !== false && attrs?.isComment !== false;
 
   const openTask = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -124,19 +117,146 @@ export function TaskMentionChip({
     );
   };
 
+  // ClickUp-style inline comment rendering: flows naturally with the text, wraps without
+  // forcing line breaks or card boxes, and displays status pill + assignee avatars inline.
+  if (effectiveIsComment) {
+    const trimmedTitle = (resolvedTitle || '').trim();
+    const words = trimmedTitle.split(/\s+/);
+    const firstWord = words[0] || '';
+    const remainingWords = words.slice(1).join(' ');
+
+    const titleProps = {
+      title: resolvedTitle ? `${resolvedTitle} (Click to open)` : 'Open Task Detail',
+      onClick: openTask,
+      onMouseEnter: () => setIsTitleHovered(true),
+      onMouseLeave: () => setIsTitleHovered(false),
+    };
+
+    return (
+      <span className={`inline align-baseline mx-0.5 select-text ${className}`}>
+        {/* Clickable task link: status icon + title */}
+        <span
+          className="inline cursor-pointer group/task-link select-text"
+          {...titleProps}
+        >
+          {/* Status icon and first word kept together so icon is never stranded alone at line end */}
+          <span className="whitespace-nowrap inline-flex items-center align-baseline">
+            <span
+              className="inline-flex items-center justify-center shrink-0 mr-1.5 align-middle transition-transform duration-200 group-hover/task-link:scale-110 select-none"
+              title={`Status: ${statusName || 'Open'}`}
+            >
+              {isClosed ? (
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: statusColor, fill: 'transparent' }} />
+              ) : (statusName || '').toUpperCase() === 'KYC' ? (
+                <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: statusColor }} />
+              ) : (
+                <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: statusColor }} />
+              )}
+            </span>
+            <span
+              className={`inline font-medium text-zinc-100 group-hover/task-link:text-white underline underline-offset-2 decoration-zinc-400/80 group-hover/task-link:decoration-white transition-colors ${
+                isClosed ? 'line-through opacity-75 decoration-zinc-500' : ''
+              } ${isSubtask ? 'text-[13px] text-zinc-300' : 'text-[14px]'}`}
+            >
+              {firstWord}
+            </span>
+          </span>
+
+          {/* Remaining words wrap naturally across lines */}
+          {remainingWords ? (
+            <span
+              className={`inline font-medium text-zinc-100 group-hover/task-link:text-white underline underline-offset-2 decoration-zinc-400/80 group-hover/task-link:decoration-white transition-colors ${
+                isClosed ? 'line-through opacity-75 decoration-zinc-500' : ''
+              } ${isSubtask ? 'text-[13px] text-zinc-300' : 'text-[14px]'}`}
+            >
+              {' ' + remainingWords}
+            </span>
+          ) : null}
+        </span>
+
+        {/* Status badge and assignee avatars: kept inline right after the title */}
+        {(statusName || assignees.length > 0) && (
+          <span
+            className="inline-flex items-center align-middle whitespace-nowrap ml-1.5 mr-0.5 select-none shrink-0 gap-1.5 cursor-pointer"
+            onClick={openTask}
+            title={resolvedTitle ? `${resolvedTitle} (Click to open)` : 'Open Task Detail'}
+          >
+            {/* Status pill badge */}
+            {statusName && (
+              <span
+                className={`px-1.5 py-[1.5px] rounded text-[9.5px] font-bold uppercase tracking-wider text-white inline-flex items-center justify-center leading-none select-none shadow-xs ${
+                  isClosed ? 'opacity-75' : ''
+                } ${isSubtask ? 'opacity-70' : ''}`}
+                style={{ backgroundColor: statusColor }}
+                title={`Status: ${statusName}`}
+              >
+                {statusName}
+              </span>
+            )}
+
+            {/* Assignees */}
+            {assignees.length > 0 && (
+              <span className="inline-flex items-center -space-x-1 select-none">
+                {assignees.slice(0, 3).map((user: any, i: number) => {
+                  const name = user.name || user.fullName || 'Assignee';
+                  const initial = name.charAt(0).toUpperCase();
+                  const colors = [
+                    'bg-teal-600',
+                    'bg-blue-600',
+                    'bg-purple-600',
+                    'bg-emerald-600',
+                    'bg-rose-600',
+                    'bg-amber-600',
+                    'bg-indigo-600',
+                    'bg-cyan-600'
+                  ];
+                  const charCode = name.charCodeAt(0) || 0;
+                  const bgCol = colors[charCode % colors.length];
+
+                  return (
+                    <span
+                      key={user.id || i}
+                      className={`w-[18px] h-[18px] rounded-full overflow-hidden border border-zinc-900 dark:border-zinc-950 z-10 shrink-0 ${bgCol} flex items-center justify-center relative shadow-xs`}
+                      style={{ zIndex: 10 - i, marginLeft: i > 0 ? '-4px' : '0' }}
+                      title={name}
+                    >
+                      {user.avatarUrl ? (
+                        <img src={user.avatarUrl} alt={name} className="w-full h-full object-cover rounded-full" />
+                      ) : (
+                        <span className="text-[9px] font-bold text-white leading-none">
+                          {initial}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })}
+              </span>
+            )}
+          </span>
+        )}
+        <span className="cursor-text select-none">&#8203;</span>
+      </span>
+    );
+  }
+
+  // Non-comment fallback (card chip view)
+  const chipBg = isSubtask
+    ? 'bg-[var(--task-chip-sub)] hover:bg-[var(--task-chip-sub)]/80'
+    : 'bg-[var(--task-chip)] hover:bg-[var(--task-chip)]/80';
+  const chipRing = isSubtask ? 'border-[var(--task-chip-sub)]' : 'border-[var(--task-chip)]';
+
+  const titleClass = `cursor-pointer border-b pb-[1px] transition-all duration-300 align-middle ${
+    isTitleHovered ? 'border-zinc-500' : 'border-transparent'
+  } ${isSubtask ? 'text-[13px] font-normal text-zinc-400' : 'text-[15px] font-medium text-zinc-100'}`;
+
+  const computedMaxTitleWidth = maxTitleWidth || 'max-w-[220px] sm:max-w-[340px] md:max-w-[440px]';
+
   const titleProps = {
     title: resolvedTitle ? `${resolvedTitle} (Click to open)` : 'Open Task Detail',
     onMouseEnter: () => setIsTitleHovered(true),
     onMouseLeave: () => setIsTitleHovered(false),
     onClick: openTask,
   };
-
-  const effectiveIsComment = isComment !== false && attrs?.isComment !== false;
-  const computedMaxTitleWidth = maxTitleWidth || (
-    effectiveIsComment
-      ? 'max-w-[130px] sm:max-w-[150px] md:max-w-[170px]'
-      : 'max-w-[220px] sm:max-w-[340px] md:max-w-[440px]'
-  );
 
   return (
     <span className={`inline-block align-middle my-0.5 mx-0.5 select-none max-w-full ${className}`}>
@@ -174,7 +294,6 @@ export function TaskMentionChip({
 
         {/* Controls */}
         <span className="whitespace-nowrap inline-flex items-center shrink-0">
-
           {/* Deliverables AlignLeft icon */}
           <span
             ref={descTriggerRef}

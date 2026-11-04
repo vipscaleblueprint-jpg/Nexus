@@ -25,6 +25,7 @@ export function Header() {
   const setCurrentUser = useAppStore(state => state.setCurrentUser);
   const isSidebarCollapsed = useAppStore(state => state.isSidebarCollapsed);
   const toggleSidebar = useAppStore(state => state.toggleSidebar);
+  const toggleMobileSidebar = useAppStore(state => state.toggleMobileSidebar);
 
   const resetStore = useAppStore(state => state.resetStore);
 
@@ -48,15 +49,15 @@ export function Header() {
 
   if (!currentUser) {
     return (
-      <header className="bg-card/90 border-b border-zinc-800/60 px-6 py-3 backdrop-blur-md relative z-[150]">
+      <header className="nexus-mobile-header bg-card/90 border-b border-border px-3.5 py-2.5 sm:px-6 sm:py-3 backdrop-blur-md relative z-[150]">
         <div className="flex items-center gap-3">
           <button
-            onClick={toggleSidebar}
+            onClick={() => (typeof window !== 'undefined' && window.innerWidth <= 768 ? toggleMobileSidebar() : toggleSidebar())}
             className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
           >
             <PanelLeft className="w-5 h-5" />
           </button>
-          <span className="text-xs font-semibold text-zinc-200">{title}</span>
+          <span className="nexus-header-title text-xs font-semibold text-zinc-200 truncate">{title}</span>
         </div>
       </header>
     );
@@ -65,17 +66,17 @@ export function Header() {
   const activeUser: User = currentUser;
 
   return (
-    <header className="bg-card/90 border-b border-zinc-800/60 text-zinc-100 backdrop-blur-md relative z-[150]">
-      <div className="px-6 py-3 flex items-center justify-between">
+    <header className="nexus-mobile-header bg-card/90 border-b border-border text-zinc-100 backdrop-blur-md relative z-[150]">
+      <div className="px-3.5 py-2.5 sm:px-6 sm:py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
-            onClick={toggleSidebar}
+            onClick={() => (typeof window !== 'undefined' && window.innerWidth <= 768 ? toggleMobileSidebar() : toggleSidebar())}
             className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors -ml-2"
           >
             <PanelLeft className="w-5 h-5" />
           </button>
           <div className="h-4 w-px bg-zinc-800 mx-1"></div>
-          <span className="text-xs font-semibold text-zinc-200">{title}</span>
+          <span className="nexus-header-title text-xs font-semibold text-zinc-200 truncate">{title}</span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -116,7 +117,7 @@ export function Header() {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -10 }}
                 transition={{ duration: 0.15, ease: "easeOut" }}
-                className="absolute right-0 mt-2 w-64 bg-card border border-zinc-800/80 rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3 origin-top-right"
+                className="nexus-profile-dropdown absolute right-0 mt-2 w-64 max-w-[calc(100vw-24px)] bg-card border border-border rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3 origin-top-right"
               >
                 <div className="flex items-center gap-3 pb-3 border-b border-zinc-800/60">
                 <div className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 text-white font-bold flex items-center justify-center text-xs shrink-0">

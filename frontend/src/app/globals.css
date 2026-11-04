@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "../styles/theme.css";
+@import "../styles/mobile.css";
 
 /* The app is dark-first: light mode (.theme-light below) inverts the palette instead of
    using Tailwind's dark: variant. By default dark: follows the OS theme, so components

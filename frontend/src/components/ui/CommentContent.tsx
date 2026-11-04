@@ -27,6 +27,7 @@ interface CommentMediaContextValue {
   onPreviewImage?: (src: string, allImages?: string[]) => void;
   allImages: string[];
   autoLoadImages: boolean;
+  maxLinkLength?: number;
 }
 
 const CommentMediaContext = React.createContext<CommentMediaContextValue>({
@@ -124,6 +125,7 @@ function PreloadableMarkdownVideo({ src }: { src: string }) {
 
 function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
   void node;
+  const { maxLinkLength } = React.useContext(CommentMediaContext);
   const target = href || '';
   if (target.match(/\.(mp4|webm|ogg|mov)(\?.*)?$/i)) {
     return <PreloadableMarkdownVideo src={target} />;
@@ -163,7 +165,8 @@ function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
     <LinkWithPreview
       {...rest}
       href={normalizeHref(target)}
-      className="text-blue-600 dark:text-blue-400 hover:bg-blue-500/15 hover:text-blue-700 dark:hover:text-blue-300 rounded-sm transition-colors underline"
+      maxLinkLength={maxLinkLength}
+      className="text-blue-600 dark:text-blue-400 hover:bg-blue-500/15 hover:text-blue-700 dark:hover:text-blue-300 rounded-sm transition-colors underline break-all [overflow-wrap:anywhere]"
       onClick={(e) => e.stopPropagation()}
     >
       {children}
@@ -203,6 +206,7 @@ export interface CommentContentProps {
   className?: string;
   onPreviewImage?: (src: string, allImages?: string[]) => void;
   autoLoadImages?: boolean;
+  maxLinkLength?: number;
 }
 
 /**
@@ -215,6 +219,7 @@ export function CommentContent({
   className = '',
   onPreviewImage,
   autoLoadImages = false,
+  maxLinkLength,
 }: CommentContentProps) {
   const hasLoadedUsers = useAppStore(state => state.hasLoadedUsers);
   const workspaceUsers = useAppStore(state => state.workspaceUsers);
@@ -233,14 +238,15 @@ export function CommentContent({
     onPreviewImage,
     allImages: contentImages,
     autoLoadImages,
-  }), [onPreviewImage, contentImages, autoLoadImages]);
+    maxLinkLength,
+  }), [onPreviewImage, contentImages, autoLoadImages, maxLinkLength]);
 
   const linkedContent = useMemo(() => {
     return linkifyPlainMentions(content, workspaceUsers);
   }, [content, workspaceUsers]);
 
   return (
-    <div className={`select-text [&_p:empty:not(:first-child):not(:last-child)]:min-h-[0.8em] [&_p]:my-0.5 [&_p]:leading-snug [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_img]:my-0 [&_img]:inline-block ${className}`}>
+    <div className={`select-text break-words [overflow-wrap:anywhere] [&_p:empty:not(:first-child):not(:last-child)]:min-h-[0.8em] [&_p]:my-0.5 [&_p]:leading-snug [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_img]:my-0 [&_img]:inline-block ${className}`}>
       <CommentMediaContext.Provider value={mediaContextValue}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}

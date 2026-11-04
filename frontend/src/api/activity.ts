@@ -2,6 +2,7 @@ import { apiClient } from './client';
 
 export interface GetAuditLogsParams {
   userId?: string;
+  search?: string;
   page?: number;
   limit?: number;
   category?: string;
@@ -23,7 +24,12 @@ export const activityApi = {
       query = `?userId=${encodeURIComponent(paramsOrUserId)}`;
     } else if (paramsOrUserId) {
       const searchParams = new URLSearchParams();
-      if (paramsOrUserId.userId) searchParams.set('userId', paramsOrUserId.userId);
+      if (paramsOrUserId.userId && paramsOrUserId.userId !== 'all') {
+        searchParams.set('userId', paramsOrUserId.userId);
+      }
+      if (paramsOrUserId.search && paramsOrUserId.search.trim()) {
+        searchParams.set('search', paramsOrUserId.search.trim());
+      }
       if (paramsOrUserId.page) searchParams.set('page', paramsOrUserId.page.toString());
       if (paramsOrUserId.limit) searchParams.set('limit', paramsOrUserId.limit.toString());
       if (paramsOrUserId.category && paramsOrUserId.category !== 'all') {

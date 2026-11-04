@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
+import { isGalaxyTask } from '@/lib/galaxyTask';
 import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil, ArrowDownUp } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
@@ -200,7 +201,7 @@ const MemoizedColumnWrapper = memo(function MemoizedColumnWrapper({
     <div
       ref={sortable.setNodeRef}
       style={style}
-      className={`h-full ${hasMarginRight ? 'mr-4' : ''} ${isGhost ? 'z-50 relative' : ''}`}
+      className={`h-full kanban-column-snap ${hasMarginRight ? 'mr-3 sm:mr-4' : ''} ${isGhost ? 'z-50 relative' : ''}`}
     >
       <KanbanColumn
         status={status}
@@ -240,7 +241,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   // Select only what the board uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
-  const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache } = useAppStore(useShallow((s) => ({
+  const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, isGalaxyFilterActive, setActiveMobileTask } = useAppStore(useShallow((s) => ({
     currentUser: s.currentUser,
     workspaceRoles: s.workspaceRoles,
     loadRoles: s.loadRoles,
@@ -248,6 +249,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     workspaceTeams: s.workspaceTeams,
     loadTeams: s.loadTeams,
     hydrateTeamsFromCache: s.hydrateTeamsFromCache,
+    isGalaxyFilterActive: s.isGalaxyFilterActive,
+    setActiveMobileTask: s.setActiveMobileTask,
   })));
 
   useEffect(() => {
@@ -262,15 +265,27 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [localTasks, setLocalTasks] = useState(tasks);
 
+  // Mobile responsiveness states
+  const [activeMobileColumn, setActiveMobileColumn] = useState<string | null>(null);
+
   const handleTaskClick = useCallback((task: Task) => {
     isDraggingRef.current = false;
     setActiveTask(null);
     setActiveColumn(null);
     setActiveGroup(null);
+
+    // On mobile screens (<= 768px), selecting a card highlights it in the mobile bottom navbar quick inspector
+    // showing all important details cleanly without mis-tapping dense card buttons
+    if (typeof window !== 'undefined' && window.innerWidth <= 768) {
+      setActiveMobileTask(task);
+      return;
+    }
+
     if (onTaskClick) {
       onTaskClick(task);
     }
   }, [onTaskClick]);
+
 
   useEffect(() => {
     const handleOpenTask = () => {
@@ -766,7 +781,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     localStatuses.forEach((s: any) => {
       if (s.name) canonicalStatus[s.name.trim().toUpperCase()] = s.name;
     });
-    const map = localTasks.reduce((acc: Record<string, Task[]>, task) => {
+    const filteredTasks = isGalaxyFilterActive ? localTasks.filter((t) => isGalaxyTask(t)) : localTasks;
+    const map = filteredTasks.reduce((acc: Record<string, Task[]>, task) => {
       const raw = task.status || 'PENDING';
       const status = canonicalStatus[raw.trim().toUpperCase()] || raw;
       if (!acc[status]) acc[status] = [];
@@ -791,7 +807,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
 
     return map;
-  }, [localTasks, localStatuses, sortLatestClosedFirst, isClosedStatus, getTaskClosedTimestamp]);
+  }, [localTasks, localStatuses, sortLatestClosedFirst, isClosedStatus, getTaskClosedTimestamp, isGalaxyFilterActive]);
 
   // Group columns into configured categories + dynamic custom groups
   const categorizedColumns = useMemo(() => {
@@ -851,6 +867,25 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const sortableColumnIds = useMemo(() => {
     return categorizedColumns.filter(c => !c.isCatchAll).map(c => c.id);
   }, [categorizedColumns]);
+
+  const allColumnStatuses = useMemo(() => {
+    const list: string[] = [];
+    categorizedColumns.forEach((cat) => {
+      cat.statuses.forEach((s: string) => {
+        if (!list.includes(s)) list.push(s);
+      });
+    });
+    return list;
+  }, [categorizedColumns]);
+
+  const handleScrollToColumn = useCallback((colStatus: string) => {
+    setActiveMobileColumn(colStatus);
+    if (!boardContainerRef.current) return;
+    const colEl = boardContainerRef.current.querySelector(`[data-column-name="${colStatus}"]`);
+    if (colEl) {
+      colEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, []);
 
   // When a search match is targeted, ensure its column and category are uncollapsed so the card is rendered
   useEffect(() => {
@@ -1388,6 +1423,31 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
+      {/* ── MOBILE COLUMN QUICK PILL SWITCHER ── */}
+      {allColumnStatuses.length > 0 && (
+        <div className="md:hidden flex items-center gap-1.5 overflow-x-auto px-3 py-2 border-b border-border bg-card/60 backdrop-blur-sm shrink-0 scrollbar-none">
+          {allColumnStatuses.map((status) => {
+            const count = tasksByStatus[status]?.length || 0;
+            const isActive = activeMobileColumn === status;
+            return (
+              <button
+                key={status}
+                onClick={() => handleScrollToColumn(status)}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 shrink-0 ${
+                  isActive
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-hover-subtle text-foreground hover:bg-hover-subtle/80 border border-border/50'
+                }`}
+              >
+                <span className="uppercase">{status}</span>
+                <span className={`text-[10px] px-1 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-black/10 dark:bg-white/10 text-muted-foreground'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div
           ref={boardContainerRef}
           onWheel={handleWheelScroll}
@@ -1444,7 +1504,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                 e.currentTarget.scrollTop = 0;
                               }
                             }}
-                            className={`rounded-2xl h-full p-4 pt-3 overflow-hidden flex flex-col ${
+                            className={`rounded-2xl h-full p-2.5 sm:p-4 pt-2.5 sm:pt-3 overflow-visible sm:overflow-hidden flex flex-col ${
                               category.isCatchAll 
                                 ? 'bg-transparent border-transparent shadow-none' 
                                 : 'border bg-card shadow-sm shadow-black/5 dark:shadow-black/20'
@@ -1454,7 +1514,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                           {/* Group Header */}
                           {!category.isCatchAll && (
                             <div
-                              className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing"
+                              className="flex items-center justify-between mb-3 w-full cursor-grab active:cursor-grabbing sticky left-0 z-10"
                               {...(category.id.startsWith('group_') ? { 'data-group-drag-handle': 'true' } : {})}
                               {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.listeners : {})}
                               {...((category.id.startsWith('group_') && editingGroup !== category.title) ? sortable.attributes : {})}
@@ -1611,7 +1671,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                           )}
 
                           {/* Columns inside the group */}
-                          <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max">
+                          <div className="flex items-start flex-1 min-h-0 shrink-0 min-w-max gap-3 sm:gap-0">
                             <SortableContext items={category.statuses} strategy={horizontalListSortingStrategy}>
                               {category.statuses.map((status: string, index: number) => {
                                 const isCollapsed = collapsedColumns[status];
@@ -1731,7 +1791,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
           </SortableContext>
 
           {/* Add Group Column / Input */}
-          <div className="flex-shrink-0 w-[350px]">
+          <div className="flex-shrink-0 w-[calc(100vw-36px)] max-w-[320px] sm:w-[350px]">
             <div className="flex flex-col pt-3">
               {!isAddingGroup ? (
                 <button
@@ -1897,6 +1957,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
         }}
         reviewButtonText={blockedAuditAlert.uncheckedAudits.length > 0 ? 'Open Task & Review Audits' : 'Open Task & Review Subtasks'}
       />
+
     </DndContext>
   );
 }

@@ -212,6 +212,14 @@ interface AppState {
   isSidebarCollapsed: boolean;
   toggleSidebar: () => void;
   setSidebarCollapsed: (isSidebarCollapsed: boolean) => void;
+  isMobileSidebarOpen: boolean;
+  toggleMobileSidebar: () => void;
+  setMobileSidebarOpen: (open: boolean) => void;
+  activeMobileTask: Task | null;
+  setActiveMobileTask: (task: Task | null) => void;
+  isGalaxyFilterActive: boolean;
+  toggleGalaxyFilter: () => void;
+  setGalaxyFilterActive: (active: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -246,6 +254,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       pageTitle: null,
       modalTitle: null,
       activeDashboardTab: null,
+      isMobileSidebarOpen: false,
+      activeMobileTask: null,
+      isGalaxyFilterActive: false,
     });
   },
   
@@ -501,4 +512,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ isSidebarCollapsed });
   },
+  isMobileSidebarOpen: false,
+  toggleMobileSidebar: () => set((state) => ({ isMobileSidebarOpen: !state.isMobileSidebarOpen })),
+  setMobileSidebarOpen: (isMobileSidebarOpen: boolean) => set({ isMobileSidebarOpen }),
+  activeMobileTask: null,
+  setActiveMobileTask: (activeMobileTask: Task | null) => set({ activeMobileTask }),
+  isGalaxyFilterActive: false,
+  toggleGalaxyFilter: () => set((state) => ({ isGalaxyFilterActive: !state.isGalaxyFilterActive })),
+  setGalaxyFilterActive: (isGalaxyFilterActive: boolean) => set({ isGalaxyFilterActive }),
 }));

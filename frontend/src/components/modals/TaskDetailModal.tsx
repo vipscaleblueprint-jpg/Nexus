@@ -3197,7 +3197,7 @@ export function TaskDetailModalContent({
   };
 
   return (
-    <div className="w-full h-full relative overflow-hidden flex flex-col">
+    <div data-task-detail-modal="" className="w-full h-full relative overflow-hidden flex flex-col task-detail-modal">
       {activeSubtask && (
         <div className="absolute inset-0 z-50 bg-background flex flex-col">
           <SubtaskDetailView
@@ -3379,10 +3379,10 @@ export function TaskDetailModalContent({
         </div>
 
         {/* Content area: Split layout */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="nexus-task-modal-split flex flex-1 overflow-hidden">
 
           {/* Left Panel: Details & Description */}
-          <div className="flex-1 overflow-y-auto border-r border-border custom-scrollbar">
+          <div className="nexus-task-left-panel flex-1 overflow-y-auto border-r border-border custom-scrollbar">
             <div className="p-8">
 
               <div className="mb-8 group max-w-3xl w-full">
@@ -4270,7 +4270,7 @@ export function TaskDetailModalContent({
           />
 
           {/* Right Panel: Activity */}
-          <div ref={activityPanelRef} style={{ width: activityWidth }} className="flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60">
+          <div ref={activityPanelRef} style={{ width: activityWidth }} className="nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60">
             <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
               <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
               <div className="flex gap-3">
@@ -4518,7 +4518,10 @@ export function TaskDetailModalContent({
                         </div>
                         {/* Reply input */}
                         {!isReply && replyingToId === comment.id && (
-                          <CommentReplyInput                            onSubmit={async (content, mentionIds) => {
+                          <CommentReplyInput
+                            workspaceUsers={workspaceUsers}
+                            currentUser={currentUser}
+                            onSubmit={async (content, mentionIds) => {
                               await handleSubmitReply(comment.id, content, mentionIds);
                             }}
                             onCancel={() => setReplyingToId(null)}
@@ -7483,10 +7486,10 @@ export function SubtaskDetailView({
       </div>
 
       {/* Content area: Split layout matching main task */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="nexus-task-modal-split flex-1 flex overflow-hidden">
 
         {/* Left Panel: Details & Description */}
-        <div className="flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
+        <div className="nexus-task-left-panel flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
           <div className="p-8">
             <div className="flex items-center gap-1.5 text-[13px] text-zinc-500 mb-2 cursor-pointer hover:text-zinc-300 transition-colors group/subtask-parent w-fit" onClick={onClose}>
               <span>Subtask of</span>
@@ -8272,7 +8275,7 @@ export function SubtaskDetailView({
         <div
           ref={subtaskActivityPanelRef}
           style={{ width: activityWidth }}
-          className="flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 z-10"
+          className="nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 z-10"
         >
           <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
@@ -8527,7 +8530,10 @@ export function SubtaskDetailView({
 
                       {/* Reply input */}
                       {!isReply && replyingToId === c.id && (
-                        <CommentReplyInput                          onSubmit={async (content, mentionIds) => {
+                        <CommentReplyInput
+                          workspaceUsers={workspaceUsers}
+                          currentUser={currentUser}
+                          onSubmit={async (content, mentionIds) => {
                             await handleSubmitReply(c.id, content, mentionIds);
                           }}
                           onCancel={() => setReplyingToId(null)}
@@ -8931,7 +8937,7 @@ export function SubtaskDetailView({
             </div>
           </div>
 
-          <div className="p-5 border-t border-zinc-800/60 shrink-0 bg-card flex flex-col gap-2">
+          <div className="p-3 sm:p-5 border-t border-zinc-800/60 shrink-0 bg-card flex flex-col gap-2" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}>
             <div className="relative">
               {stagedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2.5 mb-2">
@@ -9507,11 +9513,12 @@ export function TaskDetailModal(props: Props) {
         {props.isOpen && fullTask && (
           <motion.div
             key="full-modal"
+            data-task-detail-modal=""
             initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 1 }}
             transition={{ duration: 0 }}
-            className="absolute inset-0 z-[80] bg-background flex flex-col cursor-default"
+            className="absolute inset-0 z-[80] bg-background flex flex-col cursor-default task-detail-modal"
           >
             <TaskDetailModalContent
               {...props}
@@ -9535,7 +9542,7 @@ export function TaskDetailModal(props: Props) {
         <div
           key="modal-backdrop"
           data-task-detail-modal=""
-          className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+          className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4 cursor-pointer task-detail-modal"
           onPointerDown={(e) => {
             if (e.target === e.currentTarget) {
               props.onClose();

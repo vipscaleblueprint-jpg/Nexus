@@ -3,6 +3,7 @@
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
+import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 import { useAppStore } from '@/lib/store';
 import { useEffect, useRef, Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -17,6 +18,21 @@ import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } fro
 import { formatTabTitle, resolveRouteTitle, updateFaviconBadge } from '@/lib/tabManager';
 import { applyTheme, getStoredTheme } from '@/lib/theme';
 import { playNotificationSound, preloadCustomSound } from '@/lib/soundNotification';
+
+// Global guard for browsers/Next.js devtools releasing inactive pointer capture
+if (typeof window !== 'undefined' && typeof Element !== 'undefined' && Element.prototype.releasePointerCapture) {
+  const origReleasePointerCapture = Element.prototype.releasePointerCapture;
+  Element.prototype.releasePointerCapture = function (pointerId: number) {
+    try {
+      if (typeof this.hasPointerCapture === 'function' && !this.hasPointerCapture(pointerId)) {
+        return;
+      }
+      return origReleasePointerCapture.call(this, pointerId);
+    } catch {
+      // Gracefully ignore DOMException when pointerId was already released by browser
+    }
+  };
+}
 
 function TabTitleSync() {
   const pathname = usePathname();
@@ -74,6 +90,8 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     setAuthStatus,
     resetStore,
     setUnreadNotifications,
+    isMobileSidebarOpen,
+    setMobileSidebarOpen,
   } = useAppStore();
 
   // Track when spaces were last fetched so we don't refetch on every navigation.
@@ -88,6 +106,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     markNavigation(pathname);
+    if (isMobileSidebarOpen) {
+      setMobileSidebarOpen(false);
+    }
   }, [pathname]);
 
   // Synchronize active theme for current user
@@ -362,20 +383,28 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
       <Suspense fallback={null}><TabTitleSync /></Suspense>
       <Suspense fallback={<div className="w-[260px] h-full bg-background" />}>
+        {isMobileSidebarOpen && (
+          <div
+            onClick={() => setMobileSidebarOpen(false)}
+            className="nexus-mobile-backdrop animate-mobile-fade-in"
+            aria-label="Close navigation"
+          />
+        )}
         <Sidebar spaces={spaces} />
       </Suspense>
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-background">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-background min-w-0">
         <Header />
         <div className="flex-1 relative overflow-hidden">
           <main
             id="main-scroll-container"
-            className={`w-full h-full ${pathname?.startsWith('/lists') ? 'overflow-hidden' : 'overflow-y-auto'} bg-background relative z-0 isolate`}
+            className={`w-full h-full ${pathname?.startsWith('/lists') ? 'overflow-hidden' : 'overflow-y-auto pb-20 md:pb-0'} bg-background relative z-0 isolate`}
           >
             {children}
           </main>
           <div id="nexus-task-modal-portal" className="absolute inset-0 z-[80] pointer-events-none [&>*]:pointer-events-auto" />
         </div>
       </div>
+      <MobileBottomNav />
       <ToastContainer />
       <MentionConfetti />
     </div>

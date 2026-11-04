@@ -282,3 +282,23 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* ==========================================================================
+   MOBILE RESPONSIVE THEME UTILITIES
+   ========================================================================== */
+.mobile-safe-container {
+  padding-top: max(env(safe-area-inset-top), 0.75rem);
+  padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+  padding-left: max(env(safe-area-inset-left), 0.75rem);
+  padding-right: max(env(safe-area-inset-right), 0.75rem);
+}
+
+.mobile-card-surface {
+  background-color: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.mobile-interactive:active {
+  background-color: var(--hover-subtle);
+}

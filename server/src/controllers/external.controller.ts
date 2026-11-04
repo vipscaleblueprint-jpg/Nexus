@@ -23,6 +23,7 @@ import { autoAssignAudits, sweepInReviewTasksForShiftAudits } from '../services/
 import { isReviewStatus } from '../utils/auditChecklist';
 import { getAggregatedRoleMap } from '../services/roleMapService';
 import { findUserByName } from './sheets.controller';
+import { getTaskMoverAndUpdaters } from './task.controller';
 
 
 async function getOrCreateVipScaleUser() {
@@ -993,7 +994,8 @@ export async function updateTask(req: Request, res: Response) {
       }
     });
 
-    const broadcastPayload = updatedFullTask || task;
+    const moverInfo = await getTaskMoverAndUpdaters(task.id);
+    const broadcastPayload = { ...(updatedFullTask || task), ...moverInfo };
     io.emit('task:updated', broadcastPayload);
     if (task.listId) {
       io.to(`list:${task.listId}`).emit('task:updated', broadcastPayload);
@@ -1009,67 +1011,103 @@ export async function updateTask(req: Request, res: Response) {
       'spaces:all'
     ).catch(() => {});
 
-    // Audit log & activity feed broadcast when status changed
-    if (finalStatus !== undefined && finalStatus !== existingTask.status) {
+    // Audit log & activity feed broadcast when status changed OR MA update received
+    const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
+    const isMaUpdate = Boolean(req.body.is_ma_update || rawMoverName || req.body.ma_updaters);
+    const statusChanged = finalStatus !== undefined && finalStatus !== existingTask.status;
+
+    if (statusChanged || isMaUpdate) {
       try {
-        const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
         const resolvedMover = rawMoverName ? await findUserByName(rawMoverName) : null;
         const fallbackActor = apiKey.user || await getOrCreateVipScaleUser();
         const actor = resolvedMover || fallbackActor;
         const authorName = resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale');
+
+        let rawUpdaters: string[] = [];
+        if (Array.isArray(req.body.ma_updaters)) {
+          rawUpdaters = req.body.ma_updaters;
+        } else if (typeof req.body.ma_updaters === 'string' && req.body.ma_updaters.trim()) {
+          rawUpdaters = req.body.ma_updaters.split(',').map((s: string) => s.trim()).filter(Boolean);
+        } else if (rawMoverName) {
+          rawUpdaters = [rawMoverName];
+        }
+
+        const resolvedUpdaterIds: string[] = [];
+        const resolvedUpdaterNames: string[] = [];
+        for (const uName of rawUpdaters) {
+          if (!uName) continue;
+          const cleanName = String(uName).trim();
+          if (!resolvedUpdaterNames.includes(cleanName)) resolvedUpdaterNames.push(cleanName);
+          const uUser = await findUserByName(cleanName);
+          if (uUser && !resolvedUpdaterIds.includes(uUser.id)) {
+            resolvedUpdaterIds.push(uUser.id);
+          }
+        }
+        if (resolvedMover?.id && !resolvedUpdaterIds.includes(resolvedMover.id)) {
+          resolvedUpdaterIds.push(resolvedMover.id);
+        }
+        if (authorName && !resolvedUpdaterNames.includes(authorName)) {
+          resolvedUpdaterNames.push(authorName);
+        }
+
         const log = await prisma.auditLog.create({
           data: {
-            action: 'STATUS_CHANGE',
+            action: statusChanged ? 'STATUS_CHANGE' : 'MA_UPDATE',
             entity: 'TASK',
             entityId: task.id,
             userId: actor.id,
             details: {
               oldStatus: existingTask.status,
-              newStatus: finalStatus,
+              newStatus: finalStatus || existingTask.status,
               source: 'external',
               movedByName: authorName,
               movedById: resolvedMover?.id || null,
-              isMaUpdate: Boolean(rawMoverName),
+              isMaUpdate: true,
+              maUpdaterIds: resolvedUpdaterIds,
+              maUpdaterNames: resolvedUpdaterNames,
             },
           }
         });
-        const activity = {
-          id: log.id,
-          type: 'status_change',
-          author: authorName,
-          oldStatus: existingTask.status,
-          newStatus: finalStatus,
-          date: log.createdAt,
-          user: { ...actor, name: authorName },
-        };
-        io.emit('task_activity', { listId: task.listId, taskId: task.id, activity });
-        if (task.listId) {
-          io.to(`list:${task.listId}`).emit('task_activity', { listId: task.listId, taskId: task.id, activity });
+
+        if (statusChanged) {
+          const activity = {
+            id: log.id,
+            type: 'status_change',
+            author: authorName,
+            oldStatus: existingTask.status,
+            newStatus: finalStatus,
+            date: log.createdAt,
+            user: { ...actor, name: authorName },
+          };
+          io.emit('task_activity', { listId: task.listId, taskId: task.id, activity });
+          if (task.listId) {
+            io.to(`list:${task.listId}`).emit('task_activity', { listId: task.listId, taskId: task.id, activity });
+          }
+
+          // Send task notifications to relevant workspace users (assignees, auditors, PMs)
+          const rawUsersToNotify = await getStatusChangeRecipients(
+            finalStatus,
+            { ...task, teamId: task.teamId },
+            actor.id
+          );
+          const usersToNotify = await filterUsersByNotificationPreference(rawUsersToNotify, 'status');
+          if (usersToNotify.length > 0) {
+            await prisma.taskNotification.createMany({
+              data: usersToNotify.map((id: any) => ({
+                userId: id,
+                actorId: actor.id,
+                taskId: task.id,
+                type: 'STATUS_CHANGE',
+                title: `${authorName} changed status from ${existingTask.status} to ${status} on task ${task.title}`,
+              })),
+            });
+            usersToNotify.forEach((id: any) => {
+              io.to(`user:${id}`).emit('notification_received');
+            });
+          }
         }
 
-        // Send task notifications to relevant workspace users (assignees, auditors, PMs)
-        const rawUsersToNotify = await getStatusChangeRecipients(
-          finalStatus,
-          { ...task, teamId: task.teamId },
-          actor.id
-        );
-        const usersToNotify = await filterUsersByNotificationPreference(rawUsersToNotify, 'status');
-        if (usersToNotify.length > 0) {
-          await prisma.taskNotification.createMany({
-            data: usersToNotify.map((id: any) => ({
-              userId: id,
-              actorId: actor.id,
-              taskId: task.id,
-              type: 'STATUS_CHANGE',
-              title: `${authorName} changed status from ${existingTask.status} to ${status} on task ${task.title}`,
-            })),
-          });
-          usersToNotify.forEach((id: any) => {
-            io.to(`user:${id}`).emit('notification_received');
-          });
-        }
-
-        await invalidateCache(`task:activities:${task.id}`);
+        await invalidateCache(`task:activities:${task.id}`, `task:${task.id}`);
       } catch (activityErr) {
         console.error('[external.updateTask] activity log error:', activityErr);
       }

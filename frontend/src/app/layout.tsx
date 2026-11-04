@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ClientLayout } from "./ClientLayout";
 import { PRE_PAINT_THEME_SCRIPT } from "@/lib/theme";
@@ -13,6 +13,17 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
+    { media: "(prefers-color-scheme: dark)", color: "#131316" },
+  ],
+};
 
 export const metadata: Metadata = {
   title: "Nexus — Enterprise Project Management Platform",
@@ -34,6 +45,12 @@ export default function RootLayout({
         <script
           id="nexus-theme-prepaint"
           dangerouslySetInnerHTML={{ __html: PRE_PAINT_THEME_SCRIPT }}
+        />
+        <script
+          id="nexus-safe-pointer-capture"
+          dangerouslySetInnerHTML={{
+            __html: `(function(){if(typeof Element!=='undefined'&&Element.prototype.releasePointerCapture){var orig=Element.prototype.releasePointerCapture;Element.prototype.releasePointerCapture=function(id){try{if(this.hasPointerCapture&&!this.hasPointerCapture(id)){return;}return orig.call(this,id);}catch(e){}};}})();`,
+          }}
         />
       </head>
       <body suppressHydrationWarning className="min-h-full flex flex-col bg-background text-foreground">

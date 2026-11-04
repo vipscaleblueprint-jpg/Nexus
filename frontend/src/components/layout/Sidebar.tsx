@@ -62,6 +62,7 @@ const DropIndicatorContext = createContext<DropIndicatorContextType>({
 });
 
 import {
+  X,
   Home,
   Users,
   UserPlus,
@@ -938,7 +939,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const searchParams = useSearchParams();
   const filterParam = searchParams?.get('filter');
 
-  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, unreadNotifications, activeDashboardTab } = useAppStore();
+  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, isMobileSidebarOpen, setMobileSidebarOpen, unreadNotifications, activeDashboardTab } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
   // ── Resizable Nexus sub-sidebar (width persisted per user) ──
@@ -1385,7 +1386,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const flatDocs = allDocs.map((item: any) => item.doc);
 
   return (
-    <div className="flex h-screen shrink-0 z-20">
+    <div className={`nexus-sidebar-wrapper ${isMobileSidebarOpen ? 'mobile-open' : 'mobile-closed'} flex h-screen shrink-0 z-20`}>
       {/* ── PRIMARY VIPScale Sidebar ───────────────────────────── */}
       <motion.div
         animate={{ width: collapsed ? '3rem' : '16rem' }}
@@ -1531,11 +1532,22 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
             <div className={`mx-auto h-full w-0.5 transition-colors ${isResizingNexus ? 'bg-indigo-500' : 'bg-transparent group-hover/resize:bg-indigo-500/70'}`} />
           </div>
           {/* Nexus header */}
-          <div className="flex h-[60px] items-center px-3 shrink-0 border-b border-zinc-800 gap-2">
-            <div className="size-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
+          <div className="flex h-[60px] items-center px-3 shrink-0 border-b border-zinc-800 gap-2 justify-between">
+            <div className="flex items-center gap-2 overflow-hidden">
+              <div className="size-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
               <span className="text-[9px] font-bold text-white">N</span>
             </div>
             <span className="font-semibold text-sm truncate">Nexus</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMobileSidebarOpen(false)}
+              className="nexus-drawer-close-btn md:hidden"
+              title="Close navigation"
+              aria-label="Close navigation"
+            >
+              <X className="size-4" />
+            </button>
           </div>
 
           {/* Nexus nav */}

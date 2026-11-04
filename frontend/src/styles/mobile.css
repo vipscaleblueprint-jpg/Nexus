@@ -1,0 +1,475 @@
+/**
+ * Nexus Dedicated Mobile Responsiveness Stylesheet
+ * Handles mobile viewport safety, touch targets, gestures, responsive layout shifts,
+ * and seamless light/dark mode animations across all mobile breakpoints.
+ */
+
+/* ==========================================================================
+   1. VIEWPORT, SAFE AREAS & TOUCH ERGONOMICS
+   ========================================================================== */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+
+  /* Mobile surface tokens (Dark mode default) */
+  --mobile-backdrop: rgba(0, 0, 0, 0.72);
+  --mobile-drawer-bg: var(--surface, #18181c);
+  --mobile-drawer-border: var(--border, #242429);
+  --mobile-sheet-bg: var(--surface, #18181c);
+  --mobile-sheet-handle: rgba(255, 255, 255, 0.22);
+  --mobile-card-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+  --mobile-shimmer-from: rgba(255, 255, 255, 0.02);
+  --mobile-shimmer-mid: rgba(255, 255, 255, 0.08);
+  --mobile-shimmer-to: rgba(255, 255, 255, 0.02);
+}
+
+/* Light mode overrides for mobile surfaces */
+:root.theme-light,
+.theme-light,
+:root[data-theme="light"],
+html[data-theme="light"] {
+  --mobile-backdrop: rgba(15, 23, 42, 0.45);
+  --mobile-drawer-bg: var(--surface, #FFFFFF);
+  --mobile-drawer-border: var(--border, #E8E8E8);
+  --mobile-sheet-bg: var(--surface, #FFFFFF);
+  --mobile-sheet-handle: rgba(0, 0, 0, 0.22);
+  --mobile-card-shadow: 0 4px 18px -2px rgba(0, 0, 0, 0.08);
+  --mobile-shimmer-from: rgba(0, 0, 0, 0.03);
+  --mobile-shimmer-mid: rgba(0, 0, 0, 0.08);
+  --mobile-shimmer-to: rgba(0, 0, 0, 0.03);
+}
+
+/* Palette preset bridge for mobile surfaces */
+:root[data-palette] {
+  --mobile-drawer-bg: var(--surface);
+  --mobile-drawer-border: var(--border);
+  --mobile-sheet-bg: var(--surface);
+}
+
+/* Universal touch optimization on mobile */
+@media (max-width: 768px) {
+
+  /* Eliminate the 300ms tap delay on mobile browsers */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  [role="button"],
+  .touch-manipulate {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Prevent iOS Safari auto-zooming when focusing text inputs */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  /* Safe area padding utilities */
+  .safe-top {
+    padding-top: max(12px, var(--sat));
+  }
+
+  .safe-bottom {
+    padding-bottom: max(12px, var(--sab));
+  }
+
+  .safe-left {
+    padding-left: max(12px, var(--sal));
+  }
+
+  .safe-right {
+    padding-right: max(12px, var(--sar));
+  }
+}
+
+/* ==========================================================================
+   2. MOBILE ANIMATIONS (DARK & LIGHT AWARE)
+   ========================================================================== */
+
+/* Drawer slide in from left */
+@keyframes mobileDrawerIn {
+  from {
+    transform: translate3d(-100%, 0, 0);
+    opacity: 0.8;
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
+/* Drawer slide out to left */
+@keyframes mobileDrawerOut {
+  from {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+
+  to {
+    transform: translate3d(-100%, 0, 0);
+    opacity: 0.8;
+  }
+}
+
+/* Mobile backdrop fade in */
+@keyframes mobileFadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Mobile bottom sheet slide up */
+@keyframes mobileSheetUp {
+  from {
+    transform: translate3d(0, 100%, 0);
+    opacity: 0.9;
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
+/* Mobile bottom sheet slide down */
+@keyframes mobileSheetDown {
+  from {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+
+  to {
+    transform: translate3d(0, 100%, 0);
+    opacity: 0.9;
+  }
+}
+
+/* Theme-adaptive skeleton shimmer */
+@keyframes mobileShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* FAB button pop-in */
+@keyframes mobileFabIn {
+  0% {
+    transform: scale(0.6) translateY(20px);
+    opacity: 0;
+  }
+
+  70% {
+    transform: scale(1.05) translateY(0);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Animation utility classes */
+.animate-mobile-drawer-in {
+  animation: mobileDrawerIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-mobile-drawer-out {
+  animation: mobileDrawerOut 0.22s cubic-bezier(0.4, 0, 1, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-mobile-sheet-up {
+  animation: mobileSheetUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-mobile-sheet-down {
+  animation: mobileSheetDown 0.22s cubic-bezier(0.4, 0, 1, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-mobile-fade-in {
+  animation: mobileFadeIn 0.2s ease-out forwards;
+  will-change: opacity;
+}
+
+.animate-mobile-fab-in {
+  animation: mobileFabIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+/* Adaptive skeleton loader class */
+.mobile-skeleton {
+  background: linear-gradient(90deg,
+      var(--mobile-shimmer-from) 25%,
+      var(--mobile-shimmer-mid) 50%,
+      var(--mobile-shimmer-to) 75%);
+  background-size: 200% 100%;
+  animation: mobileShimmer 1.8s infinite ease-in-out;
+}
+
+/* Touch feedback for buttons & cards */
+.touch-active {
+  transition: transform 0.12s ease-out, opacity 0.12s ease-out;
+}
+
+.touch-active:active {
+  transform: scale(0.97);
+  opacity: 0.9;
+}
+
+/* Reduced motion accessibility */
+@media (prefers-reduced-motion: reduce) {
+
+  .animate-mobile-drawer-in,
+  .animate-mobile-drawer-out,
+  .animate-mobile-sheet-up,
+  .animate-mobile-sheet-down,
+  .animate-mobile-fade-in,
+  .animate-mobile-fab-in,
+  .mobile-skeleton {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .touch-active:active {
+    transform: none !important;
+  }
+}
+
+/* ==========================================================================
+   3. MOBILE DRAWER & NAVIGATION CONTAINER
+   ========================================================================== */
+@media (max-width: 768px) {
+
+  /* On mobile, sidebar transforms into an off-canvas drawer */
+  .nexus-sidebar-wrapper {
+    position: fixed !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    z-index: 120 !important;
+    display: flex !important;
+    flex-direction: row !important;
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s ease !important;
+    will-change: transform;
+    pointer-events: auto !important;
+  }
+
+  .nexus-sidebar-wrapper.mobile-closed {
+    transform: translate3d(-100%, 0, 0) !important;
+    pointer-events: none !important;
+    box-shadow: none !important;
+  }
+
+  .nexus-sidebar-wrapper.mobile-open {
+    transform: translate3d(0, 0, 0) !important;
+    box-shadow: var(--mobile-card-shadow) !important;
+  }
+
+  /* Mobile backdrop overlay with frosted blur */
+  .nexus-mobile-backdrop {
+    position: fixed !important;
+    inset: 0 !important;
+    background-color: var(--mobile-backdrop) !important;
+    backdrop-filter: blur(8px) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
+    z-index: 110 !important;
+    transition: opacity 0.24s ease-out !important;
+  }
+
+  /* Make sure drawer content fits screen width on smaller phones */
+  .nexus-sidebar-wrapper>div {
+    max-width: calc(100vw - 44px) !important;
+  }
+
+  /* Ensure touch targets meet 44px minimum for fingers */
+  .nexus-sidebar-wrapper button,
+  .nexus-sidebar-wrapper a {
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* Close button on mobile drawer header */
+  .nexus-drawer-close-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    color: var(--muted);
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  .nexus-drawer-close-btn:hover,
+  .nexus-drawer-close-btn:active {
+    background-color: var(--hover-subtle);
+    color: var(--text);
+  }
+}
+
+@media (min-width: 769px) {
+  .nexus-mobile-backdrop {
+    display: none !important;
+  }
+
+  .nexus-drawer-close-btn {
+    display: none !important;
+  }
+}
+
+/* ==========================================================================
+   4. KANBAN BOARD & COLUMN RESPONSIVE TOUCH BEHAVIOR
+   ========================================================================== */
+@media (max-width: 768px) {
+  .kanban-board-scroll {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    scroll-snap-type: x mandatory !important;
+    scroll-padding-left: 12px !important;
+    scroll-padding-right: 12px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    padding-top: 8px !important;
+    padding-bottom: 6rem !important;
+    gap: 12px !important;
+  }
+
+  /* Columns snap nicely to center when scrolling horizontally */
+  .kanban-column-snap {
+    scroll-snap-align: center !important;
+    scroll-snap-stop: normal !important;
+    width: calc(100vw - 36px) !important;
+    max-width: 360px !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* Prevent category group box from clipping or collapsing columns */
+  .kanban-board-scroll > div {
+    flex-shrink: 0 !important;
+  }
+
+  /* Micro scrollbars on mobile so horizontal scroll is visible without clutter */
+  .kanban-board-scroll::-webkit-scrollbar {
+    height: 4px !important;
+  }
+
+  .kanban-board-scroll::-webkit-scrollbar-thumb {
+    background-color: var(--border) !important;
+    border-radius: 9999px !important;
+  }
+}
+
+/* ==========================================================================
+   5. MODALS & TASK DETAIL MODAL RESPONSIVE STACKING
+   ========================================================================== */
+@media (max-width: 768px) {
+
+  /* Task modal full-bleed layout on mobile */
+  #nexus-task-modal-portal>div {
+    inset: 0 !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Task Detail Modal responsive container: Full 100dvh viewport on mobile */
+  [data-task-detail-modal] > div {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+  }
+
+  /* Seamless tabbed view for mobile Task Detail Modal */
+  .nexus-task-modal-split {
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  .nexus-task-modal-split > .nexus-task-left-panel {
+    border-right: none !important;
+    width: 100% !important;
+    flex: 1 1 0% !important;
+  }
+
+  .nexus-task-modal-split > .nexus-task-activity-panel {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    border-left: none !important;
+    flex: 1 1 0% !important;
+  }
+
+  /* Compact modal headers */
+  .nexus-modal-header {
+    padding: 12px 14px !important;
+  }
+
+  /* Full width for generic popovers/dialogs on mobile */
+  [data-radix-popper-content-wrapper] {
+    max-width: calc(100vw - 20px) !important;
+  }
+}
+
+/* ==========================================================================
+   6. HEADER & TOOLBAR RESPONSIVENESS
+   ========================================================================== */
+@media (max-width: 640px) {
+
+  /* Compact header on mobile screens */
+  header.nexus-header {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .nexus-header-title {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Profile popover constraint */
+  .nexus-profile-dropdown {
+    right: 0 !important;
+    max-width: calc(100vw - 24px) !important;
+    width: 280px !important;
+  }
+}

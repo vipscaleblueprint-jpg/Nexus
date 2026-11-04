@@ -1050,7 +1050,7 @@ export default function BoardPage() {
       ) : error ? (
         <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>
       ) : (
-        <div className="w-full h-full flex flex-col px-6 pt-6 overflow-hidden">
+        <div className="w-full h-full flex flex-col px-3 pt-3 sm:px-6 sm:pt-6 overflow-hidden">
           {/* Header */}
           <div className="mb-6 flex items-start justify-between">
             <div className="flex flex-col">
@@ -1164,7 +1164,7 @@ export default function BoardPage() {
           </div>
 
           {/* View Tabs */}
-          <div className="flex items-center gap-4 border-b border-zinc-800/80 mb-4">
+          <div className="flex items-center gap-4 border-b border-zinc-800/80 mb-4 flex-wrap sm:flex-nowrap">
             <button
               onClick={() => setActiveTab('board')}
               className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'board'
@@ -1176,13 +1176,13 @@ export default function BoardPage() {
               Board
             </button>
 
-            <div className="ml-auto mb-2 flex items-center gap-2">
+            <div className="ml-auto mb-2 flex items-center gap-2 w-full sm:w-auto justify-end">
               {isSearching && (
                 <span className={`text-[11px] ${visibleTasks.length ? 'text-zinc-500' : 'text-amber-400'}`}>
                   {visibleTasks.length ? `${visibleTasks.length} of ${activeTasksCount}` : 'No matching tasks'}
                 </span>
               )}
-              <div className={`relative flex items-center w-64 rounded-md border bg-secondary/60 transition-colors ${isSearching ? 'border-indigo-500/60' : 'border-zinc-800 focus-within:border-zinc-600'}`}>
+              <div className={`relative flex items-center w-full sm:w-64 rounded-md border bg-secondary/60 transition-colors ${isSearching ? 'border-indigo-500/60' : 'border-zinc-800 focus-within:border-zinc-600'}`}>
                 <Search className="absolute left-2.5 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
                 <input
                   ref={searchInputRef}

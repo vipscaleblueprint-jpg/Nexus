@@ -799,9 +799,36 @@ const DocBlockRow = memo(({
 
 // True when an event comes from the task detail modal (or one of its portaled popovers) rather than
 // the doc itself — the page's document-level key/paste/drop handlers must leave those alone.
-const isFromTaskModal = (target: EventTarget | null) =>
-  target instanceof Element &&
-  !!(target.closest('[data-task-detail-modal]') || target.closest('[data-radix-popper-content-wrapper]'));
+const isFromTaskModal = (target: EventTarget | null): boolean => {
+  if (typeof document === 'undefined') return false;
+  const resolveElement = (t: EventTarget | null): Element | null => {
+    if (!t) return null;
+    if (t instanceof Element) return t;
+    if ((t as Node)?.parentElement instanceof Element) return (t as Node).parentElement;
+    return null;
+  };
+
+  const el = resolveElement(target);
+  const activeEl = resolveElement(document.activeElement);
+
+  const check = (node: Element | null): boolean => {
+    if (!node) return false;
+    return !!(
+      node.closest('[data-task-detail-modal]') ||
+      node.closest('#nexus-task-modal-portal') ||
+      node.closest('.task-detail-modal') ||
+      node.closest('[data-radix-popper-content-wrapper]') ||
+      node.closest('[data-radix-portal]') ||
+      node.closest('[role="dialog"]')
+    );
+  };
+
+  return check(el) || check(activeEl);
+};
+
+
+
+
 
 const PAGES_PANEL_COLLAPSED_KEY = 'nexus-doc-pages-collapsed';
 
@@ -1086,6 +1113,10 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [dbTeams, setDbTeams] = useState<any[]>([]);
   const [selectedTaskForModal, setSelectedTaskForModal] = useState<Task | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const isTaskModalOpenRef = useRef(false);
+  useEffect(() => {
+    isTaskModalOpenRef.current = isTaskModalOpen;
+  }, [isTaskModalOpen]);
 
   // The Priorities journal opens tasks in the full-screen task page instead of the modal
   const router = useRouter();
@@ -1140,6 +1171,13 @@ export default function DocPage({ docId }: { docId?: string }) {
   // Native click handler for mention nodes — works even in read-only BlockEditor
   useEffect(() => {
     const handleDocClick = (e: MouseEvent) => {
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+        return;
+      }
       const target = e.target as HTMLElement;
       const mentionSpan = target.closest('span[data-type="mention"]');
       if (!mentionSpan) return;
@@ -1975,7 +2013,13 @@ export default function DocPage({ docId }: { docId?: string }) {
   useEffect(() => {
     const handleNativeBackspace = (e: KeyboardEvent) => {
       if (e.key !== 'Backspace' && e.key !== 'Delete') return;
-      if (isFromTaskModal(e.target)) return;
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+        return;
+      }
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) return;
 
@@ -2046,6 +2090,13 @@ export default function DocPage({ docId }: { docId?: string }) {
     };
 
     const handleNativeCopyCut = (e: ClipboardEvent) => {
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+        return;
+      }
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) return;
 
@@ -2134,7 +2185,13 @@ export default function DocPage({ docId }: { docId?: string }) {
 
     const handleSelectAll = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-        if (isFromTaskModal(e.target)) return;
+        if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+        return;
+      }
         // If they are focusing something that is NOT our editor (like a title input), don't intercept
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
@@ -2182,7 +2239,13 @@ export default function DocPage({ docId }: { docId?: string }) {
     if (selectedBlockIds.size === 0) return;
 
     const handleGlobalKeyDown = async (e: KeyboardEvent) => {
-      if (isFromTaskModal(e.target)) return;
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+        return;
+      }
       // Don't intercept if focus is inside an active editor
       if (e.target instanceof HTMLElement && e.target.closest('.ProseMirror') && document.activeElement === e.target) {        return;
       }
@@ -2426,7 +2489,13 @@ export default function DocPage({ docId }: { docId?: string }) {
   // Global Undo/Redo keydown
   useEffect(() => {
     const handleUndoRedoKeys = (e: KeyboardEvent) => {
-      if (isFromTaskModal(e.target)) return;
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) {
@@ -2452,7 +2521,13 @@ export default function DocPage({ docId }: { docId?: string }) {
   //   4. If block-selection mode is active → the keydown Ctrl+V handler takes precedence.
   useEffect(() => {
     const handleGlobalPaste = (e: ClipboardEvent | DragEvent) => {
-      if (isFromTaskModal(e.target)) return;
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+        return;
+      }
       let text = '';
       if (e.type === 'drop') {
         text = (e as DragEvent).dataTransfer?.getData('text/plain') ?? '';
@@ -2602,6 +2677,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     
     // For drop events, we also need to allow the drop action by preventing default on dragover
     const handleDragOver = (e: DragEvent) => {
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
       // If we're dragging text (not files, not blocks), allow it
       if (e.dataTransfer?.types.includes('text/plain') && !e.dataTransfer?.types.includes('Files')) {
         e.preventDefault();

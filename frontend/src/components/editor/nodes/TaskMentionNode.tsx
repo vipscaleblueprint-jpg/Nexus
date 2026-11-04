@@ -318,11 +318,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         data-drag-handle 
         contentEditable={false}
         onMouseDown={(e: React.MouseEvent) => {
-          // If they click a dropdown or button inside, let it handle its own click,
-          // but for selection, we want to route the cursor to the right.
-          // We don't preventDefault here so that onClick still fires for buttons,
-          // but we do set the selection. Actually, ProseMirror also listens to mousedown.
-          // By calling setTextSelection and focus, we override it.
           if (typeof getPos === 'function') {
             editor.commands.setTextSelection(getPos() + node.nodeSize);
             editor.commands.focus();
@@ -369,8 +364,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || !taskData) return;
 
-    // Subtasks skip this: the mention's subtask data has no checklists, so the check can't see their audits.
-    // The server checks them, and a refusal reverts the chip below.
     if (mentionType !== 'subtask') {
       const transitionCheck = canTransitionTaskStatus(taskData, newStatus);
       if (!transitionCheck.allowed) {
@@ -399,7 +392,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       toast.success('Status updated');
     } catch (e: any) {
       toast.error(e.message || 'Failed to update status');
-      // The server refused (e.g. audits not done): put the chip back to the status it really has
       updateTaskStore(previousTask);
       try { updateAttributes({ taskStatus: previousStatusAttr }); } catch (err) {}
       setLocalStatus(previousLocalStatus);
@@ -491,7 +483,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     }
   };
 
-  // Subtask mentions must save through the subtask endpoint (the subtask id is not a task id)
   const persistTeamRoles = (roles: string[], teamId: string, assigneeIds: string[]) => {
     const data = { assigneeRoleRestrictions: roles, teamId, assigneeIds } as any;
     const request = mentionType === 'subtask'
@@ -500,7 +491,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     request.catch(() => toast.error('Failed to update team role'));
   };
 
-  // Resolve board/list name: prefer live taskData, fallback to stored taskListName attr
   const resolvedListName = (taskData?.list?.name) || node.attrs.taskListName || '';
 
   const isSubtask = mentionType === 'subtask';
@@ -517,8 +507,6 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     },
   };
   const isClosedNode = (parsedStatusName || '').toUpperCase() === 'CLOSED' || (parsedStatusName || '').toUpperCase() === 'DONE';
-  // Chip surface comes from theme variables (globals.css) so it follows light mode; avatar rings
-  // use the same colour so stacked avatars read as cut-outs instead of outlined circles.
   const chipBg = isSubtask ? 'bg-[var(--task-chip-sub)] hover:bg-[var(--task-chip-sub)]/80' : 'bg-[var(--task-chip)] hover:bg-[var(--task-chip)]/80';
   const chipRing = isSubtask ? 'border-[var(--task-chip-sub)]' : 'border-[var(--task-chip)]';
 
@@ -529,13 +517,12 @@ export const TaskMentionNode = (props: NodeViewProps) => {
       contentEditable={false}
       onMouseDown={(e: React.MouseEvent) => {
         if (typeof getPos === 'function') {
-          // Put the cursor immediately after this node when ANY part of the block is clicked
           editor.commands.setTextSelection(getPos() + node.nodeSize);
           editor.commands.focus();
         }
       }}
     >
-      <motion.span layout className={`relative ${isComment ? 'inline-flex items-center max-w-full' : 'inline'} align-middle px-1.5 py-[2px] rounded-md transition-all duration-300 ${isComment ? '' : 'box-decoration-clone'} leading-relaxed ${chipBg} ${isClosedNode ? 'opacity-75' : ''}`}>
+      <motion.span layout className={`relative inline align-middle transition-all duration-300 ${isComment ? 'bg-transparent px-0.5' : `px-1.5 py-[2px] rounded-md ${chipBg}`} leading-relaxed ${isClosedNode ? 'opacity-75' : ''}`}>
         
         {isClosedNode && (
           <div className="absolute top-1/2 left-1.5 right-1.5 h-[1.5px] bg-zinc-500/70 -translate-y-1/2 pointer-events-none z-50 rounded-full" />
@@ -551,20 +538,20 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         >
           {taskStatus === 'Closed' || taskStatus === 'CLOSED' || taskStatus === 'DONE' ? (
             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor, fill: 'transparent' }} />
-          ) : ((taskStatus || '').toUpperCase() === 'KYC' ? (
+          ) : (taskStatus || '').toUpperCase() === 'KYC' ? (
             <CustomCircleDotted className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
           ) : (
             <CustomCircleDot className="w-3.5 h-3.5 shrink-0" style={{ color: parsedStatusColor }} />
-          ))}
+          )}
         </span>
 
         {/* Task Title */}
         <span
-          className={`${titleClass} mr-1.5 truncate ${
+          className={`${titleClass} ${isComment ? 'underline underline-offset-2 decoration-zinc-400/80 hover:decoration-white' : ''} mr-1.5 ${
             isComment
-              ? 'max-w-[130px] sm:max-w-[150px] md:max-w-[170px]'
-              : 'max-w-[220px] sm:max-w-[340px] md:max-w-[440px]'
-          } shrink min-w-[50px] inline-block align-middle`}
+              ? 'inline'
+              : 'truncate max-w-[220px] sm:max-w-[340px] md:max-w-[440px] shrink min-w-[50px] inline-block align-middle'
+          }`}
           {...titleProps}
         >
           {label || ''}
@@ -573,17 +560,19 @@ export const TaskMentionNode = (props: NodeViewProps) => {
         {/* Title controls wrapped together */}
         <span className="whitespace-nowrap inline-flex items-center align-middle shrink-0">
 
-        <span
-          ref={descTriggerRef}
-          className="cursor-pointer hover:opacity-70 transition-opacity inline-flex items-center justify-center p-0.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 rounded mr-1.5 align-middle"
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpenDropdown(openDropdown === 'description' ? null : 'description');
-          }}
-          title="Task Description"
-        >
-          <AlignLeft className="w-3.5 h-3.5" />
-        </span>
+        {!isComment && (
+          <span
+            ref={descTriggerRef}
+            className="cursor-pointer hover:opacity-70 transition-opacity inline-flex items-center justify-center p-0.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 rounded mr-1.5 align-middle"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenDropdown(openDropdown === 'description' ? null : 'description');
+            }}
+            title="Task Description"
+          >
+            <AlignLeft className="w-3.5 h-3.5" />
+          </span>
+        )}
 
         {parsedStatusName && (
           <span 
@@ -596,115 +585,121 @@ export const TaskMentionNode = (props: NodeViewProps) => {
           </span>
         )}
 
-        <span 
-          ref={priorityRef}
-          className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700/50 cursor-pointer transition-colors mr-1.5 align-middle"
-          onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
-          title={localPriority ? `${getPriorityConfig(localPriority).label} Priority` : 'Set Priority'}
-        >
-          <Flag className={`w-3.5 h-3.5 shrink-0 transition-colors ${
-            localPriority ? getPriorityConfig(localPriority).iconColor : 'text-zinc-400 dark:text-zinc-500'
-          }`} />
-        </span>
+        {!isComment && (
+          <span 
+            ref={priorityRef}
+            className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700/50 cursor-pointer transition-colors mr-1.5 align-middle"
+            onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'priority' ? null : 'priority'); }}
+            title={localPriority ? `${getPriorityConfig(localPriority).label} Priority` : 'Set Priority'}
+          >
+            <Flag className={`w-3.5 h-3.5 shrink-0 transition-colors ${
+              localPriority ? getPriorityConfig(localPriority).iconColor : 'text-zinc-400 dark:text-zinc-500'
+            }`} />
+          </span>
+        )}
 
-        <motion.span layout
-          ref={teamRef}
-          className={`inline-flex items-center justify-center shrink-0 transition-opacity mr-1.5 align-middle ${canSetAssignees ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-60'}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!canSetAssignees) {
-              toast.error(assignDeniedMessage);
-              return;
-            }
-            setOpenDropdown(openDropdown === 'team' ? null : 'team');
-          }}
-          title={!canSetAssignees ? assignDeniedMessage : taskData?.assigneeRoleRestrictions?.length ? taskData.assigneeRoleRestrictions.join(', ') : 'Assign Role'}
-        >
-          <AnimatePresence mode="popLayout">
-            {(taskData?.assigneeRoleRestrictions && taskData.assigneeRoleRestrictions.length > 0) ? (
-              taskData.assigneeRoleRestrictions.map((role: string, i: number) => {
-                const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
-                const bgColor = colors[i % colors.length];
-                return (
-                  <motion.div 
-                    key={role}
+        {!isComment && (
+          <motion.span layout
+            ref={teamRef}
+            className={`inline-flex items-center justify-center shrink-0 transition-opacity mr-1.5 align-middle ${canSetAssignees ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-60'}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!canSetAssignees) {
+                toast.error(assignDeniedMessage);
+                return;
+              }
+              setOpenDropdown(openDropdown === 'team' ? null : 'team');
+            }}
+            title={!canSetAssignees ? assignDeniedMessage : taskData?.assigneeRoleRestrictions?.length ? taskData.assigneeRoleRestrictions.join(', ') : 'Assign Role'}
+          >
+            <AnimatePresence mode="popLayout">
+              {(taskData?.assigneeRoleRestrictions && taskData.assigneeRoleRestrictions.length > 0) ? (
+                taskData.assigneeRoleRestrictions.map((role: string, i: number) => {
+                  const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
+                  const bgColor = colors[i % colors.length];
+                  return (
+                    <motion.div 
+                      key={role}
+                      layout
+                      initial={{ opacity: 0, scale: 0.5 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.5 }}
+                      transition={{ duration: 0.2 }}
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 ${chipRing} ${i > 0 ? '-ml-2' : ''} relative ${bgColor}`}
+                      style={{ zIndex: 10 - i }}
+                      title={role}
+                    >
+                      {role.substring(0, 2).toUpperCase()}
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <motion.span 
+                  key="empty-team"
+                  layout
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.5 }}
+                  className="w-5 h-5 rounded border border-zinc-700 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
+                >
+                  <Shield className="w-3 h-3" />
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </motion.span>
+        )}
+
+        {(assignees.length > 0 || !isComment) && (
+          <motion.span layout
+            ref={assigneesRef}
+            className={`inline-flex items-center -space-x-1 shrink-0 transition-opacity align-middle ${canSetAssignees ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-60'}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!canSetAssignees) {
+                toast.error(assignDeniedMessage);
+                return;
+              }
+              setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee');
+            }}
+            title={!canSetAssignees ? assignDeniedMessage : undefined}
+          >
+            <AnimatePresence mode="popLayout">
+              {assignees.length > 0 ? (
+                assignees.slice(0, 3).map((user: any, i: number) => (
+                  <motion.span 
+                    key={user.id} 
                     layout
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.5 }}
                     transition={{ duration: 0.2 }}
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white border-2 ${chipRing} ${i > 0 ? '-ml-2' : ''} relative ${bgColor}`}
-                    style={{ zIndex: 10 - i }}
-                    title={role}
+                    className={`w-5 h-5 rounded-full overflow-hidden border-2 ${chipRing} z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center relative`}
+                    style={{ zIndex: 10 - i, marginLeft: i > 0 ? '-4px' : '0' }}
                   >
-                    {role.substring(0, 2).toUpperCase()}
-                  </motion.div>
-                );
-              })
-            ) : (
-              <motion.span 
-                key="empty-team"
-                layout
-                initial={{ opacity: 0, scale: 0.5 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.5 }}
-                className="w-5 h-5 rounded border border-zinc-700 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
-              >
-                <Shield className="w-3 h-3" />
-              </motion.span>
-            )}
-          </AnimatePresence>
-        </motion.span>
-
-        <motion.span layout
-          ref={assigneesRef}
-          className={`inline-flex items-center -space-x-1 shrink-0 transition-opacity align-middle ${canSetAssignees ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-60'}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!canSetAssignees) {
-              toast.error(assignDeniedMessage);
-              return;
-            }
-            setOpenDropdown(openDropdown === 'assignee' ? null : 'assignee');
-          }}
-          title={!canSetAssignees ? assignDeniedMessage : undefined}
-        >
-          <AnimatePresence mode="popLayout">
-            {assignees.length > 0 ? (
-              assignees.slice(0, 3).map((user: any, i: number) => (
+                    {user.avatarUrl ? (
+                      <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover rounded-full" />
+                    ) : (
+                      <span className="text-[9px] font-medium text-zinc-700 dark:text-zinc-300">
+                        {user.name?.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </motion.span>
+                ))
+              ) : !isComment ? (
                 <motion.span 
-                  key={user.id} 
+                  key="empty-assignees"
                   layout
                   initial={{ opacity: 0, scale: 0.5 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.5 }}
-                  transition={{ duration: 0.2 }}
-                  className={`w-5 h-5 rounded-full overflow-hidden border-2 ${chipRing} z-10 shrink-0 bg-zinc-200 dark:bg-zinc-600 flex items-center justify-center relative`}
-                  style={{ zIndex: 10 - i, marginLeft: i > 0 ? '-4px' : '0' }}
+                  className="w-5 h-5 rounded border border-zinc-700 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
                 >
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover rounded-full" />
-                  ) : (
-                    <span className="text-[9px] font-medium text-zinc-700 dark:text-zinc-300">
-                      {user.name?.charAt(0).toUpperCase()}
-                    </span>
-                  )}
+                  <Users2 className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" />
                 </motion.span>
-              ))
-            ) : (
-              <motion.span 
-                key="empty-assignees"
-                layout
-                initial={{ opacity: 0, scale: 0.5 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.5 }}
-                className="w-5 h-5 rounded border border-zinc-700 border-dashed text-zinc-400 flex items-center justify-center bg-transparent z-10 shrink-0 hover:bg-zinc-800 transition-colors"
-              >
-                <Users2 className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" />
-              </motion.span>
-            )}
-          </AnimatePresence>
-        </motion.span>
+              ) : null}
+            </AnimatePresence>
+          </motion.span>
+        )}
         </span>
       </motion.span>
       {/* Inline (not inline-block) so this cursor spacer can never wrap onto an empty line of its own */}
@@ -979,5 +974,3 @@ export const TaskMentionNode = (props: NodeViewProps) => {
     </NodeViewWrapper>
   );
 };
-
-

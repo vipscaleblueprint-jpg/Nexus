@@ -216,6 +216,7 @@ export interface Task {
   updatedAt?: string;
   inProgressMovedBy?: { id: string; name: string; avatarUrl?: string | null } | null;
   maUpdaterIds?: string[];
+  maUpdaterNames?: string[];
 }
 
 export interface Subtask {

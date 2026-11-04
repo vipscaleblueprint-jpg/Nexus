@@ -69,6 +69,16 @@ const server = http.createServer(app);
     removeOnFail: 50,
   });
 
+  // 12:00 PM Afternoon Shift Add & Update Sweep (Cherilyn, Gie, etc.)
+  await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: 'PM_AFTERNOON' }, {
+    repeat: {
+      pattern: '0 12 * * *',
+      tz: 'Asia/Manila',
+    },
+    jobId: 'shift-audit-pm-afternoon',
+    removeOnFail: 50,
+  });
+
   // 5:00 PM Night Shift Add & Update Sweep
   await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: 'PM_NIGHT' }, {
     repeat: {

@@ -512,6 +512,7 @@ export function NotificationBell() {
         isGreyed={isGreyed}
         createdAt={n.createdAt}
         compact={true}
+        maxLinkLength={40}
         listId={n.task?.listId}
         customStatusColors={customStatusColors}
         onClick={() => {

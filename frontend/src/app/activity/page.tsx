@@ -21,6 +21,8 @@ import {
   Globe,
   UserMinus,
   UserPlus,
+  Search,
+  X,
 } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
@@ -30,6 +32,7 @@ import { toast } from '@/lib/toast';
 import { CommentContent } from '@/components/ui/CommentContent';
 import { extractImagesFromContent } from '@/lib/commentImages';
 import { ActivityCard } from '@/components/ui/ActivityCard';
+import { isSystemUser } from '@/lib/taskTokens';
 
 type ViewMode = 'for_me' | 'show_all';
 type Category = 'all' | 'assigned' | 'status' | 'checklists' | 'audits' | 'comments';
@@ -155,7 +158,15 @@ const FEED_CACHE_TTL_MS = 60_000;
 function ActivityFeedContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { decrementUnreadNotifications, currentUser, tasksIndex, tasks, workspaceRoles } = useAppStore();
+  const {
+    decrementUnreadNotifications,
+    currentUser,
+    tasksIndex,
+    tasks,
+    workspaceRoles,
+    workspaceUsers,
+    loadUsers,
+  } = useAppStore();
   const hadSelectedTask = useRef(false);
   const lastUrlTaskId = useRef<string | null>(null);
   const closedTaskIdRef = useRef<string | null>(null);
@@ -186,6 +197,77 @@ function ActivityFeedContent() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // User Filter State for 'Show All' mode
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const u =
+        new URLSearchParams(window.location.search).get('userId') ||
+        new URLSearchParams(window.location.search).get('user');
+      if (u) return u;
+    }
+    return searchParams?.get('userId') || searchParams?.get('user') || null;
+  });
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const userDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Hydrate workspace users if empty
+  useEffect(() => {
+    if (!workspaceUsers || workspaceUsers.length === 0) {
+      loadUsers();
+    }
+  }, [workspaceUsers, loadUsers]);
+
+  // Close user dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (userDropdownRef.current && !userDropdownRef.current.contains(event.target as Node)) {
+        setUserDropdownOpen(false);
+      }
+    }
+    if (userDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [userDropdownOpen]);
+
+  const selectedUser = useMemo(() => {
+    if (!selectedUserId || !workspaceUsers) return null;
+    return workspaceUsers.find((u: any) => u.id === selectedUserId) || null;
+  }, [selectedUserId, workspaceUsers]);
+
+  const filteredWorkspaceUsers = useMemo(() => {
+    if (!workspaceUsers) return [];
+    const nonSystem = workspaceUsers.filter((u: any) => !isSystemUser(u));
+    if (!userSearchQuery.trim()) return nonSystem;
+    const q = userSearchQuery.toLowerCase().trim();
+    return nonSystem.filter((u: any) => {
+      const name = (u.name || '').toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      const roles = Array.isArray(u.roles) ? u.roles.join(' ').toLowerCase() : '';
+      return name.includes(q) || email.includes(q) || roles.includes(q);
+    });
+  }, [workspaceUsers, userSearchQuery]);
+
+  const handleSelectUser = (user: any | null) => {
+    const nextUserId = user ? user.id : null;
+    setSelectedUserId(nextUserId);
+    setUserDropdownOpen(false);
+    setUserSearchQuery('');
+    setPage(1);
+
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (nextUserId) {
+        url.searchParams.set('userId', nextUserId);
+      } else {
+        url.searchParams.delete('userId');
+        url.searchParams.delete('user');
+      }
+      window.history.replaceState(null, '', url.pathname + (url.search || ''));
+    }
+  };
 
   const initialCacheValid = !!feedCache && Date.now() - feedCache.timestamp < FEED_CACHE_TTL_MS;
   const [notifications, setNotifications] = useState<TaskNotification[]>(() =>
@@ -226,6 +308,7 @@ function ActivityFeedContent() {
 
       if (viewMode === 'show_all') {
         const auditRes = await activityApi.getAuditLogs({
+          userId: selectedUserId || undefined,
           page,
           limit,
           category,
@@ -436,7 +519,7 @@ function ActivityFeedContent() {
   // Refetch when page, limit, filters, view mode or user changes
   useEffect(() => {
     fetchData();
-  }, [page, limit, category, timeFilter, viewMode, currentUser?.id]);
+  }, [page, limit, category, timeFilter, viewMode, currentUser?.id, selectedUserId]);
 
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1124,10 +1207,10 @@ function ActivityFeedContent() {
   }, []);
 
   return (
-    <div className={`flex flex-col h-full bg-background text-foreground relative ${selectedTask ? 'overflow-hidden' : 'pt-8'}`}>
+    <div className={`flex flex-col h-full bg-background text-foreground relative ${selectedTask ? 'overflow-hidden' : 'pt-4 sm:pt-8'}`}>
       <div className={selectedTask ? 'hidden' : 'flex flex-col flex-1 min-h-0'}>
         {/* Header Bar */}
-      <div className="px-8 flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+      <div className="px-3 sm:px-8 flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 mb-3 sm:mb-4">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-medium tracking-tight">Activity</h1>
 
@@ -1141,7 +1224,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'for_me'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
               title="Personal feed: tasks assigned to you or involving you"
             >
@@ -1156,7 +1239,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 viewMode === 'show_all'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
               title="Workspace-wide feed: all tasks and team activities"
             >
@@ -1167,6 +1250,169 @@ function ActivityFeedContent() {
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          {/* User Search Bar for 'Show All' mode */}
+          {viewMode === 'show_all' && (
+            <div ref={userDropdownRef} className="relative w-full sm:w-auto">
+              <div
+                className={`flex items-center gap-2 px-2.5 py-1.5 bg-card border rounded-md text-xs sm:text-sm transition-all ${
+                  userDropdownOpen
+                    ? 'border-indigo-500 ring-1 ring-indigo-500/20'
+                    : 'border-border hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300'
+                }`}
+              >
+                <Search className="size-3.5 text-muted-foreground shrink-0" />
+
+                {selectedUser ? (
+                  <div className="flex items-center gap-1.5 min-w-0 max-w-[180px] sm:max-w-[220px]">
+                    {selectedUser.avatarUrl ? (
+                      <img
+                        src={selectedUser.avatarUrl}
+                        alt={selectedUser.name}
+                        className="size-4.5 rounded-full object-cover shrink-0"
+                      />
+                    ) : (
+                      <div
+                        className={`size-4.5 rounded-full text-[9px] font-semibold text-white flex items-center justify-center shrink-0 ${getAvatarBg(
+                          selectedUser.name
+                        )}`}
+                      >
+                        {getInitials(selectedUser.name)}
+                      </div>
+                    )}
+                    <span className="truncate text-xs font-medium text-foreground">
+                      {selectedUser.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectUser(null);
+                      }}
+                      className="text-muted-foreground hover:text-foreground p-0.5 rounded hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-200 transition-colors ml-0.5 cursor-pointer"
+                      title="Clear user filter"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={userSearchQuery}
+                    onChange={(e) => {
+                      setUserSearchQuery(e.target.value);
+                      if (!userDropdownOpen) setUserDropdownOpen(true);
+                    }}
+                    onFocus={() => setUserDropdownOpen(true)}
+                    placeholder="Search by user..."
+                    className="w-full sm:w-44 bg-transparent text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                  />
+                )}
+
+                {!selectedUser && userSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setUserSearchQuery('')}
+                    className="text-muted-foreground hover:text-foreground p-0.5 rounded cursor-pointer"
+                    title="Clear search text"
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setUserDropdownOpen((prev) => !prev)}
+                  className="text-muted-foreground hover:text-foreground p-0.5 cursor-pointer"
+                  title="Toggle user dropdown"
+                >
+                  <ChevronDown
+                    className={`size-3.5 transition-transform duration-150 ${
+                      userDropdownOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* User Dropdown Popover */}
+              {userDropdownOpen && (
+                <div className="absolute left-0 top-full mt-1.5 w-full sm:w-72 max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-xl p-1 z-50 animate-in fade-in-50 zoom-in-95 duration-100">
+                  {/* Option: All Workspace Users */}
+                  <button
+                    type="button"
+                    onClick={() => handleSelectUser(null)}
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                      !selectedUserId
+                        ? 'bg-indigo-600/15 text-indigo-400 [.theme-light_&]:bg-indigo-50 [.theme-light_&]:text-indigo-600 font-medium'
+                        : 'text-foreground hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="size-5 rounded-full bg-zinc-800 [.theme-light_&]:bg-zinc-200 text-muted-foreground flex items-center justify-center shrink-0">
+                        <Users className="size-3" />
+                      </div>
+                      <span>All Workspace Users</span>
+                    </div>
+                    {!selectedUserId && <Check className="size-3.5 text-indigo-500" />}
+                  </button>
+
+                  <div className="my-1 border-t border-border" />
+
+                  {/* Filtered Users List */}
+                  {filteredWorkspaceUsers.length > 0 ? (
+                    filteredWorkspaceUsers.map((u: any) => {
+                      const isSelected = selectedUserId === u.id;
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => handleSelectUser(u)}
+                          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-indigo-600/15 text-indigo-400 [.theme-light_&]:bg-indigo-50 [.theme-light_&]:text-indigo-600 font-medium'
+                              : 'text-foreground hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {u.avatarUrl ? (
+                              <img
+                                src={u.avatarUrl}
+                                alt={u.name}
+                                className="size-5 rounded-full object-cover shrink-0"
+                              />
+                            ) : (
+                              <div
+                                className={`size-5 rounded-full text-[9px] font-semibold text-white flex items-center justify-center shrink-0 ${getAvatarBg(
+                                  u.name
+                                )}`}
+                              >
+                                {getInitials(u.name)}
+                              </div>
+                            )}
+                            <div className="flex flex-col text-left min-w-0">
+                              <span className="truncate font-medium text-foreground">
+                                {u.name}
+                              </span>
+                              {u.email && (
+                                <span className="truncate text-[10px] text-muted-foreground">
+                                  {u.email}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {isSelected && <Check className="size-3.5 text-indigo-500 shrink-0 ml-2" />}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                      No users found
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center gap-1 bg-card p-1 rounded-md border border-border mr-1 hidden sm:flex">
             <button
               onClick={() => {
@@ -1176,7 +1422,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'all'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               All time
@@ -1189,7 +1435,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'today'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               Today
@@ -1202,7 +1448,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'last7'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               Last 7 days
@@ -1215,7 +1461,7 @@ function ActivityFeedContent() {
               className={`px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
                 timeFilter === 'last30'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/50 [.theme-light_&]:hover:bg-zinc-200/60'
               }`}
             >
               Last 30 days
@@ -1244,7 +1490,7 @@ function ActivityFeedContent() {
       </div>
 
       {/* Category Tabs with Unread Badges */}
-      <div className="px-8 border-b border-border mb-6 flex items-center gap-8 overflow-x-auto custom-scrollbar">
+      <div className="px-3 sm:px-8 border-b border-border mb-4 sm:mb-6 flex items-center gap-3 sm:gap-8 overflow-x-auto scrollbar-none">
         {CATEGORIES.map((cat) => {
           const isActive = category === cat.value;
           const unreadCount = tabUnreadCounts[cat.value] || 0;
@@ -1282,7 +1528,7 @@ function ActivityFeedContent() {
             feedCache.scrollY = e.currentTarget.scrollTop;
           }
         }}
-        className="flex-1 overflow-y-auto px-8 pr-2 custom-scrollbar space-y-8"
+        className="flex-1 overflow-y-auto px-3 sm:px-8 pr-2 custom-scrollbar space-y-6 sm:space-y-8 pb-8"
       >
         {loading ? (
           <div className="flex items-center justify-center h-40">
@@ -1440,84 +1686,143 @@ function ActivityFeedContent() {
         )}
       </div>
 
-      {/* Persistent Bottom Pagination Bar (Matching Image 1) */}
+      {/* Persistent Bottom Pagination Bar */}
       {total > 0 && (
-        <div className="px-8 py-3.5 border-t border-border bg-background/95 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-          <div className="text-xs text-muted-foreground select-none">
-            Showing {Math.min((page - 1) * limit + 1, total)}–{Math.min(page * limit, total)} of {total} activities
+        <div className="border-t border-border bg-background/95 backdrop-blur-sm shrink-0 mb-16 sm:mb-0">
+          {/* Mobile Layout (< 640px) */}
+          <div className="flex flex-col gap-2 px-3 py-2.5 sm:hidden">
+            <div className="flex items-center justify-between text-xs text-muted-foreground select-none">
+              <span>
+                Showing {Math.min((page - 1) * limit + 1, total)}–{Math.min(page * limit, total)} of {total}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] select-none">Per page</span>
+                <select
+                  value={limit}
+                  onChange={(e) => {
+                    setLimit(Number(e.target.value));
+                    setPage(1);
+                    if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                  }}
+                  className="bg-card border border-border text-foreground rounded px-2 py-0.5 text-xs cursor-pointer focus:outline-none focus:border-indigo-500"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1.5 border-t border-border/50">
+              <button
+                onClick={() => {
+                  setPage((p) => Math.max(1, p - 1));
+                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                }}
+                disabled={page <= 1}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-card border border-border text-foreground hover:bg-hover-subtle transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center gap-1 cursor-pointer"
+              >
+                <ChevronLeft className="size-3.5" />
+                <span>Prev</span>
+              </button>
+
+              <span className="text-xs font-bold text-foreground">
+                Page {page} of {totalPages}
+              </span>
+
+              <button
+                onClick={() => {
+                  setPage((p) => Math.min(totalPages, p + 1));
+                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                }}
+                disabled={page >= totalPages}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-card border border-border text-foreground hover:bg-hover-subtle transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center gap-1 cursor-pointer"
+              >
+                <span>Next</span>
+                <ChevronRight className="size-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground select-none">Per page</span>
-            <select
-              value={limit}
-              onChange={(e) => {
-                setLimit(Number(e.target.value));
-                setPage(1);
-                if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-              }}
-              className="bg-card border border-border text-foreground rounded px-2.5 py-1 text-xs cursor-pointer focus:outline-none focus:border-indigo-500"
-            >
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-          </div>
+          {/* Desktop Layout (>= 640px) */}
+          <div className="hidden sm:flex px-8 py-3.5 items-center justify-between gap-4">
+            <div className="text-xs text-muted-foreground select-none">
+              Showing {Math.min((page - 1) * limit + 1, total)}–{Math.min(page * limit, total)} of {total} activities
+            </div>
 
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => {
-                setPage((p) => Math.max(1, p - 1));
-                if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-              }}
-              disabled={page <= 1}
-              className="text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
-            >
-              Prev
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground select-none">Per page</span>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                }}
+                className="bg-card border border-border text-foreground rounded px-2.5 py-1 text-xs cursor-pointer focus:outline-none focus:border-indigo-500"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
 
-            {Array.from({ length: totalPages }, (_, i) => i + 1)
-              .filter((p) => {
-                if (totalPages <= 7) return true;
-                if (p === 1 || p === totalPages) return true;
-                if (Math.abs(p - page) <= 1) return true;
-                return false;
-              })
-              .map((p, idx, arr) => {
-                const prevPage = arr[idx - 1];
-                const isGap = prevPage && p - prevPage > 1;
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => {
+                  setPage((p) => Math.max(1, p - 1));
+                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                }}
+                disabled={page <= 1}
+                className="text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
+              >
+                Prev
+              </button>
 
-                return (
-                  <Fragment key={p}>
-                    {isGap && <span className="text-muted-foreground/60 px-1 text-xs select-none">...</span>}
-                    <button
-                      onClick={() => {
-                        setPage(p);
-                        if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-                      }}
-                      className={`w-7 h-7 rounded text-xs transition-all flex items-center justify-center cursor-pointer ${
-                        page === p
-                          ? 'bg-foreground text-background font-bold shadow-xs'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/80 font-medium'
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  </Fragment>
-                );
-              })}
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter((p) => {
+                  if (totalPages <= 7) return true;
+                  if (p === 1 || p === totalPages) return true;
+                  if (Math.abs(p - page) <= 1) return true;
+                  return false;
+                })
+                .map((p, idx, arr) => {
+                  const prevPage = arr[idx - 1];
+                  const isGap = prevPage && p - prevPage > 1;
 
-            <button
-              onClick={() => {
-                setPage((p) => Math.min(totalPages, p + 1));
-                if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
-              }}
-              disabled={page >= totalPages}
-              className="text-xs text-foreground hover:text-foreground hover:bg-zinc-800/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
-            >
-              Next
-            </button>
+                  return (
+                    <Fragment key={p}>
+                      {isGap && <span className="text-muted-foreground/60 px-1 text-xs select-none">...</span>}
+                      <button
+                        onClick={() => {
+                          setPage(p);
+                          if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                        }}
+                        className={`w-7 h-7 rounded text-xs transition-all flex items-center justify-center cursor-pointer ${
+                          page === p
+                            ? 'bg-foreground text-background font-bold shadow-xs'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-zinc-800/80 font-medium'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    </Fragment>
+                  );
+                })}
+
+              <button
+                onClick={() => {
+                  setPage((p) => Math.min(totalPages, p + 1));
+                  if (feedScrollRef.current) feedScrollRef.current.scrollTop = 0;
+                }}
+                disabled={page >= totalPages}
+                className="text-xs text-foreground hover:text-foreground hover:bg-zinc-800/60 px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none cursor-pointer font-medium"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       )}

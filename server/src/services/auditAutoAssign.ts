@@ -1,7 +1,7 @@
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { invalidateCache } from './redisService';
-import { getRequiredAudits } from '../controllers/task.controller';
+import { getRequiredAudits, getTaskMoverAndUpdaters } from '../controllers/task.controller';
 import {
   getAiPickedAudits,
   isNexusAuditChecklist,
@@ -22,8 +22,8 @@ export type ShiftType = 'AM' | 'PM_AFTERNOON' | 'PM_NIGHT' | 'OFF_SHIFT';
 
 /**
  * Shift definitions in Manila Time (UTC+8):
- * - AM (Morning Shift): 08:00 - 13:00 -> Aaron, Darlene, Mimi, Bea, Blessie
- * - PM Afternoon Shift: 13:00 - 17:00 -> Aaron, Darlene, Mimi, Bea, Blessie, Cherilyn, Gie
+ * - AM (Morning Shift): 08:00 - 12:00 -> Aaron, Darlene, Mimi, Bea, Blessie
+ * - PM Afternoon Shift: 12:00 - 17:00 -> Aaron, Darlene, Mimi, Bea, Blessie, Cherilyn, Gie
  * - PM Night Shift: 17:00 - 01:00 (next day) -> Cherilyn, Gie, Pau2x (Gwyneth), Hannah
  * - Off-Shift: 01:00 - 08:00 -> No shift assignments; tasks wait until 8 AM morning shift
  */
@@ -54,12 +54,12 @@ export function getManilaHourAndMinute(date: Date = new Date()): { hour: number;
  */
 export function getCurrentManilaShift(date: Date = new Date()): ShiftType {
   const { hour } = getManilaHourAndMinute(date);
-  // 08:00 to 12:59 -> AM Morning shift
-  if (hour >= 8 && hour < 13) {
+  // 08:00 to 11:59 -> AM Morning shift
+  if (hour >= 8 && hour < 12) {
     return 'AM';
   }
-  // 13:00 to 16:59 -> PM Afternoon shift
-  if (hour >= 13 && hour < 17) {
+  // 12:00 to 16:59 -> PM Afternoon shift (Cherilyn and Gie start at 12pm)
+  if (hour >= 12 && hour < 17) {
     return 'PM_AFTERNOON';
   }
   // 17:00 to 00:59 -> PM Night shift (until 1:00 AM)
@@ -172,22 +172,28 @@ export async function autoAssignAudits(
     select: { id: true, name: true, email: true, roles: true },
   });
   const shiftAuditors = allUsers.filter((u) => isUserInShift(u, currentShift));
+
+  // Align with audit restrictions: exclude task assignees, inProgress mover, and MA updaters for this iteration
+  const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
   const taskAssigneeIds = new Set(
     [task.assigneeId, ...task.assignees.map((a) => a.id)].filter(Boolean) as string[]
   );
 
-  // Current load: unchecked audit items already assigned to each auditor
-  const openItems = await prisma.checklistItem.findMany({
-    where: {
-      completed: false,
-      assigneeId: { isEmpty: false },
-      NOT: { text: { startsWith: '!' } },
-      checklist: { name: { equals: 'Audit', mode: 'insensitive' } },
-    },
-    select: { assigneeId: true },
-  });
-  const load = new Map<string, number>();
-  openItems.forEach((i) => i.assigneeId.forEach((id) => load.set(id, (load.get(id) || 0) + 1)));
+  const blockedUserIds = new Set<string>([
+    ...taskAssigneeIds,
+    ...maUpdaterIds,
+    ...(inProgressMovedBy?.id ? [inProgressMovedBy.id] : []),
+  ]);
+  const blockedNames = new Set<string>([
+    ...maUpdaterNames.map((n) => n.trim().toLowerCase()),
+    ...(inProgressMovedBy?.name ? [inProgressMovedBy.name.trim().toLowerCase()] : []),
+  ]);
+
+  const isUserBlocked = (u: { id: string; name?: string | null }) => {
+    if (blockedUserIds.has(u.id)) return true;
+    if (u.name && blockedNames.has(u.name.trim().toLowerCase())) return true;
+    return false;
+  };
 
   let checklistId = auditChecklists[0]?.id;
   const assigned: { itemId: string; text: string; userId: string }[] = [];
@@ -199,58 +205,31 @@ export async function autoAssignAudits(
     // Never modify or reassign already completed audits
     if (existing?.completed) continue;
 
-    const holders = shiftAuditors
-      .filter((u) =>
-        u.roles.some((r) => r.toLowerCase().includes('audit') && AUDIT_ROLE_MATCHERS[norm](r.toLowerCase()))
-      )
-      .map((u) => u.id);
-    const others = holders.filter((id) => !taskAssigneeIds.has(id));
-    const pool = others.length > 0 ? others : holders;
-    if (pool.length === 0) continue;
+    // Filter to shift auditors who hold the matching audit role and are NOT blocked
+    const eligibleAuditors = shiftAuditors.filter((u) =>
+      !isUserBlocked(u) &&
+      u.roles.some((r) => r.toLowerCase().includes('audit') && AUDIT_ROLE_MATCHERS[norm](r.toLowerCase()))
+    );
 
-    // Pick least busy auditor in active shift; break ties randomly
-    const minLoad = Math.min(...pool.map((id) => load.get(id) || 0));
-    const tied = pool.filter((id) => (load.get(id) || 0) === minLoad);
-    const userId = tied[Math.floor(Math.random() * tied.length)];
+    if (eligibleAuditors.length === 0) continue;
 
-    let updatedAssignees: string[] = [];
+    const eligibleAuditorIds = eligibleAuditors.map((u) => u.id);
+    const existingAssigneeIds = (existing?.assigneeId || []).filter((id) => !blockedUserIds.has(id));
 
-    if (currentShift === 'PM_NIGHT') {
-      // Night shift (5 PM to 1 AM): adds night shift auditors to unchecked audits
-      if (existing) {
-        if (existing.assigneeId.includes(userId)) {
-          continue; // Already has this night shift auditor
-        }
-        updatedAssignees = Array.from(new Set([...existing.assigneeId, userId]));
-      } else {
-        updatedAssignees = [userId];
-      }
-    } else if (currentShift === 'AM') {
-      // Morning shift: "8 am for morning shift automatic if audits is not checked automatically assign"
-      if (existing && existing.assigneeId.length > 0) {
-        const hasAmAuditor = existing.assigneeId.some((id) =>
-          shiftAuditors.some((sa) => sa.id === id)
-        );
-        if (hasAmAuditor) continue;
-        // Assign morning shift auditor
-        updatedAssignees = [userId];
-      } else {
-        updatedAssignees = [userId];
-      }
-    } else {
-      // PM Afternoon shift:
-      if (existing && existing.assigneeId.length > 0) {
-        const hasAfternoonAuditor = existing.assigneeId.some((id) =>
-          shiftAuditors.some((sa) => sa.id === id)
-        );
-        if (hasAfternoonAuditor) continue;
-        updatedAssignees = [userId];
-      } else {
-        updatedAssignees = [userId];
-      }
+    // Multiple assignees: add shift auditors to existing assignees
+    const updatedAssignees = Array.from(new Set([...existingAssigneeIds, ...eligibleAuditorIds]));
+
+    // Find newly added auditors to notify
+    const newlyAdded = eligibleAuditors.filter((u) => !existingAssigneeIds.includes(u.id));
+
+    // If no change in assignees, skip DB update
+    if (
+      existing &&
+      existing.assigneeId.length === updatedAssignees.length &&
+      existing.assigneeId.every((id) => updatedAssignees.includes(id))
+    ) {
+      continue;
     }
-
-    load.set(userId, (load.get(userId) || 0) + 1);
 
     if (!checklistId) {
       const checklist = await prisma.checklist.create({
@@ -271,7 +250,9 @@ export async function autoAssignAudits(
           select: { id: true },
         });
 
-    assigned.push({ itemId: item.id, text, userId });
+    newlyAdded.forEach((u) => {
+      assigned.push({ itemId: item.id, text, userId: u.id });
+    });
   }
 
   if (assigned.length === 0) return { success: true, assignedCount: 0 };

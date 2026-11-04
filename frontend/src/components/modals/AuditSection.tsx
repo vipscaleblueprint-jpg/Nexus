@@ -64,6 +64,12 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
 
   const isSelfAuditBlocked = useMemo(() => {
     if (!currentUser?.id) return false;
+
+    // In REVISION, editors are reset back to zero
+    const currentSubtask = subtaskId ? task.subtasks?.find((s: any) => s.id === subtaskId) : null;
+    const currentStatus = (currentSubtask?.status || task.status || '').toUpperCase();
+    if (currentStatus === 'REVISION') return false;
+
     if (task.inProgressMovedBy?.id === currentUser.id) return true;
     if (task.maUpdaterIds?.includes(currentUser.id)) return true;
     if (
@@ -73,8 +79,15 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
     ) {
       return true;
     }
+    if (
+      task.maUpdaterNames &&
+      currentUser.name &&
+      task.maUpdaterNames.some((n: string) => n && n.trim().toLowerCase() === currentUser.name?.trim().toLowerCase())
+    ) {
+      return true;
+    }
     return false;
-  }, [currentUser?.id, currentUser?.name, task.inProgressMovedBy, task.maUpdaterIds]);
+  }, [currentUser?.id, currentUser?.name, task.inProgressMovedBy, task.maUpdaterIds, task.maUpdaterNames, task.status, task.subtasks, subtaskId]);
 
   // Synchronize incoming checklists prop changes smoothly, preserving pending local updates
   useEffect(() => {
@@ -1143,7 +1156,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                 setShakingAuditItem(null);
                                 setIsShaking(false);
                               }, 700);
-                              toast.error("You're not allowed to check an audit that you've created duh! 🙄");
+                              toast.error("You're not allowed to check an audit that you or your group edited! 🙄");
                               return;
                             }
                             if (canCheck) {
@@ -1152,7 +1165,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                           }}
                           title={
                             isSelfAuditBlocked
-                              ? "You're not allowed to check an audit that you've created duh! 🙄"
+                              ? "You're not allowed to check an audit that you or your group edited! 🙄"
                               : !canCheck
                               ? `Only ${requiredRole || 'Admins'} can check this item`
                               : "Click to check audit"

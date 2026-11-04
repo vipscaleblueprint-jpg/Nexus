@@ -338,6 +338,7 @@ export interface LinkWithPreviewProps extends React.AnchorHTMLAttributes<HTMLAnc
   href?: string;
   children?: React.ReactNode;
   className?: string;
+  maxLinkLength?: number;
 }
 
 /**
@@ -349,6 +350,7 @@ export function LinkWithPreview({
   children,
   className = '',
   onClick,
+  maxLinkLength,
   ...rest
 }: LinkWithPreviewProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -359,6 +361,32 @@ export function LinkWithPreview({
 
   const anchorText = typeof children === 'string' ? children : '';
   const metadata = React.useMemo(() => parseLinkMetadata(href, anchorText), [href, anchorText]);
+
+  const displayChildren = React.useMemo(() => {
+    if (!maxLinkLength || maxLinkLength <= 0) return children;
+    if (typeof children === 'string' && children.length > maxLinkLength) {
+      const sliceLen = Math.max(1, maxLinkLength - 3);
+      return `${children.slice(0, sliceLen)}...`;
+    }
+    if (Array.isArray(children)) {
+      let cur = 0;
+      return React.Children.map(children, (child) => {
+        if (typeof child === 'string') {
+          if (cur >= maxLinkLength) return '';
+          if (cur + child.length > maxLinkLength) {
+            const rem = maxLinkLength - cur;
+            const sliceLen = Math.max(1, rem - 3);
+            cur = maxLinkLength;
+            return `${child.slice(0, sliceLen)}...`;
+          }
+          cur += child.length;
+          return child;
+        }
+        return child;
+      });
+    }
+    return children;
+  }, [children, maxLinkLength]);
 
   const handleMouseEnter = useCallback(() => {
     if (closeTimeoutRef.current) {
@@ -421,6 +449,7 @@ export function LinkWithPreview({
         ref={linkRef}
         {...rest}
         href={metadata.normalizedHref}
+        title={rest.title || (typeof children === 'string' ? children : metadata.normalizedHref)}
         target="_blank"
         rel="noopener noreferrer"
         onMouseEnter={handleMouseEnter}
@@ -429,9 +458,9 @@ export function LinkWithPreview({
           handleClose();
           if (onClick) onClick(e);
         }}
-        className={className}
+        className={`break-all [overflow-wrap:anywhere] ${className || ''}`}
       >
-        {children}
+        {displayChildren}
       </a>
 
       {isOpen && triggerRect && typeof document !== 'undefined' &&

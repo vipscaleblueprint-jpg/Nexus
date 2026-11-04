@@ -6,6 +6,9 @@ import { EmojiPicker } from '../ui/EmojiPicker';
 import { uploadApi } from '@/api/upload';
 import { validateUploadFile, formatFileSize, MAX_FILES_PER_BATCH, isImageFile } from '@/lib/fileValidation';
 import { toast } from '@/lib/toast';
+import { useAppStore } from '@/lib/store';
+import { isSystemUser } from '@/lib/taskTokens';
+import { triggerMentionConfetti } from '../ui/MentionConfetti';
 
 interface CommentReplyInputProps {
   commentId?: string;
@@ -61,14 +64,32 @@ export function CommentReplyInput({
 
   const [emojiAnchor, setEmojiAnchor] = useState<HTMLElement | null>(null);
 
+  // Ensure workspace users are fetched from store if missing or not passed
+  const storeUsers = useAppStore((s) => s.workspaceUsers);
+  const loadUsers = useAppStore((s) => s.loadUsers);
+  const hydrateUsersFromCache = useAppStore((s) => s.hydrateUsersFromCache);
+
+  useEffect(() => {
+    if (storeUsers.length === 0) {
+      hydrateUsersFromCache();
+      loadUsers();
+    }
+  }, [storeUsers.length, hydrateUsersFromCache, loadUsers]);
+
+  const allUsers = useMemo(() => {
+    if (workspaceUsers && workspaceUsers.length > 0) return workspaceUsers;
+    return storeUsers || [];
+  }, [workspaceUsers, storeUsers]);
+
   // Filtered users for mention search
   const filteredUsers = useMemo(() => {
-    if (!mentionSearch) return workspaceUsers;
+    const list = (allUsers || []).filter((u) => !isSystemUser(u));
+    if (!mentionSearch) return list;
     const q = mentionSearch.toLowerCase();
-    return workspaceUsers.filter((u) =>
+    return list.filter((u) =>
       (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q)
     );
-  }, [workspaceUsers, mentionSearch]);
+  }, [allUsers, mentionSearch]);
 
   // Clean up preview object URLs on unmount
   useEffect(() => {
@@ -279,6 +300,7 @@ export function CommentReplyInput({
       }
       setShowMentionMenu(false);
       setMentionSearch('');
+      triggerMentionConfetti(user as any);
       const newCursor = atIndex + replacement.length;
       setTimeout(() => {
         inputRef.current?.focus();
@@ -331,7 +353,7 @@ export function CommentReplyInput({
       const finalMentionIds: string[] = [];
 
       // Check against all workspace members to match @Name mentions accurately
-      const usersToCheck = [...mentionedUsers, ...workspaceUsers];
+      const usersToCheck = [...mentionedUsers, ...allUsers];
       const seenUserIds = new Set<string>();
 
       for (const u of usersToCheck) {

@@ -60,6 +60,7 @@ import { getAssigneeAvatarColor } from "@/lib/taskTokens";
 import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
 import { getPriorityConfig } from "@/lib/priority";
+import { isGalaxyTask } from "@/lib/galaxyTask";
 
 const FOCUS_REFETCH_INTERVAL_MS = 60 * 1000;
 
@@ -500,7 +501,7 @@ function WorkspaceDashboardContent({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache, workspaceUsers, loadUsers, hasLoadedUsers, setPageTitle, setActiveDashboardTab } = useAppStore();
+  const { currentUser, allLists, allDocs, tasks, loadingTasks, loadTasks, addTask, updateTask, removeTask, hydrateTasksFromCache, workspaceUsers, loadUsers, hasLoadedUsers, setPageTitle, setActiveDashboardTab, isGalaxyFilterActive, setActiveMobileTask } = useAppStore();
 
   const [searchQuery, setSearchQuery] = useState("");
   // All Tasks Filters & Sort
@@ -796,6 +797,11 @@ function WorkspaceDashboardContent({
     const taskToOpen = parent || row;
     const subtaskId = explicitSubtaskId !== undefined ? explicitSubtaskId : (isSub ? row.id : null);
 
+    if (typeof window !== "undefined" && window.innerWidth <= 768) {
+      setActiveMobileTask(taskToOpen);
+      return;
+    }
+
     if (typeof window !== "undefined") {
       const container = document.getElementById("main-scroll-container");
       if (container) {
@@ -889,6 +895,9 @@ function WorkspaceDashboardContent({
 
   const filteredMyTasks = useMemo(() => {
     let result = showClosed ? [...myTasks] : myTasks.filter((t) => !isClosedTask(t));
+    if (isGalaxyFilterActive) {
+      result = result.filter((t) => isGalaxyTask(t));
+    }
 
     const viewParam = searchParams?.get("view");
     if (viewParam === "today") {
@@ -954,7 +963,7 @@ function WorkspaceDashboardContent({
     });
 
     return result;
-  }, [myTasks, searchQuery, filterPriority, filterStatus, sortBy, searchParams, currentUser?.id]);
+  }, [myTasks, searchQuery, filterPriority, filterStatus, sortBy, searchParams, currentUser?.id, isGalaxyFilterActive]);
 
   const myTasksBadgeCount = useMemo(() => {
     if (currentTab === "my" && (searchQuery.trim() || filterPriority !== "all" || filterStatus !== "all")) {
@@ -966,6 +975,9 @@ function WorkspaceDashboardContent({
   // All Tasks filtering and sorting
   const filteredAllTasks = useMemo(() => {
     let result = showClosed ? [...tasksWithSubtasks] : tasksWithSubtasks.filter((t) => !isClosedTask(t));
+    if (isGalaxyFilterActive) {
+      result = result.filter((t) => isGalaxyTask(t));
+    }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -1031,6 +1043,7 @@ function WorkspaceDashboardContent({
     filterPriority,
     filterStatus,
     sortBy,
+    isGalaxyFilterActive,
   ]);
 
   const groupedAllTasksByStatus = useMemo(() => {

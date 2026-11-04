@@ -44,6 +44,7 @@ export interface ActivityCardProps {
   customStatusColor?: string;
   listId?: string;
   customStatusColors?: Record<string, string>;
+  maxLinkLength?: number;
 }
 
 export const STATUS_HEX_MAP: Record<string, string> = {
@@ -168,6 +169,7 @@ export function ActivityCard({
   customStatusColor,
   listId,
   customStatusColors,
+  maxLinkLength,
 }: ActivityCardProps) {
   const currentUser = useAppStore((state) => state.currentUser);
   const normType = (type || '').toUpperCase();
@@ -179,6 +181,7 @@ export function ActivityCard({
   const contentWrapperRef = useRef<HTMLDivElement>(null);
 
   const maxHeight = compact ? 56 : 76;
+  const effectiveMaxLinkLength = maxLinkLength ?? (compact ? 40 : undefined);
 
   useEffect(() => {
     const el = contentWrapperRef.current;
@@ -309,21 +312,21 @@ export function ActivityCard({
 
     if (isMention) {
       badgeNode = (
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border select-none ${mentionClass} shadow-xs`}>
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border select-none whitespace-nowrap ${mentionClass} shadow-xs`}>
           <AtSign className="size-2.5 stroke-[2.4] text-blue-400 [.theme-light_&]:text-blue-700" />
           Mentioned you
         </span>
       );
     } else if (isYouMentioned) {
       badgeNode = (
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border select-none ${mentionClass} shadow-xs`}>
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border select-none whitespace-nowrap ${mentionClass} shadow-xs`}>
           <AtSign className="size-2.5 stroke-[2.4] text-indigo-400 [.theme-light_&]:text-indigo-700" />
           You mentioned
         </span>
       );
     } else if (isSomeoneMentioned) {
       badgeNode = (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border select-none bg-zinc-800/80 text-zinc-300 border-zinc-700/60 shadow-xs [.theme-light_&]:bg-zinc-100 [.theme-light_&]:text-zinc-700 [.theme-light_&]:border-zinc-300">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border select-none whitespace-nowrap bg-zinc-800/80 text-zinc-300 border-zinc-700/60 shadow-xs [.theme-light_&]:bg-zinc-100 [.theme-light_&]:text-zinc-700 [.theme-light_&]:border-zinc-300">
           <AtSign className="size-2.5 stroke-[2.4] text-zinc-400 [.theme-light_&]:text-zinc-600" />
           {firstMentionedUser ? `Mentions ${firstMentionedUser.replace(/^@/, '')}` : 'Mentions teammate'}
         </span>
@@ -664,8 +667,11 @@ export function ActivityCard({
       <div className="flex-1 min-w-0">
         {/* Top Line: Actor + Action + Target + Timestamp + Unread Dot */}
         <div className="flex items-start justify-between gap-3">
-          <div className={`${compact ? 'text-xs' : 'text-sm'} text-foreground min-w-0 pr-1 leading-snug`}>
+          <div className={`${compact ? 'text-xs' : 'text-sm'} text-foreground min-w-0 pr-1 leading-snug break-words [overflow-wrap:anywhere]`}>
             {titleNode}
+            {mentionBadge && (
+              <span className="inline-block ml-1.5 align-middle">{mentionBadge}</span>
+            )}
           </div>
 
           {/* Timestamp right-aligned with unread blue dot */}
@@ -686,10 +692,10 @@ export function ActivityCard({
           </div>
         </div>
 
-        {/* Sub-row for badges (Status pills, Mentions) */}
-        {(statusPills || mentionBadge) && (
+        {/* Sub-row for badges (Status pills) */}
+        {statusPills && (
           <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-            {mentionBadge}
+
             {statusPills}
           </div>
         )}
@@ -700,7 +706,7 @@ export function ActivityCard({
             <div
               ref={contentWrapperRef}
               style={{ maxHeight: !isExpanded && canExpand ? maxHeight : undefined }}
-              className={`relative rounded-xl border font-normal transition-all duration-200 ${
+              className={`relative rounded-xl border font-normal transition-all duration-200 overflow-hidden break-words [overflow-wrap:anywhere] ${
                 compact ? 'px-2.5 py-1.5 text-xs leading-normal' : 'px-3 py-2 text-xs sm:text-sm leading-relaxed'
               } ${
                 isGreyed
@@ -708,15 +714,16 @@ export function ActivityCard({
                   : !isRead
                   ? 'bg-[var(--notif-quote-bg)] border-[var(--notif-quote-border)] text-foreground shadow-2xs'
                   : 'bg-background/60 border-border text-foreground'
-              } ${!isExpanded && canExpand ? 'overflow-hidden' : ''}`}
+              }`}
             >
               <CommentContent
                 content={content}
+                maxLinkLength={effectiveMaxLinkLength}
                 className={`${
                   compact ? 'text-xs' : 'text-xs sm:text-sm'
                 } ${
                   isGreyed ? 'text-zinc-400 dark:text-zinc-400' : 'text-foreground'
-                } max-w-full prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline [&_img]:my-0 [&_img]:inline-block`}
+                } max-w-full break-words [overflow-wrap:anywhere] prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline [&_a]:break-all [&_a]:[overflow-wrap:anywhere] [&_img]:my-0 [&_img]:inline-block`}
                 onPreviewImage={onPreviewImage}
               />
 

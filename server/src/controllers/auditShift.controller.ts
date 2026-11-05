@@ -11,6 +11,14 @@ import {
 } from '../services/auditAutoAssign';
 
 /**
+ * Checks if a user's roles include any auditor specialization.
+ */
+export function isAuditorRole(roles: string[] = []): boolean {
+  if (!roles || !Array.isArray(roles)) return false;
+  return roles.some((r) => typeof r === 'string' && r.toLowerCase().includes('audit'));
+}
+
+/**
  * Get all configured audit shifts, eligible users, and current Manila shift status.
  */
 export const getAuditShifts = async (req: Request, res: Response) => {
@@ -23,7 +31,7 @@ export const getAuditShifts = async (req: Request, res: Response) => {
       shifts = DEFAULT_SHIFTS;
     }
 
-    // Fetch active users for auditor selection
+    // Fetch active users for auditor & member selection
     const users = await prisma.user.findMany({
       where: { isActive: true },
       select: {
@@ -37,6 +45,32 @@ export const getAuditShifts = async (req: Request, res: Response) => {
       orderBy: { name: 'asc' },
     });
 
+    // Enrich each shift with members (auditors + normal users) and isAudit flag
+    const enrichedShifts = shifts.map((s: any) => {
+      const auditorIdSet = new Set<string>((s.auditorIds || []).map((id: string) => id.trim()));
+      const memberIdSet = new Set<string>((s.memberIds || []).map((id: string) => id.trim()));
+      const memberNameSet = new Set<string>((s.memberNames || []).map((n: string) => n.trim().toLowerCase()));
+      const auditorNameSet = new Set<string>((s.auditorNames || []).map((n: string) => n.trim().toLowerCase()));
+
+      const members = users
+        .filter((u) => {
+          if (memberIdSet.has(u.id) || auditorIdSet.has(u.id)) return true;
+          if (u.name && (memberNameSet.has(u.name.toLowerCase()) || auditorNameSet.has(u.name.toLowerCase()))) {
+            return true;
+          }
+          return false;
+        })
+        .map((u) => ({
+          ...u,
+          isAudit: isAuditorRole(u.roles) || auditorIdSet.has(u.id),
+        }));
+
+      return {
+        ...s,
+        members,
+      };
+    });
+
     const { hour, minute } = getManilaHourAndMinute();
     const activeShiftKey = await getActiveManilaShift();
 
@@ -45,10 +79,11 @@ export const getAuditShifts = async (req: Request, res: Response) => {
       hour: 'numeric',
       minute: '2-digit',
       hour12: true,
+      hourCycle: 'h12',
     }).format(new Date());
 
     res.json({
-      shifts,
+      shifts: enrichedShifts,
       users,
       currentManilaTime: {
         hour,
@@ -79,6 +114,8 @@ export const updateAuditShift = async (req: Request, res: Response) => {
       endMinute,
       auditorNames,
       auditorIds,
+      memberNames,
+      memberIds,
       isActive,
       order,
     } = req.body;
@@ -92,6 +129,8 @@ export const updateAuditShift = async (req: Request, res: Response) => {
     if (endMinute !== undefined) data.endMinute = Math.max(0, Math.min(59, parseInt(endMinute, 10)));
     if (Array.isArray(auditorNames)) data.auditorNames = auditorNames.map((s: string) => String(s).trim());
     if (Array.isArray(auditorIds)) data.auditorIds = auditorIds.map((s: string) => String(s).trim());
+    if (Array.isArray(memberNames)) data.memberNames = memberNames.map((s: string) => String(s).trim());
+    if (Array.isArray(memberIds)) data.memberIds = memberIds.map((s: string) => String(s).trim());
     if (isActive !== undefined) data.isActive = Boolean(isActive);
     if (order !== undefined) data.order = parseInt(order, 10);
 
@@ -124,6 +163,8 @@ export const createAuditShift = async (req: Request, res: Response) => {
       endMinute = 0,
       auditorNames = [],
       auditorIds = [],
+      memberNames = [],
+      memberIds = [],
       isActive = true,
       order = 0,
     } = req.body;
@@ -142,6 +183,8 @@ export const createAuditShift = async (req: Request, res: Response) => {
         endMinute: Math.max(0, Math.min(59, parseInt(endMinute, 10))),
         auditorNames: Array.isArray(auditorNames) ? auditorNames.map((s: string) => String(s).trim()) : [],
         auditorIds: Array.isArray(auditorIds) ? auditorIds.map((s: string) => String(s).trim()) : [],
+        memberNames: Array.isArray(memberNames) ? memberNames.map((s: string) => String(s).trim()) : [],
+        memberIds: Array.isArray(memberIds) ? memberIds.map((s: string) => String(s).trim()) : [],
         isActive: Boolean(isActive),
         order: parseInt(order, 10) || 0,
       },

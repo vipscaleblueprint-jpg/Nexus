@@ -528,18 +528,52 @@ export function TaskDetailModalContent({
   const drafts = useAppStore((state) => state.drafts);
   const upsertDraft = useAppStore((state) => state.upsertDraft);
   const removeDraftsByTask = useAppStore((state) => state.removeDraftsByTask);
+  const removeDraft = useAppStore((state) => state.removeDraft);
 
   const [draftSaveStatus, setDraftSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [restoredDraftId, setRestoredDraftId] = useState<string | null>(null);
   const [showRestoredText, setShowRestoredText] = useState(false);
   const restoredTimerRef = useRef<NodeJS.Timeout | null>(null);
   const draftDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const restoredTaskIdRef = useRef<string | null>(null);
+  const prevTaskIdRef = useRef<string | null>(null);
+  const draftSaveRequestIdRef = useRef(0);
+  const draftAbortControllerRef = useRef<AbortController | null>(null);
 
-  // Restore pre-saved draft from store if user had unsent draft
+  useEffect(() => {
+    return () => {
+      if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+      if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+      draftAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  // Restore pre-saved draft from store if user had unsent draft (only once per task)
   useEffect(() => {
     if (!task?.id) return;
+
+    if (prevTaskIdRef.current !== task.id) {
+      prevTaskIdRef.current = task.id;
+      restoredTaskIdRef.current = null;
+      if (draftDebounceTimerRef.current) {
+        clearTimeout(draftDebounceTimerRef.current);
+        draftDebounceTimerRef.current = null;
+      }
+      if (restoredTimerRef.current) {
+        clearTimeout(restoredTimerRef.current);
+        restoredTimerRef.current = null;
+      }
+      draftAbortControllerRef.current?.abort();
+      setShowRestoredText(false);
+      setRestoredDraftId(null);
+      setDraftSaveStatus('idle');
+    }
+
+    if (restoredTaskIdRef.current === task.id) return;
+
     const existingDraft = drafts.find((d) => d.taskId === task.id && !d.subtaskId);
     if (existingDraft?.comment && (!comment || isBlankCommentHtml(comment))) {
+      restoredTaskIdRef.current = task.id;
       setComment(existingDraft.comment);
       setRestoredDraftId(existingDraft.id);
       setShowRestoredText(true);
@@ -555,21 +589,39 @@ export function TaskDetailModalContent({
   }, [task?.id, drafts]);
 
   const handleDiscardDraft = useCallback(async () => {
-    setComment('');
-    setRestoredDraftId(null);
+    if (draftDebounceTimerRef.current) {
+      clearTimeout(draftDebounceTimerRef.current);
+      draftDebounceTimerRef.current = null;
+    }
+    draftSaveRequestIdRef.current++;
+    draftAbortControllerRef.current?.abort();
+    draftAbortControllerRef.current = null;
+
+    if (restoredTimerRef.current) {
+      clearTimeout(restoredTimerRef.current);
+      restoredTimerRef.current = null;
+    }
     setShowRestoredText(false);
+    setRestoredDraftId(null);
     setDraftSaveStatus('idle');
-    if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+
+    if (task?.id) {
+      restoredTaskIdRef.current = task.id;
+    }
+
+    setComment('');
     commentEditorRef.current?.clear?.();
     if (task?.id) {
+      removeDraftsByTask(task.id, null);
+      removeDraft(`task:${task.id}`);
       try {
-        await draftsApi.deleteDraftByTask(task.id);
-        removeDraftsByTask(task.id);
-        window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: task.id } }));
-        toast.success('Draft discarded');
+        await draftsApi.deleteDraftByTask(task.id, null);
+        await draftsApi.deleteDraft(`task:${task.id}`);
       } catch {}
+      window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: task.id } }));
+      toast.success('Draft discarded');
     }
-  }, [task?.id, removeDraftsByTask]);
+  }, [task?.id, removeDraftsByTask, removeDraft]);
 
 
   // Auto-scroll the bottom of the comment being edited into view so the user doesn't have to scroll down manually
@@ -655,6 +707,15 @@ export function TaskDetailModalContent({
     }
     return null;
   });
+
+  const [mobilePanelTab, setMobilePanelTab] = useState<'details' | 'activity'>(
+    scrollToComments || targetCommentId ? 'activity' : 'details'
+  );
+  useEffect(() => {
+    if (scrollToComments || targetCommentId) {
+      setMobilePanelTab('activity');
+    }
+  }, [scrollToComments, targetCommentId]);
 
   const setActiveSubtask = useCallback((st: any) => {
     if (!st) {
@@ -2459,6 +2520,13 @@ export function TaskDetailModalContent({
 
   // Focus trap and esc handler activity panel
   const [activityWidth, setActivityWidth] = useState(mode === 'full' ? 450 : 380);
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    const check = () => setIsDesktop(typeof window !== 'undefined' && window.innerWidth >= 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
   const isResizing = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(300);
@@ -3073,11 +3141,38 @@ export function TaskDetailModalContent({
       setVisibleActivityCount(prev => prev + 1);
       scrollToLatestComment();
 
-      setComment('');
-      draftsApi.deleteDraftByTask(targetId, subtaskId).catch(() => {});
-      removeDraftsByTask(targetId, subtaskId);
-      setDraftSaveStatus('idle');
+      if (draftDebounceTimerRef.current) {
+        clearTimeout(draftDebounceTimerRef.current);
+        draftDebounceTimerRef.current = null;
+      }
+      draftSaveRequestIdRef.current++;
+      draftAbortControllerRef.current?.abort();
+      draftAbortControllerRef.current = null;
+
+      if (restoredTimerRef.current) {
+        clearTimeout(restoredTimerRef.current);
+        restoredTimerRef.current = null;
+      }
+      setShowRestoredText(false);
       setRestoredDraftId(null);
+      setDraftSaveStatus('idle');
+
+      if (task?.id) {
+        restoredTaskIdRef.current = task.id;
+      }
+
+      setComment('');
+      commentEditorRef.current?.clear?.();
+
+      removeDraftsByTask(targetId, subtaskId ?? null);
+      removeDraft(`task:${targetId}`);
+      if (subtaskId) {
+        removeDraft(`task:${targetId}:sub:${subtaskId}`);
+      }
+      try {
+        await draftsApi.deleteDraftByTask(targetId, subtaskId ?? null);
+        await draftsApi.deleteDraft(subtaskId ? `task:${targetId}:sub:${subtaskId}` : `task:${targetId}`);
+      } catch {}
       window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: targetId } }));
       setTimeout(() => {
         const el = document.getElementById('main-task-comment');
@@ -3278,20 +3373,26 @@ export function TaskDetailModalContent({
         className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0 bg-card">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 border-b border-border shrink-0 bg-card w-full max-w-full overflow-hidden">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => {
                 onClose();
               }}
-              className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
+              className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-1 sm:mr-2 cursor-pointer shrink-0"
               title="Close"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
 
+            {/* Mobile-only compact title (no unnecessary breadcrumb links on mobile, only on iPad+) */}
+            <span className="md:hidden text-xs font-semibold text-zinc-200 truncate max-w-[150px] sm:max-w-[220px]">
+              {task.title || 'Untitled'}
+            </span>
+
+            {/* Breadcrumb links only visible on iPad and desktop */}
             {task.list ? (
-              <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
+              <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400 font-medium">
                 {task.list.space && (
                   <>
                     <button
@@ -3345,7 +3446,7 @@ export function TaskDetailModalContent({
                 <span className="truncate max-w-[150px] text-zinc-200">{task.title || 'Untitled'}</span>
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-xs animate-pulse opacity-50 cursor-default">
+              <div className="hidden md:flex items-center gap-2 text-xs animate-pulse opacity-50 cursor-default">
                 <div className="flex items-center gap-1.5">
                   <div className="w-4 h-4 rounded bg-zinc-800 shrink-0" />
                   <div className="w-16 h-3 bg-zinc-800 rounded" />
@@ -3364,17 +3465,17 @@ export function TaskDetailModalContent({
             )}
 
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               onClick={() => {
                 const link = getNexusTaskUrl(task, activeSubtask?.id);
                 navigator.clipboard.writeText(link);
                 toast.success('Link copied to clipboard');
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-2"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-1 sm:mr-2"
             >
               <Share2 className="w-3.5 h-3.5 text-zinc-400" />
-              Share
+              <span className="hidden sm:inline">Share</span>
             </button>
             {mode === 'modal' && (
               <button
@@ -3430,11 +3531,44 @@ export function TaskDetailModalContent({
           </div>
         </div>
 
+        {/* Mobile Segmented Tab Bar (md:hidden) */}
+        <div className="md:hidden px-4 py-2 border-b border-border bg-card/95 shrink-0 flex items-center justify-center">
+          <div className="grid grid-cols-2 gap-1 w-full bg-secondary/80 p-0.5 rounded-lg border border-border text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setMobilePanelTab('details')}
+              className={`py-1.5 rounded-md transition-all ${
+                mobilePanelTab === 'details'
+                  ? 'bg-card text-foreground shadow-xs font-bold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Details
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobilePanelTab('activity')}
+              className={`py-1.5 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                mobilePanelTab === 'activity'
+                  ? 'bg-card text-foreground shadow-xs font-bold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <span>Activity & Comments</span>
+              {(richComments?.length > 0 || task?.comments?.length > 0) && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-400">
+                  {richComments?.length || task?.comments?.length || 0}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
         {/* Content area: Split layout */}
         <div className="nexus-task-modal-split flex flex-1 overflow-hidden">
 
           {/* Left Panel: Details & Description */}
-          <div className="nexus-task-left-panel flex-1 overflow-y-auto border-r border-border custom-scrollbar">
+          <div className={`nexus-task-left-panel flex-1 overflow-y-auto border-r border-border custom-scrollbar ${mobilePanelTab === 'activity' ? 'hidden md:block' : 'block'}`}>
             <div className="p-8">
 
               <div className="mb-8 group max-w-3xl w-full">
@@ -4317,13 +4451,13 @@ export function TaskDetailModalContent({
 
           {/* Resizer */}
           <div
-            className="w-1 bg-zinc-800/30 hover:bg-indigo-500 cursor-col-resize shrink-0 transition-colors z-10"
+            className="hidden md:block w-1 bg-zinc-800/30 hover:bg-indigo-500 cursor-col-resize shrink-0 transition-colors z-10"
             onMouseDown={startResizing}
           />
 
           {/* Right Panel: Activity */}
-          <div ref={activityPanelRef} style={{ width: activityWidth }} className="nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60">
-            <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
+          <div ref={activityPanelRef} style={isDesktop ? { width: activityWidth } : undefined} className={`nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 overflow-hidden ${mobilePanelTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}>
+            <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
               <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
               <div className="flex gap-3">
                 <span className="text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
@@ -4336,7 +4470,7 @@ export function TaskDetailModalContent({
               onWheel={() => { isUserScrollingRef.current = true; }}
               onTouchStart={() => { isUserScrollingRef.current = true; }}
               onPointerDown={() => { isUserScrollingRef.current = true; }}
-              className="flex-1 overflow-y-auto p-6 custom-scrollbar"
+              className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 custom-scrollbar"
             >
               <div className="space-y-5">
 
@@ -5179,12 +5313,24 @@ export function TaskDetailModalContent({
                         value={comment}
                         onChange={(html, text, cursorPosition, textBefore) => {
                           setComment(html);
+                          if (task?.id) {
+                            restoredTaskIdRef.current = task.id;
+                          }
 
-                          if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+                          if (draftDebounceTimerRef.current) {
+                            clearTimeout(draftDebounceTimerRef.current);
+                            draftDebounceTimerRef.current = null;
+                          }
+                          const reqId = ++draftSaveRequestIdRef.current;
                           draftDebounceTimerRef.current = setTimeout(async () => {
                             if (!task?.id) return;
+                            if (reqId !== draftSaveRequestIdRef.current) return;
+
                             if (!isBlankCommentHtml(html) && html.trim().length > 0) {
                               setDraftSaveStatus('saving');
+                              draftAbortControllerRef.current?.abort();
+                              const abortController = new AbortController();
+                              draftAbortControllerRef.current = abortController;
                               try {
                                 const res = await draftsApi.saveDraft({
                                   id: `task:${task.id}`,
@@ -5192,22 +5338,28 @@ export function TaskDetailModalContent({
                                   taskTitle: task.title,
                                   comment: html,
                                   type: 'comment',
-                                });
-                                if (res?.draft) {
+                                }, { signal: abortController.signal });
+                                if (reqId === draftSaveRequestIdRef.current && res?.draft) {
                                   upsertDraft(res.draft);
                                   setDraftSaveStatus('saved');
                                   window.dispatchEvent(new CustomEvent('draft:updated', { detail: { draft: res.draft } }));
                                 }
-                              } catch {
-                                setDraftSaveStatus('idle');
+                              } catch (err: any) {
+                                if (err?.name !== 'AbortError' && reqId === draftSaveRequestIdRef.current) {
+                                  setDraftSaveStatus('idle');
+                                }
                               }
                             } else {
                               try {
-                                await draftsApi.deleteDraftByTask(task.id);
-                                removeDraftsByTask(task.id);
-                                setDraftSaveStatus('idle');
-                                setRestoredDraftId(null);
-                                window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: task.id } }));
+                                await draftsApi.deleteDraftByTask(task.id, null);
+                                await draftsApi.deleteDraft(`task:${task.id}`);
+                                if (reqId === draftSaveRequestIdRef.current) {
+                                  removeDraftsByTask(task.id, null);
+                                  removeDraft(`task:${task.id}`);
+                                  setDraftSaveStatus('idle');
+                                  setRestoredDraftId(null);
+                                  window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: task.id } }));
+                                }
                               } catch {}
                             }
                           }, 1200);
@@ -5282,13 +5434,6 @@ export function TaskDetailModalContent({
                         }
                         footerEnd={
                           <div className="flex items-center gap-2">
-                            {draftSaveStatus === 'saving' && (
-                              <span className="text-[11px] text-zinc-400 whitespace-nowrap shrink-0 flex items-center gap-1.5 animate-pulse select-none">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>Saving draft...</span>
-                              </span>
-                            )}
-
                             <ComposerSendButton
                               onClick={handleAddComment}
                               disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
@@ -5447,6 +5592,15 @@ export function SubtaskDetailView({
     window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
   }, [parentTask, onUpdateTask, setActiveSubtask]);
 
+  const [subtaskMobileTab, setSubtaskMobileTab] = useState<'details' | 'activity'>(
+    scrollToComments || targetCommentId ? 'activity' : 'details'
+  );
+  useEffect(() => {
+    if (scrollToComments || targetCommentId) {
+      setSubtaskMobileTab('activity');
+    }
+  }, [scrollToComments, targetCommentId]);
+
   const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(() => subtask?.assigneeRoleRestrictions || []);
   const latestRoleRestrictionsRef = useRef<string[]>(subtask?.assigneeRoleRestrictions || []);
   const lastRoleUpdateTimestampRef = useRef<number>(0);
@@ -5478,18 +5632,52 @@ export function SubtaskDetailView({
   const drafts = useAppStore((state) => state.drafts);
   const upsertDraft = useAppStore((state) => state.upsertDraft);
   const removeDraftsByTask = useAppStore((state) => state.removeDraftsByTask);
+  const removeDraft = useAppStore((state) => state.removeDraft);
 
   const [draftSaveStatus, setDraftSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [restoredDraftId, setRestoredDraftId] = useState<string | null>(null);
   const [showRestoredText, setShowRestoredText] = useState(false);
   const restoredTimerRef = useRef<NodeJS.Timeout | null>(null);
   const draftDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const restoredSubtaskIdRef = useRef<string | null>(null);
+  const prevSubtaskIdRef = useRef<string | null>(null);
+  const draftSaveRequestIdRef = useRef(0);
+  const draftAbortControllerRef = useRef<AbortController | null>(null);
 
-  // Restore subtask draft
+  useEffect(() => {
+    return () => {
+      if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+      if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+      draftAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  // Restore subtask draft (only once per subtask)
   useEffect(() => {
     if (!parentTask?.id || !subtask?.id) return;
+
+    if (prevSubtaskIdRef.current !== subtask.id) {
+      prevSubtaskIdRef.current = subtask.id;
+      restoredSubtaskIdRef.current = null;
+      if (draftDebounceTimerRef.current) {
+        clearTimeout(draftDebounceTimerRef.current);
+        draftDebounceTimerRef.current = null;
+      }
+      if (restoredTimerRef.current) {
+        clearTimeout(restoredTimerRef.current);
+        restoredTimerRef.current = null;
+      }
+      draftAbortControllerRef.current?.abort();
+      setShowRestoredText(false);
+      setRestoredDraftId(null);
+      setDraftSaveStatus('idle');
+    }
+
+    if (restoredSubtaskIdRef.current === subtask.id) return;
+
     const existingDraft = drafts.find((d) => d.taskId === parentTask.id && d.subtaskId === subtask.id);
     if (existingDraft?.comment && (!comment || isBlankCommentHtml(comment))) {
+      restoredSubtaskIdRef.current = subtask.id;
       setComment(existingDraft.comment);
       setRestoredDraftId(existingDraft.id);
       setShowRestoredText(true);
@@ -5505,21 +5693,39 @@ export function SubtaskDetailView({
   }, [parentTask?.id, subtask?.id, drafts]);
 
   const handleDiscardDraft = useCallback(async () => {
-    setComment('');
-    setRestoredDraftId(null);
+    if (draftDebounceTimerRef.current) {
+      clearTimeout(draftDebounceTimerRef.current);
+      draftDebounceTimerRef.current = null;
+    }
+    draftSaveRequestIdRef.current++;
+    draftAbortControllerRef.current?.abort();
+    draftAbortControllerRef.current = null;
+
+    if (restoredTimerRef.current) {
+      clearTimeout(restoredTimerRef.current);
+      restoredTimerRef.current = null;
+    }
     setShowRestoredText(false);
+    setRestoredDraftId(null);
     setDraftSaveStatus('idle');
-    if (restoredTimerRef.current) clearTimeout(restoredTimerRef.current);
+
+    if (subtask?.id) {
+      restoredSubtaskIdRef.current = subtask.id;
+    }
+
+    setComment('');
     commentEditorRef.current?.clear?.();
     if (parentTask?.id && subtask?.id) {
+      removeDraftsByTask(parentTask.id, subtask.id);
+      removeDraft(`task:${parentTask.id}:sub:${subtask.id}`);
       try {
         await draftsApi.deleteDraftByTask(parentTask.id, subtask.id);
-        removeDraftsByTask(parentTask.id, subtask.id);
-        window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
-        toast.success('Draft discarded');
+        await draftsApi.deleteDraft(`task:${parentTask.id}:sub:${subtask.id}`);
       } catch {}
+      window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
+      toast.success('Draft discarded');
     }
-  }, [parentTask?.id, subtask?.id, removeDraftsByTask]);
+  }, [parentTask?.id, subtask?.id, removeDraftsByTask, removeDraft]);
   const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
   const [isSubtaskMenuOpen, setIsSubtaskMenuOpen] = useState(false);
   const [isDeleteSubtaskModalOpen, setIsDeleteSubtaskModalOpen] = useState(false);
@@ -6091,6 +6297,13 @@ export function SubtaskDetailView({
   };
 
   const [activityWidth, setActivityWidth] = useState(propActivityWidth || (mode === 'full' ? 450 : 380));
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    const check = () => setIsDesktop(typeof window !== 'undefined' && window.innerWidth >= 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   useEffect(() => {
     if (propActivityWidth && propActivityWidth !== activityWidth) {
@@ -7207,11 +7420,35 @@ export function SubtaskDetailView({
       setVisibleActivityCount(prev => prev + 1);
       scrollToLatestComment();
 
-      setComment('');
-      draftsApi.deleteDraftByTask(parentTask.id, subtask.id).catch(() => {});
-      removeDraftsByTask(parentTask.id, subtask.id);
-      setDraftSaveStatus('idle');
+      if (draftDebounceTimerRef.current) {
+        clearTimeout(draftDebounceTimerRef.current);
+        draftDebounceTimerRef.current = null;
+      }
+      draftSaveRequestIdRef.current++;
+      draftAbortControllerRef.current?.abort();
+      draftAbortControllerRef.current = null;
+
+      if (restoredTimerRef.current) {
+        clearTimeout(restoredTimerRef.current);
+        restoredTimerRef.current = null;
+      }
+      setShowRestoredText(false);
       setRestoredDraftId(null);
+      setDraftSaveStatus('idle');
+
+      if (subtask?.id) {
+        restoredSubtaskIdRef.current = subtask.id;
+      }
+
+      setComment('');
+      commentEditorRef.current?.clear?.();
+
+      removeDraftsByTask(parentTask.id, subtask.id);
+      removeDraft(`task:${parentTask.id}:sub:${subtask.id}`);
+      try {
+        await draftsApi.deleteDraftByTask(parentTask.id, subtask.id);
+        await draftsApi.deleteDraft(`task:${parentTask.id}:sub:${subtask.id}`);
+      } catch {}
       window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
       setTimeout(() => {
         const el = document.getElementById('subtask-comment');
@@ -7463,8 +7700,8 @@ export function SubtaskDetailView({
       className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 border-b border-border bg-card shrink-0 w-full max-w-full overflow-hidden">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
             onClick={() => {
               if (setActiveSubtask) {
@@ -7473,13 +7710,20 @@ export function SubtaskDetailView({
                 onClose();
               }
             }}
-            className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-2 cursor-pointer"
+            className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-1 sm:mr-2 cursor-pointer shrink-0"
             title="Go Back"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
+
+          {/* Mobile-only compact title (no unnecessary breadcrumb links on mobile, only on iPad+) */}
+          <span className="md:hidden text-xs font-semibold text-zinc-200 truncate max-w-[150px] sm:max-w-[220px]">
+            {subtask.title || 'Untitled'}
+          </span>
+
+          {/* Breadcrumb links only visible on iPad and desktop */}
           {parentTask.list ? (
-            <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
+            <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400 font-medium">
               {parentTask.list.space && (
                 <>
                   <button
@@ -7549,7 +7793,7 @@ export function SubtaskDetailView({
               <span className="truncate max-w-[150px] text-zinc-200">{subtask.title || 'Untitled'}</span>
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-xs animate-pulse opacity-50 cursor-default">
+            <div className="hidden md:flex items-center gap-2 text-xs animate-pulse opacity-50 cursor-default">
               <div className="flex items-center gap-1.5">
                 <div className="w-4 h-4 rounded bg-zinc-800 shrink-0" />
                 <div className="w-16 h-3 bg-zinc-800 rounded" />
@@ -7569,7 +7813,7 @@ export function SubtaskDetailView({
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Action buttons could go here */}
           <button
             onClick={() => {
@@ -7577,10 +7821,10 @@ export function SubtaskDetailView({
               navigator.clipboard.writeText(link);
               toast.success('Link copied to clipboard');
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-2"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 text-[11px] font-medium rounded-lg border border-zinc-700/50 transition-colors cursor-pointer mr-1 sm:mr-2"
           >
             <Share2 className="w-3.5 h-3.5 text-zinc-400" />
-            Share
+            <span className="hidden sm:inline">Share</span>
           </button>
           {mode !== 'full' && (
             <button
@@ -7640,11 +7884,39 @@ export function SubtaskDetailView({
         </div>
       </div>
 
+      {/* Mobile Segmented Tab Bar (md:hidden) */}
+      <div className="md:hidden px-4 py-2 border-b border-border bg-card/95 shrink-0 flex items-center justify-center">
+        <div className="grid grid-cols-2 gap-1 w-full bg-secondary/80 p-0.5 rounded-lg border border-border text-xs font-semibold">
+          <button
+            type="button"
+            onClick={() => setSubtaskMobileTab('details')}
+            className={`py-1.5 rounded-md transition-all ${
+              subtaskMobileTab === 'details'
+                ? 'bg-card text-foreground shadow-xs font-bold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubtaskMobileTab('activity')}
+            className={`py-1.5 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+              subtaskMobileTab === 'activity'
+                ? 'bg-card text-foreground shadow-xs font-bold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <span>Activity & Comments</span>
+          </button>
+        </div>
+      </div>
+
       {/* Content area: Split layout matching main task */}
       <div className="nexus-task-modal-split flex-1 flex overflow-hidden">
 
         {/* Left Panel: Details & Description */}
-        <div className="nexus-task-left-panel flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar">
+        <div className={`nexus-task-left-panel flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar ${subtaskMobileTab === 'activity' ? 'hidden md:block' : 'block'}`}>
           <div className="p-8">
             <div className="flex items-center gap-1.5 text-[13px] text-zinc-500 mb-2 cursor-pointer hover:text-zinc-300 transition-colors group/subtask-parent w-fit" onClick={onClose}>
               <span>Subtask of</span>
@@ -8422,17 +8694,17 @@ export function SubtaskDetailView({
 
         {/* Resizer */}
         <div
-          className="w-1 bg-zinc-800/30 hover:bg-indigo-500 cursor-col-resize shrink-0 transition-colors z-10"
+          className="hidden md:block w-1 bg-zinc-800/30 hover:bg-indigo-500 cursor-col-resize shrink-0 transition-colors z-10"
           onMouseDown={startResizing}
         />
 
         {/* Right Panel: Activity Log */}
         <div
           ref={subtaskActivityPanelRef}
-          style={{ width: activityWidth }}
-          className="nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 z-10"
+          style={isDesktop ? { width: activityWidth } : undefined}
+          className={`nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 z-10 overflow-hidden ${subtaskMobileTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}
         >
-          <div className="px-6 py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
+          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
             <div className="flex gap-3">
               <span className="text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
@@ -8445,7 +8717,7 @@ export function SubtaskDetailView({
             onWheel={() => { isUserScrollingRef.current = true; }}
             onTouchStart={() => { isUserScrollingRef.current = true; }}
             onPointerDown={() => { isUserScrollingRef.current = true; }}
-            className="flex-1 overflow-y-auto p-6 custom-scrollbar"
+            className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 custom-scrollbar"
           >
             <div className="space-y-5">
 
@@ -9239,12 +9511,24 @@ export function SubtaskDetailView({
                       value={comment}
                       onChange={(html, text, cursorPosition, textBefore) => {
                         setComment(html);
+                        if (subtask?.id) {
+                          restoredSubtaskIdRef.current = subtask.id;
+                        }
 
-                        if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+                        if (draftDebounceTimerRef.current) {
+                          clearTimeout(draftDebounceTimerRef.current);
+                          draftDebounceTimerRef.current = null;
+                        }
+                        const reqId = ++draftSaveRequestIdRef.current;
                         draftDebounceTimerRef.current = setTimeout(async () => {
                           if (!parentTask?.id || !subtask?.id) return;
+                          if (reqId !== draftSaveRequestIdRef.current) return;
+
                           if (!isBlankCommentHtml(html) && html.trim().length > 0) {
                             setDraftSaveStatus('saving');
+                            draftAbortControllerRef.current?.abort();
+                            const abortController = new AbortController();
+                            draftAbortControllerRef.current = abortController;
                             try {
                               const res = await draftsApi.saveDraft({
                                 id: `task:${parentTask.id}:sub:${subtask.id}`,
@@ -9254,22 +9538,28 @@ export function SubtaskDetailView({
                                 subtaskTitle: subtask.title,
                                 comment: html,
                                 type: 'comment',
-                              });
-                              if (res?.draft) {
+                              }, { signal: abortController.signal });
+                              if (reqId === draftSaveRequestIdRef.current && res?.draft) {
                                 upsertDraft(res.draft);
                                 setDraftSaveStatus('saved');
                                 window.dispatchEvent(new CustomEvent('draft:updated', { detail: { draft: res.draft } }));
                               }
-                            } catch {
-                              setDraftSaveStatus('idle');
+                            } catch (err: any) {
+                              if (err?.name !== 'AbortError' && reqId === draftSaveRequestIdRef.current) {
+                                setDraftSaveStatus('idle');
+                              }
                             }
                           } else {
                             try {
                               await draftsApi.deleteDraftByTask(parentTask.id, subtask.id);
-                              removeDraftsByTask(parentTask.id, subtask.id);
-                              setDraftSaveStatus('idle');
-                              setRestoredDraftId(null);
-                              window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
+                              await draftsApi.deleteDraft(`task:${parentTask.id}:sub:${subtask.id}`);
+                              if (reqId === draftSaveRequestIdRef.current) {
+                                removeDraftsByTask(parentTask.id, subtask.id);
+                                removeDraft(`task:${parentTask.id}:sub:${subtask.id}`);
+                                setDraftSaveStatus('idle');
+                                setRestoredDraftId(null);
+                                window.dispatchEvent(new CustomEvent('draft:deleted', { detail: { taskId: parentTask.id, subtaskId: subtask.id } }));
+                              }
                             } catch {}
                           }
                         }, 1200);
@@ -9344,13 +9634,6 @@ export function SubtaskDetailView({
                       }
                       footerEnd={
                         <div className="flex items-center gap-2">
-                          {draftSaveStatus === 'saving' && (
-                            <span className="text-[11px] text-zinc-400 whitespace-nowrap shrink-0 flex items-center gap-1.5 animate-pulse select-none">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                              <span>Saving draft...</span>
-                            </span>
-                          )}
-
                           <ComposerSendButton
                             onClick={handleAddComment}
                             disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
@@ -9728,7 +10011,7 @@ export function TaskDetailModal(props: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 1 }}
             transition={{ duration: 0 }}
-            className="absolute inset-0 z-[80] bg-background flex flex-col cursor-default task-detail-modal"
+            className="absolute inset-0 z-[80] bg-background flex flex-col cursor-default task-detail-modal overflow-hidden w-full max-w-full"
           >
             <TaskDetailModalContent
               {...props}
@@ -9752,7 +10035,7 @@ export function TaskDetailModal(props: Props) {
         <div
           key="modal-backdrop"
           data-task-detail-modal=""
-          className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4 cursor-pointer task-detail-modal"
+          className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-0 md:p-4 cursor-pointer task-detail-modal overflow-hidden"
           onPointerDown={(e) => {
             if (e.target === e.currentTarget) {
               props.onClose();
@@ -9764,7 +10047,7 @@ export function TaskDetailModal(props: Props) {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.97 }}
             transition={{ duration: 0.15, ease: 'easeOut' }}
-            className="w-full max-w-7xl h-[90vh] rounded-xl overflow-hidden shadow-2xl border border-border flex flex-col cursor-default"
+            className="w-full max-w-7xl h-[100dvh] md:h-[90vh] rounded-none md:rounded-xl overflow-hidden shadow-2xl border-0 md:border border-border flex flex-col cursor-default"
           >
             <TaskDetailModalContent
               {...props}

@@ -229,6 +229,10 @@ interface AppState {
   isGalaxyFilterActive: boolean;
   toggleGalaxyFilter: () => void;
   setGalaxyFilterActive: (active: boolean) => void;
+  mobileActiveTab: 'my_tasks' | 'inbox' | 'home';
+  setMobileActiveTab: (tab: 'my_tasks' | 'inbox' | 'home') => void;
+  isMobileCreateOpen: boolean;
+  setIsMobileCreateOpen: (open: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -515,7 +519,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       drafts: state.drafts.filter((d) => {
         if (d.taskId !== taskId) return true;
-        if (subtaskId !== undefined && subtaskId !== null) return d.subtaskId !== subtaskId;
+        if (subtaskId !== undefined) {
+          if (subtaskId === null) return Boolean(d.subtaskId);
+          return d.subtaskId !== subtaskId;
+        }
         return false;
       }),
     })),
@@ -565,4 +572,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   isGalaxyFilterActive: false,
   toggleGalaxyFilter: () => set((state) => ({ isGalaxyFilterActive: !state.isGalaxyFilterActive })),
   setGalaxyFilterActive: (isGalaxyFilterActive: boolean) => set({ isGalaxyFilterActive }),
+  mobileActiveTab: 'my_tasks',
+  setMobileActiveTab: (mobileActiveTab) => set({ mobileActiveTab }),
+  isMobileCreateOpen: false,
+  setIsMobileCreateOpen: (isMobileCreateOpen) => set({ isMobileCreateOpen }),
 }));

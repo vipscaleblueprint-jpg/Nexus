@@ -30,11 +30,12 @@ import activityRoutes from './routes/activity.routes';
 import { emojiRouter } from './routes/emoji.routes';
 import draftRoutes from './routes/draft.routes';
 import { auditShiftRouter } from './routes/auditShift.routes';
+import { taskMapRouter } from './routes/taskMap.routes';
 
 // Import workers to initialize them
 import './workers/task.worker';
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
-import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB } from './workers/dailyRollover.worker';
+import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
@@ -96,6 +97,28 @@ const server = http.createServer(app);
     repeat: { every: 5 * 60 * 1000 },
     jobId: 'shift-audit-catch-up',
     attempts: 1,
+    removeOnFail: 50,
+  });
+
+  // Task Map Shift Rollovers:
+  // 12:00 PM Manila: Day -> Noon
+  await dailyRolloverQueue.add(TASK_MAP_SHIFT_ROLLOVER_JOB, { fromShift: 'DAY' }, {
+    repeat: { pattern: '0 12 * * *', tz: 'Asia/Manila' },
+    jobId: 'task-map-rollover-noon',
+    removeOnFail: 50,
+  });
+
+  // 5:00 PM Manila: Noon -> Night
+  await dailyRolloverQueue.add(TASK_MAP_SHIFT_ROLLOVER_JOB, { fromShift: 'NOON' }, {
+    repeat: { pattern: '0 17 * * *', tz: 'Asia/Manila' },
+    jobId: 'task-map-rollover-night',
+    removeOnFail: 50,
+  });
+
+  // 1:00 AM Manila: Night -> Day (Next day)
+  await dailyRolloverQueue.add(TASK_MAP_SHIFT_ROLLOVER_JOB, { fromShift: 'NIGHT' }, {
+    repeat: { pattern: '0 1 * * *', tz: 'Asia/Manila' },
+    jobId: 'task-map-rollover-day',
     removeOnFail: 50,
   });
 
@@ -222,6 +245,7 @@ app.use('/api/emojis', emojiRouter);
 app.use('/api/drafts', draftRoutes);
 app.use('/api/admin/audit-shifts', auditShiftRouter);
 app.use('/api/audit-shifts', auditShiftRouter);
+app.use('/api/task-map', taskMapRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

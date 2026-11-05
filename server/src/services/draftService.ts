@@ -113,7 +113,9 @@ export async function deleteDraftByTask(
 
   for (const draft of drafts) {
     const matchesTask = draft.taskId === taskId;
-    const matchesSubtask = subtaskId ? draft.subtaskId === subtaskId : true;
+    const matchesSubtask = subtaskId !== undefined
+      ? (subtaskId ? draft.subtaskId === subtaskId : !draft.subtaskId)
+      : true;
     if (matchesTask && matchesSubtask) {
       await deleteDraft(userId, draft.id);
       removedCount++;

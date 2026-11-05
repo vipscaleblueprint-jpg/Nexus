@@ -4,27 +4,26 @@ import React, { useState, useMemo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutDashboard,
+  CheckSquare,
   Rocket,
   FolderKanban,
   Bell,
-  Menu,
+  Plus,
   X,
   ExternalLink,
   ChevronDown,
-  ShieldCheck,
   Calendar,
-  CornerDownRight,
   Filter,
   Check,
   ArrowRight,
   ListTodo,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { isGalaxyTask, getGalaxyTaskUrl } from '@/lib/galaxyTask';
+import { isGalaxyTask } from '@/lib/galaxyTask';
 import { getPriorityConfig } from '@/lib/priority';
 import { tasksApi } from '@/api/tasks';
 import { toast } from '@/lib/toast';
+import { ClickUpMobileCreateModal } from '@/components/mobile/ClickUpMobileCreateModal';
 
 const STATUS_OPTIONS = ['PENDING', 'IN PROGRESS', 'CHECKING', 'DONE', 'CLOSED'];
 
@@ -37,12 +36,15 @@ export function MobileBottomNav() {
     spaces,
     allLists,
     unreadNotifications,
-    toggleMobileSidebar,
     activeMobileTask,
     setActiveMobileTask,
     isGalaxyFilterActive,
     toggleGalaxyFilter,
     updateTask,
+    mobileActiveTab,
+    setMobileActiveTab,
+    isMobileCreateOpen,
+    setIsMobileCreateOpen,
   } = useAppStore();
 
   const [isGalaxySheetOpen, setIsGalaxySheetOpen] = useState(false);
@@ -54,24 +56,6 @@ export function MobileBottomNav() {
   const galaxyTasks = useMemo(() => {
     return (tasks || []).filter((t) => isGalaxyTask(t));
   }, [tasks]);
-
-  // Compute audit checklist progress for the selected active task
-  const auditProgress = useMemo(() => {
-    if (!activeMobileTask || !activeMobileTask.checklists) return null;
-    const auditChecklist = activeMobileTask.checklists.find(
-      (c: any) =>
-        c.name?.toLowerCase() === 'audit' ||
-        (c.items && c.items.some((i: any) => i.text?.startsWith('!')))
-    );
-    if (!auditChecklist || !auditChecklist.items?.length) return null;
-    const items = auditChecklist.items;
-    const completed = items.filter((i: any) => i.completed).length;
-    return {
-      completed,
-      total: items.length,
-      allDone: completed === items.length,
-    };
-  }, [activeMobileTask]);
 
   const priorityConfig = useMemo(() => {
     return activeMobileTask ? getPriorityConfig(activeMobileTask.priority) : null;
@@ -97,23 +81,14 @@ export function MobileBottomNav() {
 
   const handleOpenFullTask = (task: any) => {
     if (!task) return;
-    if (typeof window !== 'undefined') {
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.set('task', task.id);
-        window.history.replaceState(null, '', url.pathname + (url.search || ''));
-      } catch {}
-      window.dispatchEvent(
-        new CustomEvent('open-task-detail', {
-          detail: { taskId: task.id, task },
-        })
-      );
-    }
+    router.push(`/tasks/${task.id}`);
   };
 
-  const isDashboardActive = pathname === '/' || pathname === '/tasks';
-  const isListsActive = pathname.startsWith('/lists');
-  const isActivityActive = pathname.startsWith('/activity');
+  const isInboxActive =
+    (mobileActiveTab === 'inbox' && pathname === '/') || pathname.startsWith('/activity');
+  const isMyTasksActive =
+    (mobileActiveTab === 'my_tasks' && pathname === '/') ||
+    (!isInboxActive && pathname === '/');
 
   return (
     <>
@@ -133,7 +108,7 @@ export function MobileBottomNav() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 350 }}
-              className="fixed inset-x-0 bottom-0 z-50 bg-card border-t border-border rounded-t-2xl max-h-[82vh] flex flex-col md:hidden shadow-2xl safe-bottom text-foreground"
+              className="fixed inset-x-0 bottom-0 z-50 bg-card border-t border-border rounded-t-3xl max-h-[82vh] flex flex-col md:hidden shadow-2xl safe-bottom text-foreground"
             >
               <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
@@ -149,14 +124,14 @@ export function MobileBottomNav() {
                 </div>
                 <button
                   onClick={() => setIsGalaxySheetOpen(false)}
-                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-hover-subtle transition-colors"
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="size-4" />
                 </button>
               </div>
 
               {/* Action Toolbar */}
-              <div className="px-4 py-2.5 bg-hover-subtle/50 border-b border-border flex items-center justify-between gap-2 shrink-0">
+              <div className="px-4 py-2.5 bg-secondary/50 border-b border-border flex items-center justify-between gap-2 shrink-0">
                 <button
                   onClick={toggleGalaxyFilter}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
@@ -186,9 +161,6 @@ export function MobileBottomNav() {
                   <div className="text-center py-8 text-muted-foreground text-xs">
                     <Rocket className="size-8 mx-auto mb-2 opacity-40 text-sky-400" />
                     <p>No Galaxy tasks found in workspace.</p>
-                    <p className="text-[11px] mt-1 text-muted-foreground/80">
-                      Tasks generated from Galaxy webhooks appear here automatically.
-                    </p>
                   </div>
                 ) : (
                   galaxyTasks.map((task) => {
@@ -199,44 +171,21 @@ export function MobileBottomNav() {
                         onClick={() => {
                           setActiveMobileTask(task);
                           setIsGalaxySheetOpen(false);
+                          router.push(`/tasks/${task.id}`);
                         }}
                         className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
                           isSelected
                             ? 'bg-sky-500/10 border-sky-500/50 shadow-xs'
-                            : 'bg-card border-border hover:border-zinc-600 hover:bg-hover-subtle'
+                            : 'bg-card border-border hover:border-zinc-700'
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <span className="font-semibold text-xs leading-snug line-clamp-2">
+                          <span className="font-semibold text-xs leading-snug line-clamp-2 text-foreground">
                             {task.title || 'Untitled Galaxy Task'}
                           </span>
                           <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/30">
                             {task.status}
                           </span>
-                        </div>
-
-                        <div className="flex items-center gap-3 text-[10px] text-muted-foreground flex-wrap pt-0.5">
-                          {task.assignee?.name && (
-                            <span className="flex items-center gap-1">
-                              <span className="size-1.5 rounded-full bg-indigo-400" />
-                              {task.assignee.name}
-                            </span>
-                          )}
-                          {task.dueDate && (
-                            <span className="flex items-center gap-1">
-                              <Calendar className="size-3" />
-                              {new Date(task.dueDate).toLocaleDateString(undefined, {
-                                month: 'short',
-                                day: 'numeric',
-                              })}
-                            </span>
-                          )}
-                          {task.subtasks?.length > 0 && (
-                            <span className="flex items-center gap-1">
-                              <CornerDownRight className="size-3" />
-                              {task.subtasks.length} subtask{task.subtasks.length !== 1 ? 's' : ''}
-                            </span>
-                          )}
                         </div>
                       </div>
                     );
@@ -264,7 +213,7 @@ export function MobileBottomNav() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 350 }}
-              className="fixed inset-x-0 bottom-0 z-50 bg-card border-t border-border rounded-t-2xl max-h-[75vh] flex flex-col md:hidden shadow-2xl safe-bottom text-foreground"
+              className="fixed inset-x-0 bottom-0 z-50 bg-card border-t border-border rounded-t-3xl max-h-[75vh] flex flex-col md:hidden shadow-2xl safe-bottom text-foreground"
             >
               <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
@@ -278,7 +227,7 @@ export function MobileBottomNav() {
                 </div>
                 <button
                   onClick={() => setIsListsSheetOpen(false)}
-                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-hover-subtle"
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground"
                 >
                   <X className="size-4" />
                 </button>
@@ -334,12 +283,11 @@ export function MobileBottomNav() {
       <nav
         aria-label="Mobile application navigation"
         className="fixed bottom-0 inset-x-0 z-40 md:hidden bg-card/95 border-t border-border backdrop-blur-xl shadow-2xl transition-all duration-300"
-        style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))' }}
+        style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))' }}
       >
         {activeMobileTask ? (
-          /* ── ACTIVE TASK QUICK INSPECTOR (IMPORTANT DETAILS ONLY) ── */
+          /* ── ACTIVE TASK QUICK INSPECTOR ── */
           <div className="p-3 flex flex-col gap-2.5 animate-mobile-sheet-up">
-            {/* Header: Title + Deselect */}
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 mb-0.5">
@@ -360,28 +308,26 @@ export function MobileBottomNav() {
 
               <button
                 onClick={() => setActiveMobileTask(null)}
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-hover-subtle transition-colors shrink-0"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors shrink-0"
                 title="Deselect task"
               >
                 <X className="size-4" />
               </button>
             </div>
 
-            {/* Important Details Chips Row */}
+            {/* Chips row */}
             <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1">
-              {/* Status Picker Pill */}
               <div className="relative shrink-0">
                 <button
                   onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
                   disabled={isUpdatingStatus}
-                  className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
+                  className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 flex items-center gap-1 cursor-pointer"
                 >
                   <span className="size-1.5 rounded-full bg-indigo-400" />
                   <span className="truncate max-w-[100px]">{activeMobileTask.status}</span>
                   <ChevronDown className="size-3 opacity-70" />
                 </button>
 
-                {/* Status Dropdown Menu */}
                 {isStatusDropdownOpen && (
                   <div className="absolute bottom-full left-0 mb-1 w-44 bg-card border border-border rounded-xl shadow-2xl p-1 z-50 text-xs space-y-0.5 max-h-48 overflow-y-auto">
                     {STATUS_OPTIONS.map((status) => (
@@ -402,73 +348,13 @@ export function MobileBottomNav() {
                 )}
               </div>
 
-              {/* Priority Chip */}
               {priorityConfig && (
-                <span
-                  className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 ${
-                    activeMobileTask.priority === 'URGENT'
-                      ? 'bg-red-500/15 text-red-400 border border-red-500/30'
-                      : activeMobileTask.priority === 'HIGH'
-                      ? 'bg-orange-500/15 text-orange-400 border border-orange-500/30'
-                      : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
-                  }`}
-                >
+                <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-secondary text-foreground border border-border">
                   <span className="capitalize">{String(activeMobileTask.priority).toLowerCase()}</span>
-                </span>
-              )}
-
-              {/* Assignee Avatar / Name */}
-              {activeMobileTask.assignee?.name && (
-                <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium bg-hover-subtle text-foreground border border-border flex items-center gap-1">
-                  <span className="size-3.5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[7px] font-bold">
-                    {activeMobileTask.assignee.name.slice(0, 1)}
-                  </span>
-                  <span className="truncate max-w-[80px]">{activeMobileTask.assignee.name}</span>
-                </span>
-              )}
-
-              {/* Due Date Chip */}
-              {activeMobileTask.dueDate && (
-                <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium bg-hover-subtle text-foreground border border-border flex items-center gap-1">
-                  <Calendar className="size-3 text-muted-foreground" />
-                  <span>
-                    {new Date(activeMobileTask.dueDate).toLocaleDateString(undefined, {
-                      month: 'short',
-                      day: 'numeric',
-                    })}
-                  </span>
-                </span>
-              )}
-
-              {/* Audit Checklist Progress Badge */}
-              {auditProgress && (
-                <span
-                  className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border ${
-                    auditProgress.allDone
-                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                      : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                  }`}
-                >
-                  <ShieldCheck className="size-3" />
-                  <span>
-                    Audit {auditProgress.completed}/{auditProgress.total}
-                  </span>
-                </span>
-              )}
-
-              {/* Subtasks Count Badge */}
-              {activeMobileTask.subtasks && activeMobileTask.subtasks.length > 0 && (
-                <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium bg-hover-subtle text-foreground border border-border flex items-center gap-1">
-                  <CornerDownRight className="size-3 text-muted-foreground" />
-                  <span>
-                    {activeMobileTask.subtasks.filter((s: any) => s.completed).length}/
-                    {activeMobileTask.subtasks.length} subtasks
-                  </span>
                 </span>
               )}
             </div>
 
-            {/* Actions Row */}
             <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={() => handleOpenFullTask(activeMobileTask)}
@@ -477,34 +363,25 @@ export function MobileBottomNav() {
                 <span>Open Full Details</span>
                 <ArrowRight className="size-3.5" />
               </button>
-
-              {isGalaxyTask(activeMobileTask) && (
-                <a
-                  href={getGalaxyTaskUrl(activeMobileTask)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 rounded-xl bg-sky-500/15 text-sky-400 border border-sky-500/30 hover:bg-sky-500/25 transition-colors shrink-0"
-                  title="Open in VIP Scale"
-                >
-                  <ExternalLink className="size-4" />
-                </a>
-              )}
             </div>
           </div>
         ) : (
-          /* ── DEFAULT 5-TAB MOBILE NAVIGATION BAR ──────────────── */
-          <div className="grid grid-cols-5 items-center px-1 py-1">
-            {/* 1. Dashboard */}
+          /* ── NEXUS 5-POSITION DOCK ────────────────────────────── */
+          <div className="grid grid-cols-5 items-center px-2 py-1 max-w-md mx-auto">
+            {/* 1. Tasks / Hub */}
             <button
-              onClick={() => router.push('/')}
+              onClick={() => {
+                setMobileActiveTab('my_tasks');
+                if (pathname !== '/') router.push('/');
+              }}
               className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
-                isDashboardActive
+                isMyTasksActive
                   ? 'text-indigo-400 font-semibold'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-hover-subtle/50'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <LayoutDashboard className="size-4 mb-0.5" />
-              <span className="text-[10px]">Dashboard</span>
+              <CheckSquare className="size-4 mb-0.5" />
+              <span className="text-[10px]">Tasks</span>
             </button>
 
             {/* 2. Galaxy Tasks */}
@@ -513,7 +390,7 @@ export function MobileBottomNav() {
               className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all relative cursor-pointer ${
                 isGalaxyFilterActive
                   ? 'text-sky-400 font-semibold'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-hover-subtle/50'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <div className="relative">
@@ -527,26 +404,40 @@ export function MobileBottomNav() {
               <span className="text-[10px]">Galaxy</span>
             </button>
 
-            {/* 3. Lists & Spaces */}
+            {/* 3. Quick Create (+) */}
+            <button
+              onClick={() => setIsMobileCreateOpen(true)}
+              className="flex flex-col items-center justify-center py-0.5 cursor-pointer"
+              title="Create in Nexus"
+            >
+              <div className="size-9 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-md active:scale-95 transition-transform">
+                <Plus className="size-5" />
+              </div>
+            </button>
+
+            {/* 4. Lists */}
             <button
               onClick={() => setIsListsSheetOpen(true)}
               className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
-                isListsActive
+                pathname.startsWith('/lists')
                   ? 'text-indigo-400 font-semibold'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-hover-subtle/50'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <FolderKanban className="size-4 mb-0.5" />
               <span className="text-[10px]">Lists</span>
             </button>
 
-            {/* 4. Activity */}
+            {/* 5. Activity */}
             <button
-              onClick={() => router.push('/activity')}
+              onClick={() => {
+                setMobileActiveTab('inbox');
+                if (pathname !== '/') router.push('/');
+              }}
               className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all relative cursor-pointer ${
-                isActivityActive
+                isInboxActive
                   ? 'text-indigo-400 font-semibold'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-hover-subtle/50'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <div className="relative">
@@ -559,19 +450,17 @@ export function MobileBottomNav() {
               </div>
               <span className="text-[10px]">Activity</span>
             </button>
-
-            {/* 5. Menu Drawer */}
-            <button
-              onClick={toggleMobileSidebar}
-              className="flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-muted-foreground hover:text-foreground hover:bg-hover-subtle/50 transition-all cursor-pointer"
-            >
-              <Menu className="size-4 mb-0.5" />
-              <span className="text-[10px]">Menu</span>
-            </button>
           </div>
         )}
       </nav>
+
+      {/* ── NEXUS CREATE MODAL ────────────────────────────────── */}
+      <ClickUpMobileCreateModal
+        isOpen={isMobileCreateOpen}
+        onClose={() => setIsMobileCreateOpen(false)}
+        onOpenCreateList={() => setIsListsSheetOpen(true)}
+        onOpenGalaxyTasks={() => setIsGalaxySheetOpen(true)}
+      />
     </>
   );
 }
-

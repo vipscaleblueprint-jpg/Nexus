@@ -16,6 +16,7 @@ import {
 } from '../utils/pageBlocks';
 import { runRecurringDailyRollover } from '../services/recurringTaskService';
 import { sweepInReviewTasksForShiftAudits } from '../services/auditAutoAssign';
+import { executeTaskMapShiftRollover } from './taskMapRollover.worker';
 
 // KYC, Closed, and Pin Board items never roll over (status is free text, so match any casing)
 const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
@@ -322,6 +323,7 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
 
 export const JOURNAL_CATCH_UP_JOB = 'journalCatchUp';
 export const SHIFT_AUDIT_JOB = 'shiftAuditSweep';
+export const TASK_MAP_SHIFT_ROLLOVER_JOB = 'taskMapShiftRollover';
 
 // What the previous catch-up run found missing, per day page. A task is only added once two runs in a row miss it, so
 // the append made when it was created, or a user's erase still being recorded, always finishes first.
@@ -423,6 +425,7 @@ export const dailyRolloverWorker = new Worker(
     // On the rollover's queue so it never runs while the rollover is building today's page
     if (job.name === JOURNAL_CATCH_UP_JOB) return appendMissingTasksToJournal();
     if (job.name === SHIFT_AUDIT_JOB) return sweepInReviewTasksForShiftAudits(job.data?.shift);
+    if (job.name === TASK_MAP_SHIFT_ROLLOVER_JOB) return executeTaskMapShiftRollover(job.data?.fromShift);
     logger.info('Running DailyRollover job (Dynamic Generation)...');
     await runDailyRollover(job.data);
     logger.info('Running Daily Recurring Tasks Rollover...');
@@ -439,7 +442,7 @@ export const dailyRolloverWorker = new Worker(
 
 // Listeners for logging
 dailyRolloverWorker.on('completed', (job) => {
-  if (job.name === JOURNAL_CATCH_UP_JOB || job.name === SHIFT_AUDIT_JOB) return; // runs every few minutes; it logs when it adds something
+  if (job.name === JOURNAL_CATCH_UP_JOB || job.name === SHIFT_AUDIT_JOB || job.name === TASK_MAP_SHIFT_ROLLOVER_JOB) return; // runs every few minutes; it logs when it adds something
   logger.info(`DailyRollover job ${job.id} has completed!`);
 });
 

@@ -1600,12 +1600,7 @@ function ActivityFeedContent() {
               <div>
                 <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
                   <FileEdit className="size-4 text-amber-400" />
-                  <span>Saved Task Drafts</span>
-                  {drafts.length > 0 && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold">
-                      {drafts.length}
-                    </span>
-                  )}
+                  <span>Saved Comment Drafts</span>
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Auto-saved drafts. If your session ends or a crash occurs, continue editing right where you left off.
@@ -1624,7 +1619,7 @@ function ActivityFeedContent() {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <div className="space-y-3 w-full">
                 {drafts.map((d) => {
                   const rawPreview = d.comment || d.description || '';
                   const cleanPreview =
@@ -1646,7 +1641,7 @@ function ActivityFeedContent() {
                         }
                         handleOpenTask(d.taskId);
                       }}
-                      className="group relative p-4 rounded-xl border border-border/80 hover:border-amber-500/50 bg-card hover:bg-zinc-800/30 transition-all cursor-pointer flex flex-col justify-between gap-3 shadow-xs"
+                      className="group relative p-4 rounded-xl border border-border/80 hover:border-amber-500/50 bg-card hover:bg-zinc-800/30 transition-all cursor-pointer flex flex-col justify-between gap-3 shadow-xs w-full"
                     >
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">

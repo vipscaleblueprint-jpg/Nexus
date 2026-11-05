@@ -126,6 +126,7 @@ import {
   UserCheck,
   CalendarCheck,
   Palette,
+  Map,
 } from 'lucide-react';
 
 export const FOLDER_COLOR_PALETTE = [
@@ -1580,6 +1581,15 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               >
                 <Target className="size-4 shrink-0 text-rose-500" />
                 <span className="truncate">Priorities Journal</span>
+              </Link>
+              <Link
+                href="/activity/task-map"
+                className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground ${
+                  pathname.startsWith('/activity/task-map') || pathname.startsWith('/task-map') ? 'bg-accent text-accent-foreground font-medium' : 'text-zinc-100'
+                }`}
+              >
+                <Map className="size-4 shrink-0 text-sky-400" />
+                <span className="truncate">Task Map</span>
               </Link>
             </div>
 

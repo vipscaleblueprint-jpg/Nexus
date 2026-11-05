@@ -82,12 +82,14 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
   const [editEndHour, setEditEndHour] = useState(12);
   const [editEndMinute, setEditEndMinute] = useState(0);
   const [editIsActive, setEditIsActive] = useState(true);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [selectedMemberNames, setSelectedMemberNames] = useState<string[]>([]);
   const [selectedAuditorIds, setSelectedAuditorIds] = useState<string[]>([]);
   const [selectedAuditorNames, setSelectedAuditorNames] = useState<string[]>([]);
 
-  // Search and filter for auditor picker
+  // Search and filter for member/auditor picker
   const [auditorSearch, setAuditorSearch] = useState('');
-  const [auditorsOnly, setAuditorsOnly] = useState(true);
+  const [auditorsOnly, setAuditorsOnly] = useState(false);
 
   // Load shifts and users
   const loadShifts = async () => {
@@ -140,6 +142,8 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
     setEditEndHour(shift.endHour);
     setEditEndMinute(shift.endMinute || 0);
     setEditIsActive(shift.isActive);
+    setSelectedMemberIds(shift.memberIds && shift.memberIds.length > 0 ? shift.memberIds : (shift.auditorIds || []));
+    setSelectedMemberNames(shift.memberNames && shift.memberNames.length > 0 ? shift.memberNames : (shift.auditorNames || []));
     setSelectedAuditorIds(shift.auditorIds || []);
     setSelectedAuditorNames(shift.auditorNames || []);
   };
@@ -155,7 +159,7 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
     return shifts.find((s) => s.shiftKey === selectedShiftKey);
   }, [shifts, selectedShiftKey]);
 
-  // Filter eligible users for auditor picker
+  // Filter eligible users for member/auditor picker
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
       const hasAuditorRole = (u.roles || []).some((r) => r.toLowerCase().includes('audit'));
@@ -170,14 +174,27 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
     });
   }, [users, auditorSearch, auditorsOnly]);
 
-  const toggleAuditor = (user: AuditShiftUser) => {
-    const isAlreadySelected = selectedAuditorIds.includes(user.id);
-    if (isAlreadySelected) {
+  const toggleMember = (user: AuditShiftUser) => {
+    const isMember = selectedMemberIds.includes(user.id) ||
+      selectedMemberNames.some((n) => n.toLowerCase() === user.name.toLowerCase());
+    const hasAuditorRole = (user.roles || []).some((r) => r.toLowerCase().includes('audit'));
+
+    if (isMember) {
+      // Remove from members
+      setSelectedMemberIds((prev) => prev.filter((id) => id !== user.id));
+      setSelectedMemberNames((prev) => prev.filter((name) => name.toLowerCase() !== user.name.toLowerCase()));
+      // Also remove from auditors if present
       setSelectedAuditorIds((prev) => prev.filter((id) => id !== user.id));
       setSelectedAuditorNames((prev) => prev.filter((name) => name.toLowerCase() !== user.name.toLowerCase()));
     } else {
-      setSelectedAuditorIds((prev) => [...prev, user.id]);
-      setSelectedAuditorNames((prev) => Array.from(new Set([...prev, user.name])));
+      // Add to members
+      setSelectedMemberIds((prev) => [...prev, user.id]);
+      setSelectedMemberNames((prev) => Array.from(new Set([...prev, user.name])));
+      // If user is an auditor by role, also add to auditors
+      if (hasAuditorRole) {
+        setSelectedAuditorIds((prev) => [...prev, user.id]);
+        setSelectedAuditorNames((prev) => Array.from(new Set([...prev, user.name])));
+      }
     }
   };
 
@@ -193,6 +210,8 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
         endHour: editEndHour,
         endMinute: editEndMinute,
         isActive: editIsActive,
+        memberIds: selectedMemberIds,
+        memberNames: selectedMemberNames,
         auditorIds: selectedAuditorIds,
         auditorNames: selectedAuditorNames,
       };
@@ -340,12 +359,12 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
                 </div>
               </div>
 
-              {/* Auditor Count & State */}
+              {/* Member Count & State */}
               <div className="flex items-center justify-between mt-4 pt-3 border-t border-zinc-800/60 text-xs">
                 <div className="flex items-center gap-1.5 text-zinc-300">
                   <Users className="w-3.5 h-3.5 text-zinc-400" />
                   <span className="font-medium">
-                    {shift.auditorNames?.length || shift.auditorIds?.length || 0} Auditors
+                    {shift.memberNames?.length || shift.auditorNames?.length || 0} Members
                   </span>
                 </div>
                 <span
@@ -490,17 +509,19 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
             </div>
           </div>
 
-          {/* Section 2: Selected Auditors Chips */}
+          {/* Section 2: Selected Members Chips */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Assigned Shift Auditors ({selectedAuditorNames.length})</span>
+                <span>Assigned Shift Members & Auditors ({selectedMemberNames.length})</span>
               </h4>
-              {selectedAuditorNames.length > 0 && (
+              {selectedMemberNames.length > 0 && (
                 <button
                   type="button"
                   onClick={() => {
+                    setSelectedMemberIds([]);
+                    setSelectedMemberNames([]);
                     setSelectedAuditorIds([]);
                     setSelectedAuditorNames([]);
                   }}
@@ -511,29 +532,38 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
               )}
             </div>
 
-            {selectedAuditorNames.length === 0 ? (
+            {selectedMemberNames.length === 0 ? (
               <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-center text-xs text-zinc-500">
-                No auditors selected for this shift. Click members below to assign.
+                No members selected for this shift. Click directory members below to assign.
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {selectedAuditorNames.map((name) => {
+                {selectedMemberNames.map((name) => {
                   const matchingUser = users.find((u) => u.name.toLowerCase() === name.toLowerCase());
+                  const isAuditor = matchingUser ? (matchingUser.roles || []).some((r) => r.toLowerCase().includes('audit')) : false;
+
                   return (
                     <span
                       key={name}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/25 text-indigo-200 text-xs font-medium"
                     >
                       <span>{name}</span>
+                      {isAuditor ? (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          Auditor
+                        </span>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => {
+                          setSelectedMemberNames((prev) => prev.filter((n) => n !== name));
                           setSelectedAuditorNames((prev) => prev.filter((n) => n !== name));
                           if (matchingUser) {
+                            setSelectedMemberIds((prev) => prev.filter((id) => id !== matchingUser.id));
                             setSelectedAuditorIds((prev) => prev.filter((id) => id !== matchingUser.id));
                           }
                         }}
-                        className="hover:text-rose-400 transition-colors cursor-pointer"
+                        className="hover:text-rose-400 transition-colors cursor-pointer ml-0.5"
                       >
                         <X className="w-3 h-3" />
                       </button>
@@ -548,7 +578,7 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-                Select Members from Directory
+                Select Members & Auditors from Directory
               </h4>
 
               <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -583,7 +613,7 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
                   }`}
                 >
                   <Filter className="w-3 h-3" />
-                  <span>Auditors Only</span>
+                  <span>{auditorsOnly ? 'Auditors Only' : 'All Directory'}</span>
                 </button>
               </div>
             </div>
@@ -592,14 +622,15 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[380px] overflow-y-auto custom-scrollbar p-1">
               {filteredUsers.map((user) => {
                 const isSelected =
-                  selectedAuditorIds.includes(user.id) ||
-                  selectedAuditorNames.some((n) => n.toLowerCase() === user.name.toLowerCase());
+                  selectedMemberIds.includes(user.id) ||
+                  selectedMemberNames.some((n) => n.toLowerCase() === user.name.toLowerCase());
                 const auditorRoles = (user.roles || []).filter((r) => r.toLowerCase().includes('audit'));
+                const nonAuditorRoles = (user.roles || []).filter((r) => !r.toLowerCase().includes('audit'));
 
                 return (
                   <div
                     key={user.id}
-                    onClick={() => toggleAuditor(user)}
+                    onClick={() => toggleMember(user)}
                     className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${
                       isSelected
                         ? 'bg-indigo-600/15 border-indigo-500/40 shadow-xs'
@@ -626,6 +657,10 @@ export function AuditShiftsTab({ onRefreshUsers }: AuditShiftsTabProps) {
                                 {r}
                               </span>
                             ))
+                          ) : nonAuditorRoles.length > 0 ? (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded font-medium bg-zinc-800 text-zinc-400 border border-zinc-700">
+                              {nonAuditorRoles[0]}
+                            </span>
                           ) : (
                             <span className="text-[10px] text-zinc-500 truncate">{user.email}</span>
                           )}

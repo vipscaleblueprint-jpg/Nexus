@@ -345,6 +345,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task:updated', { detail: { task } }));
     });
 
+    s.on('task_map:updated', (data) => {
+      window.dispatchEvent(new CustomEvent('task_map:updated', { detail: data }));
+    });
+
     s.on('task:deleted', ({ id }) => {
       useAppStore.getState().removeTask(id);
       window.dispatchEvent(new CustomEvent('task:deleted', { detail: { id } }));

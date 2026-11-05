@@ -10,6 +10,9 @@ export interface AuditShift {
   endMinute: number;
   auditorNames: string[];
   auditorIds: string[];
+  memberNames?: string[];
+  memberIds?: string[];
+  members?: (AuditShiftUser & { isAudit: boolean })[];
   isActive: boolean;
   order: number;
   createdAt: string;

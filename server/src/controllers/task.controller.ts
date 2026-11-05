@@ -1608,7 +1608,7 @@ export async function createTaskComment(req: Request, res: Response) {
       date: log.createdAt,
       user,
       parentCommentId: parentCommentId || null,
-      subtaskId: subtaskId || null,
+      subtaskId: (subtaskId || null) as any,
     };
 
     const payload = { taskId, comment, activity, subtaskId };
@@ -2082,7 +2082,7 @@ export async function toggleCommentReaction(req: Request, res: Response) {
       // Broadcast reaction to all connected clients in real time
       io.emit('task:comment_reaction', {
         taskId: commentRecord.taskId,
-        subtaskId: commentRecord.subtaskId || null,
+        subtaskId: (commentRecord.subtaskId || null) as any,
         commentId,
         reactions,
       });
@@ -3617,7 +3617,7 @@ export async function createChecklistItem(req: Request, res: Response) {
                   userId: rId,
                   actorId: userId,
                   taskId: targetTask.id,
-                  subtaskId: subtask?.id || null,
+                  subtaskId: (subtask?.id || null) as any,
                   type: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
                   title: notifTitle,
                 })),
@@ -3663,7 +3663,7 @@ export async function createChecklistItem(req: Request, res: Response) {
                 userId: notifyId,
                 actorId: userId || '',
                 taskId: targetTask?.id || subtask?.taskId || '',
-                subtaskId: subtask?.id || null,
+                subtaskId: (subtask?.id || null) as any,
                 type: 'CHECKLIST_ITEM_ASSIGNED',
                 title: `${actorName} assigned you "${item.text}" in ${cl.name || 'Checklist'}`,
               },
@@ -3923,7 +3923,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
                     userId: rId,
                     actorId: userId,
                     taskId: targetTask.id,
-                    subtaskId: subtask?.id || null,
+                    subtaskId: (subtask?.id || null) as any,
                     type: isAudit ? 'AUDIT_ITEM_CHECKED' : 'CHECKLIST_ITEM_CHECKED',
                     title: notifTitle,
                   })),
@@ -3977,7 +3977,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
                 userId: notifyId,
                 actorId: userId || '',
                 taskId: targetTask?.id || subtask?.taskId || '',
-                subtaskId: subtask?.id || null,
+                subtaskId: (subtask?.id || null) as any,
                 type: 'CHECKLIST_ITEM_ASSIGNED',
                 title: `${actorName} assigned you "${itemRef.text}" in ${checklist.name || 'Checklist'}`,
               },

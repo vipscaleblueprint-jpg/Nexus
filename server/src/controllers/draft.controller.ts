@@ -83,7 +83,10 @@ export async function deleteDraftByTask(req: AuthRequest, res: Response) {
     }
 
     const { taskId } = req.params;
-    const subtaskId = req.query.subtaskId as string | undefined;
+    let subtaskId = req.query.subtaskId as string | null | undefined;
+    if (subtaskId === 'null') {
+      subtaskId = null;
+    }
 
     if (!taskId) {
       return res.status(400).json({ error: 'taskId is required' });

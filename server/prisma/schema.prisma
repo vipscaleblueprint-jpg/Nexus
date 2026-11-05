@@ -269,6 +269,7 @@ model Task {
   comments                 TaskComment[]
   notifications            TaskNotification[]
   assignees                User[]             @relation("TaskMultiAssignees")
+  taskMapRecord            TaskMapRecord?
 
   /// Board load: tasks of one list ordered by createdAt (also serves listId-only lookups)
   @@index([listId, createdAt])
@@ -685,6 +686,8 @@ model AuditShiftConfig {
   endMinute    Int      @default(0)
   auditorNames String[] @default([])
   auditorIds   String[] @default([])
+  memberNames  String[] @default([])
+  memberIds    String[] @default([])
   isActive     Boolean  @default(true)
   order        Int      @default(0)
   createdAt    DateTime @default(now())
@@ -692,4 +695,59 @@ model AuditShiftConfig {
 
   @@index([shiftKey])
   @@index([isActive])
+}
+
+model TaskMapStatusOption {
+  id        String   @id @default(uuid())
+  label     String   @unique
+  color     String
+  textColor String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+model TaskMapShiftConfig {
+  id          String   @id @default(uuid())
+  shiftKey    String   @unique
+  name        String
+  startHour   Int
+  startMinute Int      @default(0)
+  endHour     Int
+  endMinute   Int      @default(0)
+  timezone    String   @default("Asia/Manila")
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shiftKey])
+  @@index([isActive])
+}
+
+model TaskMapRecord {
+  id                 String    @id @default(uuid())
+  taskId             String    @unique
+  subtaskId          String?
+  statuses           String[]  @default([])
+  shift              String    @default("DAY")
+  shiftDate          DateTime  @default(now())
+  rolloverCount      Int       @default(0)
+  originShift        String?
+  originDate         DateTime?
+  dontRollover       Boolean   @default(false)
+  handedOver         Boolean   @default(false)
+  stepOrder          Int       @default(0)
+  pmReviews          Json?
+  waitingReviewSince DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  task               Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([shift, shiftDate])
+  @@index([shift])
+  @@index([rolloverCount])
 }

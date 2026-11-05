@@ -53,7 +53,7 @@ export function Header() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => (typeof window !== 'undefined' && window.innerWidth <= 768 ? toggleMobileSidebar() : toggleSidebar())}
-            className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
+            className="hidden md:inline-flex p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
           >
             <PanelLeft className="w-5 h-5" />
           </button>
@@ -71,11 +71,11 @@ export function Header() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => (typeof window !== 'undefined' && window.innerWidth <= 768 ? toggleMobileSidebar() : toggleSidebar())}
-            className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors -ml-2"
+            className="hidden md:inline-flex p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors -ml-2"
           >
             <PanelLeft className="w-5 h-5" />
           </button>
-          <div className="h-4 w-px bg-zinc-800 mx-1"></div>
+          <div className="hidden md:block h-4 w-px bg-zinc-800 mx-1"></div>
           <span className="nexus-header-title text-xs font-semibold text-zinc-200 truncate">{title}</span>
         </div>
 

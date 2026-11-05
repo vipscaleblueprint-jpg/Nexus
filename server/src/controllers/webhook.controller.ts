@@ -447,6 +447,24 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[0] : null;
     const roleRestrictions = Array.from(roleNamesSet);
 
+    // Prevent duplicate task creation with the same title in the same client list
+    const existingSameTitle = await prisma.task.findFirst({
+      where: {
+        listId: list.id,
+        title: { equals: title, mode: 'insensitive' },
+      },
+      select: { id: true, title: true, listId: true, externalId: true },
+    });
+    if (existingSameTitle) {
+      console.warn(`[Galaxy] Duplicate task detected in list ${list.id} with title "${title}". Reusing existing task ${existingSameTitle.id}`);
+      return res.status(200).json({
+        success: true,
+        task: existingSameTitle,
+        isDuplicate: true,
+        message: `Task "${title}" already exists for this client`,
+      });
+    }
+
     // Since this is a newly created task from Galaxy, we'll try 'PENDING', fallback to 'DAILY', or the first available status
     const firstStatus = await prisma.listStatus.findFirst({
       where: { listId: list.id, name: { equals: 'Pending', mode: 'insensitive' } }

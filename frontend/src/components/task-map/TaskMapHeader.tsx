@@ -155,7 +155,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                   const name = getCleanUpworkName(s);
                   const sinceTime = formatManilaTime(s.startedAt);
                   const elapsed = formatElapsed(s.startedAt, now);
-                  const timePart = sinceTime ? `(since ${sinceTime} UTC+8 · ${elapsed})` : `(${elapsed})`;
+                  const timePart = sinceTime ? `(since ${sinceTime} · ${elapsed})` : `(${elapsed})`;
                   return `${name} - UPWORK ACTIVE ${timePart}`;
                 }).join('  |  ')}
               </span>

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { TaskMapOption, taskMapApi } from '@/api/taskMap';
-import { Check, Search, Pencil, Plus, Trash2, X, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Check, Search, Pencil, Plus, Trash2, X, ChevronDown, AlertTriangle, Lock } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 
@@ -207,7 +207,12 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
           e.stopPropagation();
           if (!readOnly) setIsOpen(!isOpen);
         }}
-        className={`w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer select-none shadow-sm ${
+        title={readOnly ? 'Status management is restricted' : undefined}
+        className={`w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all select-none shadow-sm ${
+          readOnly
+            ? 'cursor-not-allowed opacity-80'
+            : 'cursor-pointer'
+        } ${
           selectedStatuses.length === 0
             ? 'border border-dashed border-zinc-700/80 bg-[#111216] text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
             : 'border border-transparent'
@@ -229,7 +234,11 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
               +{selectedStatuses.length - 1}
             </span>
           )}
-          <ChevronDown className="size-3 opacity-80" />
+          {readOnly ? (
+            <Lock className="size-2.5 opacity-60" />
+          ) : (
+            <ChevronDown className="size-3 opacity-80" />
+          )}
         </div>
       </button>
 

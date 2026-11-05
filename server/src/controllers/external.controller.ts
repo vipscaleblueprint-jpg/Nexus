@@ -995,7 +995,7 @@ export async function updateTask(req: Request, res: Response) {
     });
 
     const moverInfo = await getTaskMoverAndUpdaters(task.id);
-    const broadcastPayload = { ...(updatedFullTask || task), ...moverInfo };
+    let broadcastPayload = { ...(updatedFullTask || task), ...moverInfo };
     io.emit('task:updated', broadcastPayload);
     if (task.listId) {
       io.to(`list:${task.listId}`).emit('task:updated', broadcastPayload);
@@ -1068,6 +1068,13 @@ export async function updateTask(req: Request, res: Response) {
             },
           }
         });
+
+        const freshMoverInfo = await getTaskMoverAndUpdaters(task.id);
+        broadcastPayload = { ...(updatedFullTask || task), ...freshMoverInfo };
+        io.emit('task:updated', broadcastPayload);
+        if (task.listId) {
+          io.to(`list:${task.listId}`).emit('task:updated', broadcastPayload);
+        }
 
         if (statusChanged) {
           const activity = {
@@ -1158,7 +1165,9 @@ export async function updateTask(req: Request, res: Response) {
       }
     }
 
-    if (status && status !== existingTask.status && isReviewStatus(status)) {
+    const currentOrNewStatus = finalStatus || existingTask.status;
+    const isNowInReview = isReviewStatus(currentOrNewStatus);
+    if ((status && status !== existingTask.status && isNowInReview) || (isMaUpdate && isNowInReview)) {
       autoAssignAudits(task.id).catch((err) =>
         console.error('[external.updateTask] audit shift assign failed:', err)
       );

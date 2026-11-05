@@ -240,7 +240,14 @@ export async function autoAssignAudits(
       assigneeId: true,
       assigneeRoleRestrictions: true,
       assignees: { select: { id: true } },
-      subtasks: { select: { title: true, assigneeRoleRestrictions: true } },
+      subtasks: {
+        select: {
+          title: true,
+          assigneeRoleRestrictions: true,
+          assigneeId: true,
+          assignees: { select: { id: true } },
+        },
+      },
       checklists: {
         where: { subtaskId: null },
         select: {
@@ -301,7 +308,12 @@ export async function autoAssignAudits(
   // Align with audit restrictions: exclude task assignees, inProgress mover, and MA updaters for this iteration
   const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
   const taskAssigneeIds = new Set(
-    [task.assigneeId, ...task.assignees.map((a) => a.id)].filter(Boolean) as string[]
+    [
+      task.assigneeId,
+      ...task.assignees.map((a) => a.id),
+      ...task.subtasks.map((s) => s.assigneeId),
+      ...task.subtasks.flatMap((s) => s.assignees?.map((a) => a.id) || []),
+    ].filter(Boolean) as string[]
   );
 
   const blockedUserIds = new Set<string>([
@@ -314,9 +326,21 @@ export async function autoAssignAudits(
     ...(inProgressMovedBy?.name ? [inProgressMovedBy.name.trim().toLowerCase()] : []),
   ]);
 
-  const isUserBlocked = (u: { id: string; name?: string | null }) => {
+  const isUserBlocked = (u: { id: string; name?: string | null; email?: string | null }) => {
     if (blockedUserIds.has(u.id)) return true;
-    if (u.name && blockedNames.has(u.name.trim().toLowerCase())) return true;
+    const uName = (u.name || '').trim().toLowerCase();
+    const uEmail = (u.email || '').trim().toLowerCase();
+    if (!uName && !uEmail) return false;
+
+    for (const b of blockedNames) {
+      if (!b) continue;
+      if (uName === b) return true;
+      if (uName.includes(b) || b.includes(uName)) return true;
+      if (uEmail && (uEmail === b || uEmail.includes(b) || b.includes(uEmail))) return true;
+      const bTokens = b.split(/[\s\-_\/]+/).filter((t) => t.length > 2);
+      const uTokens = uName.split(/[\s\-_\/]+/).filter((t) => t.length > 2);
+      if (bTokens.some((bt) => uTokens.includes(bt))) return true;
+    }
     return false;
   };
 
@@ -336,10 +360,17 @@ export async function autoAssignAudits(
       u.roles.some((r) => r.toLowerCase().includes('audit') && AUDIT_ROLE_MATCHERS[norm](r.toLowerCase()))
     );
 
-    if (eligibleAuditors.length === 0) continue;
-
     const eligibleAuditorIds = eligibleAuditors.map((u) => u.id);
-    const existingAssigneeIds = (existing?.assigneeId || []).filter((id) => !blockedUserIds.has(id));
+    const existingAssigneeIds = (existing?.assigneeId || []).filter((id) => {
+      if (blockedUserIds.has(id)) return false;
+      const user = allUsers.find((u) => u.id === id);
+      return user ? !isUserBlocked(user) : true;
+    });
+
+    // If no eligible auditors on shift and no existing assignees need cleanup, skip
+    if (eligibleAuditors.length === 0 && existing && existing.assigneeId.length === existingAssigneeIds.length) {
+      continue;
+    }
 
     // Multiple assignees: add shift auditors to existing assignees
     const updatedAssignees = Array.from(new Set([...existingAssigneeIds, ...eligibleAuditorIds]));

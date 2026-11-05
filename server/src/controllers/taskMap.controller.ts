@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { logger } from '../config/logger';
-import { invalidateCache } from '../services/redisService';
+import { invalidateCache, redis, isRedisReady } from '../services/redisService';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { isAuditorRole } from './auditShift.controller';
 import {
@@ -70,8 +70,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       recordsMap.set(r.taskId, r);
     }
 
-    // Options and Shift configs
-    const options = await getStatusOptions();
+    // Options and Shift configs: filter out obsolete static Upwork options
+    const rawOptions = await getStatusOptions();
+    const options = rawOptions.filter((opt) => {
+      const up = opt.label.toUpperCase().trim();
+      return up !== 'UPWORK ACTIVE' && !up.startsWith('UPWORK |') && !up.startsWith('UPWORK|');
+    });
     const shifts = await getShiftConfigs();
 
     // PM Users for Review queue and tag matching
@@ -154,12 +158,29 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         return up === 'CHE' || up === 'PAU' || up === 'HAN' || up.includes('PM');
       });
 
+      // Check active Upwork status and session
+      let upworkStartedAt: string | null = null;
+      let upworkSession: any = null;
+      const upworkStatus = (mapRecord.statuses || []).find(s => s.toUpperCase().startsWith('UPWORK'));
+      if (upworkStatus) {
+        let reviewsList = mapRecord.pmReviews;
+        if (typeof reviewsList === 'string') {
+          try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
+        }
+        if (Array.isArray(reviewsList)) {
+          upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
+        }
+        upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
+      }
+
       return {
         ...task,
         taskMap: mapRecord,
         pmTags,
         isWaitingPmReview: pmTags.length > 0,
         isClosed: isClosedStatus(task.status),
+        upworkStartedAt,
+        upworkSession,
       };
     });
 
@@ -233,6 +254,49 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
+    // Collect all active Upwork sessions across non-closed tasks
+    const activeUpworkSessions: Array<{
+      taskId: string;
+      taskTitle: string;
+      userId: string;
+      userName: string;
+      pmName: string;
+      startedAt: string;
+    }> = [];
+
+    for (const t of openTasks as any[]) {
+      const upworkTag = (t.taskMap?.statuses || []).find((s: string) => s.toUpperCase().startsWith('UPWORK'));
+      if (upworkTag) {
+        let pmName = 'General';
+        const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+        if (m && m[1]) {
+          pmName = m[1].trim().toUpperCase();
+        } else if (upworkTag.toUpperCase().includes('ACTIVE')) {
+          pmName = 'Active';
+        }
+
+        const startedAt = t.upworkStartedAt || (t.taskMap?.updatedAt ? new Date(t.taskMap.updatedAt).toISOString() : new Date().toISOString());
+        const rawName = t.upworkSession?.userName || t.assignee?.name || (t.assignees && t.assignees[0]?.name) || t.creator?.name || '';
+        const cleanName = rawName.includes('@') ? rawName.split('@')[0] : rawName;
+        const userName = (pmName && pmName !== 'General' && pmName !== 'Active') ? pmName : (cleanName || 'Team Member');
+        const userId = t.upworkSession?.userId || t.assigneeId || (t.assignees && t.assignees[0]?.id) || '';
+
+        const sessionItem = {
+          taskId: t.id,
+          taskTitle: t.title,
+          userId,
+          userName,
+          pmName,
+          startedAt,
+        };
+        activeUpworkSessions.push(sessionItem);
+
+        if (isRedisReady()) {
+          redis.hset('task_map:upwork_active', t.id, JSON.stringify(sessionItem)).catch(() => {});
+        }
+      }
+    }
+
     res.json({
       success: true,
       tasks: openTasks,
@@ -248,6 +312,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       pmUsers,
       allUsers,
       shiftUsers,
+      activeUpworkSessions,
     });
   } catch (error: any) {
     logger.error({ error }, 'Error fetching task map data');
@@ -260,7 +325,11 @@ export const getTaskMapData = async (req: Request, res: Response) => {
  */
 export const getOptions = async (req: Request, res: Response) => {
   try {
-    const options = await getStatusOptions();
+    const rawOptions = await getStatusOptions();
+    const options = rawOptions.filter((opt) => {
+      const up = opt.label.toUpperCase().trim();
+      return up !== 'UPWORK ACTIVE' && !up.startsWith('UPWORK |') && !up.startsWith('UPWORK|');
+    });
     res.json({ success: true, options });
   } catch (error: any) {
     logger.error({ error }, 'Error fetching status options');
@@ -380,6 +449,27 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const currentRecord = await getOrCreateTaskMapRecord(id);
     const oldStatuses = currentRecord.statuses || [];
 
+    // Check permissions on Available Tasks (unassigned in pool): strictly Project Managers and Admins only
+    const currentTask = await prisma.task.findUnique({
+      where: { id },
+      select: {
+        title: true,
+        assigneeId: true,
+        assignees: { select: { id: true } },
+        assignee: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    const isPm = user?.systemRole === 'ADMIN' || (user?.roles || []).some((r: string) => {
+      const rl = r.toLowerCase();
+      return rl.includes('pm') || rl.includes('project manager') || rl.includes('team lead') || rl.includes('senior');
+    });
+
+    const isUnassigned = !currentTask?.assigneeId && (!currentTask?.assignees || currentTask.assignees.length === 0);
+    if (isUnassigned && !isPm) {
+      return res.status(403).json({ error: 'Only Project Managers can modify statuses on Available Tasks' });
+    }
+
     // Detect PM review tags
     const pmReviewTags = ['CHE', 'PAU', 'HAN'];
     const addedPmTags = statuses.filter(s => pmReviewTags.includes(s.toUpperCase()) && !oldStatuses.includes(s));
@@ -402,11 +492,153 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       }
     }
 
+    // Upwork tracking detection & session persistence (Reverse-engineered from Teammap.js)
+    const oldUpworkTag = oldStatuses.find((s: string) => s.toUpperCase().startsWith('UPWORK'));
+    const newUpworkTag = statuses.find((s: string) => s.toUpperCase().startsWith('UPWORK'));
+
+    let taskRecordForUpwork: any = null;
+    if (newUpworkTag || oldUpworkTag) {
+      taskRecordForUpwork = await prisma.task.findUnique({
+        where: { id },
+        select: { title: true, assignee: { select: { id: true, name: true, email: true } } },
+      });
+    }
+
+    const taskTitle = taskRecordForUpwork?.title || 'Task';
+    const rawUserName = user?.name || taskRecordForUpwork?.assignee?.name || (user?.email ? user.email.split('@')[0] : '') || 'Team Member';
+    const cleanUserName = rawUserName.includes('@') ? rawUserName.split('@')[0] : rawUserName;
+    const effectiveUserId = user?.id || taskRecordForUpwork?.assignee?.id || '';
+
+    let upworkStartedAt: string | null = null;
+    let upworkSession: any = null;
+
+    // 1. Newly activated or updated Upwork status
+    if (newUpworkTag) {
+      let pmName = 'General';
+      const m = newUpworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+      if (m && m[1]) {
+        pmName = m[1].trim().toUpperCase();
+      } else if (newUpworkTag.toUpperCase().includes('ACTIVE')) {
+        pmName = 'Active';
+      }
+
+      const sessionUserName = (pmName && pmName !== 'General' && pmName !== 'Active') ? pmName : cleanUserName;
+
+      // Check if there is an existing active session
+      let activeSession = pmReviews.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
+      if (!activeSession) {
+        upworkStartedAt = new Date().toISOString();
+        activeSession = {
+          type: 'UPWORK_SESSION',
+          active: true,
+          pmName,
+          userId: effectiveUserId,
+          userName: sessionUserName,
+          startedAt: upworkStartedAt,
+        };
+        pmReviews.push(activeSession);
+      } else {
+        activeSession.pmName = pmName;
+        activeSession.userName = sessionUserName;
+        upworkStartedAt = activeSession.startedAt;
+      }
+      upworkSession = activeSession;
+
+      // Save to Redis active sessions hash
+      if (isRedisReady()) {
+        try {
+          await redis.hset(
+            'task_map:upwork_active',
+            id,
+            JSON.stringify({
+              taskId: id,
+              taskTitle,
+              userId: effectiveUserId,
+              userName: sessionUserName,
+              pmName,
+              startedAt: upworkStartedAt,
+            })
+          );
+        } catch (err) {
+          logger.warn({ err }, 'Failed to set Upwork active session in Redis');
+        }
+      }
+
+      // Broadcast real-time Upwork active alert to all connected users
+      io.emit('upwork:status_changed', {
+        taskId: id,
+        taskTitle,
+        active: true,
+        userId: effectiveUserId,
+        userName: sessionUserName,
+        pmName,
+        startedAt: upworkStartedAt,
+      });
+    } else if (oldUpworkTag && !newUpworkTag) {
+      // 2. Stopped Upwork (deselected or changed away from Upwork)
+      const activeIdx = pmReviews.findIndex((r: any) => r.type === 'UPWORK_SESSION' && r.active);
+      let durationS = 0;
+      let pmName = 'General';
+      if (activeIdx !== -1) {
+        const s = pmReviews[activeIdx];
+        pmName = s.pmName || 'General';
+        const startMs = new Date(s.startedAt).getTime();
+        durationS = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+        pmReviews[activeIdx].active = false;
+        pmReviews[activeIdx].stoppedAt = new Date().toISOString();
+        pmReviews[activeIdx].durationS = durationS;
+      }
+
+      // Remove from Redis active sessions hash
+      if (isRedisReady()) {
+        try {
+          await redis.hdel('task_map:upwork_active', id);
+        } catch (err) {
+          logger.warn({ err }, 'Failed to remove Upwork session from Redis');
+        }
+      }
+
+      // Broadcast real-time Upwork stopped alert to all connected users
+      io.emit('upwork:status_changed', {
+        taskId: id,
+        taskTitle,
+        active: false,
+        userId: effectiveUserId,
+        userName: cleanUserName,
+        pmName,
+        durationS,
+      });
+    }
+
     const updated = await updateTaskMapRecord(id, {
       statuses,
       waitingReviewSince,
       pmReviews,
     });
+
+    // Invalidate Redis task and task_map caches
+    await invalidateCache('task:*', 'tasks:all', `task:${id}`, 'task_map:*');
+
+    // Collect latest active Upwork sessions from Redis or current session
+    let activeUpworkSessions: any[] = [];
+    if (isRedisReady()) {
+      try {
+        const rawMap = await redis.hgetall('task_map:upwork_active');
+        if (rawMap && Object.keys(rawMap).length > 0) {
+          activeUpworkSessions = Object.values(rawMap).map((val) => JSON.parse(val));
+        }
+      } catch (err) {}
+    }
+    if (activeUpworkSessions.length === 0 && upworkSession?.active) {
+      activeUpworkSessions = [{
+        taskId: id,
+        taskTitle,
+        userId: effectiveUserId,
+        userName: upworkSession.userName || cleanUserName,
+        pmName: upworkSession.pmName,
+        startedAt: upworkStartedAt,
+      }];
+    }
 
     // Create AuditLog
     await prisma.auditLog.create({
@@ -423,10 +655,23 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       },
     });
 
-    io.emit('task_map:updated', { taskId: id, statuses, taskMap: updated });
+    io.emit('task_map:updated', {
+      taskId: id,
+      statuses,
+      taskMap: updated,
+      upworkStartedAt,
+      upworkSession,
+      activeUpworkSessions,
+    });
     io.emit('task:updated', { id });
 
-    res.json({ success: true, taskMap: updated });
+    res.json({
+      success: true,
+      taskMap: updated,
+      upworkStartedAt,
+      upworkSession,
+      activeUpworkSessions,
+    });
   } catch (error: any) {
     logger.error({ error }, 'Error updating task statuses');
     res.status(500).json({ error: 'Failed to update task statuses' });

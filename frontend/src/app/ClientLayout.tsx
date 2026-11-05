@@ -345,6 +345,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task:updated', { detail: { task } }));
     });
 
+    s.on('upwork:status_changed', (data) => {
+      window.dispatchEvent(new CustomEvent('upwork:status_changed', { detail: data }));
+    });
+
     s.on('task_map:updated', (data) => {
       window.dispatchEvent(new CustomEvent('task_map:updated', { detail: data }));
     });

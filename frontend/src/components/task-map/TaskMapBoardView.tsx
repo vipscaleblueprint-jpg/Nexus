@@ -386,33 +386,108 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
   };
 
-  // Render PM Tag helper
-  const renderUpworkTag = (task: TaskMapItem) => {
-    const upworkTag = (task.taskMap.statuses || []).find((s) =>
-      s.toUpperCase().startsWith('UPWORK')
-    );
-    if (!upworkTag) return null;
+  // Image 1 Status Presets (Available Tasks / PM-only)
+  const getAvailableTaskOptions = (task: TaskMapItem): TaskMapOption[] => {
+    const list: TaskMapOption[] = [
+      { id: 'opt-avail-1', label: 'Available Task', color: '#1d4ed8', textColor: '#ffffff', order: 0 },
+      { id: 'opt-avail-2', label: 'Sent', color: '#15803d', textColor: '#ffffff', order: 1 },
+      { id: 'opt-avail-3', label: 'To send', color: '#b91c1c', textColor: '#ffffff', order: 2 },
+      { id: 'opt-avail-4', label: 'Follow up', color: '#fbcfe8', textColor: '#831843', order: 3 },
+      { id: 'opt-avail-5', label: 'Done Review', color: '#99f6e4', textColor: '#134e4a', order: 4 },
+      { id: 'opt-avail-6', label: 'Revision', color: '#e9d5ff', textColor: '#581c87', order: 5 },
+      { id: 'opt-avail-7', label: 'CHE', color: '#f87171', textColor: '#ffffff', order: 6 },
+      { id: 'opt-avail-8', label: 'PAU', color: '#7e22ce', textColor: '#ffffff', order: 7 },
+      { id: 'opt-avail-9', label: 'HAN', color: '#facc15', textColor: '#713f12', order: 8 },
+      { id: 'opt-avail-10', label: 'URGENT TASK', color: '#991b1b', textColor: '#fee2e2', order: 9 },
+    ];
 
-    const pmName = upworkTag.replace(/^UPWORK\s*\|\s*/i, '').trim().toUpperCase();
+    // Dynamic Upwork PM options: Upwork + username for PMs
+    const pms = allUsers.filter((u: any) => {
+      if (u.systemRole === 'ADMIN') return true;
+      const r = (u.roles || []).join(' ').toLowerCase();
+      if (r.includes('pm') || r.includes('project manager') || r.includes('team lead') || r.includes('senior')) return true;
+      const n = (u.name || '').toUpperCase();
+      return n.includes('HAN') || n.includes('CHE') || n.includes('PAU');
+    });
 
-    // Matching colors: PAU dark purple, CHE salmon/dusty pink, HAN yellow
-    let tagBg = 'bg-[#4a154b] text-[#f4d1e8] border-[#72236d]';
-    if (pmName === 'PAU') {
-      tagBg = 'bg-[#49166f] text-[#ebd2ff] border-[#6b25a3]';
-    } else if (pmName === 'CHE') {
-      tagBg = 'bg-[#831843] text-[#fbcfe8] border-[#9d174d]';
-    } else if (pmName === 'HAN') {
-      tagBg = 'bg-[#713f12] text-[#fef08a] border-[#854d0e]';
-    }
+    const pmNames = pms.length > 0 ? Array.from(new Set(pms.map((p: any) => p.name.toUpperCase()))) : ['HANNAH', 'CHE', 'PAU'];
+    pmNames.forEach((pmName: string, idx: number) => {
+      const label = `UPWORK | ${pmName}`;
+      let color = '#3b82f6';
+      let textColor = '#ffffff';
+      if (pmName.includes('PAU')) {
+        color = '#7e22ce';
+      } else if (pmName.includes('CHE')) {
+        color = '#f87171';
+      } else if (pmName.includes('HAN')) {
+        color = '#facc15';
+        textColor = '#713f12';
+      }
+      list.push({
+        id: `opt-avail-upwork-${idx}`,
+        label,
+        color,
+        textColor,
+        order: 10 + idx,
+      });
+    });
 
-    return (
-      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-        <span>Upwork job for</span>
-        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${tagBg}`}>
-          {pmName}
-        </span>
-      </div>
-    );
+    // Ensure any currently selected statuses on this task are also present so the PM can see and remove them
+    (task.taskMap.statuses || []).forEach((st: string) => {
+      if (!list.some((o) => o.label.toLowerCase() === st.toLowerCase())) {
+        const isUpwork = st.toUpperCase().startsWith('UPWORK');
+        list.push({
+          id: `opt-cur-${st}`,
+          label: st,
+          color: isUpwork ? '#7f1d1d' : '#3f3f46',
+          textColor: '#ffffff',
+          order: 99,
+        });
+      }
+    });
+
+    return list;
+  };
+
+  // Image 2 Status Presets (Normal Member Tasks)
+  const getUserTaskOptions = (task: TaskMapItem, user: any): TaskMapOption[] => {
+    const list: TaskMapOption[] = [
+      { id: 'opt-user-1', label: 'Not started', color: '#52525b', textColor: '#f4f4f5', order: 0 },
+      { id: 'opt-user-2', label: 'In progress', color: '#ca8a04', textColor: '#fef08a', order: 1 },
+      { id: 'opt-user-3', label: 'Done', color: '#166534', textColor: '#dcfce7', order: 2 },
+      { id: 'opt-user-4', label: 'URGENT', color: '#991b1b', textColor: '#fee2e2', order: 3 },
+      { id: 'opt-user-5', label: 'To review', color: '#1d4ed8', textColor: '#dbeafe', order: 4 },
+      { id: 'opt-user-6', label: 'SENT', color: '#bbf7d0', textColor: '#14532d', order: 5 },
+      { id: 'opt-user-7', label: 'Handed-over/Ready for Next Steps', color: '#e9d5ff', textColor: '#581c87', order: 7 },
+    ];
+
+    // Dynamic Upwork + username: e.g. "UPWORK | SHEMUEL" (NOT "UPWORK ACTIVE"!)
+    const targetName = (user?.name || task.assignee?.name || currentUser?.name || 'User').toUpperCase();
+    const upworkLabel = `UPWORK | ${targetName}`;
+
+    list.splice(6, 0, {
+      id: `opt-user-upwork-${targetName}`,
+      label: upworkLabel,
+      color: '#7f1d1d',
+      textColor: '#fee2e2',
+      order: 6,
+    });
+
+    // Ensure any currently selected statuses on this task are also present so the user/PM can see and remove them
+    (task.taskMap.statuses || []).forEach((st: string) => {
+      if (!list.some((o) => o.label.toLowerCase() === st.toLowerCase())) {
+        const isUpwork = st.toUpperCase().startsWith('UPWORK');
+        list.push({
+          id: `opt-cur-${st}`,
+          label: st,
+          color: isUpwork ? '#7f1d1d' : '#3f3f46',
+          textColor: '#ffffff',
+          order: 99,
+        });
+      }
+    });
+
+    return list;
   };
 
   return (
@@ -477,9 +552,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           {task.title}
                         </h4>
 
-                        {/* Upwork Job Tag */}
-                        {renderUpworkTag(task)}
-
                         {/* Controls row: circle dot left of bulletin, priority flag */}
                         <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
                           {/* Circle Dot Status Indicator */}
@@ -521,8 +593,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           </span>
                           <TaskMapStatusDropdown
                             selectedStatuses={task.taskMap.statuses || []}
-                            options={options}
+                            options={getAvailableTaskOptions(task)}
                             onToggleStatus={(label) => {
+                              if (!isPmUser) {
+                                toast.error('Only Project Managers can modify statuses on Available Tasks');
+                                return;
+                              }
                               const current = task.taskMap.statuses || [];
                               const next = current.includes(label)
                                 ? current.filter((s) => s !== label)
@@ -530,6 +606,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               onStatusChange(task.id, next);
                             }}
                             onOptionsUpdated={onOptionsUpdated}
+                            readOnly={!isPmUser}
                           />
                         </div>
                       </div>
@@ -629,9 +706,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               {task.title}
                             </h4>
 
-                            {/* Upwork Job Tag if present */}
-                            {renderUpworkTag(task)}
-
                             {/* Controls row: circle dot left of bulletin, priority flag */}
                             <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
                               {/* Circle Dot Status Indicator */}
@@ -673,8 +747,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               </span>
                               <TaskMapStatusDropdown
                                 selectedStatuses={task.taskMap.statuses || []}
-                                options={options}
+                                options={getUserTaskOptions(task, user)}
                                 onToggleStatus={(label) => {
+                                  const canEdit = isPmUser || currentUser?.id === user.id || currentUser?.id === task.assigneeId;
+                                  if (!canEdit) {
+                                    toast.error('Only the assigned user or Project Managers can update this task');
+                                    return;
+                                  }
                                   const current = task.taskMap.statuses || [];
                                   const next = current.includes(label)
                                     ? current.filter((s) => s !== label)
@@ -682,6 +761,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   onStatusChange(task.id, next);
                                 }}
                                 onOptionsUpdated={onOptionsUpdated}
+                                readOnly={!isPmUser && currentUser?.id !== user.id && currentUser?.id !== task.assigneeId}
                               />
                             </div>
                           </div>

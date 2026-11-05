@@ -6,6 +6,7 @@ import {
   TaskMapItem,
   TaskMapOption,
   TaskMapShift,
+  UpworkSession,
 } from '@/api/taskMap';
 import { TaskMapSidebar } from './TaskMapSidebar';
 import { TaskMapHeader } from './TaskMapHeader';
@@ -13,6 +14,7 @@ import { TaskMapBoardView } from './TaskMapBoardView';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { useAppStore } from '@/lib/store';
 
 export const TaskMapContainer: React.FC = () => {
   const [tasks, setTasks] = useState<TaskMapItem[]>([]);
@@ -21,6 +23,8 @@ export const TaskMapContainer: React.FC = () => {
   const [shifts, setShifts] = useState<TaskMapShift[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [shiftUsers, setShiftUsers] = useState<any[]>([]);
+  const [activeUpworkSessions, setActiveUpworkSessions] = useState<UpworkSession[]>([]);
+  const currentUser = useAppStore((s) => s.currentUser);
 
   // Shift & Date state (defaults to Nov 5, 2026 or today)
   const [currentShift, setCurrentShift] = useState<string>('DAY');
@@ -49,6 +53,7 @@ export const TaskMapContainer: React.FC = () => {
         setShifts(res.shifts || []);
         setAllUsers(res.allUsers || []);
         setShiftUsers(res.shiftUsers || []);
+        setActiveUpworkSessions(res.activeUpworkSessions || []);
         if (!currentShift && res.activeShift) {
           setCurrentShift(res.activeShift);
         }
@@ -80,33 +85,189 @@ export const TaskMapContainer: React.FC = () => {
       loadData(true);
     };
 
+    const handleTaskMapUpdated = (e: any) => {
+      const data = e.detail || e;
+      if (!data?.taskId) {
+        loadData(true);
+        return;
+      }
+
+      const {
+        taskId,
+        statuses,
+        taskMap,
+        upworkStartedAt,
+        upworkSession,
+        activeUpworkSessions: incomingActiveSessions,
+      } = data;
+
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (t.id !== taskId) return t;
+          return {
+            ...t,
+            upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
+            upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
+            taskMap: {
+              ...t.taskMap,
+              ...(taskMap || {}),
+              statuses: statuses || taskMap?.statuses || t.taskMap.statuses,
+            },
+          };
+        })
+      );
+
+      setAvailablePool((prev) =>
+        prev.map((t) => {
+          if (t.id !== taskId) return t;
+          return {
+            ...t,
+            upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
+            upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
+            taskMap: {
+              ...t.taskMap,
+              ...(taskMap || {}),
+              statuses: statuses || taskMap?.statuses || t.taskMap.statuses,
+            },
+          };
+        })
+      );
+
+      if (incomingActiveSessions) {
+        setActiveUpworkSessions(incomingActiveSessions);
+      }
+    };
+
+    const handleUpworkChanged = (e: any) => {
+      const data = e.detail || e;
+      if (!data) return;
+
+      if (data.active) {
+        toast.info(`⚡ ${data.userName || 'A user'} is now active on Upwork!`, 6000);
+        setActiveUpworkSessions((prev) => {
+          const filtered = prev.filter((s) => s.taskId !== data.taskId);
+          return [
+            ...filtered,
+            {
+              taskId: data.taskId,
+              taskTitle: data.taskTitle,
+              userId: data.userId,
+              userName: data.userName,
+              pmName: data.pmName,
+              startedAt: data.startedAt,
+            },
+          ];
+        });
+      } else {
+        const mins = data.durationS ? Math.floor(data.durationS / 60) : 0;
+        const durStr = mins > 0 ? `worked ${mins}m` : 'completed';
+        toast.success(`✓ ${data.userName || 'User'} stopped Upwork (${durStr}) — Upwork is now available!`, 5000);
+        setActiveUpworkSessions((prev) => prev.filter((s) => s.taskId !== data.taskId));
+      }
+
+      loadData(true);
+    };
+
     window.addEventListener('task:updated', handleTaskUpdated);
-    window.addEventListener('task_map:updated', handleTaskUpdated);
+    window.addEventListener('task_map:updated', handleTaskMapUpdated);
     window.addEventListener('task_activity', handleTaskUpdated);
+    window.addEventListener('upwork:status_changed', handleUpworkChanged);
 
     return () => {
       window.removeEventListener('task:updated', handleTaskUpdated);
-      window.removeEventListener('task_map:updated', handleTaskUpdated);
+      window.removeEventListener('task_map:updated', handleTaskMapUpdated);
       window.removeEventListener('task_activity', handleTaskUpdated);
+      window.removeEventListener('upwork:status_changed', handleUpworkChanged);
     };
   }, [loadData]);
 
-  // Status Change Handler
+  // Status Change Handler with Optimistic Updates (Frontend First) & Instant Realtime
   const handleStatusChange = async (taskId: string, newStatuses: string[]) => {
-    // Optimistic local update
+    const existingTask = tasks.find((t) => t.id === taskId) || availablePool.find((t) => t.id === taskId);
+    const upworkStatus = newStatuses.find((s) => s.toUpperCase().startsWith('UPWORK'));
+
+    let optimisticStartedAt: string | null = null;
+    let optimisticSession: UpworkSession | null = null;
+
+    if (upworkStatus) {
+      const m = upworkStatus.match(/^UPWORK\s*\|\s*(.+)$/i);
+      const pmName = m && m[1] ? m[1].trim().toUpperCase() : 'General';
+      optimisticStartedAt = existingTask?.upworkStartedAt || new Date().toISOString();
+      const rawUser = currentUser?.name || existingTask?.assignee?.name || (currentUser?.email ? currentUser.email.split('@')[0] : '') || 'User';
+      const cleanUser = rawUser.includes('@') ? rawUser.split('@')[0] : rawUser;
+      const userName = (pmName && pmName !== 'General' && pmName !== 'Active') ? pmName : cleanUser.toUpperCase();
+      optimisticSession = {
+        taskId,
+        taskTitle: existingTask?.title || 'Task',
+        userId: currentUser?.id || '',
+        userName,
+        pmName,
+        startedAt: optimisticStartedAt,
+      };
+    }
+
+    // 1. Update Frontend First on both tasks and availablePool immediately
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
-          ? { ...t, taskMap: { ...t.taskMap, statuses: newStatuses } }
+          ? {
+              ...t,
+              upworkStartedAt: optimisticStartedAt,
+              upworkSession: optimisticSession,
+              taskMap: { ...t.taskMap, statuses: newStatuses },
+            }
           : t
       )
     );
 
+    setAvailablePool((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              upworkStartedAt: optimisticStartedAt,
+              upworkSession: optimisticSession,
+              taskMap: { ...t.taskMap, statuses: newStatuses },
+            }
+          : t
+      )
+    );
+
+    // 2. Optimistically update activeUpworkSessions for instant Header Banner change
+    if (optimisticSession) {
+      setActiveUpworkSessions((prev) => {
+        const withoutThis = prev.filter((s) => s.taskId !== taskId);
+        return [...withoutThis, optimisticSession!];
+      });
+    } else {
+      setActiveUpworkSessions((prev) => prev.filter((s) => s.taskId !== taskId));
+    }
+
+    // 3. Send update to server
     try {
-      await taskMapApi.updateTaskStatuses(taskId, newStatuses);
+      const res = await taskMapApi.updateTaskStatuses(taskId, newStatuses);
+      if (res.activeUpworkSessions) {
+        setActiveUpworkSessions(res.activeUpworkSessions);
+      }
+      if (res.upworkStartedAt !== undefined) {
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === taskId
+              ? { ...t, upworkStartedAt: res.upworkStartedAt, upworkSession: res.upworkSession }
+              : t
+          )
+        );
+        setAvailablePool((prev) =>
+          prev.map((t) =>
+            t.id === taskId
+              ? { ...t, upworkStartedAt: res.upworkStartedAt, upworkSession: res.upworkSession }
+              : t
+          )
+        );
+      }
       toast.success('Statuses updated');
     } catch (err: any) {
-      toast.error('Failed to update statuses');
+      toast.error(err?.message || 'Failed to update statuses');
       loadData(true);
     }
   };
@@ -140,6 +301,7 @@ export const TaskMapContainer: React.FC = () => {
           shifts={shifts}
           search={search}
           onSearchChange={setSearch}
+          activeUpworkSessions={activeUpworkSessions}
         />
 
         {/* Board Viewport: Available Tasks Pool + User Shift Columns */}

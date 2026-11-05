@@ -72,22 +72,25 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
 
     if (task.inProgressMovedBy?.id === currentUser.id) return true;
     if (task.maUpdaterIds?.includes(currentUser.id)) return true;
-    if (
-      task.inProgressMovedBy?.name &&
-      currentUser.name &&
-      task.inProgressMovedBy.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase()
-    ) {
-      return true;
-    }
-    if (
-      task.maUpdaterNames &&
-      currentUser.name &&
-      task.maUpdaterNames.some((n: string) => n && n.trim().toLowerCase() === currentUser.name?.trim().toLowerCase())
-    ) {
-      return true;
-    }
+
+    const cName = (currentUser.name || '').trim().toLowerCase();
+    const cEmail = (currentUser.email || '').trim().toLowerCase();
+
+    const matchesName = (target?: string | null) => {
+      if (!target) return false;
+      const t = target.trim().toLowerCase();
+      if (!t || (!cName && !cEmail)) return false;
+      if (cName && (t === cName || cName.includes(t) || t.includes(cName))) return true;
+      if (cEmail && (cEmail.includes(t) || t.includes(cEmail))) return true;
+      const tTokens = t.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+      const cTokens = cName.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+      return tTokens.some(tok => cTokens.includes(tok));
+    };
+
+    if (matchesName(task.inProgressMovedBy?.name)) return true;
+    if (task.maUpdaterNames && task.maUpdaterNames.some(matchesName)) return true;
     return false;
-  }, [currentUser?.id, currentUser?.name, task.inProgressMovedBy, task.maUpdaterIds, task.maUpdaterNames, task.status, task.subtasks, subtaskId]);
+  }, [currentUser?.id, currentUser?.name, currentUser?.email, task.inProgressMovedBy, task.maUpdaterIds, task.maUpdaterNames, task.status, task.subtasks, subtaskId]);
 
   // Synchronize incoming checklists prop changes smoothly, preserving pending local updates
   useEffect(() => {
@@ -1240,7 +1243,27 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                   Unassigned
                                 </button>
                                 {/* Strictly holders of this audit's auditor role */}
-                                {users.filter(u => !isSystemUser(u) && isAuditorFor(text, u.roles)).map(u => (
+                                {users.filter(u => !isSystemUser(u) && isAuditorFor(text, u.roles)).map(u => {
+                                  const isUserContributor = (() => {
+                                    if (task.inProgressMovedBy?.id === u.id) return true;
+                                    if (task.maUpdaterIds?.includes(u.id)) return true;
+                                    const uName = (u.name || '').trim().toLowerCase();
+                                    const uEmail = (u.email || '').trim().toLowerCase();
+                                    const matches = (target?: string | null) => {
+                                      if (!target || (!uName && !uEmail)) return false;
+                                      const t = target.trim().toLowerCase();
+                                      if (t === uName || uName.includes(t) || t.includes(uName)) return true;
+                                      if (uEmail && (uEmail.includes(t) || t.includes(uEmail))) return true;
+                                      const tTokens = t.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+                                      const uTokens = uName.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+                                      return tTokens.some(tok => uTokens.includes(tok));
+                                    };
+                                    if (matches(task.inProgressMovedBy?.name)) return true;
+                                    if (task.maUpdaterNames?.some(matches)) return true;
+                                    return false;
+                                  })();
+
+                                  return (
                                   <button 
                                     key={u.id}
                                     type="button"
@@ -1259,9 +1282,15 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                       </div>
                                     )}
                                     <span className="flex-1 truncate">{u.name}</span>
+                                    {isUserContributor && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0" title="Edited task on MA Daily / moved in-progress">
+                                        Contributor
+                                      </span>
+                                    )}
                                     {assigneeIds.includes(u.id) && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                                   </button>
-                                ))}
+                                );
+                              })}
                                 {/* Assigned before the strict role lists: removable only */}
                                 {assigneeIds.filter(id => !isAuditorFor(text, usersMap.get(id)?.roles)).map(id => {
                                   const u = usersMap.get(id);

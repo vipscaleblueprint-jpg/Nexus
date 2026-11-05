@@ -63,6 +63,8 @@ export interface TaskMapItem {
   pmTags: string[];
   isWaitingPmReview: boolean;
   isClosed: boolean;
+  upworkStartedAt?: string | null;
+  upworkSession?: UpworkSession | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -75,6 +77,15 @@ export interface ShiftUser {
   roles: string[];
   systemRole: string;
   isAudit: boolean;
+}
+
+export interface UpworkSession {
+  taskId: string;
+  taskTitle: string;
+  userId: string;
+  userName: string;
+  pmName: string;
+  startedAt: string;
 }
 
 export interface TaskMapDataResponse {
@@ -92,6 +103,7 @@ export interface TaskMapDataResponse {
   pmUsers: any[];
   allUsers?: any[];
   shiftUsers?: ShiftUser[];
+  activeUpworkSessions?: UpworkSession[];
 }
 
 export const taskMapApi = {
@@ -132,8 +144,23 @@ export const taskMapApi = {
     });
   },
 
-  updateTaskStatuses: async (taskId: string, statuses: string[]): Promise<{ success: boolean; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/statuses`, {
+  updateTaskStatuses: async (
+    taskId: string,
+    statuses: string[]
+  ): Promise<{
+    success: boolean;
+    taskMap: TaskMapRecord;
+    upworkStartedAt?: string | null;
+    upworkSession?: UpworkSession | null;
+    activeUpworkSessions?: UpworkSession[];
+  }> => {
+    return apiClient<{
+      success: boolean;
+      taskMap: TaskMapRecord;
+      upworkStartedAt?: string | null;
+      upworkSession?: UpworkSession | null;
+      activeUpworkSessions?: UpworkSession[];
+    }>(`/api/task-map/tasks/${taskId}/statuses`, {
       method: 'PATCH',
       body: JSON.stringify({ statuses }),
     });

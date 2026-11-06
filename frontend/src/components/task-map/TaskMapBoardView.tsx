@@ -738,7 +738,7 @@ const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
         title={
           details.label
             ? `Filtered by: ${details.label}`
-            : 'Filter by Client & Admin (All Clients & Admins visible)'
+            : 'Filter by Client & Admin (All Clients visible)'
         }
       >
         <Building2 className={`size-3 shrink-0 ${details.iconClass}`} />

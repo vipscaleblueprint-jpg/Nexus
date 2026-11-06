@@ -1554,6 +1554,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
           {/* Nexus nav */}
           <div className="flex-1 overflow-y-auto px-2 py-2 space-y-px">
             <Link
+              id="sidebar-activity-link"
               href="/activity"
               onClick={() => {
                 if (pathname === '/activity') {

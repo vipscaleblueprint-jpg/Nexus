@@ -54,7 +54,7 @@ export interface TaskMapItem {
   assigneeId: string | null;
   assigneeRoleRestrictions: string[];
   teamAssignAccessRole: string | null;
-  list: { id: string; name: string };
+  list: { id: string; name: string; folder?: { id: string; name: string } | null };
   assignee: any;
   assignees: any[];
   creator: any;
@@ -63,6 +63,7 @@ export interface TaskMapItem {
   pmTags: string[];
   isWaitingPmReview: boolean;
   isClosed: boolean;
+  isAdminTask?: boolean;
   upworkStartedAt?: string | null;
   upworkSession?: UpworkSession | null;
   createdAt: string;
@@ -92,6 +93,7 @@ export interface TaskMapDataResponse {
   success: boolean;
   tasks: TaskMapItem[];
   availablePool: TaskMapItem[];
+  allClients?: Array<{ id: string; name: string }>;
   options: TaskMapOption[];
   shifts: TaskMapShift[];
   statusCounts: Record<string, number>;
@@ -107,11 +109,12 @@ export interface TaskMapDataResponse {
 }
 
 export const taskMapApi = {
-  getData: async (params?: { shift?: string; date?: string; search?: string }): Promise<TaskMapDataResponse> => {
+  getData: async (params?: { shift?: string; date?: string; search?: string; client?: string }): Promise<TaskMapDataResponse> => {
     const q = new URLSearchParams();
     if (params?.shift) q.set('shift', params.shift);
     if (params?.date) q.set('date', params.date);
     if (params?.search) q.set('search', params.search);
+    if (params?.client) q.set('client', params.client);
     const queryString = q.toString() ? `?${q.toString()}` : '';
     return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`);
   },

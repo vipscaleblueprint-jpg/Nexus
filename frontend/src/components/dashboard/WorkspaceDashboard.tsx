@@ -111,6 +111,13 @@ const isRecentItem = (dateStr?: string, maxDays = 30) => {
   return now - itemDate <= maxMs;
 };
 
+export const isTaskClosed = (t: { status?: string | null; completed?: boolean } | null | undefined) => {
+  if (!t) return false;
+  if ((t as any).completed) return true;
+  const s = (t.status || "").trim().toUpperCase();
+  return s === "CLOSED" || s === "DONE" || s === "COMPLETED" || s === "RESOLVED" || s === "CANCELLED";
+};
+
 // ClickUp-style Status Badges & Colors
 const STATUS_STYLES: Record<
   string,
@@ -492,6 +499,59 @@ function FilterDropdown({
   );
 }
 
+/**
+ * Calculates a search relevance score for a task against a query.
+ * Prioritizes matches where the query matches "what was written first" (exact match or title startsWith),
+ * followed by word boundary matches, phrase matches, parent task titles, list names, and status.
+ * Intentionally avoids matching raw HTML descriptions to prevent noisy false positives.
+ */
+function getTaskSearchScore(task: Task, query: string): number {
+  const q = query.trim().toLowerCase();
+  if (!q) return 0;
+
+  const title = (task.title || "").trim().toLowerCase();
+  const listName = (task.list?.name || "").trim().toLowerCase();
+  const status = (task.status || "").trim().toLowerCase();
+  const isSub = Boolean((task as any).isSubtask);
+  const parentTitle = isSub ? (((task as any).parentTask?.title || "").trim().toLowerCase()) : "";
+
+  // 1. Exact match on title: highest score
+  if (title === q) return 100;
+
+  // 2. Title starts with query ("what was written first"!)
+  if (title.startsWith(q)) return 90;
+
+  // 3. A word in the title starts with the query (e.g. "Weekly Create Content")
+  const words = title.split(/\s+/);
+  if (words.some((w) => w.startsWith(q))) return 80;
+
+  // 4. Title contains the exact query phrase
+  if (title.includes(q)) return 70;
+
+  // 5. Multi-word query where all tokens appear in title
+  const queryTokens = q.split(/\s+/).filter(Boolean);
+  if (queryTokens.length > 1 && queryTokens.every((tok) => title.includes(tok))) {
+    return 60;
+  }
+
+  // 6. Subtask's parent task title match
+  if (parentTitle) {
+    if (parentTitle.startsWith(q)) return 55;
+    if (parentTitle.includes(q)) return 45;
+  }
+
+  // 7. Client / List name starts with query
+  if (listName.startsWith(q)) return 40;
+
+  // 8. Client / List name contains query
+  if (listName.includes(q)) return 35;
+
+  // 9. Status exact or contains match (e.g. searching "in progress" or "daily")
+  if (status === q || status.includes(q)) return 20;
+
+  return 0;
+}
+
 function WorkspaceDashboardContent({
   activeView = "all",
   spaces = [],
@@ -531,6 +591,9 @@ function WorkspaceDashboardContent({
       closedTaskIdRef.current = selectedTask.id;
     }
     setSelectedTask(null);
+    if (loadMyAuditsRef.current) {
+      loadMyAuditsRef.current();
+    }
 
     if (typeof window !== "undefined") {
       try {
@@ -683,6 +746,102 @@ function WorkspaceDashboardContent({
     loadMyAudits();
   }, [loadMyAudits]);
 
+  // Complete an audit directly from the dashboard row and optimistically remove it
+  const handleCompleteAudit = async (e: React.MouseEvent, audit: MyAuditItem) => {
+    e.stopPropagation();
+
+    // Optimistically remove from myAudits so it disappears immediately
+    setMyAudits((prev) => prev.filter((a) => a.id !== audit.id));
+
+    try {
+      let checklistId = audit.checklistId;
+      if (!checklistId) {
+        const res = await tasksApi.getMyAudits();
+        const found = (res.audits || []).find((a) => a.id === audit.id);
+        checklistId = found?.checklistId;
+      }
+      if (!checklistId) {
+        const taskRes = await tasksApi.getTask(audit.task.id);
+        const auditCl = (taskRes.task.checklists || []).find(
+          (c) => (c.name || "").trim().toLowerCase() === "audit"
+        );
+        checklistId = auditCl?.id;
+      }
+      if (!checklistId) {
+        throw new Error("Could not find audit checklist");
+      }
+
+      await tasksApi.updateChecklistItem(audit.task.id, checklistId, audit.id, { completed: true });
+      const auditLabel = normalizeAuditName(audit.text) === "ui ux audit" ? "UI/UX Audit" : audit.text;
+      toast.success(`Completed ${auditLabel} for ${audit.task.title}`);
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("task:checklist_item_updated", {
+            detail: {
+              taskId: audit.task.id,
+              subtaskId: audit.subtask?.id,
+              checklistId,
+              item: { id: audit.id, text: audit.text, completed: true },
+            },
+          })
+        );
+      }
+    } catch (err: any) {
+      console.error("Failed to complete audit:", err);
+      toast.error(err?.message || "Failed to complete audit");
+      loadMyAuditsRef.current();
+    }
+  };
+
+  // Subtasks flattened into their own rows (status, assignees, priority of the subtask; client of the
+  // parent) so people assigned only to a subtask still see it here
+  const tasksWithSubtasks = useMemo(() => {
+    const subtaskRows: Task[] = [];
+    tasks.forEach((parent) => {
+      (parent.subtasks || []).forEach((st: any) => {
+        subtaskRows.push({
+          ...st,
+          status: st.status || (st.completed ? "CLOSED" : "PENDING"),
+          assignee: st.User || undefined,
+          assignees: st.assignees || [],
+          list: parent.list,
+          listId: parent.listId,
+          subtasks: [],
+          isSubtask: true,
+          parentTask: parent,
+        } as any);
+      });
+    });
+    return subtaskRows.length > 0 ? [...tasks, ...subtaskRows] : tasks;
+  }, [tasks]);
+
+  const filteredMyAudits = useMemo(() => {
+    // Hide audits whose tasks are closed
+    const openAudits = myAudits.filter((audit) => {
+      const known = tasksWithSubtasks.find((t) => t.id === audit.task.id);
+      const taskToCheck = known || audit.task;
+      return !isTaskClosed(taskToCheck as Task);
+    });
+
+    if (!searchQuery.trim()) return openAudits;
+    const q = searchQuery.trim().toLowerCase();
+    return openAudits
+      .map((audit) => {
+        const title = (audit.task?.title || "").toLowerCase();
+        const subTitle = (audit.subtask?.title || "").toLowerCase();
+        const auditText = (audit.text || "").toLowerCase();
+        let score = 0;
+        if (title.startsWith(q) || subTitle.startsWith(q)) score = 90;
+        else if (title.includes(q) || subTitle.includes(q)) score = 70;
+        else if (auditText.includes(q)) score = 50;
+        return { audit, score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => item.audit);
+  }, [myAudits, searchQuery, tasksWithSubtasks]);
+
   // 2. Real-time Synchronization via Socket.io
   useEffect(() => {
     const s = io(API_BASE_URL, { withCredentials: true });
@@ -714,15 +873,47 @@ function WorkspaceDashboardContent({
     });
 
     // Audit checks, assignments and status moves change what's in My Tasks' Audits section
-    ["task:checklist_item_created", "task:checklist_item_updated", "task:checklist_deleted", "task:updated"].forEach((event) =>
-      s.on(event, () => {
-        if (myAuditsRefreshRef.current) clearTimeout(myAuditsRefreshRef.current);
-        myAuditsRefreshRef.current = setTimeout(() => loadMyAuditsRef.current(), 800);
-      }),
-    );
+    const handleAuditRefresh = (dataOrEvent?: any) => {
+      const payload = dataOrEvent?.detail || dataOrEvent;
+      // If a checklist item was marked completed, optimistically remove it immediately
+      if (payload?.item?.completed) {
+        const completedItemId = payload.item.id;
+        const norm = normalizeAuditName(payload.item.text || "");
+        const targetTaskId = payload.taskId;
+        setMyAudits((prev) =>
+          prev.filter(
+            (a) =>
+              a.id !== completedItemId &&
+              !(a.task?.id === targetTaskId && normalizeAuditName(a.text) === norm)
+          )
+        );
+      }
+
+      if (myAuditsRefreshRef.current) clearTimeout(myAuditsRefreshRef.current);
+      myAuditsRefreshRef.current = setTimeout(() => loadMyAuditsRef.current(), 300);
+    };
+
+    const auditEvents = [
+      "task:checklist_item_created",
+      "task:checklist_item_updated",
+      "task:checklist_deleted",
+      "task:updated",
+    ];
+
+    auditEvents.forEach((event) => {
+      s.on(event, handleAuditRefresh);
+      if (typeof window !== "undefined") {
+        window.addEventListener(event, handleAuditRefresh);
+      }
+    });
 
     return () => {
       s.disconnect();
+      if (typeof window !== "undefined") {
+        auditEvents.forEach((event) => {
+          window.removeEventListener(event, handleAuditRefresh);
+        });
+      }
     };
   }, []);
 
@@ -747,48 +938,44 @@ function WorkspaceDashboardContent({
   };
 
   // Filter & sort lists
-  // Filter & sort lists
   const filteredLists = useMemo(() => {
-    return allLists.filter((item) =>
-      item.list.name.toLowerCase().includes(searchQuery.toLowerCase()),
-    );
+    if (!searchQuery.trim()) return allLists;
+    const q = searchQuery.trim().toLowerCase();
+    return allLists
+      .filter((item) => item.list.name.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aStarts = a.list.name.toLowerCase().startsWith(q) ? 1 : 0;
+        const bStarts = b.list.name.toLowerCase().startsWith(q) ? 1 : 0;
+        return bStarts - aStarts;
+      });
   }, [allLists, searchQuery]);
 
   // Filter & sort docs
   const filteredDocs = useMemo(() => {
-    return allDocs.filter((item) =>
-      item.doc.title.toLowerCase().includes(searchQuery.toLowerCase()),
-    );
+    if (!searchQuery.trim()) return allDocs;
+    const q = searchQuery.trim().toLowerCase();
+    return allDocs
+      .filter((item) => item.doc.title.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aStarts = a.doc.title.toLowerCase().startsWith(q) ? 1 : 0;
+        const bStarts = b.doc.title.toLowerCase().startsWith(q) ? 1 : 0;
+        return bStarts - aStarts;
+      });
   }, [allDocs, searchQuery]);
 
   // Filter & sort spaces
   const filteredSpaces = useMemo(() => {
-    return spaces
-      .filter((s) => s.id !== "root-space")
-      .filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [spaces, searchQuery]);
-
-  // Subtasks flattened into their own rows (status, assignees, priority of the subtask; client of the
-  // parent) so people assigned only to a subtask still see it here
-  const tasksWithSubtasks = useMemo(() => {
-    const subtaskRows: Task[] = [];
-    tasks.forEach((parent) => {
-      (parent.subtasks || []).forEach((st: any) => {
-        subtaskRows.push({
-          ...st,
-          status: st.status || (st.completed ? "CLOSED" : "PENDING"),
-          assignee: st.User || undefined,
-          assignees: st.assignees || [],
-          list: parent.list,
-          listId: parent.listId,
-          subtasks: [],
-          isSubtask: true,
-          parentTask: parent,
-        } as any);
+    const list = spaces.filter((s) => s.id !== "root-space");
+    if (!searchQuery.trim()) return list;
+    const q = searchQuery.trim().toLowerCase();
+    return list
+      .filter((s) => s.name.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aStarts = a.name.toLowerCase().startsWith(q) ? 1 : 0;
+        const bStarts = b.name.toLowerCase().startsWith(q) ? 1 : 0;
+        return bStarts - aStarts;
       });
-    });
-    return subtaskRows.length > 0 ? [...tasks, ...subtaskRows] : tasks;
-  }, [tasks]);
+  }, [spaces, searchQuery]);
 
   // Subtask rows open their parent task with the subtask panel showing (TaskDetailModal reads ?subtask=)
   const openRow = (row: Task, explicitSubtaskId?: string | null) => {
@@ -886,11 +1073,7 @@ function WorkspaceDashboardContent({
   }, [tasksWithSubtasks, currentUser]);
 
   // Closed tasks are hidden from every overview tab unless the user explicitly filters by "Closed"
-  const isClosedTask = (t: Task) => {
-    if ((t as any).completed) return true;
-    const s = (t.status || "").trim().toUpperCase();
-    return s === "CLOSED" || s === "DONE" || s === "COMPLETED" || s === "RESOLVED" || s === "CANCELLED";
-  };
+  const isClosedTask = (t: Task) => isTaskClosed(t);
   const showClosed = filterStatus.toUpperCase() === "CLOSED" || filterStatus.toUpperCase() === "DONE" || filterStatus.toUpperCase() === "COMPLETED";
 
   const filteredMyTasks = useMemo(() => {
@@ -915,17 +1098,6 @@ function WorkspaceDashboardContent({
       });
     }
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (t) =>
-          t.title.toLowerCase().includes(q) ||
-          t.description?.toLowerCase().includes(q) ||
-          t.status.toLowerCase().includes(q) ||
-          t.list?.name.toLowerCase().includes(q),
-      );
-    }
-
     if (filterPriority !== "all") {
       result = result.filter(
         (t) => (t.priority || "NORMAL").toUpperCase() === filterPriority,
@@ -938,29 +1110,62 @@ function WorkspaceDashboardContent({
       );
     }
 
-    // Sort
-    result.sort((a, b) => {
-      if (sortBy === "recent") {
-        return (
-          new Date((b as any).updatedAt || b.createdAt || 0).getTime() -
-          new Date((a as any).updatedAt || a.createdAt || 0).getTime()
-        );
-      } else if (sortBy === "client") {
-        const clientA = (a.list?.name || "").toLowerCase();
-        const clientB = (b.list?.name || "").toLowerCase();
-        return clientA.localeCompare(clientB);
-      } else if (sortBy === "priority") {
-        const pOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW"];
-        const pA = pOrder.indexOf((a.priority || "NORMAL").toUpperCase());
-        const pB = pOrder.indexOf((b.priority || "NORMAL").toUpperCase());
-        return pA - pB;
-      } else if (sortBy === "status") {
-        const sA = (a.status || "TODO").toUpperCase();
-        const sB = (b.status || "TODO").toUpperCase();
-        return sA.localeCompare(sB);
-      }
-      return 0;
-    });
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result
+        .map((t) => ({ task: t, score: getTaskSearchScore(t, q) }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => {
+          if (b.score !== a.score) {
+            return b.score - a.score;
+          }
+          if (sortBy === "recent") {
+            return (
+              new Date((b.task as any).updatedAt || b.task.createdAt || 0).getTime() -
+              new Date((a.task as any).updatedAt || a.task.createdAt || 0).getTime()
+            );
+          } else if (sortBy === "client") {
+            const clientA = (a.task.list?.name || "").toLowerCase();
+            const clientB = (b.task.list?.name || "").toLowerCase();
+            return clientA.localeCompare(clientB);
+          } else if (sortBy === "priority") {
+            const pOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW"];
+            const pA = pOrder.indexOf((a.task.priority || "NORMAL").toUpperCase());
+            const pB = pOrder.indexOf((b.task.priority || "NORMAL").toUpperCase());
+            return pA - pB;
+          } else if (sortBy === "status") {
+            const sA = (a.task.status || "TODO").toUpperCase();
+            const sB = (b.task.status || "TODO").toUpperCase();
+            return sA.localeCompare(sB);
+          }
+          return 0;
+        })
+        .map((item) => item.task);
+    } else {
+      // Sort
+      result.sort((a, b) => {
+        if (sortBy === "recent") {
+          return (
+            new Date((b as any).updatedAt || b.createdAt || 0).getTime() -
+            new Date((a as any).updatedAt || a.createdAt || 0).getTime()
+          );
+        } else if (sortBy === "client") {
+          const clientA = (a.list?.name || "").toLowerCase();
+          const clientB = (b.list?.name || "").toLowerCase();
+          return clientA.localeCompare(clientB);
+        } else if (sortBy === "priority") {
+          const pOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW"];
+          const pA = pOrder.indexOf((a.priority || "NORMAL").toUpperCase());
+          const pB = pOrder.indexOf((b.priority || "NORMAL").toUpperCase());
+          return pA - pB;
+        } else if (sortBy === "status") {
+          const sA = (a.status || "TODO").toUpperCase();
+          const sB = (b.status || "TODO").toUpperCase();
+          return sA.localeCompare(sB);
+        }
+        return 0;
+      });
+    }
 
     return result;
   }, [myTasks, searchQuery, filterPriority, filterStatus, sortBy, searchParams, currentUser?.id, isGalaxyFilterActive]);
@@ -977,17 +1182,6 @@ function WorkspaceDashboardContent({
     let result = showClosed ? [...tasksWithSubtasks] : tasksWithSubtasks.filter((t) => !isClosedTask(t));
     if (isGalaxyFilterActive) {
       result = result.filter((t) => isGalaxyTask(t));
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (t) =>
-          t.title.toLowerCase().includes(q) ||
-          t.description?.toLowerCase().includes(q) ||
-          t.status.toLowerCase().includes(q) ||
-          t.list?.name.toLowerCase().includes(q),
-      );
     }
 
     if (filterAssignee !== "all") {
@@ -1011,29 +1205,62 @@ function WorkspaceDashboardContent({
       );
     }
 
-    // Sort
-    result.sort((a, b) => {
-      if (sortBy === "recent") {
-        return (
-          new Date((b as any).updatedAt || b.createdAt || 0).getTime() -
-          new Date((a as any).updatedAt || a.createdAt || 0).getTime()
-        );
-      } else if (sortBy === "client") {
-        const clientA = (a.list?.name || "").toLowerCase();
-        const clientB = (b.list?.name || "").toLowerCase();
-        return clientA.localeCompare(clientB);
-      } else if (sortBy === "priority") {
-        const pOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW"];
-        const pA = pOrder.indexOf((a.priority || "NORMAL").toUpperCase());
-        const pB = pOrder.indexOf((b.priority || "NORMAL").toUpperCase());
-        return pA - pB;
-      } else if (sortBy === "status") {
-        const sA = (a.status || "TODO").toUpperCase();
-        const sB = (b.status || "TODO").toUpperCase();
-        return sA.localeCompare(sB);
-      }
-      return 0;
-    });
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result
+        .map((t) => ({ task: t, score: getTaskSearchScore(t, q) }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => {
+          if (b.score !== a.score) {
+            return b.score - a.score;
+          }
+          if (sortBy === "recent") {
+            return (
+              new Date((b.task as any).updatedAt || b.task.createdAt || 0).getTime() -
+              new Date((a.task as any).updatedAt || a.task.createdAt || 0).getTime()
+            );
+          } else if (sortBy === "client") {
+            const clientA = (a.task.list?.name || "").toLowerCase();
+            const clientB = (b.task.list?.name || "").toLowerCase();
+            return clientA.localeCompare(clientB);
+          } else if (sortBy === "priority") {
+            const pOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW"];
+            const pA = pOrder.indexOf((a.task.priority || "NORMAL").toUpperCase());
+            const pB = pOrder.indexOf((b.task.priority || "NORMAL").toUpperCase());
+            return pA - pB;
+          } else if (sortBy === "status") {
+            const sA = (a.task.status || "TODO").toUpperCase();
+            const sB = (b.task.status || "TODO").toUpperCase();
+            return sA.localeCompare(sB);
+          }
+          return 0;
+        })
+        .map((item) => item.task);
+    } else {
+      // Sort
+      result.sort((a, b) => {
+        if (sortBy === "recent") {
+          return (
+            new Date((b as any).updatedAt || b.createdAt || 0).getTime() -
+            new Date((a as any).updatedAt || a.createdAt || 0).getTime()
+          );
+        } else if (sortBy === "client") {
+          const clientA = (a.list?.name || "").toLowerCase();
+          const clientB = (b.list?.name || "").toLowerCase();
+          return clientA.localeCompare(clientB);
+        } else if (sortBy === "priority") {
+          const pOrder = ["URGENT", "HIGH", "MEDIUM", "NORMAL", "LOW"];
+          const pA = pOrder.indexOf((a.priority || "NORMAL").toUpperCase());
+          const pB = pOrder.indexOf((b.priority || "NORMAL").toUpperCase());
+          return pA - pB;
+        } else if (sortBy === "status") {
+          const sA = (a.status || "TODO").toUpperCase();
+          const sB = (b.status || "TODO").toUpperCase();
+          return sA.localeCompare(sB);
+        }
+        return 0;
+      });
+    }
 
     return result;
   }, [
@@ -1078,6 +1305,14 @@ function WorkspaceDashboardContent({
     const allGroupKeys = Object.keys(groups);
     if (allGroupKeys.length === 0) return [];
     allGroupKeys.sort((a, b) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const maxScoreA = Math.max(...groups[a].map((t) => getTaskSearchScore(t, q)));
+        const maxScoreB = Math.max(...groups[b].map((t) => getTaskSearchScore(t, q)));
+        if (maxScoreB !== maxScoreA) {
+          return maxScoreB - maxScoreA;
+        }
+      }
       const idxA = priorityOrder.indexOf(a);
       const idxB = priorityOrder.indexOf(b);
       if (idxA !== -1 && idxB !== -1) return idxA - idxB;
@@ -1090,7 +1325,7 @@ function WorkspaceDashboardContent({
       config: getStatusConfig(statusKey, allLists),
       tasks: groups[statusKey],
     }));
-  }, [filteredAllTasks]);
+  }, [filteredAllTasks, searchQuery]);
 
   const groupedAllTasksByPriority = useMemo(() => {
     const priorityGroups: Record<string, Record<string, Task[]>> = {};
@@ -1203,7 +1438,17 @@ function WorkspaceDashboardContent({
 
     const allClientKeys = Object.keys(clientGroups);
     if (allClientKeys.length === 0) return [];
-    allClientKeys.sort((a, b) => a.localeCompare(b));
+    allClientKeys.sort((a, b) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const maxScoreA = Math.max(...(clientGroups[a] ? Object.values(clientGroups[a]).flat().map((t) => getTaskSearchScore(t, q)) : [0]));
+        const maxScoreB = Math.max(...(clientGroups[b] ? Object.values(clientGroups[b]).flat().map((t) => getTaskSearchScore(t, q)) : [0]));
+        if (maxScoreB !== maxScoreA) {
+          return maxScoreB - maxScoreA;
+        }
+      }
+      return a.localeCompare(b);
+    });
 
     return allClientKeys.map((clientKey) => {
       const statusGroups = clientGroups[clientKey];
@@ -1231,7 +1476,7 @@ function WorkspaceDashboardContent({
         totalTasks
       };
     });
-  }, [filteredAllTasks]);
+  }, [filteredAllTasks, searchQuery]);
 
   // Group tasks by status (ClickUp Style!)
   const groupedTasksByStatus = useMemo(() => {
@@ -1274,8 +1519,16 @@ function WorkspaceDashboardContent({
       return [];
     }
 
-    // Sort status groups based on ClickUp standard pipeline
+    // Sort status groups based on ClickUp standard pipeline, prioritizing relevance when searching
     allGroupKeys.sort((a, b) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const maxScoreA = Math.max(...groups[a].map((t) => getTaskSearchScore(t, q)));
+        const maxScoreB = Math.max(...groups[b].map((t) => getTaskSearchScore(t, q)));
+        if (maxScoreB !== maxScoreA) {
+          return maxScoreB - maxScoreA;
+        }
+      }
       const idxA = priorityOrder.indexOf(a);
       const idxB = priorityOrder.indexOf(b);
       if (idxA !== -1 && idxB !== -1) return idxA - idxB;
@@ -1289,7 +1542,7 @@ function WorkspaceDashboardContent({
       config: getStatusConfig(statusKey, allLists),
       tasks: groups[statusKey],
     }));
-  }, [filteredMyTasks]);
+  }, [filteredMyTasks, searchQuery]);
 
   // Handle inline quick task creation
   const handleCreateInlineTask = async (status: string) => {
@@ -1383,6 +1636,9 @@ function WorkspaceDashboardContent({
           pendingTaskUpdatesRef.current[updatedTask.id] = Date.now();
           setSelectedTask(updatedTask);
           updateTask(updatedTask);
+          if (loadMyAuditsRef.current) {
+            loadMyAuditsRef.current();
+          }
         }}
         // No onStatusChange: the modal persists the status itself via moveTask (which logs the
         // activity and notifies assignees), then reports the change back through onUpdateTask.
@@ -1864,7 +2120,7 @@ function WorkspaceDashboardContent({
       {currentTab === "my" && (
         <div className="space-y-6">
           {/* Audits assigned to me (unchecked, on open tasks) */}
-          {myAudits.length > 0 && (
+          {filteredMyAudits.length > 0 && (
             <div className="space-y-0.5">
               <div className="flex items-center justify-between px-1 pb-2 pt-2">
                 <div
@@ -1878,7 +2134,7 @@ function WorkspaceDashboardContent({
                   </span>
                 </div>
                 <span className="text-xs font-semibold text-zinc-400 w-8 shrink-0 text-center">
-                  {myAudits.length}
+                  {filteredMyAudits.length}
                 </span>
               </div>
 
@@ -1893,7 +2149,7 @@ function WorkspaceDashboardContent({
                   </div>
 
                   <div className="flex flex-col w-full">
-                    {myAudits.map((audit) => {
+                    {filteredMyAudits.map((audit) => {
                       const known = tasksWithSubtasks.find((t) => t.id === audit.task.id);
                       const taskRow = known || ({ ...audit.task, listId: audit.task.list?.id, createdAt: audit.createdAt } as unknown as Task);
                       const priorityConfig = getPriorityConfig(audit.task.priority);
@@ -1906,7 +2162,14 @@ function WorkspaceDashboardContent({
                           className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
                         >
                           <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">
-                            <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                            <button
+                              type="button"
+                              onClick={(e) => handleCompleteAudit(e, audit)}
+                              className="group/check w-4 h-4 rounded-full border border-emerald-500/50 bg-emerald-500/10 hover:border-emerald-400 hover:bg-emerald-500/20 flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                              title="Click to complete audit"
+                            >
+                              <Check className="w-2.5 h-2.5 text-emerald-400 opacity-0 group-hover/check:opacity-100 transition-opacity" />
+                            </button>
                             <span className="text-[13px] font-medium text-zinc-300 group-hover:text-indigo-300 transition-colors truncate">
                               {audit.task.title}
                             </span>

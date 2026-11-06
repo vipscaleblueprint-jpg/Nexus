@@ -35,9 +35,11 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const shiftQuery = (req.query.shift as string || '').toUpperCase();
     const dateQuery = req.query.date as string || '';
     const searchQuery = (req.query.search as string || '').toLowerCase().trim();
+    const clientQuery = (req.query.client as string || '').trim();
 
+    const isAllShifts = shiftQuery === 'ALL';
     const activeShift = await getCurrentActiveShift();
-    const currentShift = shiftQuery && shiftQuery !== 'ALL' ? shiftQuery : activeShift;
+    const currentShift = isAllShifts ? 'ALL' : (shiftQuery || activeShift);
 
     // Fetch active tasks from PostgreSQL
     const tasks = await prisma.task.findMany({
@@ -47,7 +49,13 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         ],
       },
       include: {
-        list: { select: { id: true, name: true } },
+        list: {
+          select: {
+            id: true,
+            name: true,
+            folder: { select: { id: true, name: true } },
+          },
+        },
         assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
         assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
         creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
@@ -93,18 +101,35 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     });
 
     // Determine shift members (normal users + auditors) for the selected shift from AuditShiftConfig
-    const auditShiftKey = fromTaskMapShiftKey(currentShift);
-    const activeShiftConfig = await (prisma as any).auditShiftConfig.findFirst({
-      where: { shiftKey: auditShiftKey, isActive: true },
-    });
+    const shiftAuditorIdSet = new Set<string>();
+    const shiftMemberIdSet = new Set<string>();
+    const shiftMemberNameSet = new Set<string>();
+    const shiftAuditorNameSet = new Set<string>();
 
-    const shiftAuditorIdSet = new Set<string>((activeShiftConfig?.auditorIds || []).map((id: string) => id.trim()));
-    const shiftMemberIdSet = new Set<string>((activeShiftConfig?.memberIds || []).map((id: string) => id.trim()));
-    const shiftMemberNameSet = new Set<string>((activeShiftConfig?.memberNames || []).map((n: string) => n.trim().toLowerCase()));
-    const shiftAuditorNameSet = new Set<string>((activeShiftConfig?.auditorNames || []).map((n: string) => n.trim().toLowerCase()));
+    if (isAllShifts) {
+      const allShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
+        where: { isActive: true },
+      });
+      for (const cfg of allShiftConfigs) {
+        (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+        (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+        (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+        (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+      }
+    } else {
+      const auditShiftKey = fromTaskMapShiftKey(currentShift);
+      const activeShiftConfig = await (prisma as any).auditShiftConfig.findFirst({
+        where: { shiftKey: auditShiftKey, isActive: true },
+      });
+      (activeShiftConfig?.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+      (activeShiftConfig?.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+      (activeShiftConfig?.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+      (activeShiftConfig?.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+    }
 
     const shiftUsers = allUsers
       .filter((u) => {
+        if (isAllShifts && (shiftMemberIdSet.size === 0 && shiftAuditorIdSet.size === 0)) return true;
         if (shiftMemberIdSet.has(u.id) || shiftAuditorIdSet.has(u.id)) return true;
         if (u.name && (shiftMemberNameSet.has(u.name.toLowerCase()) || shiftAuditorNameSet.has(u.name.toLowerCase()))) {
           return true;
@@ -173,19 +198,24 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
       }
 
+      const folderName = (task.list?.folder?.name || '').toLowerCase();
+      const listName = (task.list?.name || '').toLowerCase();
+      const isAdminTask = folderName === 'admin' || folderName.includes('admin') || listName === 'admin';
+
       return {
         ...task,
         taskMap: mapRecord,
         pmTags,
         isWaitingPmReview: pmTags.length > 0,
         isClosed: isClosedStatus(task.status),
+        isAdminTask,
         upworkStartedAt,
         upworkSession,
       };
     });
 
     // Filter by search query if present
-    const filteredTasks = enrichedTasks.filter((task: any) => {
+    const searchedTasks = enrichedTasks.filter((task: any) => {
       if (!searchQuery) return true;
       const titleMatch = task.title.toLowerCase().includes(searchQuery);
       const clientMatch = (task.list?.name || '').toLowerCase().includes(searchQuery);
@@ -193,6 +223,14 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         (task.assignees || []).some((a: any) => (a.name || '').toLowerCase().includes(searchQuery));
       const statusMatch = (task.taskMap.statuses || []).some((s: string) => s.toLowerCase().includes(searchQuery));
       return titleMatch || clientMatch || assigneeMatch || statusMatch;
+    });
+
+    // Filter by client query if present
+    const filteredTasks = searchedTasks.filter((task: any) => {
+      if (!clientQuery || clientQuery === 'ALL') return true;
+      const listId = task.listId || task.list?.id;
+      const listName = task.list?.name || '';
+      return listId === clientQuery || listName.toLowerCase() === clientQuery.toLowerCase();
     });
 
     // Helper to check if task is closed (by Nexus status or spreadsheet status)
@@ -207,27 +245,54 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       return false;
     };
 
-    // Segregate Available tasks pool: ONLY tasks in REVISION or PENDING that are unassigned or flagged as available
-    const isRevisionOrPending = (t: any) => {
+    // Segregate Available tasks pool:
+    // Strictly holds Pending and Revision tasks ONLY.
+    // Explicitly exclude Waiting, Recurring, Daily, Weekly, and Monthly tasks.
+    const isAvailableTaskStatus = (t: any) => {
       const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
       const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
-      return (
-        s === 'REVISION' ||
-        s === 'PENDING' ||
-        mapStatuses.includes('REVISION') ||
-        mapStatuses.includes('PENDING')
-      );
+
+      // Exclude waiting, recurring, daily, weekly, monthly, and on-hold tasks
+      const isExcluded =
+        s === 'WAITING' ||
+        s.includes('WAITING') ||
+        s === 'DAILY' ||
+        s.includes('DAILY') ||
+        s === 'WEEKLY' ||
+        s.includes('WEEKLY') ||
+        s === 'MONTHLY' ||
+        s.includes('MONTHLY') ||
+        s === 'RECURRING' ||
+        s.includes('RECURRING') ||
+        s === 'ONHOLD' ||
+        s.includes('ONHOLD') ||
+        s.includes('HOLD') ||
+        !!t.recurringConfig ||
+        mapStatuses.some((st: string) =>
+          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'ONHOLD'].includes(st) ||
+          st.includes('WAITING') ||
+          st.includes('DAILY') ||
+          st.includes('WEEKLY') ||
+          st.includes('MONTHLY') ||
+          st.includes('RECURRING') ||
+          st.includes('ONHOLD') ||
+          st.includes('HOLD')
+        );
+
+      if (isExcluded) return false;
+
+      // Strictly only Pending and Revision statuses
+      const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
+      const isRevision = s === 'REVISION' || mapStatuses.includes('REVISION');
+
+      return isPending || isRevision;
     };
 
     const availablePool = filteredTasks.filter((t: any) => {
       if (isClosedTask(t)) return false;
-      // Strictly restricted to Revision or Pending tasks
-      if (!isRevisionOrPending(t)) return false;
-      const isUnassigned = !t.assigneeId && (!t.assignees || t.assignees.length === 0);
-      const isAvailableTag = (t.taskMap.statuses || []).some((s: string) => s.toUpperCase() === 'AVAILABLE TASK');
-      return isUnassigned || isAvailableTag;
+      return isAvailableTaskStatus(t);
     });
 
     // Don't show closed tasks to users on Task Map
@@ -292,15 +357,115 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         activeUpworkSessions.push(sessionItem);
 
         if (isRedisReady()) {
-          redis.hset('task_map:upwork_active', t.id, JSON.stringify(sessionItem)).catch(() => {});
+          redis.hset('task_map:upwork_active', t.id, JSON.stringify(sessionItem)).catch(() => { });
         }
       }
+    }
+
+    // Fetch all client lists under "Client Dashboard" in PostgreSQL
+    let allClients: Array<{ id: string; name: string }> = [];
+    try {
+      const [clientDashboardFolders, clientDashboardSpaces, directClientLists] = await Promise.all([
+        prisma.folder.findMany({
+          where: {
+            name: { contains: 'client dashboard', mode: 'insensitive' },
+          },
+          select: {
+            id: true,
+            name: true,
+            lists: {
+              select: { id: true, name: true },
+              orderBy: { name: 'asc' },
+            },
+            subfolders: {
+              select: {
+                id: true,
+                name: true,
+                lists: {
+                  select: { id: true, name: true },
+                  orderBy: { name: 'asc' },
+                },
+              },
+            },
+          },
+        }),
+        prisma.space.findMany({
+          where: {
+            name: { contains: 'client dashboard', mode: 'insensitive' },
+          },
+          select: {
+            id: true,
+            name: true,
+            lists: {
+              select: { id: true, name: true },
+              orderBy: { name: 'asc' },
+            },
+            folders: {
+              select: {
+                id: true,
+                name: true,
+                lists: {
+                  select: { id: true, name: true },
+                  orderBy: { name: 'asc' },
+                },
+              },
+            },
+          },
+        }),
+        prisma.list.findMany({
+          where: {
+            OR: [
+              { folder: { name: { contains: 'client dashboard', mode: 'insensitive' } } },
+              { folder: { parentFolder: { name: { contains: 'client dashboard', mode: 'insensitive' } } } },
+              { space: { name: { contains: 'client dashboard', mode: 'insensitive' } } },
+              { folder: { space: { name: { contains: 'client dashboard', mode: 'insensitive' } } } },
+            ],
+          },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+      ]);
+
+      const allClientsMap = new Map<string, { id: string; name: string }>();
+
+      for (const f of clientDashboardFolders) {
+        (f.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
+        for (const sub of f.subfolders || []) {
+          (sub.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
+        }
+      }
+
+      for (const s of clientDashboardSpaces) {
+        (s.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
+        for (const f of s.folders || []) {
+          (f.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
+        }
+      }
+
+      for (const l of directClientLists) {
+        allClientsMap.set(l.id, { id: l.id, name: l.name });
+      }
+
+      // Also include any list from non-admin active tasks
+      for (const t of openTasks as any[]) {
+        if (t.isAdminTask) continue;
+        const listId = t.list?.id;
+        const listName = t.list?.name;
+        if (listId && listName && !allClientsMap.has(listId)) {
+          allClientsMap.set(listId, { id: listId, name: listName });
+        }
+      }
+
+      allClients = Array.from(allClientsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err: any) {
+      logger.warn({ err }, 'Failed to query client dashboard folders');
     }
 
     res.json({
       success: true,
       tasks: openTasks,
       availablePool,
+      allClients,
       options,
       shifts,
       statusCounts,
@@ -627,7 +792,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         if (rawMap && Object.keys(rawMap).length > 0) {
           activeUpworkSessions = Object.values(rawMap).map((val) => JSON.parse(val));
         }
-      } catch (err) {}
+      } catch (err) { }
     }
     if (activeUpworkSessions.length === 0 && upworkSession?.active) {
       activeUpworkSessions = [{
@@ -663,7 +828,6 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       upworkSession,
       activeUpworkSessions,
     });
-    io.emit('task:updated', { id });
 
     res.json({
       success: true,
@@ -713,8 +877,34 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
     // Prepare update data
     const updateData: any = {};
     if (assigneeId) {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: assigneeId },
+        select: { id: true, name: true, roles: true, systemRole: true },
+      });
+
+      if (!targetUser) {
+        return res.status(404).json({ error: 'Target user not found' });
+      }
+
+      // Check role restrictions on the task
+      const roleRestrictions = currentTask.assigneeRoleRestrictions || [];
+      if (roleRestrictions.length > 0 && targetUser.systemRole !== 'ADMIN') {
+        const userRoles = (targetUser.roles || []).map((r: string) => r.toLowerCase().trim());
+        const hasMatchingRole = roleRestrictions.some((reqRole: string) => {
+          const reqLower = reqRole.toLowerCase().trim();
+          return userRoles.some((ur: string) => ur === reqLower || ur.includes(reqLower) || reqLower.includes(ur));
+        });
+
+        if (!hasMatchingRole) {
+          return res.status(400).json({
+            error: `${targetUser.name || 'User'} is not fit for the task (requires role: ${roleRestrictions.join(', ')})`,
+          });
+        }
+      }
+
       updateData.assigneeId = assigneeId;
       updateData.assignees = { set: [{ id: assigneeId }] };
+      updateData.status = 'IN PROGRESS';
     } else {
       updateData.assigneeId = null;
       updateData.assignees = { set: [] };
@@ -725,20 +915,29 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       where: { id },
       data: updateData,
       include: {
-        list: { select: { id: true, name: true } },
+        list: {
+          select: {
+            id: true,
+            name: true,
+            folder: { select: { id: true, name: true } },
+          },
+        },
         assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
         assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
         creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
       },
     });
 
-    // Remove 'Available Task' status if assigned; add if unassigned back to pool
+    // Remove Available / Pending / Revision statuses if assigned to a user column; add Available Task if unassigned back to pool
     const record = await getOrCreateTaskMapRecord(id);
     let newStatuses = record.statuses || [];
     if (assigneeId) {
-      newStatuses = newStatuses.filter(s => s.toUpperCase() !== 'AVAILABLE TASK');
+      newStatuses = newStatuses.filter((s) => {
+        const up = s.toUpperCase().replace(/[\s_-]+/g, '');
+        return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'INREVIEW' && up !== 'TOREVIEW';
+      });
     } else {
-      if (!newStatuses.includes('Available Task')) {
+      if (!newStatuses.some((s) => s.toUpperCase() === 'AVAILABLE TASK')) {
         newStatuses.push('Available Task');
       }
     }
@@ -752,7 +951,7 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       'dashboard:all',
       'lists:all',
       'task_map:all'
-    ).catch(() => {});
+    ).catch(() => { });
 
     // AuditLog
     await prisma.auditLog.create({
@@ -834,7 +1033,7 @@ export const claimTask = async (req: Request, res: Response) => {
       'dashboard:all',
       'lists:all',
       'task_map:all'
-    ).catch(() => {});
+    ).catch(() => { });
 
     // AuditLog
     await prisma.auditLog.create({

@@ -56,7 +56,7 @@ export const TaskMapSidebar: React.FC<Props> = ({ currentDate, onSelectDate }) =
   const pagesCount = novDays.length;
 
   return (
-    <aside className="w-[210px] shrink-0 bg-[#0d0d10] border-r border-zinc-800/60 flex flex-col h-full select-none text-zinc-300">
+    <aside className="w-[210px] shrink-0 bg-card/70 border-r border-zinc-800/60 flex flex-col h-full select-none text-zinc-300">
       {/* Sidebar Header */}
       <div className="pt-5 px-4 pb-4">
         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
@@ -108,8 +108,8 @@ export const TaskMapSidebar: React.FC<Props> = ({ currentDate, onSelectDate }) =
                         onClick={() => onSelectDate(isoDate)}
                         className={`w-full px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer truncate ${
                           isSelected
-                            ? 'bg-[#212229] text-white font-medium shadow-sm'
-                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
+                            ? 'bg-zinc-800 text-zinc-100 font-medium shadow-sm'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
                         }`}
                       >
                         {formatted}

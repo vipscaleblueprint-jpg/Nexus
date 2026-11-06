@@ -12,8 +12,10 @@ import {
   googleAuth,
   googleCallback,
   ssoAuth,
+  session,
+  sessionTouch,
 } from '../controllers/auth.controller';
-import { authenticateToken } from '../middleware/auth.middleware';
+import { authenticateToken, optionalAuthenticateToken } from '../middleware/auth.middleware';
 import { validateBody } from '../validation';
 import {
   changePasswordSchema,
@@ -30,6 +32,8 @@ export const authRouter = Router();
 authRouter.post('/signup', validateBody(signupSchema), signup);
 authRouter.post('/login', validateBody(loginSchema), login);
 authRouter.post('/refresh', refresh);
+authRouter.get('/session', session);
+authRouter.post('/session/touch', optionalAuthenticateToken, sessionTouch);
 authRouter.post('/forgot-password', validateBody(forgotPasswordSchema), forgotPassword);
 authRouter.post('/reset-password', validateBody(resetPasswordSchema), resetPassword);
 

@@ -155,7 +155,7 @@ server.on('upgrade', async (request, socket, head) => {
   logger.debug(`WebSocket Upgrade request to: ${url}`);
   if (url.startsWith('/collaboration')) {
     // Same session as the HTTP API: the browser sends the accessToken cookie with the WebSocket handshake
-    const user = await verifyAccessToken(readCookie(request.headers.cookie, 'accessToken'));
+    const user = await verifyAccessToken(readCookie(request.headers.cookie, 'accessToken'), readCookie(request.headers.cookie, 'refreshToken'));
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
@@ -273,7 +273,8 @@ io.use(async (socket, next) => {
   const handshakeToken = (socket.handshake.auth as any)?.token;
   const rawToken = cookieToken || handshakeToken || headerToken;
 
-  const user = await verifyAccessToken(rawToken);
+  const refreshCookie = readCookie(socket.request.headers.cookie, 'refreshToken');
+  const user = await verifyAccessToken(rawToken, refreshCookie);
   if (!user) return next(new Error('Unauthorized'));
   socket.data.user = user;
   next();

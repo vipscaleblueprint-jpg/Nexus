@@ -28,6 +28,21 @@ export interface AuthResponse {
   rememberMe?: boolean;
 }
 
+export interface SessionResponse {
+  authenticated: boolean;
+  user: User | null;
+  session?: {
+    expiresAt?: number;
+    lastActivityAt?: number | null;
+  };
+  refreshed?: boolean;
+}
+
+export interface SessionTouchResponse {
+  success: boolean;
+  timestamp: number;
+}
+
 export interface UserResponse {
   user: User;
 }

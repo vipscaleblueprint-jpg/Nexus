@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { isTokenBlacklisted, getUserRevokedAt } from '../services/redisService';
-import { clearAuthCookies } from '../controllers/auth.controller';
+import { isTokenBlacklisted, getUserRevokedAt, getRefreshToken, storeRefreshToken } from '../services/redisService';
+import { clearAuthCookies, setAuthCookies, generateTokens } from '../controllers/auth.controller';
 import { requireEnv } from '../config/env';
 import type {
   AuthRequest,
@@ -12,6 +12,7 @@ import type {
 export type { AuthRequest, AuthenticatedUserPayload };
 
 const JWT_SECRET = requireEnv('JWT_SECRET');
+const JWT_REFRESH_SECRET = requireEnv('JWT_REFRESH_SECRET');
 
 /** Reads one cookie from a raw Cookie header (WebSocket handshakes don't go through cookie-parser). */
 export function readCookie(cookieHeader: string | undefined, name: string): string | undefined {
@@ -41,25 +42,99 @@ export function sanitizeToken(raw: string | undefined | null): string | null {
 }
 
 /** The user of a valid, non-revoked access token, or null. Shared by the HTTP and WebSocket auth checks. */
-export async function verifyAccessToken(token: string | undefined): Promise<AuthenticatedUserPayload | null> {
+export async function verifyAccessToken(
+  token: string | undefined,
+  refreshToken?: string | undefined
+): Promise<AuthenticatedUserPayload | null> {
   const sanitized = sanitizeToken(token);
-  if (!sanitized) return null;
-  if (await isTokenBlacklisted(sanitized)) return null;
-  try {
-    const decoded = jwt.verify(sanitized, JWT_SECRET) as AuthenticatedUserPayload & { iat?: number };
-    const revokedAt = await getUserRevokedAt(decoded.id);
-    if (revokedAt && decoded.iat && decoded.iat < revokedAt) {
-      return null;
+  if (sanitized && !(await isTokenBlacklisted(sanitized))) {
+    try {
+      const decoded = jwt.verify(sanitized, JWT_SECRET) as AuthenticatedUserPayload & { iat?: number };
+      const revokedAt = await getUserRevokedAt(decoded.id);
+      if (!(revokedAt && decoded.iat && decoded.iat < revokedAt)) {
+        return decoded;
+      }
+    } catch {
+      // Access token expired/invalid, try refresh token fallback below
     }
-    return decoded;
-  } catch {
-    return null;
   }
+
+  const sanitizedRefresh = sanitizeToken(refreshToken);
+  if (sanitizedRefresh) {
+    try {
+      const decodedRefresh = jwt.verify(sanitizedRefresh, JWT_REFRESH_SECRET) as { id: string; iat?: number };
+      const revokedAt = await getUserRevokedAt(decodedRefresh.id);
+      if (revokedAt && decodedRefresh.iat && decodedRefresh.iat < revokedAt) {
+        return null;
+      }
+      const stored = await getRefreshToken(decodedRefresh.id);
+      if (stored === sanitizedRefresh) {
+        const user = await prisma.user.findUnique({
+          where: { id: decodedRefresh.id },
+          select: { id: true, email: true, systemRole: true, roles: true, isActive: true },
+        });
+        if (user && user.isActive) {
+          return {
+            id: user.id,
+            email: user.email,
+            systemRole: user.systemRole as any,
+            roles: user.roles,
+          };
+        }
+      }
+    } catch {}
+  }
+
+  return null;
 }
 
 export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   // Already verified earlier in this request (the /api login gate in server.ts runs before route-level checks)
   if (req.user) return next();
+
+  // Helper to attempt silent sliding refresh via refreshToken cookie
+  const tryRefreshToken = async (): Promise<boolean> => {
+    const rawRefreshToken = req.cookies?.refreshToken;
+    const sanitizedRefresh = sanitizeToken(rawRefreshToken);
+    if (!sanitizedRefresh) return false;
+
+    try {
+      const decodedRefresh = jwt.verify(sanitizedRefresh, JWT_REFRESH_SECRET) as { id: string; iat?: number };
+      const revokedAt = await getUserRevokedAt(decodedRefresh.id);
+      if (revokedAt && decodedRefresh.iat && decodedRefresh.iat < revokedAt) {
+        return false;
+      }
+
+      const storedToken = await getRefreshToken(decodedRefresh.id);
+      if (!storedToken || storedToken !== sanitizedRefresh) {
+        return false;
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: decodedRefresh.id },
+        select: { id: true, email: true, systemRole: true, roles: true, isActive: true },
+      });
+
+      if (!user || !user.isActive) {
+        return false;
+      }
+
+      const tokens = generateTokens(user as any);
+      await storeRefreshToken(user.id, tokens.refreshToken);
+      setAuthCookies(res, tokens.accessToken, tokens.refreshToken, true);
+
+      req.user = {
+        id: user.id,
+        email: user.email,
+        systemRole: user.systemRole as any,
+        roles: user.roles,
+      };
+      req.token = tokens.accessToken;
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   // Read token from HttpOnly cookie first, or fallback to Authorization header
   let rawToken = req.cookies?.accessToken;
@@ -74,6 +149,9 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
 
   const token = sanitizeToken(rawToken);
   if (!token) {
+    if (await tryRefreshToken()) {
+      return next();
+    }
     return res.status(401).json({ error: 'Authentication token required' });
   }
 
@@ -94,6 +172,9 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
     req.token = token;
     next();
   } catch (error) {
+    if (await tryRefreshToken()) {
+      return next();
+    }
     clearAuthCookies(res);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }

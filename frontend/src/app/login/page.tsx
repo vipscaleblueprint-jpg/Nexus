@@ -27,11 +27,29 @@ export default function LoginPage() {
       if (urlError) {
         setErrorMsg(decodeURIComponent(urlError));
       }
+
+      // If user already has an active session, automatically forward to destination link or workspace
+      authApi.session().then((sess) => {
+        if (sess.authenticated && sess.user) {
+          setCurrentUser(sess.user);
+          const raw = params.get('returnTo');
+          const dest = raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/';
+          router.push(dest);
+        }
+      }).catch(() => {});
     }
   }, []);
 
   const handleGoogleLogin = () => {
-    window.location.href = authApi.getGoogleAuthUrl();
+    let returnTo: string | undefined;
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get('returnTo');
+      if (raw && raw.startsWith('/') && !raw.startsWith('//')) {
+        returnTo = raw;
+      }
+    }
+    window.location.href = authApi.getGoogleAuthUrl(returnTo);
   };
 
   const handleFormLogin = async (e: React.FormEvent) => {
@@ -42,7 +60,16 @@ export default function LoginPage() {
     try {
       const data = await authApi.login({ email, password, rememberMe });
       setCurrentUser(data.user);
-      router.push('/');
+
+      let destination = '/';
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const returnTo = params.get('returnTo');
+        if (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')) {
+          destination = returnTo;
+        }
+      }
+      router.push(destination);
     } catch (err: any) {
       setErrorMsg(err.message || 'Unable to connect to authentication server.');
     } finally {

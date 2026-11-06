@@ -1,5 +1,6 @@
 import { apiClient, API_BASE_URL } from './client';
 import { User, UserNotificationPreferences } from '@/lib/types';
+import { SessionResponse, SessionTouchResponse } from '@/types/api';
 
 export interface LoginParams {
   email: string;
@@ -20,14 +21,27 @@ export interface UpdateProfileParams {
 }
 
 export const authApi = {
-  getGoogleAuthUrl(): string {
-    return `${API_BASE_URL}/api/auth/google`;
+  getGoogleAuthUrl(returnTo?: string): string {
+    const qs = returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : '';
+    return `${API_BASE_URL}/api/auth/google${qs}`;
   },
 
   async login(credentials: LoginParams): Promise<AuthResponse> {
     return apiClient<AuthResponse>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify(credentials),
+    });
+  },
+
+  async session(): Promise<SessionResponse> {
+    return apiClient<SessionResponse>('/api/auth/session', {
+      method: 'GET',
+    });
+  },
+
+  async touchSession(): Promise<SessionTouchResponse> {
+    return apiClient<SessionTouchResponse>('/api/auth/session/touch', {
+      method: 'POST',
     });
   },
 

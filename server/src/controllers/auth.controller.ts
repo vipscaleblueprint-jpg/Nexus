@@ -16,6 +16,10 @@ import {
   getRefreshToken,
   removeRefreshToken,
   blacklistToken,
+  isTokenBlacklisted,
+  getUserRevokedAt,
+  recordUserActivity,
+  getUserLastActivity,
   storeOTP,
   getOTP,
   removeOTP,
@@ -78,7 +82,7 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // Wrong guesses allowed per password-reset code before it's discarded
 const MAX_OTP_ATTEMPTS = 5;
 
-function setAuthCookies(
+export function setAuthCookies(
   res: Response,
   accessToken: string,
   refreshToken: string,
@@ -89,6 +93,7 @@ function setAuthCookies(
     httpOnly: true,
     secure: IS_PROD,
     sameSite: IS_PROD ? 'none' : 'lax',
+    path: '/',
     maxAge: 24 * 3600 * 1000,
   });
 
@@ -97,6 +102,7 @@ function setAuthCookies(
     httpOnly: true,
     secure: IS_PROD,
     sameSite: IS_PROD ? 'none' : 'lax',
+    path: '/',
     ...(rememberMe ? { maxAge: 7 * 24 * 3600 * 1000 } : {}),
   });
 }
@@ -106,15 +112,17 @@ export function clearAuthCookies(res: Response) {
     httpOnly: true,
     secure: IS_PROD,
     sameSite: IS_PROD ? 'none' : 'lax',
+    path: '/',
   });
   res.clearCookie('refreshToken', {
     httpOnly: true,
     secure: IS_PROD,
     sameSite: IS_PROD ? 'none' : 'lax',
+    path: '/',
   });
 }
 
-function generateTokens(user: {
+export function generateTokens(user: {
   id: string;
   email: string;
   systemRole: SystemRole;
@@ -245,7 +253,8 @@ export async function login(req: Request, res: Response) {
 
 export function googleAuth(req: Request, res: Response) {
   const rootUrl = 'https://accounts.google.com/o/oauth2/v2/auth';
-  const options = {
+  const returnTo = req.query.returnTo as string | undefined;
+  const options: Record<string, string> = {
     redirect_uri: GOOGLE_CALLBACK_URL,
     client_id: GOOGLE_CLIENT_ID,
     access_type: 'offline',
@@ -256,6 +265,10 @@ export function googleAuth(req: Request, res: Response) {
       'https://www.googleapis.com/auth/userinfo.email',
     ].join(' '),
   };
+
+  if (returnTo && typeof returnTo === 'string') {
+    options.state = encodeURIComponent(returnTo);
+  }
 
   const qs = new URLSearchParams(options).toString();
   return res.redirect(`${rootUrl}?${qs}`);
@@ -358,7 +371,19 @@ export async function googleCallback(req: Request, res: Response) {
     // Set HttpOnly Cookies
     setAuthCookies(res, accessToken, refreshToken, true);
 
-    return res.redirect(FRONTEND_URL);
+    const state = req.query.state as string | undefined;
+    let safeReturnTo = '';
+    if (state && typeof state === 'string') {
+      try {
+        const decoded = decodeURIComponent(state);
+        if (decoded.startsWith('/') && !decoded.startsWith('//')) {
+          safeReturnTo = decoded;
+        }
+      } catch {}
+    }
+
+    const targetUrl = safeReturnTo ? `${FRONTEND_URL.replace(/\/+$/, "")}${safeReturnTo}` : FRONTEND_URL;
+    return res.redirect(targetUrl);
   } catch (err: any) {
     log.error({ err }, `Google OAuth callback failed: ${errMsg(err)}`);
     return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent(err.message)}`);
@@ -626,6 +651,7 @@ export async function resetPassword(req: Request, res: Response) {
 
 export async function ssoAuth(req: Request, res: Response) {
   const token = req.query.token as string;
+  const returnTo = (req.query.returnTo || req.query.next) as string | undefined;
   if (!token) {
     return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
   }
@@ -688,9 +714,196 @@ export async function ssoAuth(req: Request, res: Response) {
     setAuthCookies(res, accessToken, refreshToken, true);
 
     // 5. Send them into the app
-    return res.redirect(FRONTEND_URL);
+    let safeReturnTo = '';
+    if (returnTo && typeof returnTo === 'string') {
+      try {
+        const decoded = decodeURIComponent(returnTo);
+        if (decoded.startsWith('/') && !decoded.startsWith('//')) {
+          safeReturnTo = decoded;
+        }
+      } catch {}
+    }
+
+    const targetUrl = safeReturnTo ? `${FRONTEND_URL.replace(/\/+$/, "")}${safeReturnTo}` : FRONTEND_URL;
+    return res.redirect(targetUrl);
   } catch (err: any) {
     log.error({ err }, `SSO Auth handoff failed: ${errMsg(err)}`);
     return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// SESSION MANAGEMENT & PRESENCE HEARTBEAT
+// -----------------------------------------------------------------------------
+
+export async function session(req: Request, res: Response) {
+  try {
+    let rawAccessToken = req.cookies?.accessToken;
+    if (!rawAccessToken) {
+      const authHeader = req.headers['authorization'];
+      if (typeof authHeader === 'string') {
+        const match = authHeader.match(/^Bearer\s+([A-Za-z0-9._-]+)$/i);
+        rawAccessToken = match ? match[1] : undefined;
+      }
+    }
+    const accessToken = typeof rawAccessToken === 'string' && rawAccessToken.length <= 4096
+      ? rawAccessToken.trim()
+      : undefined;
+
+    const rawRefreshToken = req.cookies?.refreshToken || (req.body as any)?.refreshToken;
+    const refreshToken = typeof rawRefreshToken === 'string' && rawRefreshToken.length <= 4096
+      ? rawRefreshToken.trim()
+      : undefined;
+
+    const fetchSafeUser = async (userId: string) => {
+      const user = await (prisma.user as any).findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          avatarUrl: true,
+          dailySheetUrl: true,
+          starRating: true,
+          employmentType: true,
+          isActive: true,
+          systemRole: true,
+          roles: true,
+          lastLoginAt: true,
+          createdAt: true,
+          team: true,
+          notificationPreferences: true,
+          confettiUrl: true,
+        },
+      });
+      return user;
+    };
+
+    // 1. Check access token if present
+    if (accessToken) {
+      const blacklisted = await isTokenBlacklisted(accessToken);
+      if (!blacklisted) {
+        try {
+          const decoded = jwt.verify(accessToken, JWT_SECRET) as any;
+          const revokedAt = await getUserRevokedAt(decoded.id);
+          const isRevoked = revokedAt && decoded.iat && decoded.iat < revokedAt;
+
+          if (!isRevoked) {
+            const user = await fetchSafeUser(decoded.id);
+            if (user && user.isActive) {
+              const nowSec = Math.floor(Date.now() / 1000);
+              const expSec = decoded.exp || (nowSec + 24 * 3600);
+              const remainingSec = expSec - nowSec;
+
+              // Proactive sliding renewal: if token has less than 2 hours remaining and refreshToken is valid, renew
+              if (remainingSec < 2 * 3600 && refreshToken) {
+                try {
+                  const storedRefresh = await getRefreshToken(user.id);
+                  if (storedRefresh === refreshToken) {
+                    const tokens = generateTokens(user);
+                    await storeRefreshToken(user.id, tokens.refreshToken);
+                    setAuthCookies(res, tokens.accessToken, tokens.refreshToken, true);
+                  }
+                } catch {}
+              }
+
+              await recordUserActivity(user.id);
+              const lastActivity = await getUserLastActivity(user.id);
+
+              return res.json({
+                authenticated: true,
+                user: {
+                  ...user,
+                  confettiUrl: decryptText((user as any).confettiUrl),
+                  notificationPreferences: formatNotificationPreferences(user.notificationPreferences),
+                },
+                session: {
+                  expiresAt: expSec * 1000,
+                  lastActivityAt: lastActivity,
+                },
+              });
+            }
+          }
+        } catch (jwtErr) {
+          // Token expired or invalid — fall through to refreshToken
+        }
+      }
+    }
+
+    // 2. Check refresh token if accessToken was missing or expired
+    if (refreshToken) {
+      try {
+        const decodedRefresh = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as { id: string; iat?: number };
+        const revokedAt = await getUserRevokedAt(decodedRefresh.id);
+        const isRevoked = revokedAt && decodedRefresh.iat && decodedRefresh.iat < revokedAt;
+
+        if (!isRevoked) {
+          const storedToken = await getRefreshToken(decodedRefresh.id);
+          if (storedToken && storedToken === refreshToken) {
+            const user = await fetchSafeUser(decodedRefresh.id);
+            if (user && user.isActive) {
+              const tokens = generateTokens(user);
+              await storeRefreshToken(user.id, tokens.refreshToken);
+              setAuthCookies(res, tokens.accessToken, tokens.refreshToken, true);
+
+              await recordUserActivity(user.id);
+              const lastActivity = await getUserLastActivity(user.id);
+
+              return res.json({
+                authenticated: true,
+                refreshed: true,
+                user: {
+                  ...user,
+                  confettiUrl: decryptText((user as any).confettiUrl),
+                  notificationPreferences: formatNotificationPreferences(user.notificationPreferences),
+                },
+                session: {
+                  expiresAt: (Math.floor(Date.now() / 1000) + 24 * 3600) * 1000,
+                  lastActivityAt: lastActivity,
+                },
+              });
+            }
+          }
+        }
+      } catch (refreshErr) {
+        // Refresh token failed verification
+      }
+    }
+
+    // 3. No active valid session
+    clearAuthCookies(res);
+    return res.json({
+      authenticated: false,
+      user: null,
+    });
+  } catch (err: any) {
+    log.error({ err }, `Session resolution failed: ${errMsg(err)}`);
+    return res.status(500).json({ error: 'Session check failed' });
+  }
+}
+
+export async function sessionTouch(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (userId) {
+      await recordUserActivity(userId);
+      return res.json({ success: true, timestamp: Math.floor(Date.now() / 1000) });
+    }
+
+    const rawToken = req.cookies?.accessToken;
+    if (rawToken) {
+      try {
+        const decoded = jwt.verify(rawToken, JWT_SECRET) as any;
+        if (decoded?.id) {
+          await recordUserActivity(decoded.id);
+          return res.json({ success: true, timestamp: Math.floor(Date.now() / 1000) });
+        }
+      } catch {}
+    }
+
+    return res.status(401).json({ error: 'Unauthorized' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 }

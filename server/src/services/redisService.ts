@@ -40,6 +40,7 @@ redis.on('connect', () => {
 const inMemoryRefreshTokens = new Map<string, string>();
 const inMemoryBlacklistedTokens = new Set<string>();
 const inMemoryRevokedSessions = new Map<string, number>();
+const inMemoryUserActivity = new Map<string, number>();
 const inMemoryOTPStore = new Map<string, { otp: string; expiresAt: number }>();
 const inMemoryOTPAttempts = new Map<string, { count: number; expiresAt: number }>();
 const inMemoryCacheStore = new Map<string, { value: string; expiresAt: number }>();
@@ -126,6 +127,29 @@ export async function getUserRevokedAt(userId: string): Promise<number | null> {
     }
   }
   return inMemoryRevokedSessions.get(userId) ?? null;
+}
+
+// User activity tracking for active session sliding window & presence
+export async function recordUserActivity(userId: string, ttlSeconds: number = 7 * 24 * 3600) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  inMemoryUserActivity.set(userId, timestamp);
+  if (isRedisReady()) {
+    try {
+      await redis.set(`user_activity:${userId}`, String(timestamp), 'EX', ttlSeconds);
+    } catch (err) {
+      log.warn({ err }, `recordUserActivity failed: ${errMsg(err)}`);
+    }
+  }
+}
+
+export async function getUserLastActivity(userId: string): Promise<number | null> {
+  if (isRedisReady()) {
+    try {
+      const val = await redis.get(`user_activity:${userId}`);
+      if (val) return parseInt(val, 10);
+    } catch (err) {}
+  }
+  return inMemoryUserActivity.get(userId) ?? null;
 }
 
 // OTP (One-Time Password) Storage for Forgot Password Flow (10-min default TTL)

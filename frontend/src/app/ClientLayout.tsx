@@ -127,7 +127,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     }
   }, [currentUser?.notificationPreferences?.soundUrl]);
 
-  // Auth Gate & Session Verification
+  // Auth Gate & Session Verification (with deep-link persistence & sliding refresh)
   useEffect(() => {
     if (pathname === '/login') {
       return;
@@ -136,9 +136,13 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     if (!currentUser) {
       setAuthStatus('loading');
       authApi
-        .getMe()
-        .then(({ user }) => {
-          setCurrentUser(user);
+        .session()
+        .then((sess) => {
+          if (!sess.authenticated || !sess.user) {
+            throw new Error('Unauthenticated session');
+          }
+
+          setCurrentUser(sess.user);
           setAuthStatus('authenticated');
           // Only hydrate sensitive cached spaces and tasks once authenticated
           hydrateFromCache();
@@ -151,13 +155,15 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
           notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
             setUnreadNotifications(res.unreadCount ?? res.notifications.filter((n) => !n.isRead).length);
-          });
+          }).catch(() => {});
         })
         .catch(() => {
-          // Token expired, revoked, or invalid — clear all caches and redirect to login
+          // Truly unauthenticated or session revoked — preserve destination link so login returns to it
           resetStore();
           if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-            window.location.replace('/login');
+            const currentPath = window.location.pathname + window.location.search + window.location.hash;
+            const returnTo = currentPath && currentPath !== '/' ? `?returnTo=${encodeURIComponent(currentPath)}` : '';
+            window.location.replace(`/login${returnTo}`);
           }
         });
       return;
@@ -172,6 +178,73 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       }
     }
   }, [pathname, currentUser]);
+
+  // Active User Activity Tracking & Session Sliding Expiration
+  // ("proper handling of the session when it ends or not like if the user moved the mouse and etc")
+  useEffect(() => {
+    if (!currentUser?.id || pathname === '/login') return;
+
+    let lastTouchAt = Date.now();
+    let isIdle = false;
+    const TOUCH_INTERVAL_MS = 2 * 60 * 1000; // Touch backend at most every 2 minutes while actively working
+    const IDLE_THRESHOLD_MS = 5 * 60 * 1000;  // 5 minutes without interaction marks idle
+    const MAX_IDLE_TIMEOUT_MS = 12 * 3600 * 1000; // 12 hours of total inactivity before session ends
+
+    let idleCheckInterval: NodeJS.Timeout | null = null;
+
+    const handleUserActivity = () => {
+      const now = Date.now();
+      const timeSinceLastTouch = now - lastTouchAt;
+
+      // If user was away/idle (e.g. went to CR for 10-15 mins) and just moved mouse:
+      if (isIdle) {
+        isIdle = false;
+        // Verify and refresh session immediately upon returning from idle
+        authApi.session().then((sess) => {
+          if (!sess.authenticated) {
+            // Session was revoked or expired while away
+            resetStore();
+            const currentPath = window.location.pathname + window.location.search + window.location.hash;
+            const returnTo = currentPath && currentPath !== '/' ? `?returnTo=${encodeURIComponent(currentPath)}` : '';
+            window.location.replace(`/login${returnTo}`);
+          } else if (sess.user) {
+            setCurrentUser(sess.user);
+          }
+        }).catch(() => {});
+        lastTouchAt = now;
+        return;
+      }
+
+      // While continuously active, throttle session touch to once every 2 minutes
+      if (timeSinceLastTouch >= TOUCH_INTERVAL_MS) {
+        lastTouchAt = now;
+        authApi.touchSession().catch(() => {});
+      }
+    };
+
+    // Periodic check to mark idle or expire session after prolonged inactivity
+    idleCheckInterval = setInterval(() => {
+      const elapsed = Date.now() - lastTouchAt;
+      if (elapsed > IDLE_THRESHOLD_MS && !isIdle) {
+        isIdle = true;
+      }
+      if (elapsed > MAX_IDLE_TIMEOUT_MS) {
+        // Extended idle timeout (12h) — cleanly end session
+        resetStore();
+        const currentPath = window.location.pathname + window.location.search + window.location.hash;
+        const returnTo = currentPath && currentPath !== '/' ? `?returnTo=${encodeURIComponent(currentPath)}` : '';
+        window.location.replace(`/login${returnTo}`);
+      }
+    }, 60 * 1000);
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'focus'];
+    events.forEach((ev) => window.addEventListener(ev, handleUserActivity, { passive: true }));
+
+    return () => {
+      if (idleCheckInterval) clearInterval(idleCheckInterval);
+      events.forEach((ev) => window.removeEventListener(ev, handleUserActivity));
+    };
+  }, [currentUser?.id, pathname]);
 
   // Preload custom or sample notification sound for instant zero-lag playback
   useEffect(() => {

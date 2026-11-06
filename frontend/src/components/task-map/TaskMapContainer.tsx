@@ -8,15 +8,18 @@ import {
   TaskMapShift,
   UpworkSession,
 } from '@/api/taskMap';
+import { tasksApi } from '@/api/tasks';
 import { TaskMapSidebar } from './TaskMapSidebar';
 import { TaskMapHeader } from './TaskMapHeader';
 import { TaskMapBoardView } from './TaskMapBoardView';
 import { TaskMapAuditingView } from './TaskMapAuditingView';
+import { TaskMapCrmView } from './TaskMapCrmView';
 import { TaskMapUpworkView } from './TaskMapUpworkView';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
+import { hasCrmAccess } from '@/lib/permissions';
 
 export const TaskMapContainer: React.FC = () => {
   const [tasks, setTasks] = useState<TaskMapItem[]>([]);
@@ -41,13 +44,13 @@ export const TaskMapContainer: React.FC = () => {
 
   // Track pending optimistic status updates to avoid race conditions & background fetch overwrites
   const pendingUpdatesRef = useRef<
-    Map<string, { statuses: string[]; timer?: NodeJS.Timeout; timestamp: number }>
+    Map<string, { statuses: string[]; timer?: NodeJS.Timeout | null; timestamp: number }>
   >(new Map());
 
   // Shift, Date, Client & View mode state (defaults to Nov 5, 2026 or today)
   const [currentShift, setCurrentShift] = useState<string>('DAY');
   const [currentDate, setCurrentDate] = useState<string>('2026-11-05');
-  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'UPWORK'>('BOARD');
+  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK'>('BOARD');
   const [selectedClient, setSelectedClient] = useState<string>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
@@ -406,12 +409,13 @@ export const TaskMapContainer: React.FC = () => {
             )
           );
         }
+        const cur = pendingUpdatesRef.current.get(taskId);
+        if (cur) {
+          cur.timer = null;
+        }
         // Retain in pending set briefly (1.5s) to guard against any trailing background GETs
         setTimeout(() => {
-          const cur = pendingUpdatesRef.current.get(taskId);
-          if (cur && !cur.timer) {
-            pendingUpdatesRef.current.delete(taskId);
-          }
+          pendingUpdatesRef.current.delete(taskId);
         }, 1500);
       } catch (err: any) {
         pendingUpdatesRef.current.delete(taskId);
@@ -425,6 +429,26 @@ export const TaskMapContainer: React.FC = () => {
       timer,
       timestamp: Date.now(),
     });
+  };
+
+  // Handler for direct task property updates (e.g. main workflow status, priority)
+  const handleTaskUpdate = async (taskId: string, fields: Partial<TaskMapItem>) => {
+    // 1. Optimistically update local tasks & availablePool
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, ...fields } : t))
+    );
+    setAvailablePool((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, ...fields } : t))
+    );
+
+    // 2. Persist to backend
+    try {
+      await tasksApi.updateTask(taskId, fields as any);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { id: taskId, ...fields } }));
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update task');
+      loadData(true);
+    }
   };
 
   // Compute distinct clients from "Client Dashboard" in sidebar/database and their active task counts
@@ -604,9 +628,10 @@ export const TaskMapContainer: React.FC = () => {
           availableMAs={availableMAs}
           selectedMAs={selectedCustomMAs}
           onSelectedMAsChange={setSelectedCustomMAs}
+          hasCrmAccess={hasCrmAccess(currentUser)}
         />
 
-        {/* Viewport: Board View OR Auditing View OR Upwork Tab View */}
+        {/* Viewport: Board View OR Auditing View OR CRM View OR Upwork Tab View */}
         <div className="flex-1 overflow-hidden">
           {currentView === 'BOARD' ? (
             <TaskMapBoardView
@@ -624,6 +649,7 @@ export const TaskMapContainer: React.FC = () => {
               onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
               selectedCustomMAs={selectedCustomMAs}
               clients={clients}
+              onTaskUpdate={handleTaskUpdate}
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView
@@ -636,6 +662,21 @@ export const TaskMapContainer: React.FC = () => {
               onOptionsUpdated={() => loadData(true)}
               onOpenDetail={setSelectedTaskModal}
               onDataRefresh={() => loadData(true)}
+              onTaskUpdate={handleTaskUpdate}
+            />
+          ) : currentView === 'CRM' ? (
+            <TaskMapCrmView
+              tasks={displayedTasks}
+              availablePool={displayedPool}
+              options={options}
+              allUsers={allUsers}
+              shiftUsers={shiftUsers}
+              onStatusChange={handleStatusChange}
+              onOptionsUpdated={() => loadData(true)}
+              onOpenDetail={setSelectedTaskModal}
+              onDataRefresh={() => loadData(true)}
+              onTaskUpdate={handleTaskUpdate}
+              onSwitchToBoard={() => setCurrentView('BOARD')}
             />
           ) : (
             <TaskMapUpworkView

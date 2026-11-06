@@ -1,8 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { TaskMapItem, TaskMapOption, taskMapApi } from '@/api/taskMap';
+import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
-import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield } from 'lucide-react';
+import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { getPriorityConfig } from '@/lib/priority';
 import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions } from '@/lib/taskTokens';
@@ -39,6 +41,7 @@ interface Props {
   onToggleAdminTasks?: () => void;
   selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count: number }>;
+  onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
 }
 
 const getDotColor = (status?: string) => {
@@ -247,6 +250,23 @@ const matchesPriorityFilter = (task: TaskMapItem, filter: string) => {
     return p === 'LOW';
   }
   return true;
+};
+
+const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
+  if (!query || !query.trim()) return true;
+  const q = query.trim().toLowerCase();
+  const title = (task.title || '').toLowerCase();
+  const clientName = (task.list?.name || '').toLowerCase();
+  const folderName = (task.list?.folder?.name || '').toLowerCase();
+  const desc = (task.description || '').toLowerCase();
+  const statuses = (task.taskMap?.statuses || []).map((s: string) => (s || '').toLowerCase());
+  return (
+    title.includes(q) ||
+    clientName.includes(q) ||
+    folderName.includes(q) ||
+    desc.includes(q) ||
+    statuses.some((s: string) => s.includes(q))
+  );
 };
 
 const getColumnPriorityCounts = (items: TaskMapItem[]) => {
@@ -919,6 +939,327 @@ const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
   );
 };
 
+// ---------------------------------------------------------------------------
+// Card Status & Priority Interactive Dropdowns
+// ---------------------------------------------------------------------------
+const CardStatusDropdown: React.FC<{
+  taskId: string;
+  currentStatus: string;
+  onSelect: (newStatus: string) => void;
+}> = ({ taskId, currentStatus, onSelect }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  const statusList = [
+    { label: 'In progress', color: '#D04A7C' },
+    { label: 'Pending', color: '#D29A2A' },
+    { label: 'To review', color: '#1d4ed8' },
+    { label: 'Revision', color: '#5B6BD6' },
+    { label: 'Done', color: '#166534' },
+    { label: 'Closed', color: '#10b981', isClosed: true },
+    { label: 'KYC', color: '#059669', isKyc: true },
+  ];
+
+  const calcPos = (rect: DOMRect) => {
+    const width = 160;
+    const height = 240;
+    let top = rect.bottom + 4;
+    if (top + height > window.innerHeight - 10) {
+      top = Math.max(10, rect.top - height - 4);
+    }
+    let left = rect.left;
+    if (left + width > window.innerWidth - 10) {
+      left = Math.max(10, window.innerWidth - width - 10);
+    }
+    return { top, left };
+  };
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isOpen) {
+      setIsOpen(false);
+      setCoords(null);
+      return;
+    }
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const nextCoords = calcPos(rect);
+    setCoords(nextCoords);
+    setIsOpen(true);
+  };
+
+  useLayoutEffect(() => {
+    if (!isOpen || !triggerRef.current) return;
+
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        triggerRef.current &&
+        !triggerRef.current.contains(e.target as Node) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+        setCoords(null);
+      }
+    };
+
+    const handleScrollOrResize = () => {
+      setIsOpen(false);
+      setCoords(null);
+    };
+
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [isOpen]);
+
+  const clean = (currentStatus || 'In progress').trim();
+  const isClosed = clean.toUpperCase() === 'CLOSED' || clean.toUpperCase() === 'DONE';
+  const isKyc = clean.toUpperCase() === 'KYC';
+
+  return (
+    <div
+      className="relative inline-flex items-center"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={handleToggle}
+        className="flex items-center p-1 -m-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer select-none"
+        title={`Status: ${clean} (click to change)`}
+      >
+        {isClosed ? (
+          <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
+        ) : isKyc ? (
+          <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
+        ) : (
+          <CustomCircleDot
+            className="size-3.5 shrink-0"
+            style={{ color: getDotColor(clean) }}
+          />
+        )}
+      </button>
+
+      {isOpen &&
+        coords &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: `${coords.top}px`,
+              left: `${coords.left}px`,
+              zIndex: 999999,
+            }}
+            className="w-40 p-1.5 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col gap-0.5 text-zinc-200 animate-in fade-in zoom-in-95 duration-75"
+          >
+            <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider px-2 py-1">
+              Change Status
+            </span>
+            {statusList.map((item) => {
+              const isSelected = clean.toUpperCase() === item.label.toUpperCase();
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    setCoords(null);
+                    onSelect(item.label);
+                  }}
+                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-zinc-800 text-white font-semibold'
+                      : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    {item.isClosed ? (
+                      <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
+                    ) : item.isKyc ? (
+                      <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
+                    ) : (
+                      <CustomCircleDot
+                        className="size-3.5 shrink-0"
+                        style={{ color: item.color }}
+                      />
+                    )}
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                  {isSelected && <Check className="size-3 text-blue-400 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+};
+
+const CardPriorityDropdown: React.FC<{
+  taskId: string;
+  priority: string;
+  onSelect: (newPriority: string) => void;
+}> = ({ taskId, priority, onSelect }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  const priorities = [
+    { key: 'URGENT', label: 'Urgent', iconColor: 'text-red-500', color: 'text-red-400' },
+    { key: 'HIGH', label: 'High', iconColor: 'text-amber-500', color: 'text-amber-400' },
+    { key: 'NORMAL', label: 'Normal', iconColor: 'text-blue-500', color: 'text-blue-400' },
+    { key: 'LOW', label: 'Low', iconColor: 'text-zinc-400', color: 'text-zinc-400' },
+  ];
+
+  const priorityConfig = getPriorityConfig(priority);
+
+  const calcPos = (rect: DOMRect) => {
+    const width = 140;
+    const height = 180;
+    let top = rect.bottom + 4;
+    if (top + height > window.innerHeight - 10) {
+      top = Math.max(10, rect.top - height - 4);
+    }
+    let left = rect.left;
+    if (left + width > window.innerWidth - 10) {
+      left = Math.max(10, window.innerWidth - width - 10);
+    }
+    return { top, left };
+  };
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isOpen) {
+      setIsOpen(false);
+      setCoords(null);
+      return;
+    }
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const nextCoords = calcPos(rect);
+    setCoords(nextCoords);
+    setIsOpen(true);
+  };
+
+  useLayoutEffect(() => {
+    if (!isOpen || !triggerRef.current) return;
+
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        triggerRef.current &&
+        !triggerRef.current.contains(e.target as Node) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+        setCoords(null);
+      }
+    };
+
+    const handleScrollOrResize = () => {
+      setIsOpen(false);
+      setCoords(null);
+    };
+
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [isOpen]);
+
+  const currentKey = (priority || 'NORMAL').toUpperCase();
+
+  return (
+    <div
+      className="relative inline-flex items-center"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={handleToggle}
+        className="flex items-center gap-1 font-medium text-[11px] px-1.5 py-0.5 rounded hover:bg-zinc-800/80 transition-colors cursor-pointer select-none"
+        title={`Priority: ${priorityConfig.label} (click to change)`}
+      >
+        <Flag className={`size-3 ${priorityConfig.iconColor}`} />
+        <span className={priorityConfig.color}>{priorityConfig.label}</span>
+      </button>
+
+      {isOpen &&
+        coords &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: `${coords.top}px`,
+              left: `${coords.left}px`,
+              zIndex: 999999,
+            }}
+            className="w-36 p-1.5 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col gap-0.5 text-zinc-200 animate-in fade-in zoom-in-95 duration-75"
+          >
+            <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider px-2 py-1">
+              Set Priority
+            </span>
+            {priorities.map((item) => {
+              const isSelected =
+                currentKey === item.key ||
+                (item.key === 'NORMAL' && currentKey === 'MEDIUM');
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    setCoords(null);
+                    onSelect(item.key);
+                  }}
+                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-zinc-800 text-white font-semibold'
+                      : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Flag className={`size-3 ${item.iconColor}`} />
+                    <span className={item.color}>{item.label}</span>
+                  </div>
+                  {isSelected && <Check className="size-3 text-blue-400 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+};
+
 export const TaskMapBoardView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
@@ -934,6 +1275,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   onToggleAdminTasks,
   selectedCustomMAs = [],
   clients = [],
+  onTaskUpdate,
 }) => {
   const currentUser = useAppStore((s) => s.currentUser);
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
@@ -944,13 +1286,71 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const [localShowAdmin, setLocalShowAdmin] = useState(false);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [columnPriorityFilters, setColumnPriorityFilters] = useState<Record<string, string>>({});
-  const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>({});
+  const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
+  const [columnSearchOpen, setColumnSearchOpen] = useState<Record<string, boolean>>({});
+  const [pinnedColumns, setPinnedColumns] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const saved = localStorage.getItem('nexus_taskmap_pinned_columns');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const saved = localStorage.getItem('nexus_taskmap_collapsed_columns');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
   const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
 
+  const togglePinColumn = (columnId: string) => {
+    setPinnedColumns((prev) => {
+      const next = { ...prev, [columnId]: !prev[columnId] };
+      try {
+        localStorage.setItem('nexus_taskmap_pinned_columns', JSON.stringify(next));
+      } catch (e) {
+        console.error('Failed to save pinned columns', e);
+      }
+      return next;
+    });
+  };
+
   const toggleCollapseColumn = (columnId: string) => {
-    setCollapsedColumns((prev) => ({
+    setCollapsedColumns((prev) => {
+      const next = { ...prev, [columnId]: !prev[columnId] };
+      try {
+        localStorage.setItem('nexus_taskmap_collapsed_columns', JSON.stringify(next));
+      } catch (e) {
+        console.error('Failed to save collapsed columns', e);
+      }
+      return next;
+    });
+  };
+
+  const toggleColumnSearch = (columnId: string) => {
+    setColumnSearchOpen((prev) => {
+      const nextOpen = !prev[columnId];
+      if (!nextOpen) {
+        setColumnSearches((s) => {
+          if (!s[columnId]) return s;
+          const copy = { ...s };
+          delete copy[columnId];
+          return copy;
+        });
+      }
+      return { ...prev, [columnId]: nextOpen };
+    });
+  };
+
+  const handleColumnSearchChange = (columnId: string, query: string) => {
+    setColumnSearches((prev) => ({
       ...prev,
-      [columnId]: !prev[columnId],
+      [columnId]: query,
     }));
   };
 
@@ -1163,6 +1563,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return true;
     })
     .sort(([idA, colA], [idB, colB]) => {
+      const isPinnedA = !!pinnedColumns[idA];
+      const isPinnedB = !!pinnedColumns[idB];
+
+      // Pinned columns always come first
+      if (isPinnedA && !isPinnedB) return -1;
+      if (!isPinnedA && isPinnedB) return 1;
+
       const isCurA = isCurrentViewer(colA.user);
       const isCurB = isCurrentViewer(colB.user);
 
@@ -1315,9 +1722,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
         {/* 1. Available Tasks Pool Column (Matches Image 1) */}
         {(() => {
           const isCollapsed = !!collapsedColumns['available'];
+          const isPinned = !!pinnedColumns['available'];
+          const isSearchOpen = !!columnSearchOpen['available'];
+          const searchQuery = columnSearches['available'] || '';
           const availableFilter = columnPriorityFilters['available'] || 'ALL';
           const filteredDisplayPool = displayPool.filter((t) =>
-            matchesPriorityFilter(t, availableFilter)
+            matchesPriorityFilter(t, availableFilter) && matchesSearchFilter(t, searchQuery)
           );
 
           if (isCollapsed) {
@@ -1325,16 +1735,21 @@ export const TaskMapBoardView: React.FC<Props> = ({
               <DroppableColumn
                 key="available-pool-collapsed"
                 id="available-pool"
-                className="w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-[calc(100vh-140px)] transition-all cursor-pointer hover:border-blue-500/50"
+                className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-[calc(100vh-140px)] transition-all cursor-pointer hover:border-blue-500/50 ${
+                  isPinned ? 'sticky left-0 z-20 ring-1 ring-blue-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                }`}
               >
                 <button
                   type="button"
                   onClick={() => toggleCollapseColumn('available')}
-                  className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800/60 mb-3 cursor-pointer"
+                  className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800/60 mb-2 cursor-pointer"
                   title="Expand Available tasks"
                 >
                   <ChevronRight className="size-4 text-blue-400" />
                 </button>
+                {isPinned && (
+                  <Pin className="size-3 text-blue-400 fill-blue-400/40 rotate-45 mb-2" />
+                )}
                 <span className="size-2.5 rounded-full bg-[#0099ff] mb-2 shrink-0" />
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 mb-4">
                   {displayPool.length}
@@ -1353,53 +1768,115 @@ export const TaskMapBoardView: React.FC<Props> = ({
           return (
             <DroppableColumn
               id="available-pool"
-              className="w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-[calc(100vh-140px)]"
+              className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-[calc(100vh-140px)] ${
+                isPinned ? 'sticky left-0 z-20 ring-1 ring-blue-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+              }`}
             >
-              {/* Header */}
-              <div className="flex items-center justify-between pb-2 border-b border-border mb-2">
-                <div className="flex items-center gap-1.5 min-w-0">
+              {/* Header Top Row: Left side has dot & title; Right side has Search, Pin, and Collapse */}
+              <div className="flex items-center justify-between pb-2 border-b border-border/80 mb-2">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                  <span className="size-2 rounded-full bg-[#0099ff] shrink-0" />
+                  <h3 className="text-sm font-bold text-zinc-100 truncate">Available tasks</h3>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
+                    {displayPool.length}
+                  </span>
+                </div>
+
+                {/* Top Right: Collapse, Pin, Search (Search on right side) */}
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     onClick={() => toggleCollapseColumn('available')}
-                    className="p-1 -ml-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
+                    className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
                     title="Collapse column"
                   >
                     <ChevronLeft className="size-3.5" />
                   </button>
-                  <span className="size-2 rounded-full bg-[#0099ff] shrink-0" />
-                  <h3 className="text-sm font-bold text-zinc-100 truncate">Available tasks</h3>
-                </div>
 
-                {/* Top Right: Filter for Client & Admin tasks & Priority dropdown */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <ColumnClientDropdown
-                    tasks={availablePool}
-                    clients={clients}
-                    showAdmin={effectiveShowAdmin}
-                    onToggleAdmin={() => {
-                      if (onToggleAdminTasks) {
-                        onToggleAdminTasks();
-                      } else {
-                        setLocalShowAdmin(!localShowAdmin);
-                      }
-                    }}
-                    selectedClients={selectedClients}
-                    onSelectClients={setSelectedClients}
-                    isTaskUnderAdmin={isTaskUnderAdmin}
-                  />
+                  <button
+                    type="button"
+                    onClick={() => togglePinColumn('available')}
+                    className={`p-1 rounded-md transition-colors cursor-pointer ${
+                      isPinned
+                        ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                    }`}
+                    title={isPinned ? 'Unpin column' : 'Pin column'}
+                  >
+                    <Pin className={`size-3.5 rotate-45 ${isPinned ? 'fill-blue-400/40' : ''}`} />
+                  </button>
 
-                  <ColumnPriorityDropdown
-                    columnId="available"
-                    tasks={displayPool}
-                    activeFilter={availableFilter}
-                    onSelectFilter={handleSelectPriorityFilter}
-                  />
+                  {isSearchOpen ? (
+                    <div className="flex items-center bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-0.5 max-w-[130px] text-xs">
+                      <Search className="size-3 text-zinc-400 shrink-0 mr-1" />
+                      <input
+                        autoFocus
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => handleColumnSearchChange('available', e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') toggleColumnSearch('available');
+                        }}
+                        placeholder="Search..."
+                        className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => toggleColumnSearch('available')}
+                        className="text-zinc-400 hover:text-zinc-200 ml-0.5 p-0.5 cursor-pointer"
+                        title="Close search"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => toggleColumnSearch('available')}
+                      className={`p-1 rounded-md transition-colors cursor-pointer ${
+                        searchQuery
+                          ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                      }`}
+                      title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
+                    >
+                      <Search className="size-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <p className="text-xs text-zinc-400 mb-2.5 leading-relaxed">
-                Revision and pending tasks waiting for Project Manager assignment.
-              </p>
+              {/* Next Line: Filters on the left side (description of available tasks removed) */}
+              <div className="flex items-center gap-1.5 justify-start mb-3">
+                <ColumnClientDropdown
+                  tasks={availablePool}
+                  clients={clients}
+                  showAdmin={effectiveShowAdmin}
+                  onToggleAdmin={() => {
+                    if (onToggleAdminTasks) {
+                      onToggleAdminTasks();
+                    } else {
+                      setLocalShowAdmin(!localShowAdmin);
+                    }
+                  }}
+                  selectedClients={selectedClients}
+                  onSelectClients={setSelectedClients}
+                  isTaskUnderAdmin={isTaskUnderAdmin}
+                />
+
+                <ColumnPriorityDropdown
+                  columnId="available"
+                  tasks={displayPool}
+                  activeFilter={availableFilter}
+                  onSelectFilter={handleSelectPriorityFilter}
+                />
+
+                {searchQuery && (
+                  <span className="text-[10px] text-zinc-400 italic">
+                    ({filteredDisplayPool.length} of {displayPool.length})
+                  </span>
+                )}
+              </div>
 
               {/* Cards List */}
               <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
@@ -1442,21 +1919,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             {/* Controls row: circle dot left of bulletin, priority flag */}
                             <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
                               {/* Circle Dot Status Indicator */}
-                              <span
-                                className="shrink-0 flex items-center"
-                                title={task.status || 'In progress'}
-                              >
-                                {isClosed ? (
-                                  <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
-                                ) : (task.status || '').toUpperCase() === 'KYC' ? (
-                                  <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
-                                ) : (
-                                  <CustomCircleDot
-                                    className="size-3.5 shrink-0"
-                                    style={{ color: getDotColor(task.status) }}
-                                  />
-                                )}
-                              </span>
+                              <CardStatusDropdown
+                                taskId={task.id}
+                                currentStatus={task.status || 'In progress'}
+                                onSelect={(newStatus) => {
+                                  if (onTaskUpdate) {
+                                    onTaskUpdate(task.id, { status: newStatus });
+                                  } else {
+                                    tasksApi
+                                      .updateTask(task.id, { status: newStatus })
+                                      .then(() => onDataRefresh())
+                                      .catch((e: any) => toast.error(e.message));
+                                  }
+                                }}
+                              />
 
                               {/* Bulletin Icon - click shows task description */}
                               <TaskDescriptionButton
@@ -1465,12 +1941,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               />
 
                               {/* Priority Flag and Label */}
-                              <span className="flex items-center gap-1 font-medium text-[11px]">
-                                <Flag className={`size-3 ${priorityConfig.iconColor}`} />
-                                <span className={priorityConfig.color}>
-                                  {priorityConfig.label}
-                                </span>
-                              </span>
+                              <CardPriorityDropdown
+                                taskId={task.id}
+                                priority={task.priority || 'NORMAL'}
+                                onSelect={(newPriority) => {
+                                  if (onTaskUpdate) {
+                                    onTaskUpdate(task.id, { priority: newPriority });
+                                  } else {
+                                    tasksApi
+                                      .updateTask(task.id, { priority: newPriority as any })
+                                      .then(() => onDataRefresh())
+                                      .catch((e: any) => toast.error(e.message));
+                                  }
+                                }}
+                              />
                             </div>
                           </div>
 
@@ -1526,9 +2010,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const initials = (user.name || 'U').substring(0, 2).toUpperCase();
           const avatarBg = getAssigneeAvatarColor(user.name || 'U');
           const isCollapsed = !!collapsedColumns[userId];
+          const isPinned = !!pinnedColumns[userId];
+          const isSearchOpen = !!columnSearchOpen[userId];
+          const searchQuery = columnSearches[userId] || '';
           const userFilter = columnPriorityFilters[userId] || 'ALL';
           const filteredUserTasks = userTasks.filter((t) =>
-            matchesPriorityFilter(t, userFilter)
+            matchesPriorityFilter(t, userFilter) && matchesSearchFilter(t, searchQuery)
           );
 
           if (isCollapsed) {
@@ -1536,16 +2023,21 @@ export const TaskMapBoardView: React.FC<Props> = ({
               <DroppableColumn
                 key={userId}
                 id={`user-${userId}`}
-                className="w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-zinc-800/80 rounded-2xl shadow-xl h-[calc(100vh-140px)] transition-all cursor-pointer hover:border-zinc-700"
+                className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-zinc-800/80 rounded-2xl shadow-xl h-[calc(100vh-140px)] transition-all cursor-pointer hover:border-zinc-700 ${
+                  isPinned ? 'ring-1 ring-blue-500/40 border-blue-500/30' : ''
+                }`}
               >
                 <button
                   type="button"
                   onClick={() => toggleCollapseColumn(userId)}
-                  className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800/60 mb-3 cursor-pointer"
+                  className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800/60 mb-2 cursor-pointer"
                   title={`Expand ${user.name}`}
                 >
                   <ChevronRight className="size-4 text-zinc-400" />
                 </button>
+                {isPinned && (
+                  <Pin className="size-3 text-blue-400 fill-blue-400/40 rotate-45 mb-2" />
+                )}
                 {user.avatarUrl ? (
                   <img
                     src={user.avatarUrl}
@@ -1580,65 +2072,135 @@ export const TaskMapBoardView: React.FC<Props> = ({
             <DroppableColumn
               key={userId}
               id={`user-${userId}`}
-              className="w-[370px] shrink-0 flex flex-col bg-card/90 border border-zinc-800/80 rounded-2xl p-4 shadow-xl h-[calc(100vh-140px)]"
+              className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-zinc-800/80 rounded-2xl p-4 shadow-xl h-[calc(100vh-140px)] ${
+                isPinned ? 'ring-1 ring-blue-500/30 border-blue-500/40 shadow-blue-950/20' : ''
+              }`}
             >
               {/* User Column Header */}
               {(() => {
                 const roleInfo = getUserRolePriority(user.roles || [], user.isAudit);
 
                 return (
-                  <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/70 mb-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <button
-                        type="button"
-                        onClick={() => toggleCollapseColumn(userId)}
-                        className="p-1 -ml-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
-                        title="Collapse column"
-                      >
-                        <ChevronLeft className="size-3.5" />
-                      </button>
-                      {user.avatarUrl ? (
-                        <img
-                          src={user.avatarUrl}
-                          alt={user.name}
-                          className="size-7 rounded-full object-cover border border-zinc-700/80 shrink-0"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <div
-                          className={`size-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm shrink-0 ${avatarBg}`}
-                        >
-                          {initials}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-sm font-bold text-zinc-100 truncate">
-                          {user.name}
-                        </span>
-                        {roleInfo.label ? (
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border shrink-0 ${roleInfo.badgeClass}`}
+                  <>
+                    {/* Header Top Row: Left side has Avatar, Name, Role; Right side has Search, Pin, and Collapse */}
+                    <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/70 mb-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                        {user.avatarUrl ? (
+                          <img
+                            src={user.avatarUrl}
+                            alt={user.name}
+                            className="size-7 rounded-full object-cover border border-zinc-700/80 shrink-0"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div
+                            className={`size-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm shrink-0 ${avatarBg}`}
                           >
-                            {roleInfo.label}
+                            {initials}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-sm font-bold text-zinc-100 truncate" title={user.name}>
+                            {user.name}
                           </span>
-                        ) : user.isAudit ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-950/70 text-purple-300 border border-purple-800/60 shrink-0">
-                            Auditor
+                          {roleInfo.label ? (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border shrink-0 ${roleInfo.badgeClass}`}
+                            >
+                              {roleInfo.label}
+                            </span>
+                          ) : user.isAudit ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-950/70 text-purple-300 border border-purple-800/60 shrink-0">
+                              Auditor
+                            </span>
+                          ) : null}
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0">
+                            {userTasks.length}
                           </span>
-                        ) : null}
+                        </div>
+                      </div>
+
+                      {/* Top Right: Collapse, Pin, Search (Search on right side) */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleCollapseColumn(userId)}
+                          className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
+                          title="Collapse column"
+                        >
+                          <ChevronLeft className="size-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => togglePinColumn(userId)}
+                          className={`p-1 rounded-md transition-colors cursor-pointer ${
+                            isPinned
+                              ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
+                              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                          }`}
+                          title={isPinned ? 'Unpin column' : 'Pin column'}
+                        >
+                          <Pin className={`size-3.5 rotate-45 ${isPinned ? 'fill-blue-400/40' : ''}`} />
+                        </button>
+
+                        {isSearchOpen ? (
+                          <div className="flex items-center bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-0.5 max-w-[130px] text-xs">
+                            <Search className="size-3 text-zinc-400 shrink-0 mr-1" />
+                            <input
+                              autoFocus
+                              type="text"
+                              value={searchQuery}
+                              onChange={(e) => handleColumnSearchChange(userId, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') toggleColumnSearch(userId);
+                              }}
+                              placeholder="Search..."
+                              className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleColumnSearch(userId)}
+                              className="text-zinc-400 hover:text-zinc-200 ml-0.5 p-0.5 cursor-pointer"
+                              title="Close search"
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => toggleColumnSearch(userId)}
+                            className={`p-1 rounded-md transition-colors cursor-pointer ${
+                              searchQuery
+                                ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
+                                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                            }`}
+                            title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
+                          >
+                            <Search className="size-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
-                    <div className="shrink-0">
+
+                    {/* Next Line: Filters on the left side */}
+                    <div className="flex items-center gap-1.5 justify-start mb-3">
                       <ColumnPriorityDropdown
                         columnId={userId}
                         tasks={userTasks}
                         activeFilter={userFilter}
                         onSelectFilter={handleSelectPriorityFilter}
                       />
+                      {searchQuery && (
+                        <span className="text-[10px] text-zinc-400 italic">
+                          ({filteredUserTasks.length} of {userTasks.length})
+                        </span>
+                      )}
                     </div>
-                  </div>
+                  </>
                 );
               })()}
 
@@ -1647,7 +2209,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 {filteredUserTasks.length === 0 ? (
                   <p className="text-xs text-zinc-600 italic text-center py-12">
                     {userTasks.length > 0
-                      ? 'No tasks match the selected priority filter.'
+                      ? searchQuery
+                        ? `No tasks match "${searchQuery}"`
+                        : 'No tasks match the selected priority filter.'
                       : 'No tasks assigned for this shift.'}
                   </p>
                 ) : (
@@ -1679,21 +2243,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             {/* Controls row: circle dot left of bulletin, priority flag */}
                             <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
                               {/* Circle Dot Status Indicator */}
-                              <span
-                                className="shrink-0 flex items-center"
-                                title={task.status || 'In progress'}
-                              >
-                                {isClosed ? (
-                                  <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
-                                ) : (task.status || '').toUpperCase() === 'KYC' ? (
-                                  <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
-                                ) : (
-                                  <CustomCircleDot
-                                    className="size-3.5 shrink-0"
-                                    style={{ color: getDotColor(task.status) }}
-                                  />
-                                )}
-                              </span>
+                              <CardStatusDropdown
+                                taskId={task.id}
+                                currentStatus={task.status || 'In progress'}
+                                onSelect={(newStatus) => {
+                                  if (onTaskUpdate) {
+                                    onTaskUpdate(task.id, { status: newStatus });
+                                  } else {
+                                    tasksApi
+                                      .updateTask(task.id, { status: newStatus })
+                                      .then(() => onDataRefresh())
+                                      .catch((e: any) => toast.error(e.message));
+                                  }
+                                }}
+                              />
 
                               {/* Bulletin Icon - click shows task description */}
                               <TaskDescriptionButton
@@ -1702,12 +2265,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               />
 
                               {/* Priority Flag and Label */}
-                              <span className="flex items-center gap-1 font-medium text-[11px]">
-                                <Flag className={`size-3 ${priorityConfig.iconColor}`} />
-                                <span className={priorityConfig.color}>
-                                  {priorityConfig.label}
-                                </span>
-                              </span>
+                              <CardPriorityDropdown
+                                taskId={task.id}
+                                priority={task.priority || 'NORMAL'}
+                                onSelect={(newPriority) => {
+                                  if (onTaskUpdate) {
+                                    onTaskUpdate(task.id, { priority: newPriority });
+                                  } else {
+                                    tasksApi
+                                      .updateTask(task.id, { priority: newPriority as any })
+                                      .then(() => onDataRefresh())
+                                      .catch((e: any) => toast.error(e.message));
+                                  }
+                                }}
+                              />
                             </div>
                           </div>
 

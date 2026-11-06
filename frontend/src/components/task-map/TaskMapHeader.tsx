@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
 import { TaskMapShift, UpworkSession } from '@/api/taskMap';
-import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Kanban } from 'lucide-react';
+import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Kanban, UserCheck } from 'lucide-react';
 
 export interface ClientOption {
   id: string;
@@ -18,8 +18,8 @@ interface Props {
   search: string;
   onSearchChange: (search: string) => void;
   activeUpworkSessions?: UpworkSession[];
-  currentView?: 'BOARD' | 'AUDITING' | 'UPWORK';
-  onViewChange?: (view: 'BOARD' | 'AUDITING') => void;
+  currentView?: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK';
+  onViewChange?: (view: 'BOARD' | 'AUDITING' | 'CRM') => void;
   clients?: ClientOption[];
   selectedClient?: string;
   onClientChange?: (clientId: string) => void;
@@ -27,6 +27,7 @@ interface Props {
   availableMAs?: Array<{ id: string; name: string; avatarUrl?: string | null; roles?: string[] }>;
   selectedMAs?: string[];
   onSelectedMAsChange?: (maIds: string[]) => void;
+  hasCrmAccess?: boolean;
 }
 
 function formatElapsed(startedAt: string, now: Date): string {
@@ -83,6 +84,7 @@ export const TaskMapHeader: React.FC<Props> = ({
   availableMAs = [],
   selectedMAs = [],
   onSelectedMAsChange,
+  hasCrmAccess = false,
 }) => {
   // Live ticking timer for elapsed duration (Reverse-engineered from Teammap.js)
   const [now, setNow] = useState<Date>(new Date());
@@ -153,8 +155,68 @@ export const TaskMapHeader: React.FC<Props> = ({
   ];
 
   return (
-    <header className="px-6 pt-5 pb-3 flex flex-col gap-3 select-none">
-      {/* Top Row: Date, Shift switcher & Search */}
+    <header className="px-6 pt-4 pb-3 flex flex-col gap-3 select-none">
+      {/* Line 1: Dedicated View Mode Tabs (Task Map | Auditing | CRM) on the left, Search on the right */}
+      {onViewChange && (
+        <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/60">
+          <div className="flex items-center bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-semibold shadow-xs">
+            <button
+              type="button"
+              onClick={() => onViewChange('BOARD')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                currentView === 'BOARD'
+                  ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 font-medium'
+              }`}
+            >
+              <Kanban className="size-3.5" />
+              <span>Task Map</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onViewChange('AUDITING')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                currentView === 'AUDITING'
+                  ? 'bg-amber-600 text-white shadow-sm font-semibold'
+                  : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-800/50 font-medium'
+              }`}
+            >
+              <ShieldCheck className="size-3.5" />
+              <span>Audito Map</span>
+            </button>
+
+            {hasCrmAccess && (
+              <button
+                type="button"
+                onClick={() => onViewChange('CRM')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  currentView === 'CRM'
+                    ? 'bg-[#22A3AE] text-white shadow-sm font-semibold'
+                    : 'text-zinc-400 hover:text-[#22A3AE] hover:bg-zinc-800/50 font-medium'
+                }`}
+              >
+                <UserCheck className="size-3.5" />
+                <span>CRM Map</span>
+              </button>
+            )}
+          </div>
+
+          {/* Search moved to right side of Line 1 */}
+          <div className="relative flex items-center">
+            <Search className="size-3 text-zinc-500 absolute left-2.5 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search..."
+              className="w-36 sm:w-48 pl-7 pr-3 py-1.5 bg-card border border-zinc-800/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 transition-colors"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Line 2: Date on the left, Shift switcher & Client selector on the right */}
       <div className="flex items-start justify-between gap-4">
         {/* Left: Date & Day of Week */}
         <div>
@@ -166,49 +228,8 @@ export const TaskMapHeader: React.FC<Props> = ({
           </p>
         </div>
 
-        {/* Right: View switcher, Shift Switcher & Search Bar */}
+        {/* Right: Shift Switcher & Search Bar */}
         <div className="flex items-center gap-3">
-          {/* Main View Mode Tabs: Task Map | Auditing */}
-          {onViewChange && (
-            <div className="flex items-center bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-semibold shadow-xs">
-              <button
-                type="button"
-                onClick={() => onViewChange('BOARD')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  currentView === 'BOARD'
-                    ? 'bg-blue-600 text-white shadow-sm font-semibold'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 font-medium'
-                }`}
-              >
-                <Kanban className="size-3.5" />
-                <span>Task Map</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onViewChange('AUDITING')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  currentView === 'AUDITING'
-                    ? 'bg-amber-600 text-white shadow-sm font-semibold'
-                    : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-800/50 font-medium'
-                }`}
-              >
-                <ShieldCheck className="size-3.5" />
-                <span>Auditing</span>
-                {auditingCount > 0 && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ml-0.5 transition-colors ${
-                      currentView === 'AUDITING'
-                        ? 'bg-white/20 text-white'
-                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                    }`}
-                  >
-                    {auditingCount}
-                  </span>
-                )}
-              </button>
-            </div>
-          )}
 
           {/* Shift pills [All] [Day] [Noon] [Night] [Custom] */}
           <div className="flex items-center bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-medium">
@@ -484,18 +505,6 @@ export const TaskMapHeader: React.FC<Props> = ({
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Clean Search Input */}
-          <div className="relative flex items-center">
-            <Search className="size-3 text-zinc-500 absolute left-2.5 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search..."
-              className="w-36 sm:w-44 pl-7 pr-3 py-1.5 bg-card border border-zinc-800/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 transition-colors"
-            />
           </div>
         </div>
       </div>

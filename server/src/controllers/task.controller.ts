@@ -4258,12 +4258,14 @@ export async function listMyAudits(req: Request, res: Response) {
         id: true,
         text: true,
         createdAt: true,
+        checklistId: true,
         checklist: {
           select: {
             id: true,
             subtask: { select: { id: true, title: true } },
             task: { select: { id: true, title: true, status: true, priority: true, list: { select: { id: true, name: true } } } },
             subtaskId: true,
+            taskId: true,
           },
         },
       },
@@ -4280,12 +4282,57 @@ export async function listMyAudits(req: Request, res: Response) {
       : [];
     const parentBySubtask = new Map(subtaskParents.map((s) => [s.id, s.task]));
 
+    const taskIds = items.map((i) => i.checklist.taskId || (i.checklist.subtaskId ? parentBySubtask.get(i.checklist.subtaskId)?.id : null)).filter(Boolean) as string[];
+    const allSubtaskIds = items.map((i) => i.checklist.subtaskId).filter(Boolean) as string[];
+
+    // If an audit item of this type was ALREADY checked/completed on the same task or subtask, it shouldn't show in my audits!
+    const completedAuditItems = (taskIds.length > 0 || allSubtaskIds.length > 0)
+      ? await prisma.checklistItem.findMany({
+          where: {
+            completed: true,
+            checklist: {
+              name: { equals: 'Audit', mode: 'insensitive' },
+              OR: [
+                ...(taskIds.length > 0 ? [{ taskId: { in: taskIds } }] : []),
+                ...(allSubtaskIds.length > 0 ? [{ subtaskId: { in: allSubtaskIds } }] : []),
+              ],
+            },
+          },
+          select: {
+            text: true,
+            checklist: { select: { taskId: true, subtaskId: true } },
+          },
+        })
+      : [];
+
+    const normAudit = (txt: string) => (txt || '').trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+    const completedSet = new Set<string>();
+    for (const ci of completedAuditItems) {
+      const norm = normAudit(ci.text);
+      if (ci.checklist.taskId) completedSet.add(`${ci.checklist.taskId}::${norm}`);
+      if (ci.checklist.subtaskId) completedSet.add(`:${ci.checklist.subtaskId}:${norm}`);
+    }
+
     const closed = ['closed', 'done', 'completed', 'resolved', 'cancelled'];
     const audits = items
       .map((i) => {
-        const task = i.checklist.task || (i.checklist.subtaskId ? parentBySubtask.get(i.checklist.subtaskId) : null);
+        const taskId = i.checklist.taskId || (i.checklist.subtaskId ? parentBySubtask.get(i.checklist.subtaskId)?.id : null);
+        const subtaskId = i.checklist.subtaskId || null;
+        const task = i.checklist.task || (subtaskId ? parentBySubtask.get(subtaskId) : null);
         if (!task || closed.includes((task.status || '').trim().toLowerCase())) return null;
-        return { id: i.id, text: i.text, createdAt: i.createdAt, task, subtask: i.checklist.subtask || null };
+
+        const norm = normAudit(i.text);
+        if (taskId && completedSet.has(`${taskId}::${norm}`)) return null;
+        if (subtaskId && completedSet.has(`:${subtaskId}:${norm}`)) return null;
+
+        return {
+          id: i.id,
+          text: i.text,
+          createdAt: i.createdAt,
+          checklistId: i.checklistId || i.checklist.id,
+          task,
+          subtask: i.checklist.subtask || null,
+        };
       })
       .filter(Boolean);
 

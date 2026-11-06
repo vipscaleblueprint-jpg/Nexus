@@ -166,7 +166,7 @@ export const TaskDescriptionButton: React.FC<Props> = ({ description, taskTitle 
             }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            className="w-72 max-h-72 p-3 bg-[#18181c] border border-zinc-700/80 rounded-xl shadow-2xl text-zinc-200 flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-100"
+            className="w-72 max-h-72 p-3 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl text-zinc-200 flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-100"
           >
             <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5">
               <span className="flex items-center gap-1.5 text-xs font-bold text-zinc-300">

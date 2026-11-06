@@ -1,14 +1,15 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { TaskMapOption, taskMapApi } from '@/api/taskMap';
 import { Check, Search, Pencil, Plus, Trash2, X, ChevronDown, AlertTriangle, Lock } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
+import { isProjectManagerOrAdmin } from '@/lib/permissions';
 
 interface Props {
   selectedStatuses: string[];
   options: TaskMapOption[];
-  onToggleStatus: (statusLabel: string) => void;
+  onToggleStatus: (statusLabel: string, nextStatuses?: string[]) => void;
   onOptionsUpdated?: () => void;
   readOnly?: boolean;
 }
@@ -25,6 +26,25 @@ function isScrolledOutOfView(el: HTMLElement) {
   return false;
 }
 
+const dropdownWidth = 260;
+const dropdownHeight = 320;
+
+const calcDropdownPos = (rect: DOMRect) => {
+  let top = rect.bottom + 4;
+  if (top + dropdownHeight > window.innerHeight - 10) {
+    top = Math.max(10, rect.top - dropdownHeight - 4);
+  }
+
+  let left = rect.right - dropdownWidth;
+  if (left < 10) {
+    left = Math.max(10, rect.left);
+  }
+  if (left + dropdownWidth > window.innerWidth - 10) {
+    left = Math.max(10, window.innerWidth - dropdownWidth - 10);
+  }
+  return { top, left };
+};
+
 export const TaskMapStatusDropdown: React.FC<Props> = ({
   selectedStatuses = [],
   options = [],
@@ -39,6 +59,13 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
   const [newColor, setNewColor] = useState('#3b82f6');
   const [deleteWarning, setDeleteWarning] = useState<{ id: string; inUseCount: number } | null>(null);
 
+  // Local optimistic statuses for instantaneous 0ms feedback
+  const [localStatuses, setLocalStatuses] = useState<string[]>(selectedStatuses);
+
+  useEffect(() => {
+    setLocalStatuses(selectedStatuses);
+  }, [selectedStatuses]);
+
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -46,37 +73,55 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
 
   const currentUser = useAppStore((s) => s.currentUser);
   const isAdmin = currentUser?.systemRole === 'ADMIN';
+  const isPmOrAdmin = isProjectManagerOrAdmin(currentUser);
 
-  // Calculate coordinates on open & handle scroll limit with smooth fade
-  useEffect(() => {
+  const toggleDropdown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (readOnly) return;
+
+    if (!isOpen) {
+      if (triggerRef.current) {
+        const rect = triggerRef.current.getBoundingClientRect();
+        const pos = calcDropdownPos(rect);
+        setCoords(pos);
+        initialPosRef.current = { top: rect.top, left: rect.left };
+      }
+      setIsOpen(true);
+    } else {
+      setIsOpen(false);
+      setIsEditMode(false);
+    }
+  };
+
+  const handleToggleStatus = (label: string) => {
+    if (isEditMode || readOnly) return;
+    const next = localStatuses.includes(label)
+      ? localStatuses.filter((s) => s !== label)
+      : [...localStatuses, label];
+    setLocalStatuses(next);
+    onToggleStatus(label, next);
+  };
+
+  // Synchronously calculate coordinates before paint to prevent dragging/jumping glitch
+  useLayoutEffect(() => {
     if (!isOpen || !triggerRef.current) return;
 
     const trigger = triggerRef.current;
     const initialRect = trigger.getBoundingClientRect();
     initialPosRef.current = { top: initialRect.top, left: initialRect.left };
+    const pos = calcDropdownPos(initialRect);
+    setCoords(pos);
 
-    const dropdownWidth = 260;
-    const dropdownHeight = 320;
+    if (dropdownRef.current) {
+      dropdownRef.current.style.top = `${pos.top}px`;
+      dropdownRef.current.style.left = `${pos.left}px`;
+    }
+  }, [isOpen]);
 
-    const calcPos = (rect: DOMRect) => {
-      let top = rect.bottom + 4;
-      if (top + dropdownHeight > window.innerHeight - 10) {
-        top = Math.max(10, rect.top - dropdownHeight - 4);
-      }
-
-      let left = rect.right - dropdownWidth;
-      if (left < 10) {
-        left = Math.max(10, rect.left);
-      }
-      if (left + dropdownWidth > window.innerWidth - 10) {
-        left = Math.max(10, window.innerWidth - dropdownWidth - 10);
-      }
-      return { top, left };
-    };
-
-    // Calculate initial coordinates for mount
-    const initPos = calcPos(initialRect);
-    setCoords(initPos);
+  // Handle scroll limit & smooth fade
+  useEffect(() => {
+    if (!isOpen || !triggerRef.current) return;
 
     let rafId: number | null = null;
 
@@ -115,7 +160,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
       }
 
       // Reposition directly on DOM node to prevent main-thread layout thrashing and React re-renders
-      const { top, left } = calcPos(curRect);
+      const { top, left } = calcDropdownPos(curRect);
       if (dropdown) {
         dropdown.style.top = `${top}px`;
         dropdown.style.left = `${left}px`;
@@ -158,7 +203,22 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
     };
   }, [isOpen]);
 
-  const filteredOptions = options.filter((opt) =>
+  // Filter out URGENT, Upwork contracts or PM reviewer names - show pure statuses only
+  const isExcludedOption = (opt: TaskMapOption) => {
+    const up = (opt.label || '').toUpperCase().trim();
+    return (
+      up === 'URGENT' ||
+      up.startsWith('UPWORK') ||
+      up === 'CHE' ||
+      up === 'PAU' ||
+      up === 'HAN' ||
+      up.includes('PM')
+    );
+  };
+
+  const statusOptions = options.filter((opt) => !isExcludedOption(opt));
+
+  const filteredOptions = statusOptions.filter((opt) =>
     opt.label.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -193,7 +253,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
     }
   };
 
-  const primaryStatus = selectedStatuses[0];
+  const primaryStatus = localStatuses[0];
   const primaryOpt = primaryStatus ? options.find((o) => o.label.toLowerCase() === primaryStatus.toLowerCase()) : null;
 
   return (
@@ -203,35 +263,36 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
         ref={triggerRef}
         type="button"
         disabled={readOnly}
-        onClick={(e) => {
+        onPointerDown={(e) => {
           e.stopPropagation();
-          if (!readOnly) setIsOpen(!isOpen);
         }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+        }}
+        onClick={toggleDropdown}
         title={readOnly ? 'Status management is restricted' : undefined}
-        className={`w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all select-none shadow-sm ${
-          readOnly
+        className={`w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all select-none shadow-sm ${readOnly
             ? 'cursor-not-allowed opacity-80'
             : 'cursor-pointer'
-        } ${
-          selectedStatuses.length === 0
-            ? 'border border-dashed border-zinc-700/80 bg-[#111216] text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
+          } ${localStatuses.length === 0
+            ? 'border border-dashed border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
             : 'border border-transparent'
-        }`}
+          }`}
         style={
           primaryOpt
             ? { backgroundColor: primaryOpt.color, color: primaryOpt.textColor || '#ffffff' }
-            : selectedStatuses.length > 0
-            ? { backgroundColor: '#3f3f46', color: '#ffffff' }
-            : {}
+            : localStatuses.length > 0
+              ? { backgroundColor: '#3f3f46', color: '#ffffff' }
+              : {}
         }
       >
         <span className="truncate">
-          {selectedStatuses.length === 0 ? 'Set status' : selectedStatuses[0]}
+          {localStatuses.length === 0 ? 'Sub-Status' : localStatuses[0]}
         </span>
         <div className="flex items-center gap-1 shrink-0 ml-1">
-          {selectedStatuses.length > 1 && (
+          {localStatuses.length > 1 && (
             <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-black/30">
-              +{selectedStatuses.length - 1}
+              +{localStatuses.length - 1}
             </span>
           )}
           {readOnly ? (
@@ -248,6 +309,9 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
         createPortal(
           <div
             ref={dropdownRef}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
             style={{
               position: 'fixed',
               top: `${coords.top}px`,
@@ -255,10 +319,10 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
               zIndex: 999999,
               transition: 'opacity 75ms ease-out',
             }}
-            className="w-64 max-h-80 overflow-y-auto custom-scrollbar p-2 bg-[#18181c] border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
+            className="w-72 max-h-96 overflow-y-auto custom-scrollbar p-2.5 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
           >
             {/* Search Box */}
-            <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-xs mb-2">
+            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-xs mb-2">
               <Search className="size-3 text-zinc-500 shrink-0" />
               <input
                 type="text"
@@ -301,23 +365,26 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
             )}
 
             {/* Status Options Chips List */}
-            <div className="space-y-1 mb-2">
+            <div className="space-y-1 mb-2 max-h-56 overflow-y-auto custom-scrollbar pr-0.5">
               {filteredOptions.length === 0 ? (
-                <p className="text-xs text-zinc-500 p-2 italic text-center">No matching status</p>
+                <div className="py-6 text-center">
+                  <p className="text-xs text-zinc-500 italic">
+                    {search ? 'No matching statuses' : 'No statuses configured'}
+                  </p>
+                </div>
               ) : (
                 filteredOptions.map((opt) => {
-                  const isSelected = selectedStatuses.includes(opt.label);
+                  const isSelected = localStatuses.includes(opt.label);
                   return (
                     <div
                       key={opt.id}
-                      onClick={() => !isEditMode && onToggleStatus(opt.label)}
-                      className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
-                        isSelected ? 'bg-zinc-800/80 font-medium' : 'hover:bg-zinc-800/40'
-                      }`}
+                      onClick={() => handleToggleStatus(opt.label)}
+                      className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-colors ${isSelected ? 'bg-zinc-800/80 font-medium' : 'hover:bg-zinc-800/40'
+                        }`}
                     >
                       <span
                         style={{ backgroundColor: opt.color, color: opt.textColor || '#ffffff' }}
-                        className="px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide truncate max-w-[180px]"
+                        className="px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide truncate max-w-[190px]"
                       >
                         {opt.label}
                       </span>

@@ -5,6 +5,7 @@ export interface MyAuditItem {
   id: string;
   text: string;
   createdAt: string;
+  checklistId?: string;
   task: { id: string; title: string; status: string; priority?: string; list?: { id: string; name: string } | null };
   subtask: { id: string; title: string } | null;
 }

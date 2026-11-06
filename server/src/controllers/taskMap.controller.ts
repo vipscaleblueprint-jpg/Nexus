@@ -108,6 +108,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         email: true,
         avatarUrl: true,
         roles: true,
+        team: { select: { id: true, name: true } },
         systemRole: true,
       },
       orderBy: { name: 'asc' },
@@ -216,8 +217,19 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       // Check sheet progress
       let progress: any = reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
 
+      const clientOrListName = `${task.list?.name || ''} ${progress?.client || ''}`.toLowerCase();
+      const isLauren = clientOrListName.includes('lauren');
+
+      // Restriction for Lauren (project-based): strictly only Upwork if manually marked as Upwork on TaskMap!
+      if (isLauren && !upworkStatus) {
+        upworkSession = null;
+        if (progress) {
+          progress = { ...progress, isUpwork: false };
+        }
+      }
+
       // If Upwork session is recorded in reviewsList even without explicit UPWORK substatus
-      if (!upworkSession) {
+      if (!upworkSession && (!isLauren || upworkStatus)) {
         upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active) || null;
         if (upworkSession) {
           upworkStartedAt = upworkSession.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
@@ -225,7 +237,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
 
       // If sheet progress indicates Upwork and task is currently in progress (no timeOut)
-      if (progress?.isUpwork && !progress?.timeOut && !upworkSession) {
+      if (progress?.isUpwork && !progress?.timeOut && !upworkSession && (!isLauren || upworkStatus)) {
         upworkStartedAt = progress.updatedAt || new Date().toISOString();
         upworkSession = {
           taskId: task.id,
@@ -287,18 +299,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     };
 
     // Segregate Available tasks pool:
-    // Strictly holds Pending and Revision tasks ONLY.
-    // Explicitly exclude Waiting, Recurring, Daily, Weekly, and Monthly tasks.
+    // Holds Pending, Revision, Waiting, and On-hold tasks.
+    // Excludes recurring, daily, weekly, and monthly tasks.
     const isAvailableTaskStatus = (t: any) => {
       const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
       const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
 
-      // Exclude waiting, recurring, daily, weekly, monthly, and on-hold tasks
+      // Exclude recurring, daily, weekly, and monthly tasks
       const isExcluded =
-        s === 'WAITING' ||
-        s.includes('WAITING') ||
         s === 'DAILY' ||
         s.includes('DAILY') ||
         s === 'WEEKLY' ||
@@ -307,34 +317,56 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         s.includes('MONTHLY') ||
         s === 'RECURRING' ||
         s.includes('RECURRING') ||
-        s === 'ONHOLD' ||
-        s.includes('ONHOLD') ||
-        s.includes('HOLD') ||
         !!t.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'ONHOLD'].includes(st) ||
-          st.includes('WAITING') ||
+          ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
           st.includes('DAILY') ||
           st.includes('WEEKLY') ||
           st.includes('MONTHLY') ||
-          st.includes('RECURRING') ||
-          st.includes('ONHOLD') ||
-          st.includes('HOLD')
+          st.includes('RECURRING')
         );
 
       if (isExcluded) return false;
 
-      // Strictly only Pending and Revision statuses
+      // Pending, Revision, Waiting, and On-hold statuses
       const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
       const isRevision = s === 'REVISION' || mapStatuses.includes('REVISION');
+      const isWaiting = s === 'WAITING' || s.includes('WAITING') || mapStatuses.some((st: string) => st.includes('WAITING'));
+      const isOnHold = s === 'ONHOLD' || s.includes('HOLD') || mapStatuses.some((st: string) => st.includes('HOLD'));
 
-      return isPending || isRevision;
+      return isPending || isRevision || isWaiting || isOnHold;
     };
 
-    const availablePool = filteredTasks.filter((t: any) => {
-      if (isClosedTask(t)) return false;
-      return isAvailableTaskStatus(t);
-    });
+    const isTaskUrgent = (t: any) => {
+      const p = (t.priority || '').toUpperCase();
+      if (p === 'URGENT') return true;
+      const customStatuses = t.taskMap?.statuses || [];
+      if (customStatuses.some((cs: string) => cs.toUpperCase().includes('URGENT'))) return true;
+      if ((t.tags || []).some((tag: any) => (tag?.name || tag || '').toUpperCase().includes('URGENT'))) return true;
+      if ((t.title || '').toUpperCase().includes('[URGENT]')) return true;
+      return false;
+    };
+
+    const isTaskHigh = (t: any) => (t.priority || '').toUpperCase() === 'HIGH';
+
+    const availablePool = filteredTasks
+      .filter((t: any) => {
+        if (isClosedTask(t)) return false;
+        return isAvailableTaskStatus(t);
+      })
+      .sort((a: any, b: any) => {
+        const urgentA = isTaskUrgent(a) ? 1 : 0;
+        const urgentB = isTaskUrgent(b) ? 1 : 0;
+        if (urgentA !== urgentB) return urgentB - urgentA;
+
+        const highA = isTaskHigh(a) ? 1 : 0;
+        const highB = isTaskHigh(b) ? 1 : 0;
+        if (highA !== highB) return highB - highA;
+
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      });
 
     // Don't show closed tasks to users on Task Map
     const openTasks = filteredTasks.filter((t: any) => !isClosedTask(t));
@@ -511,6 +543,18 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const upworkClients = await getUpworkClients();
 
+    let maActiveSessions: Record<string, any> = {};
+    if (isRedisReady()) {
+      try {
+        const rawMaMap = await redis.hgetall('task_map:ma_active_sessions');
+        if (rawMaMap) {
+          for (const [k, v] of Object.entries(rawMaMap)) {
+            try { maActiveSessions[k] = JSON.parse(v); } catch {}
+          }
+        }
+      } catch {}
+    }
+
     res.json({
       success: true,
       tasks: openTasks,
@@ -529,6 +573,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       shiftUsers,
       activeUpworkSessions,
       upworkClients,
+      maActiveSessions,
     });
   } catch (error: any) {
     logger.error({ error }, 'Error fetching task map data');
@@ -935,22 +980,6 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
 
       if (!targetUser) {
         return res.status(404).json({ error: 'Target user not found' });
-      }
-
-      // Check role restrictions on the task
-      const roleRestrictions = currentTask.assigneeRoleRestrictions || [];
-      if (roleRestrictions.length > 0 && targetUser.systemRole !== 'ADMIN') {
-        const userRoles = (targetUser.roles || []).map((r: string) => r.toLowerCase().trim());
-        const hasMatchingRole = roleRestrictions.some((reqRole: string) => {
-          const reqLower = reqRole.toLowerCase().trim();
-          return userRoles.some((ur: string) => ur === reqLower || ur.includes(reqLower) || reqLower.includes(ur));
-        });
-
-        if (!hasMatchingRole) {
-          return res.status(400).json({
-            error: `${targetUser.name || 'User'} is not fit for the task (requires role: ${roleRestrictions.join(', ')})`,
-          });
-        }
       }
 
       updateData.assigneeId = assigneeId;
@@ -1439,7 +1468,16 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
     if (isRedisReady()) {
       const rawMap = await redis.hgetall('task_map:upwork_active');
       if (rawMap && Object.keys(rawMap).length > 0) {
-        activeUpworkSessions = Object.values(rawMap).map((val) => JSON.parse(val));
+        activeUpworkSessions = Object.values(rawMap)
+          .map((val) => JSON.parse(val))
+          .filter((s) => {
+            const name = `${s.clientName || ''} ${s.pmName || ''} ${s.taskTitle || ''}`.toLowerCase();
+            // Lauren is project-based: only allowed if explicitly confirmed with manual UPWORK tag
+            if (name.includes('lauren')) {
+              return false;
+            }
+            return true;
+          });
       }
     }
 
@@ -1475,6 +1513,16 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
         const activeReview: any = Array.isArray(pmReviewsList)
           ? pmReviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active)
           : null;
+
+        // Restriction for Lauren: Lauren is project-based; only mark as Upwork if explicitly tagged on TaskMap!
+        const clientOrListName = `${rec.task?.list?.name || ''} ${activeReview?.clientName || ''} ${activeReview?.pmName || ''}`.toLowerCase();
+        const isLauren = clientOrListName.includes('lauren');
+        if (isLauren && !upworkTag) {
+          if (isRedisReady()) {
+            redis.hdel('task_map:upwork_active', rec.taskId).catch(() => {});
+          }
+          continue;
+        }
 
         if (upworkTag || activeReview) {
           const alreadyInList = activeUpworkSessions.some((s) => s.taskId === rec.taskId);

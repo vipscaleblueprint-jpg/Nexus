@@ -127,6 +127,56 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     }
   }, [currentUser?.notificationPreferences?.soundUrl]);
 
+  // Deployment Auto-Recovery: Reload immediately if old chunks fail to load after a new deployment
+  useEffect(() => {
+    const handleChunkError = (event: ErrorEvent | PromiseRejectionEvent) => {
+      const error = 'error' in event ? event.error : (event as PromiseRejectionEvent).reason;
+      const msg = error?.message || (typeof error === 'string' ? error : '');
+      if (
+        msg.includes('Loading chunk') ||
+        msg.includes('ChunkLoadError') ||
+        msg.includes('Failed to fetch dynamically imported module') ||
+        msg.includes('Importing a module script failed')
+      ) {
+        console.warn('[Deployment Sync] Stale chunk detected, reloading latest code...', msg);
+        const lastReload = sessionStorage.getItem('nexus_chunk_reload');
+        const now = Date.now();
+        if (!lastReload || now - Number(lastReload) > 10000) {
+          sessionStorage.setItem('nexus_chunk_reload', String(now));
+          window.location.reload();
+        }
+      }
+    };
+
+    window.addEventListener('error', handleChunkError);
+    window.addEventListener('unhandledrejection', handleChunkError);
+    return () => {
+      window.removeEventListener('error', handleChunkError);
+      window.removeEventListener('unhandledrejection', handleChunkError);
+    };
+  }, []);
+
+  // Tab Focus Version Sync: If tab was left open across deployments, verify version when user returns
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetch(`${API_BASE_URL}/api/version?_t=${Date.now()}`, { cache: 'no-store' })
+          .then((res) => res.json())
+          .then((data) => {
+            if (!data?.deployId) return;
+            const currentDeploy = sessionStorage.getItem('nexus_server_deploy_id');
+            if (currentDeploy && currentDeploy !== data.deployId) {
+              sessionStorage.setItem('nexus_server_deploy_id', data.deployId);
+              window.location.reload();
+            }
+          })
+          .catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
   // Auth Gate & Session Verification (with deep-link persistence & sliding refresh)
   useEffect(() => {
     if (pathname === '/login') {
@@ -277,6 +327,22 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       }).catch(() => {});
     });
     if (isPerfEnabled()) s.onAny((event) => recordSocketEvent(event));
+
+    // Handle server deployment notifications to ensure latest code is executed across all PCs
+    s.on('system:deploy_info', (data: { deployId: string }) => {
+      if (!data?.deployId) return;
+      const storedDeploy = sessionStorage.getItem('nexus_server_deploy_id');
+      if (!storedDeploy) {
+        sessionStorage.setItem('nexus_server_deploy_id', data.deployId);
+      } else if (storedDeploy !== data.deployId) {
+        console.info('[Deployment Sync] New server deployment detected, refreshing to load latest code...', data.deployId);
+        sessionStorage.setItem('nexus_server_deploy_id', data.deployId);
+        const isEditing = typeof document !== 'undefined' && document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+        if (!isEditing) {
+          window.location.reload();
+        }
+      }
+    });
 
     // Instant cross-app logout event dispatched by backend when tools/viptools logs out
     s.on('force_logout', () => {
@@ -465,6 +531,13 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('task_map:updated', (data) => {
       window.dispatchEvent(new CustomEvent('task_map:updated', { detail: data }));
+    });
+
+    s.on('task_map:ma_progress_changed', (data) => {
+      window.dispatchEvent(new CustomEvent('task_map:ma_progress_changed', { detail: data }));
+      if (data?.maName) {
+        useAppStore.getState().updateMaActiveSession(data.maName, data.active === false ? null : data);
+      }
     });
 
     s.on('task:deleted', ({ id }) => {

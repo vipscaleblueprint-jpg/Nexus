@@ -133,6 +133,9 @@ export const TaskMapContainer: React.FC = () => {
         if (res.upworkClients) {
           useAppStore.getState().setUpworkClients(res.upworkClients);
         }
+        if (res.maActiveSessions) {
+          useAppStore.getState().setMaActiveSessions(res.maActiveSessions);
+        }
         if (res.allClients) {
           setAllDbClients(res.allClients);
         }
@@ -284,11 +287,19 @@ export const TaskMapContainer: React.FC = () => {
       }
     };
 
+    const handleMaSessionUpdated = (e: any) => {
+      const data = e.detail || e;
+      if (data?.maName) {
+        useAppStore.getState().updateMaActiveSession(data.maName, data);
+      }
+    };
+
     window.addEventListener('task:updated', handleTaskUpdated);
     window.addEventListener('task_map:updated', handleTaskMapUpdated);
     window.addEventListener('task:progress_updated', handleProgressUpdated);
     window.addEventListener('task_activity', handleTaskUpdated);
     window.addEventListener('upwork:status_changed', handleUpworkChanged);
+    window.addEventListener('ma:session_updated', handleMaSessionUpdated);
 
     return () => {
       window.removeEventListener('task:updated', handleTaskUpdated);
@@ -296,6 +307,7 @@ export const TaskMapContainer: React.FC = () => {
       window.removeEventListener('task:progress_updated', handleProgressUpdated);
       window.removeEventListener('task_activity', handleTaskUpdated);
       window.removeEventListener('upwork:status_changed', handleUpworkChanged);
+      window.removeEventListener('ma:session_updated', handleMaSessionUpdated);
     };
   }, [loadData]);
 

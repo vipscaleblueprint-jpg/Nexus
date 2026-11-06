@@ -267,7 +267,7 @@ export function googleAuth(req: Request, res: Response) {
   };
 
   if (returnTo && typeof returnTo === 'string') {
-    options.state = encodeURIComponent(returnTo);
+    options.state = returnTo;
   }
 
   const qs = new URLSearchParams(options).toString();
@@ -275,9 +275,10 @@ export function googleAuth(req: Request, res: Response) {
 }
 
 export async function googleCallback(req: Request, res: Response) {
+  const frontendLoginUrl = `${FRONTEND_URL.replace(/\/+$/, '')}/login`;
   const code = req.query.code as string;
   if (!code) {
-    return res.redirect(`${FRONTEND_URL}?error=Google%20auth%20code%20missing`);
+    return res.redirect(`${frontendLoginUrl}?error=${encodeURIComponent('Google auth code missing')}`);
   }
 
   try {
@@ -309,13 +310,13 @@ export async function googleCallback(req: Request, res: Response) {
     // An unverified address may not belong to whoever holds the Google account, and it would log them in as the
     // existing Nexus user with that email
     if (!googleUser.email || googleUser.email_verified !== true) {
-      return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent('Your Google email address is not verified')}`);
+      return res.redirect(`${frontendLoginUrl}?error=${encodeURIComponent('Your Google email address is not verified')}`);
     }
 
     let user = await prisma.user.findUnique({ where: { email: googleUser.email } });
 
     if (user && !user.isActive) {
-      return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent('This account has been deactivated')}`);
+      return res.redirect(`${frontendLoginUrl}?error=${encodeURIComponent('This account has been deactivated')}`);
     }
 
     if (!user) {
@@ -331,7 +332,7 @@ export async function googleCallback(req: Request, res: Response) {
       });
       if (!invitation) {
         return res.redirect(
-          `${FRONTEND_URL}?error=${encodeURIComponent('No Nexus account exists for this Google account. Ask an admin for an invitation.')}`
+          `${frontendLoginUrl}?error=${encodeURIComponent('No Nexus account exists for this Google account. Ask an admin for an invitation.')}`
         );
       }
 
@@ -375,7 +376,10 @@ export async function googleCallback(req: Request, res: Response) {
     let safeReturnTo = '';
     if (state && typeof state === 'string') {
       try {
-        const decoded = decodeURIComponent(state);
+        let decoded = decodeURIComponent(state);
+        if (decoded.includes('%')) {
+          try { decoded = decodeURIComponent(decoded); } catch {}
+        }
         if (decoded.startsWith('/') && !decoded.startsWith('//')) {
           safeReturnTo = decoded;
         }
@@ -386,7 +390,7 @@ export async function googleCallback(req: Request, res: Response) {
     return res.redirect(targetUrl);
   } catch (err: any) {
     log.error({ err }, `Google OAuth callback failed: ${errMsg(err)}`);
-    return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent(err.message)}`);
+    return res.redirect(`${frontendLoginUrl}?error=${encodeURIComponent(err.message)}`);
   }
 }
 
@@ -696,7 +700,7 @@ export async function ssoAuth(req: Request, res: Response) {
       });
     } else if (!user.isActive) {
       // Not back to the tools' SSO: it would hand us a fresh token and loop
-      return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent('This account has been deactivated')}`);
+      return res.redirect(`${FRONTEND_URL.replace(/\/+$/, '')}/login?error=${encodeURIComponent('This account has been deactivated')}`);
     } else {
       await prisma.user.update({
         where: { id: user.id },

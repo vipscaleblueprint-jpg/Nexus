@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
-import { TaskMapShift, UpworkSession, taskMapApi } from '@/api/taskMap';
+import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition } from '@/api/taskMap';
 import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Kanban, UserCheck, X, Briefcase, Plus } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { isAaronUser } from '@/lib/permissions';
@@ -152,24 +152,30 @@ export const TaskMapHeader: React.FC<Props> = ({
 
   useEffect(() => {
     if (!clientDropdownOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (clientDropdownRef.current && !clientDropdownRef.current.contains(e.target as Node)) {
+    const handleClickOutside = (e: PointerEvent) => {
+      if (
+        clientDropdownRef.current &&
+        !e.composedPath().includes(clientDropdownRef.current)
+      ) {
         setClientDropdownOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('pointerdown', handleClickOutside);
+    return () => document.removeEventListener('pointerdown', handleClickOutside);
   }, [clientDropdownOpen]);
 
   useEffect(() => {
     if (!maDropdownOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (maDropdownRef.current && !maDropdownRef.current.contains(e.target as Node)) {
+    const handleClickOutside = (e: PointerEvent) => {
+      if (
+        maDropdownRef.current &&
+        !e.composedPath().includes(maDropdownRef.current)
+      ) {
         setMaDropdownOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('pointerdown', handleClickOutside);
+    return () => document.removeEventListener('pointerdown', handleClickOutside);
   }, [maDropdownOpen]);
 
   // Compute total tasks and active client object
@@ -225,7 +231,7 @@ const shiftOptions = [
   return (
     <>
       <header className="px-6 pt-4 pb-2.5 flex flex-col gap-2.5 select-none">
-      {/* LINE 1: Dedicated View Mode Line (Task Map | Audito Map | CRM Map) & Search Bar on Right */}
+      {/* LINE 1: Dedicated View Mode Line (Task Map | Auditor Map | CRM Map) & Search Bar on Right */}
       <div className="flex items-center justify-between gap-4">
         {/* Left: View switcher tabs */}
         {onViewChange && (
@@ -253,7 +259,7 @@ const shiftOptions = [
               }`}
             >
               <ShieldCheck className="size-3.5" />
-              <span>Audito Map</span>
+              <span>Auditor Map</span>
             </button>
 
             {hasCrmAccess && (
@@ -389,6 +395,8 @@ const shiftOptions = [
                       ref={maDropdownRef}
                       className="absolute left-0 top-full mt-1.5 w-64 bg-popover border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-100"
                       onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
                     >
                       {/* Search */}
                       <div className="relative">
@@ -404,7 +412,7 @@ const shiftOptions = [
                       </div>
 
                       {/* MA list */}
-                      <div className="max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+                      <div className="max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-0.5" onWheel={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()}>
                         {filteredMAs.length === 0 ? (
                           <p className="text-[11px] text-zinc-500 italic text-center py-2">
                             No members found
@@ -440,11 +448,14 @@ const shiftOptions = [
                                   </div>
                                   <span className="truncate">{ma.name}</span>
                                 </div>
-                                {ma.roles && ma.roles[0] && (
-                                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 shrink-0">
-                                    {ma.roles[0]}
-                                  </span>
-                                )}
+                                {(() => {
+                                  const rDef = getUserRoleDefinition(ma);
+                                  return (
+                                    <span className={`text-[9px] px-1.5 py-0.5 rounded border shrink-0 font-medium ${rDef.badgeClass}`}>
+                                      {rDef.mainRoleShort}
+                                    </span>
+                                  );
+                                })()}
                               </button>
                             );
                           })
@@ -512,6 +523,8 @@ const shiftOptions = [
               <div
                 className="absolute right-0 top-full mt-1.5 w-60 bg-popover border border-zinc-800 rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-1 animate-in fade-in zoom-in-95 duration-100"
                 onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
               >
                 {/* Search if > 4 clients */}
                 {clients.length > 4 && (
@@ -528,7 +541,7 @@ const shiftOptions = [
                   </div>
                 )}
 
-                <div className="max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+                <div className="max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-0.5" onWheel={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()}>
                   {/* Option: All Clients */}
                   <button
                     type="button"

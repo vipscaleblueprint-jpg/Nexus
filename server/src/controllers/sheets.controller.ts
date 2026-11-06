@@ -897,6 +897,13 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     let isUpwork = isConfiguredUpworkClient || isTrackerUpwork;
 
+    // Restriction for Lauren: Lauren is a project-based client.
+    // She should NEVER be marked as Upwork based on sheet tracker; only if explicitly marked as UPWORK on TaskMap.
+    const isLaurenClient = clientStr ? clientStr.toLowerCase().includes('lauren') : false;
+    if (isLaurenClient) {
+      isUpwork = false;
+    }
+
     const link = task_link || taskId || task_id;
     let target = await findByNexusLink(link);
     if (!target && task) {
@@ -983,6 +990,48 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         });
       }
 
+      // If user provided MA name and latest schedule input (day, time in/out, status) without a direct task card:
+      // Prefill basic assumption and record as MA's latest session so Task Map can display it in the user's section
+      if (maNameStr) {
+        const assumedClient = clientStr || 'General';
+        const assumedTask = task ? String(task).trim() : 'General Task';
+        const sessionDate = date ? String(date).trim() : new Date().toISOString().split('T')[0];
+        const sessionStatus = statusStr || (cleanTimeOut ? 'Done' : 'In progress');
+
+        const sessionData = {
+          maName: maNameStr,
+          timeIn: cleanTimeIn,
+          timeOut: cleanTimeOut,
+          client: assumedClient,
+          taskName: assumedTask,
+          date: sessionDate,
+          status: sessionStatus,
+          isUpwork,
+          isMissingTime,
+          rowNumber: sheet_row ? Number(sheet_row) : undefined,
+          updatedAt: new Date().toISOString(),
+          active: !cleanTimeOut && Boolean(cleanTimeIn),
+        };
+
+        if (isRedisReady()) {
+          const maKey = maNameStr.toLowerCase().trim();
+          await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => {});
+        }
+
+        io.emit('ma:session_updated', sessionData);
+        io.emit('task_map:ma_progress_changed', sessionData);
+        io.emit('task_map:updated', {
+          maSession: sessionData,
+        });
+
+        return res.status(200).json({
+          success: true,
+          matchedTask: false,
+          session: sessionData,
+          message: 'User latest schedule input tracked with default assumption',
+        });
+      }
+
       console.warn('[Sheets] handleSheetProgress: task not found for link/title/client:', link || task || clientStr);
       return res.status(404).json({
         error: 'Task not found in Nexus',
@@ -997,7 +1046,20 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     // If task was manually marked as Upwork on TaskMap (project-based), honor it
     const hasManualUpworkTag = (record.statuses || []).some((s: string) => s.toUpperCase().startsWith('UPWORK'));
-    if (hasManualUpworkTag) {
+
+    // Check if task list is Lauren (project-based client)
+    let isTaskLauren = isLaurenClient;
+    if (!isTaskLauren && target.listId) {
+      const list = await prisma.list.findUnique({ where: { id: target.listId }, select: { name: true } });
+      if (list?.name && list.name.toLowerCase().includes('lauren')) {
+        isTaskLauren = true;
+      }
+    }
+
+    if (isTaskLauren) {
+      // Lauren is project-based; ONLY mark as Upwork if explicitly marked as Upwork (UPWORK status tag on TaskMap)
+      isUpwork = hasManualUpworkTag;
+    } else if (hasManualUpworkTag) {
       isUpwork = true;
     }
 
@@ -1028,6 +1090,26 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     };
 
     reviewsList.push(progressObj);
+
+    // Also update MA's latest active session in Redis for Task Map display
+    if (maNameStr && isRedisReady()) {
+      const maKey = maNameStr.toLowerCase().trim();
+      const maSession = {
+        maName: maNameStr,
+        timeIn: cleanTimeIn,
+        timeOut: cleanTimeOut,
+        client: clientStr || 'General',
+        taskName: task || 'General Task',
+        date: date ? String(date).trim() : new Date().toISOString().split('T')[0],
+        status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
+        isUpwork,
+        isMissingTime,
+        rowNumber: sheet_row ? Number(sheet_row) : undefined,
+        updatedAt: progressObj.updatedAt,
+      };
+      redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => {});
+      io.emit('ma:session_updated', maSession);
+    }
 
     // Handle Upwork session tracking if Upwork client/task and in progress (no time_out)
     if (isUpwork) {
@@ -1064,7 +1146,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               clientName: effectiveClientName,
               startedAt: progressObj.updatedAt,
             })
-          ).catch(() => {});
+          ).catch(() => { });
         }
 
         io.emit('upwork:status_changed', {
@@ -1082,7 +1164,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           reviewsList[activeIdx].stoppedAt = new Date().toISOString();
         }
         if (isRedisReady()) {
-          redis.hdel('task_map:upwork_active', target.taskId).catch(() => {});
+          redis.hdel('task_map:upwork_active', target.taskId).catch(() => { });
         }
 
         io.emit('upwork:status_changed', {
@@ -1094,6 +1176,23 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           clientName: effectiveClientName,
         });
       }
+    } else {
+      // If not Upwork (or restricted e.g. Lauren project-based without explicit tag), clean up any lingering Upwork session
+      const hadUpworkSession = reviewsList.some((r: any) => r.type === 'UPWORK_SESSION' && r.active);
+      if (hadUpworkSession) {
+        reviewsList = reviewsList.filter((r: any) => r.type !== 'UPWORK_SESSION');
+        if (isRedisReady()) {
+          redis.hdel('task_map:upwork_active', target.taskId).catch(() => {});
+        }
+        io.emit('upwork:status_changed', {
+          taskId: target.taskId,
+          taskTitle: task || 'Task',
+          active: false,
+          userName: maNameStr,
+          pmName: clientStr || 'UPWORK',
+          clientName: clientStr || 'UPWORK',
+        });
+      }
     }
 
     // Save back to TaskMapRecord
@@ -1101,6 +1200,15 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     // Invalidate caches
     await invalidateCache(`task:${target.taskId}`, 'task-map:data');
+
+    // If an assigned task matched, clean up any unlinked MA session in Redis and notify clients
+    if (maNameStr) {
+      if (isRedisReady()) {
+        const maKey = maNameStr.toLowerCase().trim();
+        await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
+      }
+      io.emit('task_map:ma_progress_changed', { maName: maNameStr, active: false });
+    }
 
     // Emit Realtime WebSockets so TaskMapContainer and BoardView update immediately
     io.emit('task_map:updated', {

@@ -167,7 +167,7 @@ server.on('upgrade', async (request, socket, head) => {
     // Strip /collaboration prefix so Hocuspocus sees "/<docName>" and parses it correctly.
     const docPath = url.replace(/^\/collaboration/, '') || '/default';
     const documentName = docPath.split('?')[0].replace(/^\//, '') || 'default';
-    
+
     logger.debug(`Accepting Hocuspocus connection for document: ${documentName}`);
     wss.handleUpgrade(request, socket, head, (ws) => {
       // Rewrite request.url so Hocuspocus internal parsing reads the correct document name
@@ -192,10 +192,32 @@ app.use(cors(corsOptions));
 app.use(botBlocker);
 app.use(rateLimiter);
 app.use(cookieParser());
+
+// Server deployment timestamp to ensure all client PCs track the latest deployment state
+const SERVER_DEPLOY_ID = process.env.BUILD_ID || process.env.DOKPLOY_DEPLOY_ID || String(Date.now());
+
+// Prevent caching on all API endpoints so clients, browsers, and proxies always receive fresh state
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  next();
+});
+
+// Version & Deployment Endpoint
+app.get('/api/version', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: '1.0.0',
+    deployId: SERVER_DEPLOY_ID,
+    timestamp: Date.now(),
+  });
+});
 // Every API section needs a logged-in user except these, which authenticate themselves: the login flows, and the
 // integrations that use an API key (/external) or the shared VIPScale key (/webhooks).
 // Before body parsing, so anonymous requests never get a large body parsed.
-app.use('/api', requireLoginExcept(['health', 'auth', 'external', 'webhooks', 'emojis']));
+app.use('/api', requireLoginExcept(['health', 'version', 'auth', 'external', 'webhooks', 'emojis']));
 // Login, signup and password-reset bodies are tiny: anonymous callers don't get the 50 MB limit
 app.use('/api/auth', express.json({ limit: '100kb' }), express.urlencoded({ limit: '100kb', extended: true }));
 // Document pages and task comments can contain large base64 image pastes; allocate 50mb for them
@@ -284,6 +306,8 @@ startRuntimeMetrics(() => ({ sockets: io.engine.clientsCount, inFlight: getInFli
 
 io.on('connection', (socket) => {
   socketLog.info({ socketId: socket.id }, 'Client connected');
+  // Immediately broadcast current server deploy ID so client PCs stay synchronized with latest code
+  socket.emit('system:deploy_info', { deployId: SERVER_DEPLOY_ID });
 
   socket.on('disconnect', (reason) => {
     socketLog.info({ socketId: socket.id, reason }, 'Client disconnected');

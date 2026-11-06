@@ -149,7 +149,9 @@ export const ColumnPriorityDropdown: React.FC<{
         setCoords(null);
       }
     };
-    const handleScrollOrResize = () => {
+    const handleScrollOrResize = (e?: Event) => {
+      // Don't close if the scroll happened inside the portal dropdown itself
+      if (e && dropdownRef.current && dropdownRef.current.contains(e.target as Node)) return;
       setIsOpen(false);
       setCoords(null);
     };
@@ -461,7 +463,9 @@ export const CardStatusDropdown: React.FC<{
       }
     };
 
-    const handleScrollOrResize = () => {
+    const handleScrollOrResize = (e?: Event) => {
+      // Don't close if the scroll happened inside the portal dropdown itself
+      if (e && dropdownRef.current && dropdownRef.current.contains(e.target as Node)) return;
       setIsOpen(false);
       setCoords(null);
     };
@@ -628,7 +632,9 @@ export const CardPriorityDropdown: React.FC<{
       }
     };
 
-    const handleScrollOrResize = () => {
+    const handleScrollOrResize = (e?: Event) => {
+      // Don't close if the scroll happened inside the portal dropdown itself
+      if (e && dropdownRef.current && dropdownRef.current.contains(e.target as Node)) return;
       setIsOpen(false);
       setCoords(null);
     };
@@ -733,6 +739,11 @@ export function computeElapsed(timeInStr?: string | null, dateStr?: string | nul
   start.setHours(hrs, mins, 0, 0);
 
   let diffMs = now.getTime() - start.getTime();
+  if (!dateStr && diffMs < 0) {
+    // If clocked in before midnight and current time is after midnight
+    start.setDate(start.getDate() - 1);
+    diffMs = now.getTime() - start.getTime();
+  }
   if (diffMs < 0) diffMs = 0;
 
   const totalMins = Math.floor(diffMs / 60000);
@@ -756,13 +767,19 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
 
   const clientName = prog?.client || task.list?.name || '';
   const isClientConfiguredUpwork = upworkClients.some((c) => c.toLowerCase() === clientName.toLowerCase());
-  const isUpwork = Boolean(
-    isClientConfiguredUpwork ||
-    prog?.isUpwork ||
-    prog?.timeTracker?.toLowerCase().includes('upwork') ||
-    task.list?.name?.toLowerCase().includes('upwork') ||
-    (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
-  );
+  const hasManualUpworkTag = (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'));
+  const isLauren = clientName.toLowerCase().includes('lauren');
+
+  // Upwork determination: Lauren is project-based (only Upwork if manually marked); otherwise check configured list/tracker/tag
+  const isUpwork = isLauren
+    ? hasManualUpworkTag
+    : Boolean(
+        isClientConfiguredUpwork ||
+        prog?.isUpwork ||
+        prog?.timeTracker?.toLowerCase().includes('upwork') ||
+        task.list?.name?.toLowerCase().includes('upwork') ||
+        hasManualUpworkTag
+      );
 
   // 1. Missing Time Alert: Red badge with infinity icon
   if (prog?.isMissingTime) {
@@ -824,9 +841,17 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
     );
   }
 
+  if (task.isAssumptionBlock && !prog?.timeIn) {
+    return (
+      <div className="text-[10px] font-mono text-zinc-500 px-1.5 py-0.5 rounded bg-zinc-800/40 border border-zinc-700/40 select-none">
+        --:-- - --:--
+      </div>
+    );
+  }
+
   return (
     <span className="text-[10px] font-medium text-zinc-500">
-      Posted {format(new Date(task.createdAt), 'MMM d')}
+      Posted {task.createdAt ? format(new Date(task.createdAt), 'MMM d') : format(now, 'MMM d')}
     </span>
   );
 };

@@ -81,6 +81,7 @@ export interface TaskMapItem {
   isWaitingPmReview: boolean;
   isClosed: boolean;
   isAdminTask?: boolean;
+  isAssumptionBlock?: boolean;
   upworkStartedAt?: string | null;
   upworkSession?: UpworkSession | null;
   progress?: TaskProgress | null;
@@ -104,7 +105,9 @@ export interface UpworkSession {
   userId: string;
   userName: string;
   pmName: string;
+  clientName?: string;
   startedAt: string;
+  isManuallyMarkedUpwork?: boolean;
 }
 
 export interface TaskMapDataResponse {
@@ -125,6 +128,7 @@ export interface TaskMapDataResponse {
   shiftUsers?: ShiftUser[];
   activeUpworkSessions?: UpworkSession[];
   upworkClients?: string[];
+  maActiveSessions?: Record<string, any>;
 }
 
 export const taskMapApi = {
@@ -134,12 +138,13 @@ export const taskMapApi = {
     if (params?.date) q.set('date', params.date);
     if (params?.search) q.set('search', params.search);
     if (params?.client) q.set('client', params.client);
+    q.set('_t', String(Date.now()));
     const queryString = q.toString() ? `?${q.toString()}` : '';
     return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`);
   },
 
   getOptions: async (): Promise<{ success: boolean; options: TaskMapOption[] }> => {
-    return apiClient<{ success: boolean; options: TaskMapOption[] }>('/api/task-map/options');
+    return apiClient<{ success: boolean; options: TaskMapOption[] }>(`/api/task-map/options?_t=${Date.now()}`);
   },
 
   upsertOption: async (data: Partial<TaskMapOption>): Promise<{ success: boolean; option: TaskMapOption }> => {
@@ -156,7 +161,7 @@ export const taskMapApi = {
   },
 
   getShifts: async (): Promise<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }> => {
-    return apiClient<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }>('/api/task-map/shifts');
+    return apiClient<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }>(`/api/task-map/shifts?_t=${Date.now()}`);
   },
 
   updateShifts: async (shifts: Partial<TaskMapShift>[]): Promise<{ success: boolean; shifts: TaskMapShift[] }> => {
@@ -227,7 +232,7 @@ export const taskMapApi = {
   },
 
   getUpworkClients: async (): Promise<{ success: boolean; clients: string[] }> => {
-    return apiClient<{ success: boolean; clients: string[] }>('/api/task-map/upwork-clients');
+    return apiClient<{ success: boolean; clients: string[] }>(`/api/task-map/upwork-clients?_t=${Date.now()}`);
   },
 
   toggleUpworkClient: async (data: {
@@ -243,6 +248,207 @@ export const taskMapApi = {
   },
 
   getUpworkActiveSessions: async (): Promise<{ success: boolean; activeUpworkSessions: UpworkSession[] }> => {
-    return apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>('/api/task-map/upwork-active');
+    return apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>(`/api/task-map/upwork-active?_t=${Date.now()}`);
   },
 };
+
+// ===========================================================================
+// User Roles & Short/Recreation Labels Mapping
+// ===========================================================================
+
+export interface UserRoleMapping {
+  mainRole: string;
+  mainRoleShort: string;
+  roles: string[];
+  secondaryRoles: string[];
+}
+
+export const ROLE_SHORT_NAMES: Record<string, string> = {
+  'Product': 'Prod',
+  'Production': 'Prod',
+  'Production Project Manager': 'Prod PM',
+  'Dev Project Manager': 'Dev PM',
+  'Cyber Security': 'Cyber Sec',
+  'Cybersecurity Developer': 'Cyber Sec',
+  'ProjectManagers': 'PM',
+  'Project Manager': 'PM',
+  'AI Director': 'Ai Dir',
+  'AI Scene Prompt Director': 'Ai Dir',
+  'Funnel Auditor': 'Funnel Aud',
+  'Funnel Strategist': 'Funnel Strat',
+  'Funnel Builder': 'Funnel Builder',
+  'Backend Developer': 'Backend',
+  'Back-end Developer': 'Backend',
+  'Developer': 'Dev',
+  'UI UX Auditor': 'UI UX Aud',
+  'Instruction Auditor': 'Instruction Aud',
+  'Design Auditor': 'Design Aud',
+  'Motion Graphics': 'Motion Graphics',
+  '3D Design': '3D Design',
+  'Design': 'Design',
+  'Dev Ops': 'Dev Ops',
+  'CRM': 'CRM',
+  'Client Relationship Manager': 'CRM',
+  'Lead Generation': 'Lead Gen',
+  'Sales': 'Sales',
+  'Onboarding Sales': 'Sales',
+  'Marketing': 'Marketing',
+  'Harmony': 'Harmony',
+  'Senior': 'Senior',
+  'Super Admin': 'Super Admin',
+  'Admin': 'Admin',
+  'Member': 'Member',
+};
+
+export const USER_ROLE_DEFINITIONS: Record<string, UserRoleMapping> = {};
+
+export function getRoleBadgeClass(shortOrFullRole: string): string {
+  const r = (shortOrFullRole || '').toLowerCase().trim();
+  if (r.includes('design aud')) return 'bg-pink-950/70 text-pink-300 border-pink-800/60';
+  if (r.includes('design') || r.includes('3d')) return 'bg-pink-950/70 text-pink-300 border-pink-800/60';
+  if (r.includes('prod pm') || r.includes('production project manager')) return 'bg-orange-950/70 text-orange-300 border-orange-800/60';
+  if (r.includes('prod')) return 'bg-orange-950/70 text-orange-300 border-orange-800/60';
+  if (r.includes('funnel aud')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
+  if (r.includes('funnel strat')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
+  if (r.includes('funnel')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
+  if (r.includes('ui ux') || r.includes('ui/ux') || r.includes('ui/ux aud')) return 'bg-cyan-950/70 text-cyan-300 border-cyan-800/60';
+  if (r.includes('instruction')) return 'bg-emerald-950/70 text-emerald-300 border-emerald-800/60';
+  if (r.includes('lead gen') || r.includes('lead generation')) return 'bg-emerald-950/70 text-emerald-300 border-emerald-800/60';
+  if (r.includes('dev pm') || r.includes('dev project manager')) return 'bg-violet-950/70 text-violet-300 border-violet-800/60';
+  if (r.includes('pm') || r.includes('project manager')) return 'bg-violet-950/70 text-violet-300 border-violet-800/60';
+  if (r.includes('crm') || r.includes('client relationship')) return 'bg-[#22A3AE]/20 text-[#22A3AE] border-[#22A3AE]/40';
+  if (r.includes('sales')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
+  if (r.includes('marketing')) return 'bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-800/60';
+  if (r.includes('senior')) return 'bg-yellow-950/70 text-yellow-300 border-yellow-800/60';
+  if (r.includes('harmony')) return 'bg-indigo-950/70 text-indigo-300 border-indigo-800/60';
+  if (r.includes('dev ops') || r.includes('devops')) return 'bg-indigo-950/70 text-indigo-300 border-indigo-800/60';
+  if (r.includes('backend') || r.includes('back-end')) return 'bg-blue-950/70 text-blue-300 border-blue-800/60';
+  if (r.includes('dev') && !r.includes('dev ops')) return 'bg-sky-950/70 text-sky-300 border-sky-800/60';
+  if (r.includes('ai dir') || r.includes('ai director') || r.includes('ai scene')) return 'bg-teal-950/70 text-teal-300 border-teal-800/60';
+  if (r.includes('cyber sec') || r.includes('cybersecurity')) return 'bg-red-950/70 text-red-300 border-red-800/60';
+  if (r.includes('motion')) return 'bg-purple-950/70 text-purple-300 border-purple-800/60';
+  if (r.includes('super admin') || r.includes('admin')) return 'bg-rose-950/70 text-rose-300 border-rose-800/60';
+  return 'bg-zinc-800 text-zinc-300 border-zinc-700/60';
+}
+
+export function getUserRoleDefinition(user: any): UserRoleMapping & { badgeClass: string } {
+  const dbRoles: string[] = Array.isArray(user?.roles)
+    ? user.roles.filter(Boolean)
+    : [];
+
+  const teamName: string = user?.team?.name || '';
+  let mainRole = dbRoles[0] || teamName;
+
+  if (!mainRole) {
+    mainRole = user?.systemRole === 'ADMIN' ? 'Super Admin' : 'Member';
+  }
+
+  const shortRole = ROLE_SHORT_NAMES[mainRole] || mainRole;
+  const secondaryRoles = dbRoles.length > 1 ? dbRoles.slice(1) : [];
+
+  return {
+    mainRole,
+    mainRoleShort: shortRole,
+    roles: dbRoles.length ? dbRoles : [mainRole],
+    secondaryRoles,
+    badgeClass: getRoleBadgeClass(shortRole || mainRole),
+  };
+}
+
+// ===========================================================================
+// User Latest Input / Empty Assumption Block
+// ===========================================================================
+
+export interface EmptyUserBlock {
+  id: string;
+  isAssumptionBlock: boolean;
+  day: string;
+  timeIn: string | null;
+  timeOut: string | null;
+  client: string;
+  taskTitle: string;
+  status: string;
+  isUpwork: boolean;
+  isMissingTime: boolean;
+  maName?: string | null;
+  rowNumber?: number;
+  updatedAt?: string;
+}
+
+export function createEmptyUserBlock(params?: {
+  userId?: string;
+  userName?: string;
+  day?: string | null;
+  timeIn?: string | null;
+  timeOut?: string | null;
+  client?: string | null;
+  taskTitle?: string | null;
+  status?: string | null;
+  isUpwork?: boolean;
+  rowNumber?: number;
+}): TaskMapItem {
+  const assumedClient = (params?.client || '').trim() || 'General';
+  const assumedTitle = (params?.taskTitle || '').trim() || 'General Task';
+  const assumedDay = params?.day || new Date().toISOString().split('T')[0];
+  const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
+  const id = `general-slot-${params?.userId || 'user'}`;
+
+  return {
+    id,
+    title: assumedTitle,
+    description: 'Auto-generated assumption block for latest daily schedule input',
+    priority: 'NORMAL',
+    listId: 'general',
+    status: assumedStatus,
+    dueDate: null,
+    startDate: null,
+    position: -1,
+    assigneeId: params?.userId || null,
+    assigneeRoleRestrictions: [],
+    teamAssignAccessRole: null,
+    list: { id: 'general', name: assumedClient },
+    assignee: params?.userId ? { id: params.userId, name: params.userName || 'Team Member' } : null,
+    assignees: params?.userId ? [{ id: params.userId, name: params.userName || 'Team Member' }] : [],
+    creator: null,
+    subtasks: [],
+    taskMap: {
+      id: `map-${id}`,
+      taskId: id,
+      subtaskId: null,
+      statuses: [assumedStatus],
+      shift: 'DAY',
+      shiftDate: assumedDay,
+      rolloverCount: 0,
+      originShift: null,
+      originDate: null,
+      dontRollover: true,
+      handedOver: false,
+      stepOrder: -1,
+      pmReviews: null,
+      waitingReviewSince: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    pmTags: [],
+    isWaitingPmReview: false,
+    isClosed: false,
+    isAdminTask: false,
+    isAssumptionBlock: true,
+    progress: {
+      type: 'SHEET_PROGRESS',
+      timeIn: params?.timeIn || null,
+      timeOut: params?.timeOut || null,
+      isMissingTime: Boolean(!params?.timeIn && (params?.timeOut || params?.status)),
+      isUpwork: Boolean(params?.isUpwork),
+      client: assumedClient,
+      timeTracker: params?.isUpwork ? 'Upwork' : null,
+      maName: params?.userName || null,
+      status: assumedStatus,
+      date: assumedDay,
+      sheetRow: params?.rowNumber,
+      updatedAt: new Date().toISOString(),
+    },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}

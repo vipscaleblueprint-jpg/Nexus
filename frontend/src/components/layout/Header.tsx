@@ -10,7 +10,6 @@ import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
 import { ClickUpStatusPanel } from "./ClickUpStatusPanel";
 import { motion, AnimatePresence } from "framer-motion";
 import { NotificationBell } from "./NotificationBell";
-import { isAaronUser } from "@/lib/permissions";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Nexus Workspace",
@@ -65,7 +64,16 @@ export function Header() {
     return () => clearInterval(interval);
   }, [activeUpworkSessions?.length]);
 
-  const upworkTickerText = (activeUpworkSessions || [])
+  // Lauren is project-based; strictly ignore unless explicitly marked as UPWORK
+  const validUpworkSessions = (activeUpworkSessions || []).filter((s) => {
+    const name = `${s.clientName || ''} ${s.pmName || ''} ${s.taskTitle || ''}`.toLowerCase();
+    if (name.includes('lauren')) {
+      return Boolean((s as any).isManuallyMarkedUpwork);
+    }
+    return true;
+  });
+
+  const upworkTickerText = validUpworkSessions
     .map((s) => {
       const name = getSessionDisplayName(s);
       const elapsed = formatUpworkElapsed(s.startedAt, now);
@@ -123,28 +131,28 @@ export function Header() {
         <div className="flex items-center gap-2">
           <NotificationBell />
 
-          {/* Active Upwork Live Ticker next to Profile (Restricted to Aaron, Non-clickable) */}
-          {isAaronUser(currentUser) && (() => {
-            const count = activeUpworkSessions?.length || 0;
+          {/* Active Upwork Live Ticker next to Profile (Available to everyone, Non-clickable) */}
+          {(() => {
+            const count = validUpworkSessions.length;
             // 0 active = green (available), 1 active = orange, 2+ = red double-blink conflict alert
             const tone =
               count === 0
                 ? {
-                    pill: 'border-emerald-500/40 bg-emerald-500/10',
-                    dot: 'bg-emerald-500',
-                    isConflict: false,
-                    text: 'text-emerald-300',
-                    label: 'Upwork: not active',
-                  }
+                  pill: 'border-emerald-500/40 bg-emerald-500/10',
+                  dot: 'bg-emerald-500',
+                  isConflict: false,
+                  text: 'text-emerald-300',
+                  label: 'Upwork: not active',
+                }
                 : count === 1
-                ? {
+                  ? {
                     pill: 'border-orange-500/50 bg-orange-500/10',
                     dot: 'bg-orange-500',
                     isConflict: false,
                     text: 'text-orange-300 font-medium',
                     label: upworkTickerText,
                   }
-                : {
+                  : {
                     pill: 'border-red-500/80 bg-red-500/20 ring-1 ring-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.4)] animate-pulse',
                     dot: 'bg-red-500 ring-2 ring-red-400',
                     isConflict: true,
@@ -158,8 +166,8 @@ export function Header() {
                   count === 0
                     ? 'No one is on Upwork (available)'
                     : count === 1
-                    ? 'Upwork in use by 1 person'
-                    : `Upwork Conflict: ${count} recorded sessions active simultaneously! Upwork recorded sessions cannot overlap.`
+                      ? 'Upwork in use by 1 person'
+                      : `Upwork Conflict: ${count} recorded sessions active simultaneously! Upwork recorded sessions cannot overlap.`
                 }
               >
                 <span className="relative flex h-2.5 w-2.5 shrink-0">
@@ -186,153 +194,153 @@ export function Header() {
           })()}
 
           <div className="relative text-xs">
-          <button
-            onClick={() => setIsProfileOpen(!isProfileOpen)}
-            className="flex items-center gap-2 p-1 pr-2 rounded-full bg-secondary/90 hover:bg-zinc-800 border border-zinc-800/80 transition-all cursor-pointer group"
-          >
-            <div className="relative">
-              {activeUser.imageUrl || activeUser.avatarUrl ? (
-                <img
-                  src={activeUser.imageUrl || activeUser.avatarUrl}
-                  alt={activeUser.name}
-                  className="w-7 h-7 rounded-full object-cover border border-zinc-700"
-                />
-              ) : (
-                <div className="w-7 h-7 rounded-full bg-zinc-800 border border-zinc-700 text-white font-bold flex items-center justify-center text-xs">
-                  {activeUser.name.slice(0, 2).toUpperCase()}
-                </div>
-              )}
-              <span className="w-2 h-2 bg-emerald-500 rounded-full absolute bottom-0 right-0 border border-zinc-950" />
-            </div>
+            <button
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              className="flex items-center gap-2 p-1 pr-2 rounded-full bg-secondary/90 hover:bg-zinc-800 border border-zinc-800/80 transition-all cursor-pointer group"
+            >
+              <div className="relative">
+                {activeUser.imageUrl || activeUser.avatarUrl ? (
+                  <img
+                    src={activeUser.imageUrl || activeUser.avatarUrl}
+                    alt={activeUser.name}
+                    className="w-7 h-7 rounded-full object-cover border border-zinc-700"
+                  />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-zinc-800 border border-zinc-700 text-white font-bold flex items-center justify-center text-xs">
+                    {activeUser.name.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <span className="w-2 h-2 bg-emerald-500 rounded-full absolute bottom-0 right-0 border border-zinc-950" />
+              </div>
 
-            <span className="font-semibold text-zinc-200 text-xs truncate max-w-25 hidden sm:inline">
-              {activeUser.name.split(" ")[0]}
-            </span>
+              <span className="font-semibold text-zinc-200 text-xs truncate max-w-25 hidden sm:inline">
+                {activeUser.name.split(" ")[0]}
+              </span>
 
-            <motion.div animate={{ rotate: isProfileOpen ? -180 : 0 }} transition={{ duration: 0.2 }}>
-              <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
-            </motion.div>
-          </button>
+              <motion.div animate={{ rotate: isProfileOpen ? -180 : 0 }} transition={{ duration: 0.2 }}>
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
+              </motion.div>
+            </button>
 
-          <AnimatePresence>
-            {isProfileOpen && (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95, y: -10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                transition={{ duration: 0.15, ease: "easeOut" }}
-                className="nexus-profile-dropdown absolute right-0 mt-2 w-64 max-w-[calc(100vw-24px)] bg-card border border-border rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3 origin-top-right"
-              >
-                <div className="flex items-center gap-3 pb-3 border-b border-zinc-800/60">
-                <div className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 text-white font-bold flex items-center justify-center text-xs shrink-0">
-                  {activeUser.name.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="truncate">
-                  <div className="font-bold text-zinc-100 truncate flex items-center gap-1.5">
-                    {activeUser.name}
-                    {activeUser.systemRole === "ADMIN" && (
-                      <span className="text-[9px] px-1.5 py-0.5 bg-zinc-200 text-zinc-950 font-extrabold rounded">
-                        ADMIN
+            <AnimatePresence>
+              {isProfileOpen && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                  className="nexus-profile-dropdown absolute right-0 mt-2 w-64 max-w-[calc(100vw-24px)] bg-card border border-border rounded-xl shadow-2xl p-3 z-50 text-xs space-y-3 origin-top-right"
+                >
+                  <div className="flex items-center gap-3 pb-3 border-b border-zinc-800/60">
+                    <div className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                      {activeUser.name.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="truncate">
+                      <div className="font-bold text-zinc-100 truncate flex items-center gap-1.5">
+                        {activeUser.name}
+                        {activeUser.systemRole === "ADMIN" && (
+                          <span className="text-[9px] px-1.5 py-0.5 bg-zinc-200 text-zinc-950 font-extrabold rounded">
+                            ADMIN
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-zinc-400 truncate">
+                        {activeUser.email}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 text-[11px] text-zinc-300">
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-400">Star Rating:</span>
+                      <span className="text-amber-400 font-bold">
+                        {"⭐".repeat(activeUser.starRating || 1)}
                       </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-400">Employment:</span>
+                      <span className="font-mono text-[10px] text-zinc-300 bg-secondary px-1.5 py-0.5 rounded">
+                        {activeUser.employmentType}
+                      </span>
+                    </div>
+
+                    {activeUser.dailySheetUrl && (
+                      <div className="pt-1">
+                        <a
+                          href={activeUser.dailySheetUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="w-full flex items-center justify-between p-2 rounded-lg bg-secondary hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-semibold transition-colors"
+                        >
+                          <span>Google Daily Sheet</span>
+                          <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
+                        </a>
+                      </div>
                     )}
                   </div>
-                  <div className="text-[10px] text-zinc-400 truncate">
-                    {activeUser.email}
-                  </div>
-                </div>
-              </div>
 
-              <div className="space-y-1.5 text-[11px] text-zinc-300">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Star Rating:</span>
-                  <span className="text-amber-400 font-bold">
-                    {"⭐".repeat(activeUser.starRating || 1)}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Employment:</span>
-                  <span className="font-mono text-[10px] text-zinc-300 bg-secondary px-1.5 py-0.5 rounded">
-                    {activeUser.employmentType}
-                  </span>
-                </div>
-
-                {activeUser.dailySheetUrl && (
-                  <div className="pt-1">
-                    <a
-                      href={activeUser.dailySheetUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="w-full flex items-center justify-between p-2 rounded-lg bg-secondary hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-semibold transition-colors"
+                  <div className="pt-2 space-y-1.5 border-t border-zinc-800/60">
+                    <button
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        router.push("/settings");
+                      }}
+                      className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
                     >
-                      <span>Google Daily Sheet</span>
-                      <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
-                    </a>
+                      <span className="truncate">Account Settings</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        router.push("/settings#api");
+                      }}
+                      className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                    >
+                      <span className="truncate text-indigo-400">API Settings</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        router.push("/role-map");
+                      }}
+                      className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                    >
+                      <span className="truncate text-[var(--accent)] font-medium">View Role Map</span>
+                    </button>
+
+                    {activeUser.systemRole === "ADMIN" && (
+                      <button
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          router.push("/settings/users");
+                        }}
+                        className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                      >
+                        <span className="truncate text-yellow-400">
+                          Admin Settings
+                        </span>
+                      </button>
+                    )}
+
+                    {Array.isArray((activeUser as any).roles) && (activeUser as any).roles.includes('DEV') && (
+                      <div className="w-full">
+                        <ClickUpStatusPanel isDropdownItem={true} />
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center justify-center gap-2 p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400 hover:bg-rose-500/20 dark:hover:bg-rose-500/30 font-semibold transition-colors text-xs cursor-pointer mt-2"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign Out</span>
+                    </button>
                   </div>
-                )}
-              </div>
-
-              <div className="pt-2 space-y-1.5 border-t border-zinc-800/60">
-                <button
-                  onClick={() => {
-                    setIsProfileOpen(false);
-                    router.push("/settings");
-                  }}
-                  className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
-                >
-                  <span className="truncate">Account Settings</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setIsProfileOpen(false);
-                    router.push("/settings#api");
-                  }}
-                  className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
-                >
-                  <span className="truncate text-indigo-400">API Settings</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setIsProfileOpen(false);
-                    router.push("/role-map");
-                  }}
-                  className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
-                >
-                  <span className="truncate text-[var(--accent)] font-medium">View Role Map</span>
-                </button>
-
-                {activeUser.systemRole === "ADMIN" && (
-                  <button
-                    onClick={() => {
-                      setIsProfileOpen(false);
-                      router.push("/settings/users");
-                    }}
-                    className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
-                  >
-                    <span className="truncate text-yellow-400">
-                      Admin Settings
-                    </span>
-                  </button>
-                )}
-
-                {Array.isArray((activeUser as any).roles) && (activeUser as any).roles.includes('DEV') && (
-                  <div className="w-full">
-                    <ClickUpStatusPanel isDropdownItem={true} />
-                  </div>
-                )}
-
-                <button
-                  onClick={handleLogout}
-                  className="w-full flex items-center justify-center gap-2 p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400 hover:bg-rose-500/20 dark:hover:bg-rose-500/30 font-semibold transition-colors text-xs cursor-pointer mt-2"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Sign Out</span>
-                </button>
-              </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 

@@ -5,6 +5,7 @@ import { TaskMapItem, TaskMapOption } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
+import { UserRoleBadge } from './UserRoleBadge';
 import {
   ShieldCheck,
   Pin,
@@ -623,14 +624,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                       {col.title}
                     </h3>
 
-                    {col.badgeLabel && (
+                    {col.auditorUser ? (
+                      <UserRoleBadge user={col.auditorUser} />
+                    ) : col.badgeLabel ? (
                       <span
-                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 truncate ${col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                          }`}
+                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 truncate ${
+                          col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                        }`}
                       >
                         {col.badgeLabel}
                       </span>
-                    )}
+                    ) : null}
 
                     <span
                       className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
@@ -731,11 +735,16 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                 {/* Cards List */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                   {visibleTasks.length === 0 ? (
-                    <p className="text-xs text-zinc-600 italic text-center py-12">
-                      {searchQuery || activePriority !== 'ALL'
-                        ? 'No tasks match filter'
-                        : `No tasks in ${col.title}`}
-                    </p>
+                    <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[94px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
+                      <span className="text-xs font-semibold text-zinc-400">
+                        No tasks to review
+                      </span>
+                      <span className="text-[11px] text-zinc-500 mt-1">
+                        {searchQuery || activePriority !== 'ALL'
+                          ? 'No tasks match filter'
+                          : `Drop tasks here to assign to ${col.title}`}
+                      </span>
+                    </div>
                   ) : (
                     visibleTasks.map((task) => {
                       return (

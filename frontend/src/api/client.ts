@@ -65,6 +65,7 @@ export async function apiClient<T = any>(
   let res: Response;
   try {
     res = await fetch(url, {
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
         ...headers,

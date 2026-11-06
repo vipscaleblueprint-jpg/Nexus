@@ -240,6 +240,11 @@ interface AppState {
   setActiveUpworkSessions: (sessions: UpworkSession[] | ((prev: UpworkSession[]) => UpworkSession[])) => void;
   upworkClients: string[];
   setUpworkClients: (clients: string[]) => void;
+
+  // MA Active Live Sessions (including blank block when no task/client is inputted yet)
+  maActiveSessions: Record<string, any>;
+  setMaActiveSessions: (sessions: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void;
+  updateMaActiveSession: (maName: string, session: any) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -280,6 +285,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       isGalaxyFilterActive: false,
       activeUpworkSessions: [],
       upworkClients: [],
+      maActiveSessions: {},
     });
   },
   
@@ -592,4 +598,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   upworkClients: [],
   setUpworkClients: (upworkClients) => set({ upworkClients }),
+  maActiveSessions: {},
+  setMaActiveSessions: (sessions) =>
+    set((state) => ({
+      maActiveSessions: typeof sessions === 'function' ? sessions(state.maActiveSessions) : sessions,
+    })),
+  updateMaActiveSession: (maName, session) =>
+    set((state) => {
+      const copy = { ...state.maActiveSessions };
+      const key = (maName || '').trim().toLowerCase();
+      if (!session) {
+        delete copy[key];
+      } else {
+        copy[key] = session;
+      }
+      return { maActiveSessions: copy };
+    }),
 }));

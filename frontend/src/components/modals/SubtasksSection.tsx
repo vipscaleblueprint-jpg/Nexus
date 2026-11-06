@@ -395,6 +395,9 @@ function SubtaskRow({
   onToggleCollapse,
   onSetCollapsed,
   onDeleteSubtask,
+  activeDropdown,
+  onOpenDropdown,
+  onCloseDropdown,
 }: {
   subtask: Subtask;
   users?: any[];
@@ -414,15 +417,10 @@ function SubtaskRow({
   onToggleCollapse?: () => void;
   onSetCollapsed?: (val: boolean) => void;
   onDeleteSubtask?: (subtask: Subtask) => void;
+  activeDropdown?: string | null;
+  onOpenDropdown: (id: string) => void;
+  onCloseDropdown: (expectedId?: string) => void;
 }) {
-  const [assigneeOpen, setAssigneeOpen] = useState(false);
-  const [priorityOpen, setPriorityOpen] = useState(false);
-  // Separate open states for the collapsed table cells so they never open alongside the hidden detail panel popovers
-  const [colRoleOpen, setColRoleOpen] = useState(false);
-  const [colAssigneeOpen, setColAssigneeOpen] = useState(false);
-  const [colPriorityOpen, setColPriorityOpen] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(false);
-  const [statusRowOpen, setStatusRowOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState<number | undefined>(undefined);
   const priorityConfig = getPriorityConfig(subtask.priority);
   const priorityLabel = subtask.priority ? priorityConfig.label : 'Empty';
@@ -434,9 +432,23 @@ function SubtaskRow({
   const [internalCollapsed, setInternalCollapsed] = useState(true);
   const isCollapsed = isCollapsedProp !== undefined ? isCollapsedProp : internalCollapsed;
   const setIsCollapsed = (val: boolean) => {
+    onCloseDropdown();
     if (onSetCollapsed) onSetCollapsed(val);
     else setInternalCollapsed(val);
   };
+
+  const isRowLocked = !!subtask.completed || !canEditTask;
+
+  // Single-dropdown active checks partitioned by collapsed vs expanded view
+  const isColStatusOpen = isCollapsed && activeDropdown === `${subtask.id}:status` && !!canEditTask;
+  const isColRoleOpen = isCollapsed && activeDropdown === `${subtask.id}:role` && !isRowLocked;
+  const isColAssigneeOpen = isCollapsed && activeDropdown === `${subtask.id}:assignee`;
+  const isColPriorityOpen = isCollapsed && activeDropdown === `${subtask.id}:priority` && !isRowLocked;
+
+  const isExpStatusOpen = !isCollapsed && activeDropdown === `${subtask.id}:status` && !!canEditTask;
+  const isExpRoleOpen = !isCollapsed && activeDropdown === `${subtask.id}:role` && !isRowLocked;
+  const isExpAssigneeOpen = !isCollapsed && activeDropdown === `${subtask.id}:assignee`;
+  const isExpPriorityOpen = !isCollapsed && activeDropdown === `${subtask.id}:priority` && !isRowLocked;
 
   const [localRoleRestrictions, setLocalRoleRestrictions] = useState<string[]>(() => subtask?.assigneeRoleRestrictions || []);
   const latestRoleRestrictionsRef = useRef<string[]>(subtask?.assigneeRoleRestrictions || []);
@@ -521,8 +533,7 @@ function SubtaskRow({
     subtask.assignees = [];
     subtask.assigneeIds = [];
     onUpdate(subtask.id, { assigneeIds: [], assignees: [] } as any);
-    setAssigneeOpen(false);
-    setColAssigneeOpen(false);
+    onCloseDropdown();
   };
 
   useEffect(() => {
@@ -683,6 +694,7 @@ function SubtaskRow({
       replies: [],
     }]);
     setCommentText('');
+    setIsSubmittingComment(true);
     try {
       const res = await tasksApi.addComment(taskId, text, currentUser.id, listId, [], undefined, subtask.id);
       const saved = res?.comment;
@@ -697,6 +709,8 @@ function SubtaskRow({
       setComments((commentsRef.current || []).filter((c: any) => c.id !== tempId));
       setCommentText((prev) => prev || text);
       toast.error('Failed to add comment');
+    } finally {
+      setIsSubmittingComment(false);
     }
   };
 
@@ -918,7 +932,61 @@ function SubtaskRow({
     </div>
   );
 
-  const isRowLocked = !!subtask.completed || !canEditTask;
+  const renderStatusMenu = (close: () => void) => {
+    const rawStatuses = (listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES;
+    const sorted = sortStatusesWithClosedAtEnd(rawStatuses);
+    const openStatuses = sorted.filter((s: string) => !isClosedStatus(s));
+    const closedStatuses = sorted.filter((s: string) => isClosedStatus(s));
+
+    const renderItem = (s: string) => {
+      const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
+      const isClosed = isClosedStatus(s);
+      const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+      const iconColorHex = customObj?.color ? getHexColor(customObj.color) : statusColorHex;
+      const iconStyle = iconColorHex ? { color: iconColorHex } : {};
+
+      return (
+        <div
+          key={s}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!canEditTask) return;
+            const isFinal = isClosedStatus(s);
+            onUpdate(subtask.id, { status: s, completed: isFinal });
+            close();
+          }}
+          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
+        >
+          {(() => {
+            if (isClosed) {
+              return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={iconStyle} />;
+            }
+            if ((s || '').toUpperCase() === 'KYC') {
+              return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${!iconColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
+            }
+            return <CustomCircleDot className={`w-3 h-3 shrink-0 ${!iconColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
+          })()}
+          <span className="uppercase">{s}</span>
+          {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70 text-indigo-600 dark:text-indigo-400" />}
+        </div>
+      );
+    };
+
+    return (
+      <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
+        {openStatuses.map(renderItem)}
+        {closedStatuses.length > 0 && (
+          <>
+            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+            <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
+              Closed
+            </div>
+            {closedStatuses.map(renderItem)}
+          </>
+        )}
+      </div>
+    );
+  };
 
   const statusName = subtask.status ? subtask.status : (subtask.completed ? 'CLOSED' : 'PENDING');
   const statusObj = listStatuses?.find((s: any) => (s.name || s.title || s.status) === statusName);
@@ -940,83 +1008,33 @@ function SubtaskRow({
       <div className={`flex items-center gap-3 shrink-0 min-w-0 max-w-full transition-all duration-300 ${isCollapsed ? '' : 'mb-4 pb-3 border-b border-zinc-800/60'}`}>
           <div className="flex items-center min-w-0 flex-1 gap-3">
             {isCollapsed && (
-              <Popover.Root open={statusOpen && !!canEditTask} onOpenChange={setStatusOpen}>
+              <Popover.Root
+                open={isColStatusOpen}
+                onOpenChange={(open) => {
+                  if (canEditTask) {
+                    if (open) onOpenDropdown(`${subtask.id}:status`);
+                    else onCloseDropdown(`${subtask.id}:status`);
+                  }
+                }}
+              >
                 <Popover.Trigger asChild>
-                  <div
-                    title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
-                    onClick={(e) => { e.stopPropagation(); if (canEditTask) setStatusOpen(true); }}
-                    className={`flex items-center justify-center cursor-pointer transition-transform duration-200 ${canEditTask ? 'hover:scale-110 active:scale-95' : 'opacity-50 cursor-not-allowed'}`}
+                  <button
+                    type="button"
+                    title={subtask.completed ? 'Completed — click to change status' : 'Open — click to change status'}
+                    className={`flex items-center justify-center transition-transform duration-200 ${canEditTask ? 'cursor-pointer hover:scale-110 active:scale-95' : 'opacity-50 cursor-not-allowed'}`}
                   >
-
-                    {subtask.completed ? <CheckCircle2 className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : ((subtask.status || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} /> : <CustomCircleDot className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />)}
-                  
-                  </div>
+                    {subtask.completed ? (
+                      <CheckCircle2 className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+                    ) : (subtask.status || '').toUpperCase() === 'KYC' ? (
+                      <CustomCircleDotted className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+                    ) : (
+                      <CustomCircleDot className={`w-4 h-4 shrink-0 ${statusIconColorClass}`} style={statusIconStyle} />
+                    )}
+                  </button>
                 </Popover.Trigger>
                 <Popover.Portal>
                   <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-200 dark:border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                    <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                      {(() => {
-                        const rawStatuses = (listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES;
-                        const sorted = sortStatusesWithClosedAtEnd(rawStatuses);
-                        const openStatuses = sorted.filter((s: string) => !isClosedStatus(s));
-                        const closedStatuses = sorted.filter((s: string) => isClosedStatus(s));
-
-                        const renderItem = (s: string) => {
-                          const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                          const isClosed = isClosedStatus(s);
-                          const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
-                          const statusIconStyle = statusColorHex ? { color: statusColorHex } : {};
-
-                          return (
-                            <div
-                              key={s}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!canEditTask) return;
-                                const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
-                                onUpdate(subtask.id, { status: s, completed: isFinal });
-                                setStatusOpen(false);
-                              }}
-                              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
-                            >
-                              {(() => {
-                                if (isClosed) {
-                                  return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: getHexColor(customObj.color) } : statusIconStyle} />;
-                                }
-                                if (customObj?.color) {
-                                  if ((s || '').toUpperCase() === 'KYC') {
-                                    return <CustomCircleDotted className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                                  }
-                                  return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
-                                }
-                                
-                                if ((s || '').toUpperCase() === 'KYC') {
-                                  return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
-                                }
-                                return <CustomCircleDot className={`w-3 h-3 shrink-0 ${statusColorHex ? '' : 'text-zinc-500'}`} style={statusIconStyle} />;
-                              })()}
-                              <span className="uppercase">{s}</span>
-                              {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70 text-indigo-600 dark:text-indigo-400" />}
-                            </div>
-                          );
-                        };
-
-                        return (
-                          <>
-                            {openStatuses.map(renderItem)}
-                            {closedStatuses.length > 0 && (
-                              <>
-                                <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
-                                <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
-                                  Closed
-                                </div>
-                                {closedStatuses.map(renderItem)}
-                              </>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </div>
+                    {renderStatusMenu(() => onCloseDropdown())}
                   </Popover.Content>
                 </Popover.Portal>
               </Popover.Root>
@@ -1039,10 +1057,14 @@ function SubtaskRow({
               />
             ) : (
               <button
-                onClick={() => onOpenSubtask(subtask)}
+                onClick={() => {
+                  onCloseDropdown();
+                  onOpenSubtask(subtask);
+                }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   if (subtask.completed) return;
+                  onCloseDropdown();
                   setIsEditingTitle(true);
                 }}
                 className={`text-[13px] font-semibold truncate min-w-0 text-left transition-colors ${subtask.completed ? 'text-zinc-600 line-through cursor-not-allowed' : 'text-zinc-100 hover:text-white cursor-pointer hover:bg-zinc-800/80 px-1.5 py-0.5 -ml-1.5 rounded-md'}`}
@@ -1057,7 +1079,15 @@ function SubtaskRow({
             <>
               {/* Role cell */}
               <div className="w-28 shrink-0 min-w-0">
-                <Popover.Root open={colRoleOpen && !isRowLocked} onOpenChange={(open) => { if (!isRowLocked) setColRoleOpen(open); }}>
+                <Popover.Root
+                  open={isColRoleOpen}
+                  onOpenChange={(open) => {
+                    if (!isRowLocked) {
+                      if (open) onOpenDropdown(`${subtask.id}:role`);
+                      else onCloseDropdown(`${subtask.id}:role`);
+                    }
+                  }}
+                >
                   <Popover.Trigger asChild>
                     <button
                       type="button"
@@ -1125,7 +1155,15 @@ function SubtaskRow({
 
               {/* Assignee cell */}
               <div className="w-36 shrink-0 min-w-0">
-                <Popover.Root open={colAssigneeOpen && canAssignMember} onOpenChange={(open) => { if (canAssignMember) setColAssigneeOpen(open); }}>
+                <Popover.Root
+                  open={isColAssigneeOpen}
+                  onOpenChange={(open) => {
+                    if (canAssignMember) {
+                      if (open) onOpenDropdown(`${subtask.id}:assignee`);
+                      else onCloseDropdown(`${subtask.id}:assignee`);
+                    }
+                  }}
+                >
                   <Popover.Trigger asChild>
                     <button
                       type="button"
@@ -1134,7 +1172,7 @@ function SubtaskRow({
                         // If no team role yet: open the role picker popover right away
                         if (!hasTeamRole) {
                           e.preventDefault();
-                          setColRoleOpen(true);
+                          onOpenDropdown(`${subtask.id}:role`);
                         }
                       }}
                       title={
@@ -1197,7 +1235,15 @@ function SubtaskRow({
 
               {/* Priority cell */}
               <div className="w-24 shrink-0">
-                <Popover.Root open={colPriorityOpen} onOpenChange={(open) => { if (!isRowLocked) setColPriorityOpen(open); }}>
+                <Popover.Root
+                  open={isColPriorityOpen}
+                  onOpenChange={(open) => {
+                    if (!isRowLocked) {
+                      if (open) onOpenDropdown(`${subtask.id}:priority`);
+                      else onCloseDropdown(`${subtask.id}:priority`);
+                    }
+                  }}
+                >
                   <Popover.Trigger asChild>
                     <button
                       type="button"
@@ -1226,7 +1272,7 @@ function SubtaskRow({
                       align="start"
                       sideOffset={4}
                     >
-                      {renderPriorityMenu(() => setColPriorityOpen(false))}
+                      {renderPriorityMenu(() => onCloseDropdown())}
                     </Popover.Content>
                   </Popover.Portal>
                 </Popover.Root>
@@ -1240,6 +1286,7 @@ function SubtaskRow({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
+              onCloseDropdown();
               onDeleteSubtask(subtask);
             }}
             className="w-6 h-6 flex items-center justify-center hover:bg-rose-500/10 rounded-md text-zinc-500 hover:text-rose-400 transition-all duration-200 shrink-0 cursor-pointer opacity-0 group-hover:opacity-100"
@@ -1250,7 +1297,11 @@ function SubtaskRow({
         )}
         {/* Collapse Toggle Button */}
         <button 
-          onClick={() => onToggleCollapse ? onToggleCollapse() : setIsCollapsed(!isCollapsed)} 
+          onClick={() => {
+            onCloseDropdown();
+            if (onToggleCollapse) onToggleCollapse();
+            else setIsCollapsed(!isCollapsed);
+          }} 
           className="w-6 h-6 flex items-center justify-center hover:bg-zinc-800/80 rounded-md text-zinc-500 hover:text-zinc-300 transition-opacity duration-200 shrink-0 cursor-pointer opacity-0 group-hover:opacity-100"
           title={isCollapsed ? "Expand subtask" : "Collapse subtask"}
         >
@@ -1272,10 +1323,19 @@ function SubtaskRow({
               <span className="text-[12px] text-zinc-500">Status</span>
             </div>
             
-            <Popover.Root open={statusRowOpen && !!canEditTask} onOpenChange={(open) => { if (canEditTask) setStatusRowOpen(open); }}>
+            <Popover.Root
+              open={isExpStatusOpen}
+              onOpenChange={(open) => {
+                if (canEditTask) {
+                  if (open) onOpenDropdown(`${subtask.id}:status`);
+                  else onCloseDropdown(`${subtask.id}:status`);
+                }
+              }}
+            >
               <Popover.Trigger asChild>
-                <div
-                  title={subtask.completed ? 'Done — click to reopen' : 'Open — click to change status'}
+                <button
+                  type="button"
+                  title={subtask.completed ? 'Completed — click to change status' : 'Open — click to change status'}
                   className={`inline-flex items-center h-7 px-3 rounded-md text-[11px] font-bold tracking-wider uppercase select-none w-fit transition-all ${
                     statusHexColor 
                       ? 'text-white' 
@@ -1292,68 +1352,11 @@ function SubtaskRow({
                   </span>
                   <div className="w-px h-3 bg-white/30 mr-1.5" />
                   <ChevronRight className="w-3 h-3 text-white/80" />
-                </div>
+                </button>
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content className="z-[100000] w-48 p-1.5 bg-background border border-zinc-200 dark:border-zinc-800 rounded-md shadow-xl outline-none" align="start" sideOffset={4}>
-                  <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-1">
-                    {(() => {
-                      const rawStatuses = (listStatuses && listStatuses.length > 0) ? listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')) : ALL_STATUSES;
-                      const sorted = sortStatusesWithClosedAtEnd(rawStatuses);
-                      const openStatuses = sorted.filter((s: string) => !isClosedStatus(s));
-                      const closedStatuses = sorted.filter((s: string) => isClosedStatus(s));
-
-                      const renderItem = (s: string) => {
-                        const customObj = listStatuses?.find((ls: any) => (ls.name || ls.status || ls.title) === s);
-                        const isClosed = isClosedStatus(s);
-                        const statusColorHex = STATUS_COLORS[(s || '').toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
-                        const iconStyle = customObj?.color
-                          ? { color: getHexColor(customObj.color) }
-                          : statusColorHex ? { color: statusColorHex } : {};
-
-                        return (
-                          <div
-                            key={s}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!canEditTask) return;
-                              const isFinal = s.toLowerCase() === 'closed' || s.toLowerCase() === 'done' || s.toLowerCase() === 'completed';
-                              onUpdate(subtask.id, { status: s, completed: isFinal });
-                              setStatusRowOpen(false);
-                            }}
-                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${subtask.status === s ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 font-medium' : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-accent hover:text-zinc-900 dark:hover:text-accent-foreground'}`}
-                          >
-                            {(() => {
-                              if (isClosed) {
-                                return <CheckCircle2 className="w-3 h-3 shrink-0 text-[#2FA37A]" style={customObj?.color ? { color: getHexColor(customObj.color) } : (statusColorHex ? { color: statusColorHex } : undefined)} />;
-                              }
-                              if ((s || '').toUpperCase() === 'KYC') {
-                                return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${!customObj?.color && !statusColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
-                              }
-                              return <CustomCircleDot className={`w-3 h-3 shrink-0 ${!customObj?.color && !statusColorHex ? 'text-zinc-500' : ''}`} style={iconStyle} />;
-                            })()}
-                            <span className="uppercase">{s}</span>
-                            {s === subtask.status && <Check className="w-3 h-3 ml-auto opacity-70 text-indigo-600 dark:text-indigo-400" />}
-                          </div>
-                        );
-                      };
-
-                      return (
-                        <>
-                          {openStatuses.map(renderItem)}
-                          {closedStatuses.length > 0 && (
-                            <>
-                              <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
-                              <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400 px-2.5 pt-1.5 pb-1 select-none">
-                                Closed
-                              </div>
-                              {closedStatuses.map(renderItem)}
-                            </>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
+                  {renderStatusMenu(() => onCloseDropdown())}
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
@@ -1391,26 +1394,46 @@ function SubtaskRow({
               <span className="text-[12px] text-zinc-500">Assignees</span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Popover.Root>
+              <Popover.Root
+                open={isExpRoleOpen}
+                onOpenChange={(open) => {
+                  if (!isRowLocked) {
+                    if (open) onOpenDropdown(`${subtask.id}:role`);
+                    else onCloseDropdown(`${subtask.id}:role`);
+                  }
+                }}
+              >
                 <Popover.Trigger asChild>
                   {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
-                    <div onClick={blockIfCannotAssign} title={!canSetAssignees ? assignDeniedMessage : undefined} className={`flex items-center transition-all duration-300 ${!canEditAssignment ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}`}>
+                    <button
+                      type="button"
+                      onClick={(e) => { if (!isRowLocked) blockIfCannotAssign(e); }}
+                      title={!canSetAssignees ? assignDeniedMessage : isRowLocked ? 'Locked' : undefined}
+                      className={`flex items-center transition-all duration-300 ${!canEditAssignment || isRowLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}`}
+                    >
                       {localRoleRestrictions.map((role: string, i: number) => {
                         const colors = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-pink-500'];
                         const bgColor = colors[i % colors.length];
                         return (
                           <div 
                             key={role} 
-                            className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-card ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative z-[${10-i}] ${bgColor} transition-transform`}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-card ${i > 0 ? '-ml-2.5' : ''} shadow-sm relative ${bgColor} transition-transform`}
+                            style={{ zIndex: 10 - i }}
                             title={role}
                           >
                             {role.substring(0, 2).toUpperCase()}
                           </div>
                         );
                       })}
-                    </div>
+                    </button>
                   ) : (
-                    <button onClick={blockIfCannotAssign} aria-disabled={!canEditAssignment} title={!canSetAssignees ? assignDeniedMessage : undefined} className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 border border-zinc-700/50 text-zinc-400 text-[11px] transition-colors select-none whitespace-nowrap ${!canEditAssignment ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-700/50 hover:text-zinc-200'}`}>
+                    <button
+                      type="button"
+                      onClick={(e) => { if (!isRowLocked) blockIfCannotAssign(e); }}
+                      aria-disabled={!canEditAssignment}
+                      title={!canSetAssignees ? assignDeniedMessage : isRowLocked ? 'Locked' : undefined}
+                      className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-zinc-800/50 border border-zinc-700/50 text-zinc-400 text-[11px] transition-colors select-none whitespace-nowrap ${!canEditAssignment || isRowLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-700/50 hover:text-zinc-200'}`}
+                    >
                       <Plus className="w-3 h-3 shrink-0" />
                       Assign Role
                     </button>
@@ -1423,71 +1446,86 @@ function SubtaskRow({
                 </Popover.Portal>
               </Popover.Root>
 
-              <Popover.Root open={assigneeOpen && canAssignMember} onOpenChange={(open) => { if (canAssignMember) setAssigneeOpen(open); }}>
-              <Popover.Trigger asChild>
-                <div
-                  onClick={blockIfCannotAssign}
-                  title={!canSetAssignees ? assignDeniedMessage : !hasTeamRole ? 'Select a team role first to assign members' : currentAssignees.map((u) => u.name).join(', ')}
-                  className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-all ${
-                    !canAssignMember
-                      ? 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed'
-                      : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  {currentAssignees.length > 0 ? (
-                    <>
-                      <div className="flex items-center -space-x-1.5">
-                        {currentAssignees.slice(0, 2).map((u) => (
-                          <div key={u.id} className="relative ring-2 ring-background rounded-full shrink-0">
-                            {u.avatarUrl ? (
-                              <img src={u.avatarUrl} alt={u.name} className="w-4 h-4 rounded-full object-cover shrink-0" />
-                            ) : (
-                              <div className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[7px] font-bold">
-                                {(u.name || 'U').substring(0, 2).toUpperCase()}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        {currentAssignees.length > 2 && (
-                          <div className="relative ring-2 ring-background rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0">
-                            +{currentAssignees.length - 2}
-                          </div>
-                        )}
-                      </div>
-                      {currentAssignees.length === 1 && (
-                        <span className="truncate max-w-[90px]">{currentAssignees[0].name}</span>
-                      )}
-                      {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="w-3.5 h-3.5 shrink-0" />
-                      <span>Assign</span>
-                      {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
-                    </>
-                  )}
-                </div>
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content
-                  className="z-[100000] w-72 p-0 bg-background border border-zinc-800 rounded-xl shadow-2xl overflow-hidden outline-none"
-                  side="bottom"
-                  align="start"
-                  sideOffset={8}
-                >
-                  {assigneeMenuContent}
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
-            {currentAssignees.length > 0 && !subtask.completed && canEditAssignment && (
-              <button
-                onClick={handleClearAllAssignees}
-                className="p-0.5 text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer shrink-0"
-                title="Clear assignee"
+              <Popover.Root
+                open={isExpAssigneeOpen}
+                onOpenChange={(open) => {
+                  if (canAssignMember) {
+                    if (open) onOpenDropdown(`${subtask.id}:assignee`);
+                    else onCloseDropdown(`${subtask.id}:assignee`);
+                  }
+                }}
               >
-                <X className="w-3 h-3" />
-              </button>
-            )}
+                <Popover.Trigger asChild>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      if (isRowLocked || blockIfCannotAssign(e)) return;
+                      if (!hasTeamRole) {
+                        e.preventDefault();
+                        onOpenDropdown(`${subtask.id}:role`);
+                      }
+                    }}
+                    title={!canSetAssignees ? assignDeniedMessage : !hasTeamRole ? 'Select a team role first to assign members' : currentAssignees.map((u) => u.name).join(', ')}
+                    className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] select-none w-fit transition-all ${
+                      !canAssignMember
+                        ? 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed'
+                        : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {currentAssignees.length > 0 ? (
+                      <>
+                        <div className="flex items-center -space-x-1.5">
+                          {currentAssignees.slice(0, 2).map((u) => (
+                            <div key={u.id} className="relative ring-2 ring-background rounded-full shrink-0">
+                              {u.avatarUrl ? (
+                                <img src={u.avatarUrl} alt={u.name} className="w-4 h-4 rounded-full object-cover shrink-0" />
+                              ) : (
+                                <div className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[7px] font-bold">
+                                  {(u.name || 'U').substring(0, 2).toUpperCase()}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {currentAssignees.length > 2 && (
+                            <div className="relative ring-2 ring-background rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[8px] font-bold h-4 w-4 flex items-center justify-center shrink-0">
+                              +{currentAssignees.length - 2}
+                            </div>
+                          )}
+                        </div>
+                        {currentAssignees.length === 1 && (
+                          <span className="truncate max-w-[90px]">{currentAssignees[0].name}</span>
+                        )}
+                        {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0 text-zinc-500" />}
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3.5 h-3.5 shrink-0" />
+                        <span>Assign</span>
+                        {!hasTeamRole && <Lock className="w-3 h-3 ml-0.5 shrink-0" />}
+                      </>
+                    )}
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    className="z-[100000] w-72 p-0 bg-background border border-zinc-800 rounded-xl shadow-2xl overflow-hidden outline-none"
+                    side="bottom"
+                    align="start"
+                    sideOffset={8}
+                  >
+                    {assigneeMenuContent}
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+              {currentAssignees.length > 0 && !subtask.completed && canEditAssignment && (
+                <button
+                  onClick={handleClearAllAssignees}
+                  className="p-0.5 text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer shrink-0"
+                  title="Clear assignee"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -1497,19 +1535,28 @@ function SubtaskRow({
               <Flag className={`w-3.5 h-3.5 shrink-0 text-zinc-500`} />
               <span className="text-[12px] text-zinc-500">Priority</span>
             </div>
-            <Popover.Root open={priorityOpen} onOpenChange={(open) => { if (!subtask.completed) setPriorityOpen(open); }}>
+            <Popover.Root
+              open={isExpPriorityOpen}
+              onOpenChange={(open) => {
+                if (!isRowLocked) {
+                  if (open) onOpenDropdown(`${subtask.id}:priority`);
+                  else onCloseDropdown(`${subtask.id}:priority`);
+                }
+              }}
+            >
               <Popover.Trigger asChild>
-                <div
+                <button
+                  type="button"
                   title={subtask.completed ? 'Locked' : (subtask.priority ? subtask.priority.toLowerCase() : 'No priority')}
                   className={`inline-flex items-center h-7 px-2.5 rounded-md text-[11px] font-semibold tracking-wide select-none w-fit transition-all ${
-                    subtask.completed
+                    isRowLocked
                       ? 'bg-zinc-800/40 cursor-not-allowed opacity-60'
                       : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50'
                   }`}
                 >
                   {subtask.priority && <Flag className={`w-3.5 h-3.5 shrink-0 mr-1.5 ${priorityConfig.iconColor}`} />}
                   <span className={priorityConfig.color}>{priorityLabel}</span>
-                </div>
+                </button>
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content
@@ -1518,7 +1565,7 @@ function SubtaskRow({
                   align="start"
                   sideOffset={4}
                 >
-                  {renderPriorityMenu(() => setPriorityOpen(false))}
+                  {renderPriorityMenu(() => onCloseDropdown())}
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
@@ -1913,18 +1960,33 @@ function SubtaskRow({
 export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setAddingSubtask, socket, currentUser, onOpenSubtask, listStatuses, teams, onCollapseSection, expandAllSignal }: SubtasksSectionProps & { onOpenSubtask?: (subtask: Subtask) => void }) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isSubmittingSubtask, setIsSubmittingSubtask] = useState(false);
+  const isSubmittingSubtaskRef = useRef(false);
   const [showAllSubtasks, setShowAllSubtasks] = useState(false);
   const [expandedSubtaskIds, setExpandedSubtaskIds] = useState<Set<string>>(new Set());
   const [subtaskToDelete, setSubtaskToDelete] = useState<Subtask | null>(null);
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+
+  const handleOpenDropdown = useCallback((id: string) => {
+    setActiveDropdown(id);
+  }, []);
+
+  const handleCloseDropdown = useCallback((expectedId?: string) => {
+    setActiveDropdown(prev => {
+      if (!expectedId) return null;
+      return prev === expectedId ? null : prev;
+    });
+  }, []);
 
   const handleDeleteSubtask = async (st: Subtask) => {
+    setActiveDropdown(null);
     try {
       await tasksApi.deleteSubtask(task.id, st.id);
-      const updatedSubtasks = (localSubtasks || []).filter((s) => s.id !== st.id);
+      const updatedSubtasks = (localSubtasksRef.current || []).filter((s) => s.id !== st.id);
       setLocalSubtasks(updatedSubtasks);
       const updatedParent = { ...task, subtasks: updatedSubtasks };
       onUpdateTask(updatedParent);
       useAppStore.getState().updateTask(updatedParent);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
       toast.success('Subtask deleted');
     } catch (err: any) {
       toast.error(err?.message || 'Failed to delete subtask');
@@ -2036,14 +2098,19 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   }, [optimisticUpdate]);
 
   const handleAddSubtask = async () => {
-    if (!newSubtaskTitle.trim() || isSubmittingSubtask) { setAddingSubtask(false); return; }
+    if (!newSubtaskTitle.trim() || isSubmittingSubtaskRef.current) {
+      setAddingSubtask(false);
+      return;
+    }
+    isSubmittingSubtaskRef.current = true;
     setIsSubmittingSubtask(true);
+    setActiveDropdown(null);
     try {
       const { subtask } = await tasksApi.createSubtask(task.id, {
         title: newSubtaskTitle.trim(),
         priority: 'MEDIUM',
       });
-      const updated = [...localSubtasks, subtask];
+      const updated = [...localSubtasksRef.current, subtask];
       setLocalSubtasks(updated);
       const updatedParent = { ...task, subtasks: updated };
       onUpdateTask(updatedParent);
@@ -2055,15 +2122,15 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
     } catch (err) {
       console.error('Failed to create subtask', err);
     } finally {
+      isSubmittingSubtaskRef.current = false;
       setIsSubmittingSubtask(false);
     }
   };
 
-
-
   const areAllExpanded = localSubtasks.length > 0 && expandedSubtaskIds.size === localSubtasks.length;
 
   const handleToggleExpandAll = useCallback(() => {
+    setActiveDropdown(null);
     setExpandedSubtaskIds((prev) => {
       if (prev.size === localSubtasks.length && localSubtasks.length > 0) {
         return new Set();
@@ -2083,6 +2150,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   }, [expandAllSignal, handleToggleExpandAll]);
 
   const handleToggleRow = useCallback((id: string) => {
+    setActiveDropdown(null);
     setExpandedSubtaskIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -2092,6 +2160,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
   }, []);
 
   const handleSetRow = useCallback((id: string, expanded: boolean) => {
+    setActiveDropdown(null);
     setExpandedSubtaskIds((prev) => {
       const next = new Set(prev);
       if (expanded) next.add(id);
@@ -2102,6 +2171,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
 
   const handleHeaderDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    setActiveDropdown(null);
     onCollapseSection?.();
   };
 
@@ -2135,6 +2205,7 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               onToggle={toggleSubtask}
               onUpdate={optimisticUpdate}
               onOpenSubtask={(s) => {
+                setActiveDropdown(null);
                 if (onOpenSubtask) onOpenSubtask(s);
               }}
               socket={socket}
@@ -2159,13 +2230,19 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
               onToggleCollapse={() => handleToggleRow(subtask.id)}
               onSetCollapsed={(val) => handleSetRow(subtask.id, !val)}
               onDeleteSubtask={setSubtaskToDelete}
+              activeDropdown={activeDropdown}
+              onOpenDropdown={handleOpenDropdown}
+              onCloseDropdown={handleCloseDropdown}
             />
           ))}
           </div>
 
           {localSubtasks.length > 3 && (
             <button
-              onClick={() => setShowAllSubtasks(!showAllSubtasks)}
+              onClick={() => {
+                setActiveDropdown(null);
+                setShowAllSubtasks(!showAllSubtasks);
+              }}
               className="flex items-center justify-center gap-1.5 h-8 border-t border-zinc-800/60 text-[11px] font-medium text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/30 transition-colors cursor-pointer"
             >
               <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showAllSubtasks ? 'rotate-180' : ''}`} />

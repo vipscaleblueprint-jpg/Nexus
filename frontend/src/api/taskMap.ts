@@ -41,6 +41,23 @@ export interface TaskMapRecord {
   updatedAt: string;
 }
 
+export interface TaskProgress {
+  type?: string;
+  timeIn: string | null;
+  timeOut: string | null;
+  isMissingTime: boolean;
+  isUpwork: boolean;
+  client: string | null;
+  timeTracker: string | null;
+  maName: string | null;
+  status: string | null;
+  date: string | null;
+  sheetRow?: number;
+  taskDeliverables?: string | null;
+  taskUpdateAndDeliverables?: string | null;
+  updatedAt?: string;
+}
+
 export interface TaskMapItem {
   id: string;
   title: string;
@@ -66,6 +83,7 @@ export interface TaskMapItem {
   isAdminTask?: boolean;
   upworkStartedAt?: string | null;
   upworkSession?: UpworkSession | null;
+  progress?: TaskProgress | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,6 +124,7 @@ export interface TaskMapDataResponse {
   allUsers?: any[];
   shiftUsers?: ShiftUser[];
   activeUpworkSessions?: UpworkSession[];
+  upworkClients?: string[];
 }
 
 export const taskMapApi = {
@@ -205,5 +224,25 @@ export const taskMapApi = {
 
   getTimeline: async (taskId: string): Promise<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }> => {
     return apiClient<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/timeline`);
+  },
+
+  getUpworkClients: async (): Promise<{ success: boolean; clients: string[] }> => {
+    return apiClient<{ success: boolean; clients: string[] }>('/api/task-map/upwork-clients');
+  },
+
+  toggleUpworkClient: async (data: {
+    clientName: string;
+    isUpwork?: boolean;
+    action?: 'add' | 'remove' | 'toggle';
+    clients?: string[];
+  }): Promise<{ success: boolean; clients: string[] }> => {
+    return apiClient<{ success: boolean; clients: string[] }>('/api/task-map/upwork-clients', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  getUpworkActiveSessions: async (): Promise<{ success: boolean; activeUpworkSessions: UpworkSession[] }> => {
+    return apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>('/api/task-map/upwork-active');
   },
 };

@@ -8,15 +8,18 @@ import {
   TaskMapShift,
   UpworkSession,
 } from '@/api/taskMap';
+import { tasksApi } from '@/api/tasks';
 import { TaskMapSidebar } from './TaskMapSidebar';
 import { TaskMapHeader } from './TaskMapHeader';
 import { TaskMapBoardView } from './TaskMapBoardView';
 import { TaskMapAuditingView } from './TaskMapAuditingView';
+import { TaskMapCrmView } from './TaskMapCrmView';
 import { TaskMapUpworkView } from './TaskMapUpworkView';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
+import { hasCrmAccess } from '@/lib/permissions';
 
 export const TaskMapContainer: React.FC = () => {
   const [tasks, setTasks] = useState<TaskMapItem[]>([]);
@@ -28,6 +31,7 @@ export const TaskMapContainer: React.FC = () => {
   const [activeUpworkSessions, setActiveUpworkSessions] = useState<UpworkSession[]>([]);
   const [allDbClients, setAllDbClients] = useState<Array<{ id: string; name: string }>>([]);
   const currentUser = useAppStore((s) => s.currentUser);
+  const upworkClients = useAppStore((s) => s.upworkClients);
   const spaces = useAppStore((s) => s.spaces);
   const allLists = useAppStore((s) => s.allLists);
   const loadSpaces = useAppStore((s) => s.loadSpaces);
@@ -41,13 +45,13 @@ export const TaskMapContainer: React.FC = () => {
 
   // Track pending optimistic status updates to avoid race conditions & background fetch overwrites
   const pendingUpdatesRef = useRef<
-    Map<string, { statuses: string[]; timer?: NodeJS.Timeout; timestamp: number }>
+    Map<string, { statuses: string[]; timer?: NodeJS.Timeout | null; timestamp: number }>
   >(new Map());
 
   // Shift, Date, Client & View mode state (defaults to Nov 5, 2026 or today)
   const [currentShift, setCurrentShift] = useState<string>('DAY');
   const [currentDate, setCurrentDate] = useState<string>('2026-11-05');
-  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'UPWORK'>('BOARD');
+  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK'>('BOARD');
   const [selectedClient, setSelectedClient] = useState<string>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
@@ -62,29 +66,47 @@ export const TaskMapContainer: React.FC = () => {
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
+      const shiftTokens = (currentShift || 'ALL')
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
+      const isCustomOnly = shiftTokens.length === 1 && shiftTokens[0] === 'CUSTOM';
+      const apiShift = isCustomOnly
+        ? 'ALL'
+        : shiftTokens.filter((s) => s !== 'CUSTOM').join(',') || 'ALL';
+
       const res = await taskMapApi.getData({
-        shift: currentShift === 'CUSTOM' ? 'ALL' : currentShift,
+        shift: apiShift,
         date: currentDate,
         search,
         client: selectedClient !== 'ALL' ? selectedClient : undefined,
       });
 
       if (res.success) {
+        // Sanitize sub-statuses: strip CRM tag (CRM is main board status, not a substatus label)
+        const sanitizeStatuses = (statuses?: string[], taskStatus?: string): string[] => {
+          if (!statuses || statuses.length === 0) {
+            return taskStatus?.toUpperCase().trim() === 'CRM' ? ['To send'] : [];
+          }
+          const clean = statuses.filter((s) => s.toUpperCase().trim() !== 'CRM');
+          if (clean.length > 0) return clean.slice(0, 1);
+          if (taskStatus?.toUpperCase().trim() === 'CRM') return ['To send'];
+          return [];
+        };
+
         // Merge with local pending optimistic updates so background refreshes never flicker or uncheck
         setTasks(() => {
           const serverTasks = res.tasks || [];
           return serverTasks.map((st) => {
             const pending = pendingUpdatesRef.current.get(st.id);
-            if (pending && Date.now() - pending.timestamp < 4000) {
-              return {
-                ...st,
-                taskMap: {
-                  ...st.taskMap,
-                  statuses: pending.statuses,
-                },
-              };
-            }
-            return st;
+            const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
+            return {
+              ...st,
+              taskMap: {
+                ...st.taskMap,
+                statuses: sanitizeStatuses(rawStatuses, st.status),
+              },
+            };
           });
         });
 
@@ -92,16 +114,14 @@ export const TaskMapContainer: React.FC = () => {
           const serverPool = res.availablePool || [];
           return serverPool.map((st) => {
             const pending = pendingUpdatesRef.current.get(st.id);
-            if (pending && Date.now() - pending.timestamp < 4000) {
-              return {
-                ...st,
-                taskMap: {
-                  ...st.taskMap,
-                  statuses: pending.statuses,
-                },
-              };
-            }
-            return st;
+            const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
+            return {
+              ...st,
+              taskMap: {
+                ...st.taskMap,
+                statuses: sanitizeStatuses(rawStatuses, st.status),
+              },
+            };
           });
         });
 
@@ -110,6 +130,9 @@ export const TaskMapContainer: React.FC = () => {
         setAllUsers(res.allUsers || []);
         setShiftUsers(res.shiftUsers || []);
         setActiveUpworkSessions(res.activeUpworkSessions || []);
+        if (res.upworkClients) {
+          useAppStore.getState().setUpworkClients(res.upworkClients);
+        }
         if (res.allClients) {
           setAllDbClients(res.allClients);
         }
@@ -189,6 +212,7 @@ export const TaskMapContainer: React.FC = () => {
             ...t,
             upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
             upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
+            progress: data.progress !== undefined ? data.progress : t.progress,
             taskMap: {
               ...t.taskMap,
               ...(taskMap || {}),
@@ -205,6 +229,7 @@ export const TaskMapContainer: React.FC = () => {
             ...t,
             upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
             upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
+            progress: data.progress !== undefined ? data.progress : t.progress,
             taskMap: {
               ...t.taskMap,
               ...(taskMap || {}),
@@ -217,6 +242,18 @@ export const TaskMapContainer: React.FC = () => {
       if (incomingActiveSessions) {
         setActiveUpworkSessions(incomingActiveSessions);
       }
+    };
+
+    const handleProgressUpdated = (e: any) => {
+      const data = e?.detail || e;
+      if (!data?.taskId) return;
+      const { taskId, progress } = data;
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, progress: progress !== undefined ? progress : t.progress } : t))
+      );
+      setAvailablePool((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, progress: progress !== undefined ? progress : t.progress } : t))
+      );
     };
 
     const handleUpworkChanged = (e: any) => {
@@ -249,12 +286,14 @@ export const TaskMapContainer: React.FC = () => {
 
     window.addEventListener('task:updated', handleTaskUpdated);
     window.addEventListener('task_map:updated', handleTaskMapUpdated);
+    window.addEventListener('task:progress_updated', handleProgressUpdated);
     window.addEventListener('task_activity', handleTaskUpdated);
     window.addEventListener('upwork:status_changed', handleUpworkChanged);
 
     return () => {
       window.removeEventListener('task:updated', handleTaskUpdated);
       window.removeEventListener('task_map:updated', handleTaskMapUpdated);
+      window.removeEventListener('task:progress_updated', handleProgressUpdated);
       window.removeEventListener('task_activity', handleTaskUpdated);
       window.removeEventListener('upwork:status_changed', handleUpworkChanged);
     };
@@ -262,8 +301,12 @@ export const TaskMapContainer: React.FC = () => {
 
   // Status Change Handler with Optimistic Updates (Frontend First) & Instant Realtime
   const handleStatusChange = async (taskId: string, newStatuses: string[]) => {
+    // Strip CRM tag from substatus (CRM is main board routing status, not a substatus label)
+    const cleanStatuses = newStatuses.filter((s) => s.toUpperCase().trim() !== 'CRM');
+    const finalStatuses = cleanStatuses.length > 0 ? cleanStatuses.slice(0, 1) : [];
+
     const existingTask = tasks.find((t) => t.id === taskId) || availablePool.find((t) => t.id === taskId);
-    const upworkStatus = newStatuses.find((s) => s.toUpperCase().startsWith('UPWORK'));
+    const upworkStatus = finalStatuses.find((s) => s.toUpperCase().startsWith('UPWORK'));
 
     let optimisticStartedAt: string | null = null;
     let optimisticSession: UpworkSession | null = null;
@@ -293,7 +336,7 @@ export const TaskMapContainer: React.FC = () => {
               ...t,
               upworkStartedAt: optimisticStartedAt,
               upworkSession: optimisticSession,
-              taskMap: { ...t.taskMap, statuses: newStatuses },
+              taskMap: { ...t.taskMap, statuses: finalStatuses },
             }
           : t
       )
@@ -302,7 +345,7 @@ export const TaskMapContainer: React.FC = () => {
     // Available Tasks pool strictly holds Pending and Revision statuses only.
     // Explicitly exclude Waiting, Recurring, Daily, Weekly, Monthly, and On-Hold tasks.
     const s = (existingTask?.status || '').toUpperCase().replace(/[\s_-]+/g, '');
-    const upStatuses = newStatuses.map((st) => st.toUpperCase().replace(/[\s_-]+/g, ''));
+    const upStatuses = finalStatuses.map((st) => st.toUpperCase().replace(/[\s_-]+/g, ''));
     const isExcluded =
       s === 'WAITING' ||
       s.includes('WAITING') ||
@@ -349,7 +392,7 @@ export const TaskMapContainer: React.FC = () => {
                 ...t,
                 upworkStartedAt: optimisticStartedAt,
                 upworkSession: optimisticSession,
-                taskMap: { ...t.taskMap, statuses: newStatuses },
+                taskMap: { ...t.taskMap, statuses: finalStatuses },
               }
             : t
         );
@@ -360,7 +403,7 @@ export const TaskMapContainer: React.FC = () => {
             ...existingTask,
             upworkStartedAt: optimisticStartedAt,
             upworkSession: optimisticSession,
-            taskMap: { ...existingTask.taskMap, statuses: newStatuses },
+            taskMap: { ...existingTask.taskMap, statuses: finalStatuses },
           },
           ...prev,
         ];
@@ -386,7 +429,7 @@ export const TaskMapContainer: React.FC = () => {
 
     const timer = setTimeout(async () => {
       try {
-        const res = await taskMapApi.updateTaskStatuses(taskId, newStatuses);
+        const res = await taskMapApi.updateTaskStatuses(taskId, finalStatuses);
         if (res.activeUpworkSessions) {
           setActiveUpworkSessions(res.activeUpworkSessions);
         }
@@ -406,12 +449,13 @@ export const TaskMapContainer: React.FC = () => {
             )
           );
         }
+        const cur = pendingUpdatesRef.current.get(taskId);
+        if (cur) {
+          cur.timer = null;
+        }
         // Retain in pending set briefly (1.5s) to guard against any trailing background GETs
         setTimeout(() => {
-          const cur = pendingUpdatesRef.current.get(taskId);
-          if (cur && !cur.timer) {
-            pendingUpdatesRef.current.delete(taskId);
-          }
+          pendingUpdatesRef.current.delete(taskId);
         }, 1500);
       } catch (err: any) {
         pendingUpdatesRef.current.delete(taskId);
@@ -421,10 +465,52 @@ export const TaskMapContainer: React.FC = () => {
     }, 250);
 
     pendingUpdatesRef.current.set(taskId, {
-      statuses: newStatuses,
+      statuses: finalStatuses,
       timer,
       timestamp: Date.now(),
     });
+  };
+
+  // Handler for direct task property updates (e.g. main workflow status, priority)
+  const handleTaskUpdate = async (taskId: string, fields: Partial<TaskMapItem>) => {
+    // 1. Optimistically update local tasks & availablePool while tracking previous status for undo/misclick support
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              ...fields,
+              _previousStatus:
+                fields.status && fields.status !== t.status
+                  ? t.status
+                  : (t as any)._previousStatus,
+            }
+          : t
+      )
+    );
+    setAvailablePool((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              ...fields,
+              _previousStatus:
+                fields.status && fields.status !== t.status
+                  ? t.status
+                  : (t as any)._previousStatus,
+            }
+          : t
+      )
+    );
+
+    // 2. Persist to backend
+    try {
+      await tasksApi.updateTask(taskId, fields as any);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { id: taskId, ...fields } }));
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update task');
+      loadData(true);
+    }
   };
 
   // Compute distinct clients from "Client Dashboard" in sidebar/database and their active task counts
@@ -565,6 +651,50 @@ export const TaskMapContainer: React.FC = () => {
     }));
   }, [shiftUsers, allUsers]);
 
+  // Merge activeUpworkSessions with any open tasks actively in progress under Upwork
+  const effectiveUpworkSessions = React.useMemo(() => {
+    const list = [...activeUpworkSessions];
+    const seenTaskIds = new Set(list.map((s) => s.taskId));
+
+    for (const t of tasks) {
+      if (t.isClosed) continue;
+      const clientName = t.progress?.client || t.list?.name || '';
+      const isClientConfiguredUpwork = upworkClients.some(
+        (c) => c.toLowerCase() === clientName.toLowerCase()
+      );
+      const isUpwork = t.progress?.timeTracker
+        ? Boolean(t.progress?.isUpwork)
+        : Boolean(
+            t.progress?.isUpwork ||
+            isClientConfiguredUpwork ||
+            t.list?.name?.toLowerCase().includes('upwork') ||
+            (t.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
+          );
+      // Only count as live when the MA clocked in and has not clocked out
+      const isActivelyWorking = Boolean(
+        t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime
+      );
+
+      if (isUpwork && isActivelyWorking && !seenTaskIds.has(t.id)) {
+        seenTaskIds.add(t.id);
+        const userName = t.progress?.maName || t.assignee?.name || 'Team Member';
+        list.push({
+          taskId: t.id,
+          taskTitle: t.title,
+          userId: t.assigneeId || '',
+          userName,
+          pmName: t.progress?.client ? t.progress.client.toUpperCase() : 'UPWORK',
+          startedAt: t.progress?.updatedAt || t.upworkStartedAt || new Date().toISOString(),
+        });
+      }
+    }
+    return list;
+  }, [activeUpworkSessions, tasks, upworkClients]);
+
+  useEffect(() => {
+    useAppStore.getState().setActiveUpworkSessions(effectiveUpworkSessions);
+  }, [effectiveUpworkSessions]);
+
   if (loading && tasks.length === 0 && availablePool.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-12 h-full bg-background text-zinc-400">
@@ -586,6 +716,33 @@ export const TaskMapContainer: React.FC = () => {
 
       {/* 2. Right: Main Area */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-background">
+        {/* Above-Header Master Upwork Alert Banner */}
+        {effectiveUpworkSessions.length > 0 && (
+          <div className="w-full px-6 pt-3 pb-0 shrink-0">
+            <div className="w-full flex items-center justify-between gap-3 px-4 py-2 rounded-xl bg-red-950/90 border border-red-700/80 text-white shadow-lg shadow-red-950/50 animate-in fade-in duration-200">
+              <div className="flex items-center gap-2.5 truncate text-xs sm:text-sm font-bold tracking-wide">
+                <span className="relative flex size-2.5 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full size-2.5 bg-red-500" />
+                </span>
+                <span className="truncate">
+                  {effectiveUpworkSessions.map((s) => {
+                    const rawName = s.userName || 'MA';
+                    const name = rawName.toUpperCase();
+                    const taskName = s.taskTitle ? ` · ${s.taskTitle}` : '';
+                    return `⚡ ${name} is actively doing an UPWORK task${taskName}`;
+                  }).join('   |   ')}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded bg-white text-zinc-950 shadow-xs">
+                  Upwork Active
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Top Header Bar: Date, Day, Shift Pills [All] [Day] [Noon] [Night] [Custom], Client selector, View tabs, Search */}
         <TaskMapHeader
           currentDate={currentDate}
@@ -594,7 +751,7 @@ export const TaskMapContainer: React.FC = () => {
           shifts={shifts}
           search={search}
           onSearchChange={setSearch}
-          activeUpworkSessions={activeUpworkSessions}
+          activeUpworkSessions={effectiveUpworkSessions}
           currentView={currentView}
           onViewChange={setCurrentView}
           clients={clients}
@@ -604,9 +761,10 @@ export const TaskMapContainer: React.FC = () => {
           availableMAs={availableMAs}
           selectedMAs={selectedCustomMAs}
           onSelectedMAsChange={setSelectedCustomMAs}
+          hasCrmAccess={hasCrmAccess(currentUser)}
         />
 
-        {/* Viewport: Board View OR Auditing View OR Upwork Tab View */}
+        {/* Viewport: Board View OR Auditing View OR CRM View OR Upwork Tab View */}
         <div className="flex-1 overflow-hidden">
           {currentView === 'BOARD' ? (
             <TaskMapBoardView
@@ -624,6 +782,7 @@ export const TaskMapContainer: React.FC = () => {
               onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
               selectedCustomMAs={selectedCustomMAs}
               clients={clients}
+              onTaskUpdate={handleTaskUpdate}
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView
@@ -636,6 +795,21 @@ export const TaskMapContainer: React.FC = () => {
               onOptionsUpdated={() => loadData(true)}
               onOpenDetail={setSelectedTaskModal}
               onDataRefresh={() => loadData(true)}
+              onTaskUpdate={handleTaskUpdate}
+            />
+          ) : currentView === 'CRM' ? (
+            <TaskMapCrmView
+              tasks={displayedTasks}
+              availablePool={displayedPool}
+              options={options}
+              allUsers={allUsers}
+              shiftUsers={shiftUsers}
+              onStatusChange={handleStatusChange}
+              onOptionsUpdated={() => loadData(true)}
+              onOpenDetail={setSelectedTaskModal}
+              onDataRefresh={() => loadData(true)}
+              onTaskUpdate={handleTaskUpdate}
+              onSwitchToBoard={() => setCurrentView('BOARD')}
             />
           ) : (
             <TaskMapUpworkView

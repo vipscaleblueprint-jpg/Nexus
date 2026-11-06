@@ -88,6 +88,34 @@ export function isProjectManagerOrAdmin(user: User | null | undefined): boolean 
 }
 
 /**
+ * Checks if a user has any Auditor or Audit specialization role or flag.
+ */
+export function isAuditorUser(user: any): boolean {
+  if (!user) return false;
+  if (user.isAudit) return true;
+  const roles = user.roles || [];
+  return roles.some((r: string) => typeof r === 'string' && /audit/i.test(r.trim()));
+}
+
+/**
+ * Checks if a user has a CRM role.
+ */
+export function isCrmUser(user: any): boolean {
+  if (!user) return false;
+  const roles = user.roles || [];
+  return roles.some((r: string) => typeof r === 'string' && /crm|client\s*relationship/i.test(r.trim()));
+}
+
+/**
+ * Checks if a user is allowed to access the CRM board (Admins and CRM role holders).
+ */
+export function hasCrmAccess(user: any): boolean {
+  if (!user) return false;
+  if (user.systemRole === 'ADMIN') return true;
+  return isCrmUser(user);
+}
+
+/**
  * Message shown to users who can't set Team Role / Assignees, naming the PM/Senior role(s) exactly as they are
  * written in the WorkspaceRole table. Same text as the server (server/src/utils/assignPermission.ts).
  */
@@ -186,4 +214,20 @@ export function canTransitionTaskStatus(
     targetStatus: newStatus,
   };
 }
+
+/**
+ * Checks whether the current user is Aaron (owner/admin) based on database identity.
+ */
+export function isAaronUser(user?: User | null | { id?: string; name?: string; email?: string }): boolean {
+  if (!user) return false;
+  const name = (user.name || '').toLowerCase().trim();
+  const email = (user.email || '').toLowerCase().trim();
+  return (
+    name === 'aaron' ||
+    name.includes('aaron') ||
+    email.includes('aaron') ||
+    user.id === 'bc74d7a0-e1e0-4a18-bf59-4e733fa25c92'
+  );
+}
+
 

@@ -10,6 +10,7 @@ import { Loader2 } from 'lucide-react';
 
 import { authApi } from '@/api';
 import { notificationsApi } from '@/api/notifications';
+import { taskMapApi } from '@/api/taskMap';
 import { ToastContainer } from '@/components/ui/ToastContainer';
 import { MentionConfetti } from '@/components/ui/MentionConfetti';
 import { DraftBeggingReminder } from '@/components/ui/DraftBeggingReminder';
@@ -191,6 +192,16 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
           setUnreadNotifications(res.unreadCount);
         }
       }).catch(() => {});
+      taskMapApi.getUpworkActiveSessions().then((res) => {
+        if (res?.activeUpworkSessions) {
+          useAppStore.getState().setActiveUpworkSessions(res.activeUpworkSessions);
+        }
+      }).catch(() => {});
+      taskMapApi.getUpworkClients().then((res) => {
+        if (res?.clients) {
+          useAppStore.getState().setUpworkClients(res.clients);
+        }
+      }).catch(() => {});
     });
     if (isPerfEnabled()) s.onAny((event) => recordSocketEvent(event));
 
@@ -347,6 +358,36 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('upwork:status_changed', (data) => {
       window.dispatchEvent(new CustomEvent('upwork:status_changed', { detail: data }));
+      if (data?.taskId) {
+        useAppStore.getState().setActiveUpworkSessions((prev) => {
+          if (data.active) {
+            const idx = prev.findIndex((x) => x.taskId === data.taskId);
+            const sessionItem = {
+              taskId: data.taskId,
+              taskTitle: data.taskTitle || 'Task',
+              userId: data.userId || '',
+              userName: data.userName || 'MA Member',
+              pmName: data.clientName || data.pmName || 'UPWORK',
+              startedAt: data.startedAt || new Date().toISOString(),
+            };
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], ...sessionItem };
+              return copy;
+            }
+            return [...prev, sessionItem];
+          } else {
+            return prev.filter((x) => x.taskId !== data.taskId);
+          }
+        });
+      }
+    });
+
+    s.on('upwork:clients_updated', (data) => {
+      window.dispatchEvent(new CustomEvent('upwork:clients_updated', { detail: data }));
+      if (Array.isArray(data?.clients)) {
+        useAppStore.getState().setUpworkClients(data.clients);
+      }
     });
 
     s.on('task_map:updated', (data) => {

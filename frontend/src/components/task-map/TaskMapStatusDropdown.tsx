@@ -59,16 +59,25 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
   const [newColor, setNewColor] = useState('#3b82f6');
   const [deleteWarning, setDeleteWarning] = useState<{ id: string; inUseCount: number } | null>(null);
 
-  // Local optimistic statuses for instantaneous 0ms feedback
-  const [localStatuses, setLocalStatuses] = useState<string[]>(selectedStatuses);
+  // Local optimistic statuses for instantaneous 0ms feedback with case-insensitive normalization
+  const norm = (s: string) => (s || '').trim().toLowerCase();
+  const [localStatuses, setLocalStatuses] = useState<string[]>(() => {
+    const clean = (selectedStatuses || []).filter((s) => s.toUpperCase().trim() !== 'CRM');
+    return clean.slice(0, 1);
+  });
 
   useEffect(() => {
-    setLocalStatuses(selectedStatuses);
+    const clean = (selectedStatuses || []).filter((s) => s.toUpperCase().trim() !== 'CRM');
+    const single = clean.slice(0, 1);
+    setLocalStatuses((prev) => {
+      if (prev.length === single.length && prev[0] === single[0]) return prev;
+      return single;
+    });
   }, [selectedStatuses]);
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const initialPosRef = useRef<{ top: number; left: number } | null>(null);
 
   const currentUser = useAppStore((s) => s.currentUser);
@@ -90,16 +99,20 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
       setIsOpen(true);
     } else {
       setIsOpen(false);
+      setCoords(null);
       setIsEditMode(false);
     }
   };
 
   const handleToggleStatus = (label: string) => {
     if (isEditMode || readOnly) return;
-    const next = localStatuses.includes(label)
-      ? localStatuses.filter((s) => s !== label)
-      : [...localStatuses, label];
+    const target = norm(label);
+    const already = localStatuses.some((s) => norm(s) === target);
+    // Single-select: clicking active status clears it; clicking another sets solely that status
+    const next = already ? [] : [label];
     setLocalStatuses(next);
+    setIsOpen(false);
+    setCoords(null);
     onToggleStatus(label, next);
   };
 
@@ -203,10 +216,11 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
     };
   }, [isOpen]);
 
-  // Filter out URGENT, Upwork contracts or PM reviewer names - show pure statuses only
+  // Filter out CRM, URGENT, Upwork contracts or PM reviewer names - show pure statuses only
   const isExcludedOption = (opt: TaskMapOption) => {
     const up = (opt.label || '').toUpperCase().trim();
     return (
+      up === 'CRM' ||
       up === 'URGENT' ||
       up.startsWith('UPWORK') ||
       up === 'CHE' ||
@@ -253,7 +267,8 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
     }
   };
 
-  const primaryStatus = localStatuses[0];
+  const nonCrmStatuses = localStatuses.filter((s) => s.toUpperCase().trim() !== 'CRM');
+  const primaryStatus = nonCrmStatuses[0];
   const primaryOpt = primaryStatus ? options.find((o) => o.label.toLowerCase() === primaryStatus.toLowerCase()) : null;
 
   return (
@@ -271,40 +286,36 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
         }}
         onClick={toggleDropdown}
         title={readOnly ? 'Status management is restricted' : undefined}
-        className={`w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all select-none shadow-sm ${readOnly
+        className={`substatus-pill w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all duration-150 select-none shadow-sm ${
+          readOnly
             ? 'cursor-not-allowed opacity-80'
-            : 'cursor-pointer'
-          } ${localStatuses.length === 0
-            ? 'border border-dashed border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
-            : 'border border-transparent'
-          }`}
+            : 'cursor-pointer hover:brightness-125 hover:contrast-105 active:scale-[0.98]'
+        } ${
+          !primaryStatus
+            ? 'border border-dashed border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80'
+            : 'border border-transparent hover:ring-1 hover:ring-white/20'
+        }`}
         style={
           primaryOpt
             ? { backgroundColor: primaryOpt.color, color: primaryOpt.textColor || '#ffffff' }
-            : localStatuses.length > 0
+            : primaryStatus
               ? { backgroundColor: '#3f3f46', color: '#ffffff' }
               : {}
         }
       >
         <span className="truncate">
-          {localStatuses.length === 0 ? 'Sub-Status' : localStatuses[0]}
+          {primaryStatus || 'Sub-Status'}
         </span>
         <div className="flex items-center gap-1 shrink-0 ml-1">
-          {localStatuses.length > 1 && (
-            <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-black/30">
-              +{localStatuses.length - 1}
-            </span>
-          )}
-          {readOnly ? (
+          {readOnly && (
             <Lock className="size-2.5 opacity-60" />
-          ) : (
-            <ChevronDown className="size-3 opacity-80" />
           )}
         </div>
       </button>
 
       {/* Popover Dropdown portalled directly to document.body with maximum z-index */}
       {isOpen &&
+        coords &&
         typeof document !== 'undefined' &&
         createPortal(
           <div
@@ -374,7 +385,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
                 </div>
               ) : (
                 filteredOptions.map((opt) => {
-                  const isSelected = localStatuses.includes(opt.label);
+                  const isSelected = localStatuses.some((s) => norm(s) === norm(opt.label));
                   return (
                     <div
                       key={opt.id}

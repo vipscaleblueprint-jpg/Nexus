@@ -19,6 +19,10 @@ import {
   toTaskMapShiftKey,
   fromTaskMapShiftKey,
   TaskMapRecordData,
+  getUpworkClients,
+  addUpworkClient,
+  removeUpworkClient,
+  setUpworkClients,
 } from '../services/taskMapService';
 
 // Closed status check matching Nexus conventions
@@ -37,7 +41,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const searchQuery = (req.query.search as string || '').toLowerCase().trim();
     const clientQuery = (req.query.client as string || '').trim();
 
-    const isAllShifts = shiftQuery === 'ALL';
+    const shiftTokens = shiftQuery
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+
+    const isAllShifts =
+      shiftTokens.length === 0 ||
+      shiftTokens.includes('ALL') ||
+      (shiftTokens.includes('DAY') && shiftTokens.includes('NOON') && shiftTokens.includes('NIGHT'));
+
     const activeShift = await getCurrentActiveShift();
     const currentShift = isAllShifts ? 'ALL' : (shiftQuery || activeShift);
 
@@ -117,14 +130,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
       }
     } else {
-      const auditShiftKey = fromTaskMapShiftKey(currentShift);
-      const activeShiftConfig = await (prisma as any).auditShiftConfig.findFirst({
-        where: { shiftKey: auditShiftKey, isActive: true },
+      const auditShiftKeys = Array.from(new Set(shiftTokens.map(fromTaskMapShiftKey)));
+      const activeShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
+        where: { shiftKey: { in: auditShiftKeys }, isActive: true },
       });
-      (activeShiftConfig?.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
-      (activeShiftConfig?.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
-      (activeShiftConfig?.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
-      (activeShiftConfig?.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+      for (const cfg of activeShiftConfigs) {
+        (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+        (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+        (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+        (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+      }
     }
 
     const shiftUsers = allUsers
@@ -183,19 +198,44 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         return up === 'CHE' || up === 'PAU' || up === 'HAN' || up.includes('PM');
       });
 
-      // Check active Upwork status and session
+      // Check active Upwork status, session and sheet progress
       let upworkStartedAt: string | null = null;
       let upworkSession: any = null;
+      let reviewsList = mapRecord.pmReviews;
+      if (typeof reviewsList === 'string') {
+        try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
+      }
+      if (!Array.isArray(reviewsList)) reviewsList = [];
+
       const upworkStatus = (mapRecord.statuses || []).find(s => s.toUpperCase().startsWith('UPWORK'));
       if (upworkStatus) {
-        let reviewsList = mapRecord.pmReviews;
-        if (typeof reviewsList === 'string') {
-          try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
-        }
-        if (Array.isArray(reviewsList)) {
-          upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
-        }
+        upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
         upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
+      }
+
+      // Check sheet progress
+      let progress: any = reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+
+      // If Upwork session is recorded in reviewsList even without explicit UPWORK substatus
+      if (!upworkSession) {
+        upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active) || null;
+        if (upworkSession) {
+          upworkStartedAt = upworkSession.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
+        }
+      }
+
+      // If sheet progress indicates Upwork and task is currently in progress (no timeOut)
+      if (progress?.isUpwork && !progress?.timeOut && !upworkSession) {
+        upworkStartedAt = progress.updatedAt || new Date().toISOString();
+        upworkSession = {
+          taskId: task.id,
+          taskTitle: task.title,
+          userId: task.assigneeId || '',
+          userName: progress.maName || 'Team Member',
+          pmName: 'UPWORK',
+          clientName: progress.client,
+          startedAt: upworkStartedAt,
+        };
       }
 
       const folderName = (task.list?.folder?.name || '').toLowerCase();
@@ -211,6 +251,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         isAdminTask,
         upworkStartedAt,
         upworkSession,
+        progress,
       };
     });
 
@@ -331,26 +372,33 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     for (const t of openTasks as any[]) {
       const upworkTag = (t.taskMap?.statuses || []).find((s: string) => s.toUpperCase().startsWith('UPWORK'));
-      if (upworkTag) {
-        let pmName = 'General';
-        const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
-        if (m && m[1]) {
-          pmName = m[1].trim().toUpperCase();
-        } else if (upworkTag.toUpperCase().includes('ACTIVE')) {
-          pmName = 'Active';
+      const isSheetUpworkActive = Boolean(t.progress?.isUpwork && t.progress?.timeIn && !t.progress?.timeOut);
+      const isSessionActive = Boolean(t.upworkSession && (t.upworkSession.active || isSheetUpworkActive));
+
+      if (upworkTag || isSheetUpworkActive || isSessionActive) {
+        let pmName = 'UPWORK';
+        if (upworkTag) {
+          const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+          if (m && m[1]) {
+            pmName = m[1].trim().toUpperCase();
+          } else if (upworkTag.toUpperCase().includes('ACTIVE')) {
+            pmName = 'Active';
+          }
+        } else if (t.progress?.client) {
+          pmName = String(t.progress.client).toUpperCase();
         }
 
         const startedAt = t.upworkStartedAt || (t.taskMap?.updatedAt ? new Date(t.taskMap.updatedAt).toISOString() : new Date().toISOString());
-        const rawName = t.upworkSession?.userName || t.assignee?.name || (t.assignees && t.assignees[0]?.name) || t.creator?.name || '';
+        const rawName = t.progress?.maName || t.upworkSession?.userName || t.assignee?.name || (t.assignees && t.assignees[0]?.name) || t.creator?.name || '';
         const cleanName = rawName.includes('@') ? rawName.split('@')[0] : rawName;
-        const userName = (pmName && pmName !== 'General' && pmName !== 'Active') ? pmName : (cleanName || 'Team Member');
+        const userName = (pmName && pmName !== 'General' && pmName !== 'Active' && pmName !== 'UPWORK') ? pmName : (cleanName || 'Team Member');
         const userId = t.upworkSession?.userId || t.assigneeId || (t.assignees && t.assignees[0]?.id) || '';
 
         const sessionItem = {
           taskId: t.id,
           taskTitle: t.title,
           userId,
-          userName,
+          userName: t.progress?.maName || userName,
           pmName,
           startedAt,
         };
@@ -461,6 +509,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       logger.warn({ err }, 'Failed to query client dashboard folders');
     }
 
+    const upworkClients = await getUpworkClients();
+
     res.json({
       success: true,
       tasks: openTasks,
@@ -478,6 +528,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       allUsers,
       shiftUsers,
       activeUpworkSessions,
+      upworkClients,
     });
   } catch (error: any) {
     logger.error({ error }, 'Error fetching task map data');
@@ -1331,5 +1382,135 @@ export const getTaskTimeline = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error({ error }, 'Error fetching timeline');
     res.status(500).json({ error: 'Failed to fetch timeline' });
+  }
+};
+
+/**
+ * Get configured Upwork clients
+ */
+export const getUpworkClientsHandler = async (req: Request, res: Response) => {
+  try {
+    const clients = await getUpworkClients();
+    res.json({ success: true, clients });
+  } catch (error: any) {
+    logger.error({ error }, 'Error getting upwork clients');
+    res.status(500).json({ error: 'Failed to get upwork clients' });
+  }
+};
+
+/**
+ * Update Upwork clients configuration (add, remove, toggle, or set full list)
+ */
+export const updateUpworkClientsHandler = async (req: Request, res: Response) => {
+  try {
+    const { clientName, isUpwork, action, clients } = req.body || {};
+    let updatedClients: string[] = [];
+
+    if (Array.isArray(clients)) {
+      updatedClients = await setUpworkClients(clients);
+    } else if (clientName) {
+      const current = await getUpworkClients();
+      const exists = current.some((c) => c.toLowerCase() === String(clientName).trim().toLowerCase());
+      const shouldBeUpwork = isUpwork !== undefined ? Boolean(isUpwork) : (action === 'add' ? true : action === 'remove' ? false : !exists);
+
+      if (shouldBeUpwork) {
+        updatedClients = await addUpworkClient(clientName);
+      } else {
+        updatedClients = await removeUpworkClient(clientName);
+      }
+    } else {
+      return res.status(400).json({ error: 'clientName or clients array required' });
+    }
+
+    io.emit('upwork:clients_updated', { clients: updatedClients });
+    res.json({ success: true, clients: updatedClients });
+  } catch (error: any) {
+    logger.error({ error }, 'Error updating upwork clients');
+    res.status(500).json({ error: 'Failed to update upwork clients' });
+  }
+};
+
+/**
+ * Get active Upwork sessions across the workspace
+ */
+export const getActiveUpworkSessionsHandler = async (req: Request, res: Response) => {
+  try {
+    let activeUpworkSessions: any[] = [];
+    if (isRedisReady()) {
+      const rawMap = await redis.hgetall('task_map:upwork_active');
+      if (rawMap && Object.keys(rawMap).length > 0) {
+        activeUpworkSessions = Object.values(rawMap).map((val) => JSON.parse(val));
+      }
+    }
+
+    // Also verify open tasks in PostgreSQL with manual "mark as upwork" (project-based) or active sessions
+    try {
+      const openUpworkRecords = await prisma.taskMapRecord.findMany({
+        where: {
+          task: {
+            status: { notIn: ['CLOSED', 'DONE', 'Complete', 'Completed', 'Closed', 'Done'] },
+          },
+        },
+        select: {
+          taskId: true,
+          statuses: true,
+          pmReviews: true,
+          updatedAt: true,
+          task: {
+            select: {
+              title: true,
+              assignee: { select: { name: true } },
+              list: { select: { name: true } },
+            },
+          },
+        },
+      });
+
+      for (const rec of openUpworkRecords) {
+        const upworkTag = (rec.statuses || []).find((s) => s.toUpperCase().startsWith('UPWORK'));
+        let pmReviewsList = rec.pmReviews || [];
+        if (typeof pmReviewsList === 'string') {
+          try { pmReviewsList = JSON.parse(pmReviewsList); } catch { pmReviewsList = []; }
+        }
+        const activeReview: any = Array.isArray(pmReviewsList)
+          ? pmReviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active)
+          : null;
+
+        if (upworkTag || activeReview) {
+          const alreadyInList = activeUpworkSessions.some((s) => s.taskId === rec.taskId);
+          if (!alreadyInList) {
+            let pmName = activeReview?.pmName || activeReview?.clientName || rec.task?.list?.name || 'UPWORK';
+            if (upworkTag) {
+              const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+              if (m && m[1]) pmName = m[1].trim().toUpperCase();
+            }
+            const userName = activeReview?.userName || rec.task?.assignee?.name || pmName || 'Team Member';
+            const startedAt = activeReview?.startedAt || rec.updatedAt.toISOString();
+
+            const sessionItem = {
+              taskId: rec.taskId,
+              taskTitle: rec.task?.title || 'Task',
+              userId: '',
+              userName,
+              pmName,
+              clientName: pmName,
+              startedAt,
+            };
+            activeUpworkSessions.push(sessionItem);
+
+            if (isRedisReady()) {
+              redis.hset('task_map:upwork_active', rec.taskId, JSON.stringify(sessionItem)).catch(() => {});
+            }
+          }
+        }
+      }
+    } catch (dbErr) {
+      logger.warn({ dbErr }, 'Non-blocking error checking database open Upwork tasks');
+    }
+
+    res.json({ success: true, activeUpworkSessions });
+  } catch (error: any) {
+    logger.error({ error }, 'Error fetching active upwork sessions');
+    res.status(500).json({ error: 'Failed to fetch active upwork sessions' });
   }
 };

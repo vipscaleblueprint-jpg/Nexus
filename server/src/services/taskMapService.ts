@@ -2,6 +2,7 @@ import { prisma } from '../config/prisma';
 import { randomUUID } from 'crypto';
 import { io } from '../server';
 import { getActiveManilaShift } from './auditAutoAssign';
+import { redis, isRedisReady } from './redisService';
 
 export function toTaskMapShiftKey(key: string): string {
   const norm = (key || '').trim().toUpperCase();
@@ -346,4 +347,94 @@ export function getNextShift(currentShift: string): { nextShift: string; nextDay
     default:
       return { nextShift: 'DAY', nextDay: true };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Upwork Client Management
+// ---------------------------------------------------------------------------
+export async function getUpworkClients(): Promise<string[]> {
+  if (isRedisReady()) {
+    try {
+      const members = await redis.smembers('task_map:upwork_clients');
+      if (members && members.length > 0) {
+        return members.sort((a, b) => a.localeCompare(b));
+      }
+    } catch {}
+  }
+
+  try {
+    const rows = await prisma.$queryRawUnsafe<Array<{ label: string }>>(
+      `SELECT "label" FROM "TaskMapStatusOption" WHERE "label" LIKE 'UPWORK_CLIENT:%' ORDER BY "label" ASC`
+    );
+    const clients = rows.map((r) => r.label.replace('UPWORK_CLIENT:', '').trim()).filter(Boolean);
+    if (isRedisReady() && clients.length > 0) {
+      await redis.sadd('task_map:upwork_clients', ...clients).catch(() => {});
+    }
+    return clients;
+  } catch {
+    return [];
+  }
+}
+
+export async function addUpworkClient(clientName: string): Promise<string[]> {
+  const clean = (clientName || '').trim();
+  if (!clean) return getUpworkClients();
+  const label = `UPWORK_CLIENT:${clean}`;
+  try {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "TaskMapStatusOption" ("id", "label", "color", "order", "createdAt", "updatedAt")
+       VALUES ($1, $2, '#ffffff', 0, NOW(), NOW())
+       ON CONFLICT ("label") DO NOTHING`,
+      randomUUID(),
+      label
+    );
+  } catch {}
+  if (isRedisReady()) {
+    await redis.sadd('task_map:upwork_clients', clean).catch(() => {});
+  }
+  return getUpworkClients();
+}
+
+export async function removeUpworkClient(clientName: string): Promise<string[]> {
+  const clean = (clientName || '').trim();
+  if (!clean) return getUpworkClients();
+  const label = `UPWORK_CLIENT:${clean}`;
+  try {
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "TaskMapStatusOption" WHERE "label" = $1`,
+      label
+    );
+  } catch {}
+  if (isRedisReady()) {
+    await redis.srem('task_map:upwork_clients', clean).catch(() => {});
+  }
+  return getUpworkClients();
+}
+
+export async function setUpworkClients(clients: string[]): Promise<string[]> {
+  const cleanList = Array.from(new Set(clients.map((c) => c.trim()).filter(Boolean)));
+  try {
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "TaskMapStatusOption" WHERE "label" LIKE 'UPWORK_CLIENT:%'`
+    );
+    for (const c of cleanList) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "TaskMapStatusOption" ("id", "label", "color", "order", "createdAt", "updatedAt")
+         VALUES ($1, $2, '#ffffff', 0, NOW(), NOW())
+         ON CONFLICT ("label") DO NOTHING`,
+        randomUUID(),
+        `UPWORK_CLIENT:${c}`
+      );
+    }
+  } catch {}
+
+  if (isRedisReady()) {
+    try {
+      await redis.del('task_map:upwork_clients');
+      if (cleanList.length > 0) {
+        await redis.sadd('task_map:upwork_clients', ...cleanList);
+      }
+    } catch {}
+  }
+  return cleanList;
 }

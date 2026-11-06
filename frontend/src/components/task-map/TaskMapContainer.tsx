@@ -662,12 +662,14 @@ export const TaskMapContainer: React.FC = () => {
       const isClientConfiguredUpwork = upworkClients.some(
         (c) => c.toLowerCase() === clientName.toLowerCase()
       );
-      const isUpwork = Boolean(
-        t.progress?.isUpwork ||
-        isClientConfiguredUpwork ||
-        t.list?.name?.toLowerCase().includes('upwork') ||
-        (t.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
-      );
+      const isUpwork = t.progress?.timeTracker
+        ? Boolean(t.progress?.isUpwork)
+        : Boolean(
+            t.progress?.isUpwork ||
+            isClientConfiguredUpwork ||
+            t.list?.name?.toLowerCase().includes('upwork') ||
+            (t.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
+          );
       // Only count as live when the MA clocked in and has not clocked out
       const isActivelyWorking = Boolean(
         t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime

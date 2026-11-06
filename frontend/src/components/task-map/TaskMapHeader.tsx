@@ -4,6 +4,7 @@ import { format } from 'date-fns';
 import { TaskMapShift, UpworkSession, taskMapApi } from '@/api/taskMap';
 import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Kanban, UserCheck, X, Briefcase, Plus } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
+import { isAaronUser } from '@/lib/permissions';
 
 export interface ClientOption {
   id: string;
@@ -101,7 +102,9 @@ export const TaskMapHeader: React.FC<Props> = ({
   const [clientSearch, setClientSearch] = useState('');
   const clientDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Upwork Clients state
+  // Upwork Clients state (Restricted to Aaron)
+  const currentUser = useAppStore((s) => s.currentUser);
+  const isAaron = isAaronUser(currentUser);
   const [upworkModalOpen, setUpworkModalOpen] = useState(false);
   const [upworkSearch, setUpworkSearch] = useState('');
   const [newUpworkClient, setNewUpworkClient] = useState('');
@@ -464,21 +467,23 @@ const shiftOptions = [
             <span className="hidden sm:inline">Manage Shifts</span>
           </Link>
 
-          {/* Upwork Clients Configuration Button */}
-          <button
-            type="button"
-            onClick={() => setUpworkModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-emerald-500/50 rounded-xl text-xs font-medium text-zinc-300 hover:text-emerald-300 transition-colors cursor-pointer"
-            title="Configure which clients are UPWORK clients"
-          >
-            <Briefcase className="size-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">Upwork Clients</span>
-            {upworkClients.length > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold ml-0.5">
-                {upworkClients.length}
-              </span>
-            )}
-          </button>
+          {/* Upwork Clients Configuration Button (Restricted to Aaron) */}
+          {isAaron && (
+            <button
+              type="button"
+              onClick={() => setUpworkModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-emerald-500/50 rounded-xl text-xs font-medium text-zinc-300 hover:text-emerald-300 transition-colors cursor-pointer"
+              title="Configure which clients are UPWORK clients"
+            >
+              <Briefcase className="size-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Upwork Clients</span>
+              {upworkClients.length > 0 && (
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold ml-0.5">
+                  {upworkClients.length}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Client Selector Dropdown */}
           <div className="relative" ref={clientDropdownRef}>
@@ -598,18 +603,22 @@ const shiftOptions = [
                     })
                   )}
 
-                  <div className="h-px bg-zinc-800/80 my-1" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setClientDropdownOpen(false);
-                      setUpworkModalOpen(true);
-                    }}
-                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-emerald-400 hover:bg-emerald-950/30 transition-colors cursor-pointer font-semibold"
-                  >
-                    <Briefcase className="size-3.5" />
-                    <span>Manage Upwork Clients</span>
-                  </button>
+                  {isAaron && (
+                    <>
+                      <div className="h-px bg-zinc-800/80 my-1" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setClientDropdownOpen(false);
+                          setUpworkModalOpen(true);
+                        }}
+                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-emerald-400 hover:bg-emerald-950/30 transition-colors cursor-pointer font-semibold"
+                      >
+                        <Briefcase className="size-3.5" />
+                        <span>Manage Upwork Clients</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )}

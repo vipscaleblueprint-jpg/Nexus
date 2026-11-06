@@ -10,6 +10,7 @@ import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
 import { ClickUpStatusPanel } from "./ClickUpStatusPanel";
 import { motion, AnimatePresence } from "framer-motion";
 import { NotificationBell } from "./NotificationBell";
+import { isAaronUser } from "@/lib/permissions";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Nexus Workspace",
@@ -122,56 +123,65 @@ export function Header() {
         <div className="flex items-center gap-2">
           <NotificationBell />
 
-          {/* Active Upwork Live Ticker next to Profile */}
-          {(() => {
+          {/* Active Upwork Live Ticker next to Profile (Restricted to Aaron, Non-clickable) */}
+          {isAaronUser(currentUser) && (() => {
             const count = activeUpworkSessions?.length || 0;
-            // 0 active = green (available), 1 active = orange, 2+ = red blinking
+            // 0 active = green (available), 1 active = orange, 2+ = red double-blink conflict alert
             const tone =
               count === 0
                 ? {
-                    pill: 'border-emerald-500/40 hover:border-emerald-500/70 bg-emerald-500/10',
+                    pill: 'border-emerald-500/40 bg-emerald-500/10',
                     dot: 'bg-emerald-500',
-                    ping: '',
+                    isConflict: false,
                     text: 'text-emerald-300',
                     label: 'Upwork: not active',
                   }
                 : count === 1
                 ? {
-                    pill: 'border-orange-500/50 hover:border-orange-500/80 bg-orange-500/10',
+                    pill: 'border-orange-500/50 bg-orange-500/10',
                     dot: 'bg-orange-500',
-                    ping: 'bg-orange-400',
-                    text: 'text-orange-300',
+                    isConflict: false,
+                    text: 'text-orange-300 font-medium',
                     label: upworkTickerText,
                   }
                 : {
-                    pill: 'border-red-500/60 hover:border-red-500/90 bg-red-500/10 animate-pulse',
-                    dot: 'bg-red-500',
-                    ping: 'bg-red-400',
-                    text: 'text-red-300',
-                    label: upworkTickerText,
+                    pill: 'border-red-500/80 bg-red-500/20 ring-1 ring-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.4)] animate-pulse',
+                    dot: 'bg-red-500 ring-2 ring-red-400',
+                    isConflict: true,
+                    text: 'text-red-200 font-bold',
+                    label: `⚠️ CONFLICT (${count} ACTIVE): ${upworkTickerText}`,
                   };
             return (
-              <Link
-                href="/task-map"
-                className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border transition-all text-xs cursor-pointer shadow-xs max-w-[200px] sm:max-w-xs md:max-w-md lg:max-w-xl truncate ${tone.pill}`}
+              <div
+                className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border text-xs shadow-xs max-w-[220px] sm:max-w-xs md:max-w-md lg:max-w-xl truncate cursor-default select-none transition-all ${tone.pill}`}
                 title={
                   count === 0
                     ? 'No one is on Upwork (available)'
                     : count === 1
                     ? 'Upwork in use by 1 person'
-                    : `Upwork conflict: ${count} people active at once`
+                    : `Upwork Conflict: ${count} recorded sessions active simultaneously! Upwork recorded sessions cannot overlap.`
                 }
               >
-                <span className="relative flex h-2 w-2 shrink-0">
-                  {tone.ping && (
-                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${tone.ping}`} />
+                <span className="relative flex h-2.5 w-2.5 shrink-0">
+                  {tone.isConflict ? (
+                    <>
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-80" />
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-60 [animation-delay:400ms]" />
+                      <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${tone.dot}`} />
+                    </>
+                  ) : count === 1 ? (
+                    <>
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
+                      <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${tone.dot}`} />
+                    </>
+                  ) : (
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${tone.dot}`} />
                   )}
-                  <span className={`relative inline-flex rounded-full h-2 w-2 ${tone.dot}`} />
                 </span>
-                <span className={`font-semibold text-[11px] sm:text-xs truncate ${tone.text}`}>
+                <span className={`text-[11px] sm:text-xs truncate ${tone.text}`}>
                   {tone.label}
                 </span>
-              </Link>
+              </div>
             );
           })()}
 

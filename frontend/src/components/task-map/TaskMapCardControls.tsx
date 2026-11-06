@@ -755,9 +755,11 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
   const upworkClients = useAppStore((s) => s.upworkClients);
 
   const clientName = prog?.client || task.list?.name || '';
+  const isClientConfiguredUpwork = upworkClients.some((c) => c.toLowerCase() === clientName.toLowerCase());
   const isUpwork = Boolean(
+    isClientConfiguredUpwork ||
     prog?.isUpwork ||
-    upworkClients.some((c) => c.toLowerCase() === clientName.toLowerCase()) ||
+    prog?.timeTracker?.toLowerCase().includes('upwork') ||
     task.list?.name?.toLowerCase().includes('upwork') ||
     (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
   );

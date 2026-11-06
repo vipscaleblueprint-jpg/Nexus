@@ -1702,9 +1702,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     const isClientConfiguredUpwork = upworkClients.some(
                       (c) => c.toLowerCase() === clientName.toLowerCase()
                     );
+                    // Upwork determination: Based on Upwork clients list, Column H tracker, or Upwork status tag
                     const isUpwork = Boolean(
-                      task.progress?.isUpwork ||
                       isClientConfiguredUpwork ||
+                      task.progress?.isUpwork ||
+                      task.progress?.timeTracker?.toLowerCase().includes('upwork') ||
                       task.list?.name?.toLowerCase().includes('upwork') ||
                       (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
                     );
@@ -2088,9 +2090,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     const isClientConfiguredUpwork = upworkClients.some(
                       (c) => c.toLowerCase() === clientName.toLowerCase()
                     );
+                    // Upwork determination: Based on Upwork clients list, Column H tracker, or Upwork status tag
                     const isUpwork = Boolean(
-                      task.progress?.isUpwork ||
                       isClientConfiguredUpwork ||
+                      task.progress?.isUpwork ||
+                      task.progress?.timeTracker?.toLowerCase().includes('upwork') ||
                       task.list?.name?.toLowerCase().includes('upwork') ||
                       (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
                     );

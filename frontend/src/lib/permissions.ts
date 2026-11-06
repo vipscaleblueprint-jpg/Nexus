@@ -215,3 +215,19 @@ export function canTransitionTaskStatus(
   };
 }
 
+/**
+ * Checks whether the current user is Aaron (owner/admin) based on database identity.
+ */
+export function isAaronUser(user?: User | null | { id?: string; name?: string; email?: string }): boolean {
+  if (!user) return false;
+  const name = (user.name || '').toLowerCase().trim();
+  const email = (user.email || '').toLowerCase().trim();
+  return (
+    name === 'aaron' ||
+    name.includes('aaron') ||
+    email.includes('aaron') ||
+    user.id === 'bc74d7a0-e1e0-4a18-bf59-4e733fa25c92'
+  );
+}
+
+

@@ -1442,6 +1442,72 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
         activeUpworkSessions = Object.values(rawMap).map((val) => JSON.parse(val));
       }
     }
+
+    // Also verify open tasks in PostgreSQL with manual "mark as upwork" (project-based) or active sessions
+    try {
+      const openUpworkRecords = await prisma.taskMapRecord.findMany({
+        where: {
+          task: {
+            status: { notIn: ['CLOSED', 'DONE', 'Complete', 'Completed', 'Closed', 'Done'] },
+          },
+        },
+        select: {
+          taskId: true,
+          statuses: true,
+          pmReviews: true,
+          updatedAt: true,
+          task: {
+            select: {
+              title: true,
+              assignee: { select: { name: true } },
+              list: { select: { name: true } },
+            },
+          },
+        },
+      });
+
+      for (const rec of openUpworkRecords) {
+        const upworkTag = (rec.statuses || []).find((s) => s.toUpperCase().startsWith('UPWORK'));
+        let pmReviewsList = rec.pmReviews || [];
+        if (typeof pmReviewsList === 'string') {
+          try { pmReviewsList = JSON.parse(pmReviewsList); } catch { pmReviewsList = []; }
+        }
+        const activeReview: any = Array.isArray(pmReviewsList)
+          ? pmReviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active)
+          : null;
+
+        if (upworkTag || activeReview) {
+          const alreadyInList = activeUpworkSessions.some((s) => s.taskId === rec.taskId);
+          if (!alreadyInList) {
+            let pmName = activeReview?.pmName || activeReview?.clientName || rec.task?.list?.name || 'UPWORK';
+            if (upworkTag) {
+              const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+              if (m && m[1]) pmName = m[1].trim().toUpperCase();
+            }
+            const userName = activeReview?.userName || rec.task?.assignee?.name || pmName || 'Team Member';
+            const startedAt = activeReview?.startedAt || rec.updatedAt.toISOString();
+
+            const sessionItem = {
+              taskId: rec.taskId,
+              taskTitle: rec.task?.title || 'Task',
+              userId: '',
+              userName,
+              pmName,
+              clientName: pmName,
+              startedAt,
+            };
+            activeUpworkSessions.push(sessionItem);
+
+            if (isRedisReady()) {
+              redis.hset('task_map:upwork_active', rec.taskId, JSON.stringify(sessionItem)).catch(() => {});
+            }
+          }
+        }
+      }
+    } catch (dbErr) {
+      logger.warn({ dbErr }, 'Non-blocking error checking database open Upwork tasks');
+    }
+
     res.json({ success: true, activeUpworkSessions });
   } catch (error: any) {
     logger.error({ error }, 'Error fetching active upwork sessions');

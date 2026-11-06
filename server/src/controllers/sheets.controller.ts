@@ -877,6 +877,26 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       task_update_and_deliverables,
     } = body;
 
+    const cleanTimeIn = cleanTimeString(time_in);
+    const cleanTimeOut = cleanTimeString(time_out);
+    const clientStr = client ? String(client).trim() : null;
+    const statusStr = task_status ? String(task_status).trim() : null;
+    const trackerStr = time_tracker ? String(time_tracker).trim() : null;
+    const maNameStr = ma_name ? String(ma_name).trim() : null;
+
+    // "if the user forgots to input time only the status or client it would mark as red a and an infinite logo time"
+    const hasStatusOrClientOrTask = Boolean(statusStr || clientStr || task);
+    const isMissingTime = Boolean(hasStatusOrClientOrTask && !cleanTimeIn);
+
+    // Determine Upwork: Based on configured Upwork clients list, OR if Column H (Time Tracker) explicitly specifies Upwork.
+    const upworkClientsList = await getUpworkClients();
+    const isConfiguredUpworkClient = clientStr
+      ? upworkClientsList.some((c) => c.toLowerCase() === clientStr.toLowerCase())
+      : false;
+    const isTrackerUpwork = trackerStr ? trackerStr.toLowerCase().includes('upwork') : false;
+
+    let isUpwork = isConfiguredUpworkClient || isTrackerUpwork;
+
     const link = task_link || taskId || task_id;
     let target = await findByNexusLink(link);
     if (!target && task) {
@@ -890,41 +910,97 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       }
     }
 
+    // Secondary fallback: if task was not matched by title/link, but client was given, find the client list's active task
+    if (!target && clientStr) {
+      const clientList = await prisma.list.findFirst({
+        where: { name: { equals: clientStr, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (clientList) {
+        const matched = await prisma.task.findFirst({
+          where: {
+            listId: clientList.id,
+            status: { notIn: ['CLOSED', 'DONE', 'Complete', 'Completed', 'Closed', 'Done'] },
+          },
+          select: { id: true, listId: true, externalId: true },
+          orderBy: { updatedAt: 'desc' },
+        });
+        if (matched) {
+          target = { taskId: matched.id, subtaskId: null, listId: matched.listId, clickUpLink: null };
+        }
+      }
+    }
+
     if (!target) {
-      console.warn('[Sheets] handleSheetProgress: task not found for link/title:', link || task);
+      // If still no target task, but it IS an Upwork tracking row or has MA and Client:
+      if (isUpwork) {
+        const sessionId = `upwork_${(maNameStr || 'ma').toLowerCase().replace(/\s+/g, '_')}_${(clientStr || 'client').toLowerCase().replace(/\s+/g, '_')}`;
+        const effectiveClientName = clientStr || 'UPWORK';
+        if (!cleanTimeOut && cleanTimeIn) {
+          if (isRedisReady()) {
+            await redis.hset(
+              'task_map:upwork_active',
+              sessionId,
+              JSON.stringify({
+                taskId: sessionId,
+                taskTitle: task || `${effectiveClientName} (Ad-hoc)`,
+                userId: '',
+                userName: maNameStr || 'MA Member',
+                pmName: effectiveClientName,
+                clientName: effectiveClientName,
+                startedAt: new Date().toISOString(),
+              })
+            );
+          }
+          io.emit('upwork:status_changed', {
+            taskId: sessionId,
+            taskTitle: task || `${effectiveClientName} (Ad-hoc)`,
+            active: true,
+            userName: maNameStr,
+            pmName: effectiveClientName,
+            clientName: effectiveClientName,
+            startedAt: new Date().toISOString(),
+          });
+        } else if (cleanTimeOut) {
+          if (isRedisReady()) {
+            await redis.hdel('task_map:upwork_active', sessionId);
+          }
+          io.emit('upwork:status_changed', {
+            taskId: sessionId,
+            taskTitle: task || `${effectiveClientName} (Ad-hoc)`,
+            active: false,
+            userName: maNameStr,
+            pmName: effectiveClientName,
+            clientName: effectiveClientName,
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          isUpwork: true,
+          active: !cleanTimeOut && Boolean(cleanTimeIn),
+          message: 'Upwork live session tracked without direct task card attachment',
+        });
+      }
+
+      console.warn('[Sheets] handleSheetProgress: task not found for link/title/client:', link || task || clientStr);
       return res.status(404).json({
         error: 'Task not found in Nexus',
         receivedLink: link,
         taskTitle: task,
+        client: clientStr,
       });
     }
 
-    const cleanTimeIn = cleanTimeString(time_in);
-    const cleanTimeOut = cleanTimeString(time_out);
-    const clientStr = client ? String(client).trim() : null;
-    const statusStr = task_status ? String(task_status).trim() : null;
-    const trackerStr = time_tracker ? String(time_tracker).trim() : null;
-    const maNameStr = ma_name ? String(ma_name).trim() : null;
-
-    // "if the user forgots to input time only the status or client it would mark as red a and an infinite logo time"
-    const hasStatusOrClientOrTask = Boolean(statusStr || clientStr || task);
-    const isMissingTime = Boolean(hasStatusOrClientOrTask && !cleanTimeIn);
-
-    // Check if client is designated as an Upwork client or tracker is Upwork
-    const upworkClientsList = await getUpworkClients();
-    const isConfiguredUpworkClient = clientStr
-      ? upworkClientsList.some((c) => c.toLowerCase() === clientStr.toLowerCase())
-      : false;
-
-    // "and if its an upwork client just white color and i want this to put above the header that someone is doing an upwork task"
-    const isUpwork = Boolean(
-      (trackerStr && trackerStr.toLowerCase().includes('upwork')) ||
-      (clientStr && clientStr.toLowerCase().includes('upwork')) ||
-      isConfiguredUpworkClient
-    );
-
     // Get or create TaskMapRecord
     const record = await getOrCreateTaskMapRecord(target.taskId);
+
+    // If task was manually marked as Upwork on TaskMap (project-based), honor it
+    const hasManualUpworkTag = (record.statuses || []).some((s: string) => s.toUpperCase().startsWith('UPWORK'));
+    if (hasManualUpworkTag) {
+      isUpwork = true;
+    }
+
     let reviewsList = record.pmReviews || [];
     if (typeof reviewsList === 'string') {
       try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
@@ -990,6 +1066,16 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             })
           ).catch(() => {});
         }
+
+        io.emit('upwork:status_changed', {
+          taskId: target.taskId,
+          taskTitle: task || 'Task',
+          active: true,
+          userName: maNameStr || 'MA Member',
+          pmName: effectiveClientName,
+          clientName: effectiveClientName,
+          startedAt: progressObj.updatedAt,
+        });
       } else if (cleanTimeOut) {
         if (activeIdx >= 0) {
           reviewsList[activeIdx].active = false;
@@ -998,6 +1084,15 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         if (isRedisReady()) {
           redis.hdel('task_map:upwork_active', target.taskId).catch(() => {});
         }
+
+        io.emit('upwork:status_changed', {
+          taskId: target.taskId,
+          taskTitle: task || 'Task',
+          active: false,
+          userName: maNameStr,
+          pmName: effectiveClientName,
+          clientName: effectiveClientName,
+        });
       }
     }
 

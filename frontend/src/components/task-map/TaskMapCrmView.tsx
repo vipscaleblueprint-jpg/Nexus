@@ -7,7 +7,6 @@ import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import {
   UserCheck,
-  Building2,
   Pin,
   PinOff,
   ChevronLeft,
@@ -463,41 +462,6 @@ export const TaskMapCrmView: React.FC<Props> = ({
       onDragEnd={handleDragEnd}
     >
       <div className="flex flex-col h-full bg-background select-none">
-        {/* Sub-header Banner */}
-        <div className="px-6 py-2 bg-card border-b border-zinc-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <UserCheck className="size-4 text-[#22A3AE] shrink-0" />
-            <span className="text-xs font-semibold text-zinc-200">
-              CRM & Client Outreach Board
-            </span>
-            <span className="text-zinc-500 text-xs hidden sm:inline">
-              — Manage client relationship tasks, team outreach pipelines, and client updates.
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* CRM Member Count */}
-            <span className="text-[11px] font-medium text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded-lg border border-zinc-800">
-              <strong className="text-[#22A3AE]">{crmUsers.length}</strong> CRM members active
-            </span>
-
-            {/* Admin Tasks Toggle */}
-            <button
-              type="button"
-              onClick={() => setShowAdminTasks(!showAdminTasks)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                showAdminTasks
-                  ? 'bg-purple-950/80 text-purple-200 border-purple-700/80 shadow-sm'
-                  : 'bg-card text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:border-zinc-700'
-              }`}
-              title={showAdminTasks ? 'Admin tasks are visible' : 'Admin tasks are hidden'}
-            >
-              <Building2 className={`size-3.5 ${showAdminTasks ? 'text-purple-400' : 'text-zinc-500'}`} />
-              <span>Admin Tasks</span>
-            </button>
-          </div>
-        </div>
-
         {/* Board Columns Horizontal Scroll */}
         <div className="flex-1 flex gap-4 px-6 py-4 overflow-x-auto custom-scrollbar select-none">
           {orderedColumns.map((col) => {
@@ -519,7 +483,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
               return (
                 <div
                   key={col.id}
-                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/80 border border-zinc-800 rounded-2xl shadow-md h-[calc(100vh-175px)] transition-all ${
+                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/80 border border-zinc-800 rounded-2xl shadow-md h-[calc(100vh-130px)] transition-all ${
                     isPinned ? 'border-[#22A3AE]/50 ring-1 ring-[#22A3AE]/30' : ''
                   }`}
                 >
@@ -558,7 +522,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
               <DroppableColumn
                 key={col.id}
                 id={col.id}
-                className={`w-[340px] shrink-0 flex flex-col bg-card/90 border rounded-2xl p-3.5 shadow-xl h-[calc(100vh-175px)] transition-all ${
+                className={`w-[340px] shrink-0 flex flex-col bg-card/90 border rounded-2xl p-3.5 shadow-xl h-[calc(100vh-130px)] transition-all ${
                   isPinned
                     ? 'border-[#22A3AE]/40 ring-1 ring-[#22A3AE]/20 bg-card'
                     : 'border-border'
@@ -709,9 +673,6 @@ export const TaskMapCrmView: React.FC<Props> = ({
                     </p>
                   ) : (
                     visibleTasks.map((task) => {
-                      const assignee =
-                        task.assignee || (task.assignees && task.assignees[0]);
-
                       return (
                         <DraggableTaskCard key={task.id} task={task} disabled={false}>
                           <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[94px] flex items-stretch gap-3 transition-all group">
@@ -731,21 +692,24 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                 {task.title}
                               </h4>
 
-                              {/* Controls row */}
+                              {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
                               <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
-                                {/* Assignee Avatar / Name */}
-                                {assignee ? (
-                                  <span
-                                    className="text-[10px] font-medium text-zinc-400 truncate max-w-[85px]"
-                                    title={`Assigned to ${assignee.name || 'User'}`}
-                                  >
-                                    {assignee.name?.split(' ')[0] || 'User'}
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] italic text-zinc-500">
-                                    Unassigned
-                                  </span>
-                                )}
+                                {/* Circle Dot Status Indicator */}
+                                <CardStatusDropdown
+                                  taskId={task.id}
+                                  currentStatus={task.status || 'In progress'}
+                                  onSelect={async (newStatus) => {
+                                    if (onTaskUpdate) {
+                                      await onTaskUpdate(task.id, { status: newStatus });
+                                    } else {
+                                      await tasksApi
+                                        .updateTask(task.id, { status: newStatus } as any)
+                                        .catch(console.error);
+                                      onDataRefresh();
+                                    }
+                                    toast.success(`Status updated to ${newStatus}`);
+                                  }}
+                                />
 
                                 <TaskDescriptionButton
                                   description={task.description}
@@ -774,27 +738,11 @@ export const TaskMapCrmView: React.FC<Props> = ({
                             {/* Separator */}
                             <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
 
-                            {/* Right: Status Dropdown & Posted Date */}
-                            <div className="w-[125px] shrink-0 flex flex-col justify-between py-0.5">
-                              <div className="flex justify-between items-center gap-1">
-                                <CardStatusDropdown
-                                  taskId={task.id}
-                                  currentStatus={task.status || 'In progress'}
-                                  onSelect={async (newStatus) => {
-                                    if (onTaskUpdate) {
-                                      await onTaskUpdate(task.id, { status: newStatus });
-                                    } else {
-                                      await tasksApi
-                                        .updateTask(task.id, { status: newStatus } as any)
-                                        .catch(console.error);
-                                      onDataRefresh();
-                                    }
-                                    toast.success(`Status updated to ${newStatus}`);
-                                  }}
-                                />
-
-                                <span className="text-[10px] font-medium text-zinc-500 shrink-0">
-                                  {format(new Date(task.createdAt), 'MMM d')}
+                            {/* Right: Section where Sub-Status is (with Posted date in top right corner) */}
+                            <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
+                              <div className="flex justify-end items-center">
+                                <span className="text-[10px] font-medium text-zinc-500">
+                                  Posted {format(new Date(task.createdAt), 'MMM d')}
                                 </span>
                               </div>
 
@@ -804,7 +752,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                 onMouseDown={(e) => e.stopPropagation()}
                               >
                                 <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
-                                  Status
+                                  Sub-Status
                                 </span>
                                 <TaskMapStatusDropdown
                                   selectedStatuses={task.taskMap?.statuses || []}

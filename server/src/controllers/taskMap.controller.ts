@@ -183,19 +183,44 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         return up === 'CHE' || up === 'PAU' || up === 'HAN' || up.includes('PM');
       });
 
-      // Check active Upwork status and session
+      // Check active Upwork status, session and sheet progress
       let upworkStartedAt: string | null = null;
       let upworkSession: any = null;
+      let reviewsList = mapRecord.pmReviews;
+      if (typeof reviewsList === 'string') {
+        try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
+      }
+      if (!Array.isArray(reviewsList)) reviewsList = [];
+
       const upworkStatus = (mapRecord.statuses || []).find(s => s.toUpperCase().startsWith('UPWORK'));
       if (upworkStatus) {
-        let reviewsList = mapRecord.pmReviews;
-        if (typeof reviewsList === 'string') {
-          try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
-        }
-        if (Array.isArray(reviewsList)) {
-          upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
-        }
+        upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
         upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
+      }
+
+      // Check sheet progress
+      let progress: any = reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+
+      // If Upwork session is recorded in reviewsList even without explicit UPWORK substatus
+      if (!upworkSession) {
+        upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active) || null;
+        if (upworkSession) {
+          upworkStartedAt = upworkSession.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
+        }
+      }
+
+      // If sheet progress indicates Upwork and task is currently in progress (no timeOut)
+      if (progress?.isUpwork && !progress?.timeOut && !upworkSession) {
+        upworkStartedAt = progress.updatedAt || new Date().toISOString();
+        upworkSession = {
+          taskId: task.id,
+          taskTitle: task.title,
+          userId: task.assigneeId || '',
+          userName: progress.maName || 'Team Member',
+          pmName: 'UPWORK',
+          clientName: progress.client,
+          startedAt: upworkStartedAt,
+        };
       }
 
       const folderName = (task.list?.folder?.name || '').toLowerCase();
@@ -211,6 +236,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         isAdminTask,
         upworkStartedAt,
         upworkSession,
+        progress,
       };
     });
 
@@ -331,26 +357,33 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     for (const t of openTasks as any[]) {
       const upworkTag = (t.taskMap?.statuses || []).find((s: string) => s.toUpperCase().startsWith('UPWORK'));
-      if (upworkTag) {
-        let pmName = 'General';
-        const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
-        if (m && m[1]) {
-          pmName = m[1].trim().toUpperCase();
-        } else if (upworkTag.toUpperCase().includes('ACTIVE')) {
-          pmName = 'Active';
+      const isSheetUpworkActive = Boolean(t.progress?.isUpwork && !t.progress?.timeOut);
+      const isSessionActive = Boolean(t.upworkSession && (t.upworkSession.active || isSheetUpworkActive));
+
+      if (upworkTag || isSheetUpworkActive || isSessionActive) {
+        let pmName = 'UPWORK';
+        if (upworkTag) {
+          const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+          if (m && m[1]) {
+            pmName = m[1].trim().toUpperCase();
+          } else if (upworkTag.toUpperCase().includes('ACTIVE')) {
+            pmName = 'Active';
+          }
+        } else if (t.progress?.client) {
+          pmName = String(t.progress.client).toUpperCase();
         }
 
         const startedAt = t.upworkStartedAt || (t.taskMap?.updatedAt ? new Date(t.taskMap.updatedAt).toISOString() : new Date().toISOString());
-        const rawName = t.upworkSession?.userName || t.assignee?.name || (t.assignees && t.assignees[0]?.name) || t.creator?.name || '';
+        const rawName = t.progress?.maName || t.upworkSession?.userName || t.assignee?.name || (t.assignees && t.assignees[0]?.name) || t.creator?.name || '';
         const cleanName = rawName.includes('@') ? rawName.split('@')[0] : rawName;
-        const userName = (pmName && pmName !== 'General' && pmName !== 'Active') ? pmName : (cleanName || 'Team Member');
+        const userName = (pmName && pmName !== 'General' && pmName !== 'Active' && pmName !== 'UPWORK') ? pmName : (cleanName || 'Team Member');
         const userId = t.upworkSession?.userId || t.assigneeId || (t.assignees && t.assignees[0]?.id) || '';
 
         const sessionItem = {
           taskId: t.id,
           taskTitle: t.title,
           userId,
-          userName,
+          userName: t.progress?.maName || userName,
           pmName,
           startedAt,
         };

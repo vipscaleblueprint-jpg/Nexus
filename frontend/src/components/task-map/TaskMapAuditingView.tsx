@@ -7,7 +7,6 @@ import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import {
   ShieldCheck,
-  Building2,
   Pin,
   PinOff,
   ChevronLeft,
@@ -657,9 +656,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                     </p>
                   ) : (
                     visibleTasks.map((task) => {
-                      const assignee =
-                        task.assignee || (task.assignees && task.assignees[0]);
-
                       return (
                         <DraggableTaskCard key={task.id} task={task} disabled={false}>
                           <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[94px] flex items-stretch gap-3 transition-all group">

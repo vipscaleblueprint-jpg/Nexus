@@ -32,6 +32,7 @@ import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -808,6 +809,204 @@ export const handleSheetComment = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('[Sheets] comment failed:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Robust time string cleaner: formats into "hh:mm AM/PM" or null
+ */
+function cleanTimeString(val?: unknown): string | null {
+  if (!val || typeof val !== 'string') return null;
+  const s = val.trim();
+  if (!s) return null;
+
+  const ampmMatch = s.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (ampmMatch) {
+    const hours = parseInt(ampmMatch[1], 10);
+    const mins = ampmMatch[2];
+    const ampm = ampmMatch[3].toUpperCase();
+    const h12 = (hours % 12 || 12).toString().padStart(2, '0');
+    return `${h12}:${mins} ${ampm}`;
+  }
+
+  const gmtMatch = s.match(/(?:1899|GMT).*?(\d{1,2}):(\d{2})(?::\d{2})?/i);
+  if (gmtMatch) {
+    const hours = parseInt(gmtMatch[1], 10);
+    const mins = gmtMatch[2];
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const h12 = (hours % 12 || 12).toString().padStart(2, '0');
+    return `${h12}:${mins} ${ampm}`;
+  }
+
+  const plainMatch = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (plainMatch) {
+    const hours = parseInt(plainMatch[1], 10);
+    const mins = plainMatch[2];
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const h12 = (hours % 12 || 12).toString().padStart(2, '0');
+    return `${h12}:${mins} ${ampm}`;
+  }
+
+  return s;
+}
+
+/**
+ * POST /api/webhooks/sheets/progress
+ * Ingests MA Daily Schedule row progress (time in, time out, client, status, is_missing_time, upwork).
+ * Emits realtime socket events ('task_map:updated', 'task:progress_updated', 'upwork:status_changed').
+ */
+export const handleSheetProgress = async (req: Request, res: Response) => {
+  if (!requireApiKey(req, res)) return;
+  try {
+    const body = req.body || {};
+    const {
+      task_link,
+      taskId,
+      task_id,
+      ma_name,
+      time_in,
+      time_out,
+      client,
+      time_tracker,
+      task,
+      task_status,
+      date,
+      sheet_row,
+      task_deliverables_description,
+      task_update_and_deliverables,
+    } = body;
+
+    const link = task_link || taskId || task_id;
+    let target = await findByNexusLink(link);
+    if (!target && task) {
+      // Fallback lookup by exact task title
+      const matched = await prisma.task.findFirst({
+        where: { title: { equals: String(task).trim(), mode: 'insensitive' } },
+        select: { id: true, listId: true, externalId: true },
+      });
+      if (matched) {
+        target = { taskId: matched.id, subtaskId: null, listId: matched.listId, clickUpLink: null };
+      }
+    }
+
+    if (!target) {
+      console.warn('[Sheets] handleSheetProgress: task not found for link/title:', link || task);
+      return res.status(404).json({
+        error: 'Task not found in Nexus',
+        receivedLink: link,
+        taskTitle: task,
+      });
+    }
+
+    const cleanTimeIn = cleanTimeString(time_in);
+    const cleanTimeOut = cleanTimeString(time_out);
+    const clientStr = client ? String(client).trim() : null;
+    const statusStr = task_status ? String(task_status).trim() : null;
+    const trackerStr = time_tracker ? String(time_tracker).trim() : null;
+    const maNameStr = ma_name ? String(ma_name).trim() : null;
+
+    // "if the user forgots to input time only the status or client it would mark as red a and an infinite logo time"
+    const hasStatusOrClientOrTask = Boolean(statusStr || clientStr || task);
+    const isMissingTime = Boolean(hasStatusOrClientOrTask && !cleanTimeIn);
+
+    // "and if its an upwork client just white color and i want this to put above the header that someone is doing an upwork task"
+    const isUpwork = Boolean(
+      (trackerStr && trackerStr.toLowerCase().includes('upwork')) ||
+      (clientStr && clientStr.toLowerCase().includes('upwork'))
+    );
+
+    // Get or create TaskMapRecord
+    const record = await getOrCreateTaskMapRecord(target.taskId);
+    let reviewsList = record.pmReviews || [];
+    if (typeof reviewsList === 'string') {
+      try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
+    }
+    if (!Array.isArray(reviewsList)) reviewsList = [];
+
+    // Filter out previous SHEET_PROGRESS entry
+    reviewsList = reviewsList.filter((r: any) => r.type !== 'SHEET_PROGRESS');
+
+    const progressObj = {
+      type: 'SHEET_PROGRESS',
+      timeIn: cleanTimeIn,
+      timeOut: cleanTimeOut,
+      isMissingTime,
+      isUpwork,
+      client: clientStr,
+      timeTracker: trackerStr,
+      maName: maNameStr,
+      status: statusStr,
+      date: date ? String(date).trim() : null,
+      sheetRow: sheet_row ? Number(sheet_row) : undefined,
+      taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
+      taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    reviewsList.push(progressObj);
+
+    // Handle Upwork session tracking if Upwork client/task and in progress (no time_out)
+    if (isUpwork) {
+      const activeIdx = reviewsList.findIndex((r: any) => r.type === 'UPWORK_SESSION' && r.active);
+      if (!cleanTimeOut) {
+        if (activeIdx >= 0) {
+          reviewsList[activeIdx].userName = maNameStr || reviewsList[activeIdx].userName;
+          reviewsList[activeIdx].clientName = clientStr;
+        } else {
+          reviewsList.push({
+            type: 'UPWORK_SESSION',
+            active: true,
+            taskId: target.taskId,
+            taskTitle: task || 'Task',
+            userId: '',
+            userName: maNameStr || 'MA Member',
+            pmName: 'UPWORK',
+            clientName: clientStr,
+            startedAt: new Date().toISOString(),
+          });
+        }
+      } else if (cleanTimeOut && activeIdx >= 0) {
+        reviewsList[activeIdx].active = false;
+        reviewsList[activeIdx].stoppedAt = new Date().toISOString();
+      }
+    }
+
+    // Save back to TaskMapRecord
+    await updateTaskMapRecord(target.taskId, { pmReviews: reviewsList });
+
+    // Invalidate caches
+    await invalidateCache(`task:${target.taskId}`, 'task-map:data');
+
+    // Emit Realtime WebSockets so TaskMapContainer and BoardView update immediately
+    io.emit('task_map:updated', {
+      taskId: target.taskId,
+      taskMap: {
+        statuses: record.statuses,
+      },
+      progress: progressObj,
+    });
+    io.emit('task:progress_updated', {
+      taskId: target.taskId,
+      progress: progressObj,
+    });
+
+    if (isUpwork) {
+      io.emit('upwork:status_changed', {
+        taskId: target.taskId,
+        active: !cleanTimeOut,
+        userName: maNameStr,
+        startedAt: progressObj.updatedAt,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      taskId: target.taskId,
+      progress: progressObj,
+    });
+  } catch (error: any) {
+    console.error('[Sheets] progress failed:', error);
     return res.status(500).json({ error: error.message });
   }
 };

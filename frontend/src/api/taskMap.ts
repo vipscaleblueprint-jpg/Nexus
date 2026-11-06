@@ -41,6 +41,23 @@ export interface TaskMapRecord {
   updatedAt: string;
 }
 
+export interface TaskProgress {
+  type?: string;
+  timeIn: string | null;
+  timeOut: string | null;
+  isMissingTime: boolean;
+  isUpwork: boolean;
+  client: string | null;
+  timeTracker: string | null;
+  maName: string | null;
+  status: string | null;
+  date: string | null;
+  sheetRow?: number;
+  taskDeliverables?: string | null;
+  taskUpdateAndDeliverables?: string | null;
+  updatedAt?: string;
+}
+
 export interface TaskMapItem {
   id: string;
   title: string;
@@ -66,6 +83,7 @@ export interface TaskMapItem {
   isAdminTask?: boolean;
   upworkStartedAt?: string | null;
   upworkSession?: UpworkSession | null;
+  progress?: TaskProgress | null;
   createdAt: string;
   updatedAt: string;
 }

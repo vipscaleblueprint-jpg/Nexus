@@ -26,13 +26,13 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
-import { invalidateCache, redis } from '../services/redisService';
+import { invalidateCache, redis, isRedisReady } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { getOrCreateTaskMapRecord, updateTaskMapRecord } from '../services/taskMapService';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -554,12 +554,12 @@ export const resolveNexusLinks = async (req: Request, res: Response) => {
     const match = { OR: ids.flatMap((id) => [{ externalId: id }, { externalId: { endsWith: `/${id}` } }]) };
     const [tasks, subtasks] = ids.length
       ? await Promise.all([
-          prisma.task.findMany({ where: match, select: { id: true, listId: true, externalId: true } }),
-          prisma.subtask.findMany({
-            where: match,
-            select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
-          }),
-        ])
+        prisma.task.findMany({ where: match, select: { id: true, listId: true, externalId: true } }),
+        prisma.subtask.findMany({
+          where: match,
+          select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+        }),
+      ])
       : [[], []];
 
     const nexusLinkById = new Map<string, string>();
@@ -606,7 +606,7 @@ const commentInclude = { user: { select: { id: true, name: true, avatarUrl: true
 async function dropCommentCache(taskId: string, subtaskId: string | null) {
   await redis
     .del(`comments:list:${taskId}`, ...(subtaskId ? [`comments:list:${taskId}:sub:${subtaskId}`] : []))
-    .catch(() => {});
+    .catch(() => { });
 }
 
 export const handleSheetComment = async (req: Request, res: Response) => {
@@ -676,7 +676,7 @@ export const handleSheetComment = async (req: Request, res: Response) => {
               action: { in: ['COMMENT', 'REPLY'] },
               OR: commentIdFilters,
             },
-          }).catch(() => {});
+          }).catch(() => { });
         }
       } catch (cleanErr) {
         console.error('[sheets:deleteComment] Cleanup error:', cleanErr);
@@ -910,10 +910,17 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     const hasStatusOrClientOrTask = Boolean(statusStr || clientStr || task);
     const isMissingTime = Boolean(hasStatusOrClientOrTask && !cleanTimeIn);
 
+    // Check if client is designated as an Upwork client or tracker is Upwork
+    const upworkClientsList = await getUpworkClients();
+    const isConfiguredUpworkClient = clientStr
+      ? upworkClientsList.some((c) => c.toLowerCase() === clientStr.toLowerCase())
+      : false;
+
     // "and if its an upwork client just white color and i want this to put above the header that someone is doing an upwork task"
     const isUpwork = Boolean(
       (trackerStr && trackerStr.toLowerCase().includes('upwork')) ||
-      (clientStr && clientStr.toLowerCase().includes('upwork'))
+      (clientStr && clientStr.toLowerCase().includes('upwork')) ||
+      isConfiguredUpworkClient
     );
 
     // Get or create TaskMapRecord
@@ -949,10 +956,11 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // Handle Upwork session tracking if Upwork client/task and in progress (no time_out)
     if (isUpwork) {
       const activeIdx = reviewsList.findIndex((r: any) => r.type === 'UPWORK_SESSION' && r.active);
+      const effectiveClientName = clientStr || 'UPWORK';
       if (!cleanTimeOut) {
         if (activeIdx >= 0) {
           reviewsList[activeIdx].userName = maNameStr || reviewsList[activeIdx].userName;
-          reviewsList[activeIdx].clientName = clientStr;
+          reviewsList[activeIdx].clientName = effectiveClientName;
         } else {
           reviewsList.push({
             type: 'UPWORK_SESSION',
@@ -961,14 +969,35 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             taskTitle: task || 'Task',
             userId: '',
             userName: maNameStr || 'MA Member',
-            pmName: 'UPWORK',
-            clientName: clientStr,
+            pmName: effectiveClientName,
+            clientName: effectiveClientName,
             startedAt: new Date().toISOString(),
           });
         }
-      } else if (cleanTimeOut && activeIdx >= 0) {
-        reviewsList[activeIdx].active = false;
-        reviewsList[activeIdx].stoppedAt = new Date().toISOString();
+
+        if (isRedisReady()) {
+          redis.hset(
+            'task_map:upwork_active',
+            target.taskId,
+            JSON.stringify({
+              taskId: target.taskId,
+              taskTitle: task || 'Task',
+              userId: '',
+              userName: maNameStr || 'MA Member',
+              pmName: effectiveClientName,
+              clientName: effectiveClientName,
+              startedAt: progressObj.updatedAt,
+            })
+          ).catch(() => {});
+        }
+      } else if (cleanTimeOut) {
+        if (activeIdx >= 0) {
+          reviewsList[activeIdx].active = false;
+          reviewsList[activeIdx].stoppedAt = new Date().toISOString();
+        }
+        if (isRedisReady()) {
+          redis.hdel('task_map:upwork_active', target.taskId).catch(() => {});
+        }
       }
     }
 
@@ -994,8 +1023,11 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     if (isUpwork) {
       io.emit('upwork:status_changed', {
         taskId: target.taskId,
+        taskTitle: task || 'Task',
         active: !cleanTimeOut,
         userName: maNameStr,
+        pmName: clientStr || 'UPWORK',
+        clientName: clientStr,
         startedAt: progressObj.updatedAt,
       });
     }

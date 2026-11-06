@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store";
 import { User } from "@/lib/types";
@@ -18,6 +19,29 @@ const PAGE_TITLES: Record<string, string> = {
   "/settings/users": "Admin Settings",
 };
 
+function formatUpworkElapsed(startedAt: string | Date | undefined, now: Date): string {
+  if (!startedAt) return '0 hr 00 mins';
+  const startMs = new Date(startedAt).getTime();
+  if (isNaN(startMs)) return '0 hr 00 mins';
+  const diffMs = Math.max(0, now.getTime() - startMs);
+  const totalMins = Math.floor(diffMs / 60000);
+  const hrs = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  return `${hrs} hr ${String(mins).padStart(2, '0')} mins`;
+}
+
+function getSessionDisplayName(session: any): string {
+  const rawUser = session.userName || '';
+  const cleanUser = rawUser.includes('@') ? rawUser.split('@')[0] : rawUser;
+  const pm = session.pmName || session.clientName || '';
+  const cleanClient = pm && pm !== 'Active' && pm !== 'General' && pm !== 'UPWORK' ? pm : '';
+
+  if (cleanClient) {
+    return `${cleanUser} ${cleanClient}`;
+  }
+  return cleanUser || 'Team Member';
+}
+
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
@@ -26,11 +50,27 @@ export function Header() {
   const isSidebarCollapsed = useAppStore(state => state.isSidebarCollapsed);
   const toggleSidebar = useAppStore(state => state.toggleSidebar);
   const toggleMobileSidebar = useAppStore(state => state.toggleMobileSidebar);
+  const activeUpworkSessions = useAppStore(state => state.activeUpworkSessions);
 
   const resetStore = useAppStore(state => state.resetStore);
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const pageTitle = useAppStore(state => state.pageTitle);
+
+  const [now, setNow] = useState<Date>(new Date());
+  useEffect(() => {
+    if (!activeUpworkSessions || activeUpworkSessions.length === 0) return;
+    const interval = setInterval(() => setNow(new Date()), 5000);
+    return () => clearInterval(interval);
+  }, [activeUpworkSessions?.length]);
+
+  const upworkTickerText = (activeUpworkSessions || [])
+    .map((s) => {
+      const name = getSessionDisplayName(s);
+      const elapsed = formatUpworkElapsed(s.startedAt, now);
+      return `${name} ${elapsed}`;
+    })
+    .join(' | ');
 
   const title = pageTitle || PAGE_TITLES[pathname] || "Nexus";
 
@@ -80,8 +120,62 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2">
-        <NotificationBell />
-        <div className="relative text-xs">
+          <NotificationBell />
+
+          {/* Active Upwork Live Ticker next to Profile */}
+          {(() => {
+            const count = activeUpworkSessions?.length || 0;
+            // 0 active = green (available), 1 active = orange, 2+ = red blinking
+            const tone =
+              count === 0
+                ? {
+                    pill: 'border-emerald-500/40 hover:border-emerald-500/70 bg-emerald-500/10',
+                    dot: 'bg-emerald-500',
+                    ping: '',
+                    text: 'text-emerald-300',
+                    label: 'Upwork: not active',
+                  }
+                : count === 1
+                ? {
+                    pill: 'border-orange-500/50 hover:border-orange-500/80 bg-orange-500/10',
+                    dot: 'bg-orange-500',
+                    ping: 'bg-orange-400',
+                    text: 'text-orange-300',
+                    label: upworkTickerText,
+                  }
+                : {
+                    pill: 'border-red-500/60 hover:border-red-500/90 bg-red-500/10 animate-pulse',
+                    dot: 'bg-red-500',
+                    ping: 'bg-red-400',
+                    text: 'text-red-300',
+                    label: upworkTickerText,
+                  };
+            return (
+              <Link
+                href="/task-map"
+                className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border transition-all text-xs cursor-pointer shadow-xs max-w-[200px] sm:max-w-xs md:max-w-md lg:max-w-xl truncate ${tone.pill}`}
+                title={
+                  count === 0
+                    ? 'No one is on Upwork (available)'
+                    : count === 1
+                    ? 'Upwork in use by 1 person'
+                    : `Upwork conflict: ${count} people active at once`
+                }
+              >
+                <span className="relative flex h-2 w-2 shrink-0">
+                  {tone.ping && (
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${tone.ping}`} />
+                  )}
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${tone.dot}`} />
+                </span>
+                <span className={`font-semibold text-[11px] sm:text-xs truncate ${tone.text}`}>
+                  {tone.label}
+                </span>
+              </Link>
+            );
+          })()}
+
+          <div className="relative text-xs">
           <button
             onClick={() => setIsProfileOpen(!isProfileOpen)}
             className="flex items-center gap-2 p-1 pr-2 rounded-full bg-secondary/90 hover:bg-zinc-800 border border-zinc-800/80 transition-all cursor-pointer group"

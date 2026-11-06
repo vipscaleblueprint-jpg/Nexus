@@ -4,6 +4,7 @@ import { spacesApi, tasksApi } from '@/api';
 import { getRoles } from '@/api/roles';
 import { usersApi } from '@/api/users';
 import { draftsApi, TaskDraft } from '@/api/drafts';
+import { UpworkSession } from '@/api/taskMap';
 
 const SPACES_CACHE_KEY = 'nexus_spaces_cache';
 const TASKS_CACHE_KEY = 'nexus_tasks_cache';
@@ -233,6 +234,12 @@ interface AppState {
   setMobileActiveTab: (tab: 'my_tasks' | 'inbox' | 'home') => void;
   isMobileCreateOpen: boolean;
   setIsMobileCreateOpen: (open: boolean) => void;
+
+  // Upwork Live Tracking & Clients
+  activeUpworkSessions: UpworkSession[];
+  setActiveUpworkSessions: (sessions: UpworkSession[] | ((prev: UpworkSession[]) => UpworkSession[])) => void;
+  upworkClients: string[];
+  setUpworkClients: (clients: string[]) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -271,6 +278,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       isMobileSidebarOpen: false,
       activeMobileTask: null,
       isGalaxyFilterActive: false,
+      activeUpworkSessions: [],
+      upworkClients: [],
     });
   },
   
@@ -576,4 +585,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMobileActiveTab: (mobileActiveTab) => set({ mobileActiveTab }),
   isMobileCreateOpen: false,
   setIsMobileCreateOpen: (isMobileCreateOpen) => set({ isMobileCreateOpen }),
+  activeUpworkSessions: [],
+  setActiveUpworkSessions: (sessions) =>
+    set((state) => ({
+      activeUpworkSessions: typeof sessions === 'function' ? sessions(state.activeUpworkSessions) : sessions,
+    })),
+  upworkClients: [],
+  setUpworkClients: (upworkClients) => set({ upworkClients }),
 }));

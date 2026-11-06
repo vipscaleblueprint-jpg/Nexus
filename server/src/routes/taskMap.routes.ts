@@ -13,6 +13,9 @@ import {
   runRollover,
   updateTaskMeta,
   getTaskTimeline,
+  getUpworkClientsHandler,
+  updateUpworkClientsHandler,
+  getActiveUpworkSessionsHandler,
 } from '../controllers/taskMap.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -25,6 +28,10 @@ taskMapRouter.get('/data', getTaskMapData);
 taskMapRouter.get('/options', getOptions);
 taskMapRouter.post('/options', upsertOption);
 taskMapRouter.delete('/options/:id', deleteOption);
+
+taskMapRouter.get('/upwork-clients', getUpworkClientsHandler);
+taskMapRouter.post('/upwork-clients', updateUpworkClientsHandler);
+taskMapRouter.get('/upwork-active', getActiveUpworkSessionsHandler);
 
 taskMapRouter.get('/shifts', getShifts);
 taskMapRouter.put('/shifts', updateShifts);

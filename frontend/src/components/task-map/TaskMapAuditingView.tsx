@@ -8,12 +8,12 @@ import { TaskDescriptionButton } from './TaskDescriptionButton';
 import {
   ShieldCheck,
   Pin,
-  PinOff,
   ChevronLeft,
   ChevronRight,
   Search,
   X,
   User,
+  Infinity as InfinityIcon,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isAuditorUser } from '@/lib/permissions';
@@ -69,13 +69,12 @@ const DraggableTaskCard: React.FC<{
       ref={setNodeRef}
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
-      className={`touch-none transition-all duration-200 ease-out ${
-        isDragging
+      className={`touch-none transition-all duration-200 ease-out ${isDragging
           ? 'opacity-25 scale-[0.98] border border-dashed border-amber-600 rounded-xl bg-zinc-900/40 pointer-events-none'
           : disabled
-          ? 'cursor-default'
-          : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
-      }`}
+            ? 'cursor-default'
+            : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
+        }`}
     >
       {children}
     </div>
@@ -93,9 +92,8 @@ const DroppableColumn: React.FC<{
   return (
     <div
       ref={setNodeRef}
-      className={`${className || ''} transition-all duration-200 ${
-        isOver ? 'ring-2 ring-amber-500/70 bg-amber-950/25 shadow-xl shadow-amber-950/40 scale-[1.005]' : ''
-      }`}
+      className={`${className || ''} transition-all duration-200 ${isOver ? 'ring-2 ring-amber-500/70 bg-amber-950/25 shadow-xl shadow-amber-950/40 scale-[1.005]' : ''
+        }`}
     >
       {children}
     </div>
@@ -120,6 +118,87 @@ const getAuditorBadge = (user: any) => {
   return { label: 'Auditor', color: 'bg-purple-950/80 text-purple-300 border-purple-800/60' };
 };
 
+function computeElapsed(timeInStr?: string | null, dateStr?: string | null, now = new Date()): string {
+  if (!timeInStr) return '';
+  const m = timeInStr.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+  if (!m) return '';
+
+  let hrs = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  const ampm = (m[3] || '').toUpperCase();
+  if (ampm === 'PM' && hrs < 12) hrs += 12;
+  if (ampm === 'AM' && hrs === 12) hrs = 0;
+
+  const start = dateStr ? new Date(dateStr) : new Date(now);
+  start.setHours(hrs, mins, 0, 0);
+
+  let diffMs = now.getTime() - start.getTime();
+  if (diffMs < 0) diffMs = 0;
+
+  const totalMins = Math.floor(diffMs / 60000);
+  const h = Math.floor(totalMins / 60);
+  const remM = totalMins % 60;
+
+  if (h > 0) {
+    return `${h}h ${remM}m`;
+  }
+  return `${Math.max(1, remM)}m`;
+}
+
+interface TaskTimeProgressSlotProps {
+  task: TaskMapItem;
+  now: Date;
+}
+
+const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now }) => {
+  const prog = task.progress;
+
+  if (prog?.isMissingTime) {
+    return (
+      <div
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-400 font-bold text-[10px] shadow-xs select-none"
+        title="Missing Time! Status/Client entered without Time In"
+      >
+        <InfinityIcon className="size-3 text-red-500 animate-pulse shrink-0" />
+        <span className="font-mono">∞</span>
+      </div>
+    );
+  }
+
+  if (prog?.timeIn && prog?.timeOut) {
+    return (
+      <div
+        className="text-[10px] font-mono text-zinc-400 font-medium truncate max-w-[125px]"
+        title={`Logged time: ${prog.timeIn} - ${prog.timeOut}${prog.maName ? ` (${prog.maName})` : ''}`}
+      >
+        {prog.timeIn} - {prog.timeOut}
+      </div>
+    );
+  }
+
+  if (prog?.timeIn && !prog?.timeOut) {
+    const elapsed = computeElapsed(prog.timeIn, prog.date, now);
+    return (
+      <div
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 font-bold text-[10px] shadow-xs select-none"
+        title={`In progress since ${prog.timeIn} (${elapsed || '0m'} elapsed)`}
+      >
+        <span className="relative flex size-1.5 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+          <span className="relative inline-flex rounded-full size-1.5 bg-emerald-500" />
+        </span>
+        <span className="font-mono">{elapsed || '0m'}</span>
+      </div>
+    );
+  }
+
+  return (
+    <span className="text-[10px] font-medium text-zinc-500">
+      Posted {format(new Date(task.createdAt), 'MMM d')}
+    </span>
+  );
+};
+
 export const TaskMapAuditingView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
@@ -133,6 +212,13 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   onTaskUpdate,
 }) => {
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
+
+  // Live ticking clock to update in-progress elapsed minutes and hours
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 10000);
+    return () => clearInterval(timer);
+  }, []);
   const [showAdminTasks, setShowAdminTasks] = useState(false);
 
   // Column controls: Priority filter, search, pin, collapse
@@ -247,24 +333,48 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     );
   };
 
+  // Check if a task has review status
+  const isReviewStatus = (t: TaskMapItem) => {
+    const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+    const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
+      x.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    return (
+      s === 'TOREVIEW' ||
+      s === 'INREVIEW' ||
+      s === 'REVIEW' ||
+      s === 'DONEREVIEW' ||
+      mapStatuses.includes('TOREVIEW') ||
+      mapStatuses.includes('INREVIEW') ||
+      mapStatuses.includes('REVIEW') ||
+      mapStatuses.includes('DONEREVIEW')
+    );
+  };
+
   // Check if a task is assigned to a specific auditor
   const isTaskAssignedToAuditor = (task: TaskMapItem, auditor: any) => {
     if (isDoneReview(task)) return false;
 
-    // 1. Check direct assignee / assignees
-    if (task.assignee?.id === auditor.id) return true;
-    if ((task.assignees || []).some((u) => u.id === auditor.id)) return true;
-
-    // 2. Check taskMap.statuses for tag matching (e.g. initials CHE, PAU, HAN or auditor name)
+    // 1. Check taskMap.statuses for tag matching (e.g. initials CHE, PAU, HAN or auditor name)
     const mapStatuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
     const audNameUpper = (auditor.name || '').toUpperCase().trim();
     const firstName = audNameUpper.split(' ')[0];
     const shortInitials = audNameUpper.substring(0, 3);
 
-    if (mapStatuses.includes(audNameUpper)) return true;
-    if (firstName && mapStatuses.includes(firstName)) return true;
-    if (shortInitials && mapStatuses.includes(shortInitials)) return true;
-    if (mapStatuses.includes(auditor.id.toUpperCase())) return true;
+    const hasAuditorTag =
+      mapStatuses.includes(audNameUpper) ||
+      (firstName && mapStatuses.includes(firstName)) ||
+      (shortInitials && mapStatuses.includes(shortInitials)) ||
+      mapStatuses.includes(auditor.id.toUpperCase());
+
+    if (hasAuditorTag) return true;
+
+    // 2. Direct assignee check: ONLY if the task has a review-related status!
+    const isDirectAssignee =
+      task.assignee?.id === auditor.id ||
+      (task.assignees || []).some((u) => u.id === auditor.id);
+
+    if (isDirectAssignee && isReviewStatus(task)) return true;
 
     return false;
   };
@@ -327,11 +437,11 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     });
 
     if (targetColumnId === 'col-to-review') {
-      updatedStatuses.push('To review');
+      updatedStatuses = ['To review'];
       toast.info('Task moved to General Review queue');
       onStatusChange(taskId, updatedStatuses);
     } else if (targetColumnId === 'col-done-review') {
-      updatedStatuses.push('Done Review');
+      updatedStatuses = ['Done Review'];
       toast.success('Task marked Done Review');
       onStatusChange(taskId, updatedStatuses);
       if (onTaskUpdate) {
@@ -343,9 +453,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       const auditorId = targetColumnId.replace('col-auditor-', '');
       const auditor = auditorUsers.find((a) => a.id === auditorId);
       if (auditor) {
-        const audTag = (auditor.name || '').split(' ')[0].toUpperCase();
-        updatedStatuses.push(audTag);
-        updatedStatuses.push('To review');
+        updatedStatuses = ['To review'];
         toast.success(`Task assigned to ${auditor.name} for review`);
         onStatusChange(taskId, updatedStatuses);
 
@@ -361,27 +469,11 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   };
 
   // Helper options for sub-status dropdown in Auditing
-  const getAuditingOptions = (task: TaskMapItem): TaskMapOption[] => {
-    const base: TaskMapOption[] = [
-      { id: 'opt-donereview', label: 'Done Review', color: '#2dd4bf', textColor: '#134e4a', order: 1 },
-      { id: 'opt-revision', label: 'Revision', color: '#c084fc', textColor: '#581c87', order: 2 },
-      { id: 'opt-toreview', label: 'To review', color: '#1d4ed8', textColor: '#dbeafe', order: 3 },
-      { id: 'opt-inprog', label: 'In progress', color: '#ca8a04', textColor: '#fef08a', order: 4 },
-    ];
-
-    auditorUsers.forEach((a, idx) => {
-      const first = (a.name || '').split(' ')[0].toUpperCase();
-      base.push({
-        id: `opt-aud-${a.id}`,
-        label: first,
-        color: '#f59e0b',
-        textColor: '#ffffff',
-        order: 10 + idx,
-      });
-    });
-
-    return base;
-  };
+  const getAuditingOptions = (task: TaskMapItem): TaskMapOption[] => [
+    { id: 'opt-audit-tosend', label: 'To send', color: '#22A3AE', textColor: '#ffffff', order: 1 },
+    { id: 'opt-audit-revision', label: 'Revision', color: '#5B6BD6', textColor: '#ffffff', order: 2 },
+    { id: 'opt-audit-donereview', label: 'Done Review', color: '#2dd4bf', textColor: '#134e4a', order: 3 },
+  ];
 
   // Assemble full columns array
   interface AuditingColumnDef {
@@ -464,39 +556,39 @@ export const TaskMapAuditingView: React.FC<Props> = ({
             // Collapsed Column Bar
             if (isCollapsed) {
               return (
-                <div
-                  key={col.id}
-                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/80 border border-zinc-800 rounded-2xl shadow-md h-[calc(100vh-130px)] transition-all ${
-                    isPinned ? 'border-amber-500/50 ring-1 ring-amber-500/30' : ''
-                  }`}
+                <DroppableColumn
+                  key={`${col.id}-collapsed`}
+                  id={col.id}
+                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-[calc(100vh-130px)] transition-all cursor-pointer hover:border-amber-500/50 ${isPinned ? 'ring-1 ring-amber-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                    }`}
                 >
                   <button
                     type="button"
                     onClick={() => toggleCollapseColumn(col.id)}
-                    className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer mb-3"
+                    className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800/60 mb-2 cursor-pointer"
                     title="Expand column"
                   >
-                    <ChevronRight className="size-4" />
+                    <ChevronRight className="size-4 text-amber-400" />
                   </button>
 
-                  <span
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border mb-4 ${
-                      col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                    }`}
-                  >
+                  {isPinned && (
+                    <Pin className="size-3 text-amber-400 fill-amber-400/40 rotate-45 mb-2" />
+                  )}
+
+                  <span className={`size-2.5 rounded-full ${col.dotColor} mb-2 shrink-0`} />
+
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-4">
                     {col.tasks.length}
                   </span>
 
-                  <div className="flex-1 flex items-center justify-center">
-                    <span className="text-xs font-bold text-zinc-300 tracking-wider [writing-mode:vertical-lr] rotate-180 truncate max-h-[300px]">
-                      {col.title}
-                    </span>
-                  </div>
-
-                  {isPinned && (
-                    <Pin className="size-3 text-amber-400 mt-2 shrink-0 fill-amber-400/30" />
-                  )}
-                </div>
+                  <span
+                    onClick={() => toggleCollapseColumn(col.id)}
+                    style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}
+                    className="text-xs font-bold text-zinc-300 tracking-wider whitespace-nowrap mt-2 cursor-pointer hover:text-white select-none"
+                  >
+                    {col.title}
+                  </span>
+                </DroppableColumn>
               );
             }
 
@@ -505,149 +597,139 @@ export const TaskMapAuditingView: React.FC<Props> = ({
               <DroppableColumn
                 key={col.id}
                 id={col.id}
-                className={`w-[340px] shrink-0 flex flex-col bg-card/90 border rounded-2xl p-3.5 shadow-xl h-[calc(100vh-130px)] transition-all ${
-                  isPinned
-                    ? 'border-amber-500/40 ring-1 ring-amber-500/20 bg-card'
-                    : 'border-border'
-                }`}
+                className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-[calc(100vh-130px)] ${isPinned ? 'ring-1 ring-amber-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                  }`}
               >
-                {/* Column Header */}
-                <div className="pb-2 border-b border-zinc-800/80 mb-2">
-                  <div className="flex items-center justify-between gap-1">
-                    {/* Left: Avatar/Dot + Title + Role Badge */}
-                    <div className="flex items-center gap-2 min-w-0">
-                      {col.auditorUser ? (
-                        col.auditorUser.avatarUrl ? (
-                          <img
-                            src={col.auditorUser.avatarUrl}
-                            alt={col.title}
-                            className="size-6 rounded-full object-cover shrink-0 ring-1 ring-amber-500/40"
-                          />
-                        ) : (
-                          <div className="size-6 rounded-full bg-amber-950/80 border border-amber-600/40 text-amber-300 flex items-center justify-center text-[10px] font-bold shrink-0">
-                            {(col.title || 'U').charAt(0).toUpperCase()}
-                          </div>
-                        )
+                {/* Header Top Row: Left side has dot/avatar & title & badge & count; Right side has Collapse, Pin, Search */}
+                <div className="flex items-center justify-between pb-2 border-b border-border/80 mb-2">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                    {col.auditorUser ? (
+                      col.auditorUser.avatarUrl ? (
+                        <img
+                          src={col.auditorUser.avatarUrl}
+                          alt={col.title}
+                          className="size-6 rounded-full object-cover shrink-0 ring-1 ring-amber-500/40"
+                        />
                       ) : (
-                        <span className={`size-2.5 rounded-full ${col.dotColor} shrink-0`} />
-                      )}
-
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <h3 className="text-xs font-bold text-zinc-100 truncate" title={col.title}>
-                            {col.title}
-                          </h3>
-                          <span
-                            className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border truncate ${
-                              col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                            }`}
-                          >
-                            {col.badgeLabel || 'Auditor'}
-                          </span>
+                        <div className="size-6 rounded-full bg-amber-950/80 border border-amber-600/40 text-amber-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                          {(col.title || 'U').charAt(0).toUpperCase()}
                         </div>
-                      </div>
-                    </div>
+                      )
+                    ) : (
+                      <span className={`size-2 rounded-full ${col.dotColor} shrink-0`} />
+                    )}
 
-                    {/* Right: Task Count Badge */}
+                    <h3 className="text-sm font-bold text-zinc-100 truncate" title={col.title}>
+                      {col.title}
+                    </h3>
+
+                    {col.badgeLabel && (
+                      <span
+                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 truncate ${col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                          }`}
+                      >
+                        {col.badgeLabel}
+                      </span>
+                    )}
+
                     <span
-                      className={`text-xs font-bold px-2 py-0.5 rounded-full border shrink-0 ${
-                        col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                      }`}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
+                        }`}
                     >
-                      {visibleTasks.length !== col.tasks.length
-                        ? `${visibleTasks.length}/${col.tasks.length}`
-                        : col.tasks.length}
+                      {col.tasks.length}
                     </span>
                   </div>
 
-                  {/* Column Controls Row: Priority Filter on Left, [Collapse] [Pin] [Search] on Right */}
-                  <div className="flex items-center justify-between gap-1 pt-2">
-                    {/* Left: Priority Filter */}
-                    <ColumnPriorityDropdown
-                      columnId={col.id}
-                      tasks={col.tasks}
-                      activeFilter={activePriority}
-                      onSelectFilter={(cId, filter) =>
-                        setColumnPriorityFilters((prev) => ({ ...prev, [cId]: filter }))
-                      }
-                    />
+                  {/* Top Right: Collapse, Pin, Search (Search on right side) */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleCollapseColumn(col.id)}
+                      className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
+                      title="Collapse column"
+                    >
+                      <ChevronLeft className="size-3.5" />
+                    </button>
 
-                    {/* Right: Controls in requested order: Collapse, Pin, Search */}
-                    <div className="flex items-center gap-1">
-                      {/* 1. Collapse */}
-                      <button
-                        type="button"
-                        onClick={() => toggleCollapseColumn(col.id)}
-                        className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
-                        title="Collapse column"
-                      >
-                        <ChevronLeft className="size-3.5" />
-                      </button>
-
-                      {/* 2. Pin */}
-                      <button
-                        type="button"
-                        onClick={() => togglePinColumn(col.id)}
-                        className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                          isPinned
-                            ? 'text-amber-400 bg-amber-950/50 hover:bg-amber-950'
-                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                    <button
+                      type="button"
+                      onClick={() => togglePinColumn(col.id)}
+                      className={`p-1 rounded-md transition-colors cursor-pointer ${isPinned
+                          ? 'text-amber-400 bg-amber-500/15 border border-amber-500/30'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
                         }`}
-                        title={isPinned ? 'Unpin column' : 'Pin column to left'}
-                      >
-                        {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-                      </button>
+                      title={isPinned ? 'Unpin column' : 'Pin column'}
+                    >
+                      <Pin className={`size-3.5 rotate-45 ${isPinned ? 'fill-amber-400/40' : ''}`} />
+                    </button>
 
-                      {/* 3. Search */}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setColumnSearchOpen((prev) => ({ ...prev, [col.id]: !prev[col.id] }))
-                        }
-                        className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                          isSearchOpen || searchQuery
-                            ? 'text-blue-400 bg-blue-950/50 hover:bg-blue-950'
-                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                        }`}
-                        title="Search tasks in this column"
-                      >
-                        <Search className="size-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Inline Expandable Search Bar */}
-                  {(isSearchOpen || searchQuery) && (
-                    <div className="mt-2 relative">
-                      <Search className="size-3 text-zinc-500 absolute left-2.5 top-2 pointer-events-none" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) =>
-                          setColumnSearches((prev) => ({ ...prev, [col.id]: e.target.value }))
-                        }
-                        placeholder="Filter in column..."
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-7 py-1 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-                        autoFocus={isSearchOpen && !searchQuery}
-                      />
-                      {searchQuery && (
+                    {isSearchOpen ? (
+                      <div className="flex items-center bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-0.5 max-w-[130px] text-xs">
+                        <Search className="size-3 text-zinc-400 shrink-0 mr-1" />
+                        <input
+                          autoFocus
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) =>
+                            setColumnSearches((prev) => ({ ...prev, [col.id]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              setColumnSearchOpen((prev) => ({ ...prev, [col.id]: false }));
+                            }
+                          }}
+                          placeholder="Search..."
+                          className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+                        />
                         <button
                           type="button"
                           onClick={() => {
                             setColumnSearches((prev) => ({ ...prev, [col.id]: '' }));
                             setColumnSearchOpen((prev) => ({ ...prev, [col.id]: false }));
                           }}
-                          className="absolute right-2 top-1.5 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                          className="text-zinc-400 hover:text-zinc-200 ml-0.5 p-0.5 cursor-pointer"
+                          title="Close search"
                         >
                           <X className="size-3" />
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setColumnSearchOpen((prev) => ({ ...prev, [col.id]: true }))
+                        }
+                        className={`p-1 rounded-md transition-colors cursor-pointer ${searchQuery
+                            ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                          }`}
+                        title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
+                      >
+                        <Search className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Next Line: Filters on the left side */}
+                <div className="flex items-center gap-1.5 justify-start mb-3">
+                  <ColumnPriorityDropdown
+                    columnId={col.id}
+                    tasks={col.tasks}
+                    activeFilter={activePriority}
+                    onSelectFilter={(cId, filter) =>
+                      setColumnPriorityFilters((prev) => ({ ...prev, [cId]: filter }))
+                    }
+                  />
+                  {searchQuery && (
+                    <span className="text-[10px] text-zinc-400 italic">
+                      ({visibleTasks.length} of {col.tasks.length})
+                    </span>
                   )}
                 </div>
 
                 {/* Cards List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2.5 pr-1">
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                   {visibleTasks.length === 0 ? (
                     <p className="text-xs text-zinc-600 italic text-center py-12">
                       {searchQuery || activePriority !== 'ALL'
@@ -721,12 +803,10 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                             {/* Separator */}
                             <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
 
-                            {/* Right: Section where Sub-Status is (with Posted date in top right corner) */}
+                            {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
                             <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
                               <div className="flex justify-end items-center">
-                                <span className="text-[10px] font-medium text-zinc-500">
-                                  Posted {format(new Date(task.createdAt), 'MMM d')}
-                                </span>
+                                <TaskTimeProgressSlot task={task} now={currentTime} />
                               </div>
 
                               <div
@@ -740,13 +820,77 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                 <TaskMapStatusDropdown
                                   selectedStatuses={task.taskMap?.statuses || []}
                                   options={getAuditingOptions(task)}
-                                  onToggleStatus={(label, nextStatuses) => {
-                                    const next =
-                                      nextStatuses ||
-                                      ((task.taskMap?.statuses || []).includes(label)
-                                        ? (task.taskMap?.statuses || []).filter((s) => s !== label)
-                                        : [...(task.taskMap?.statuses || []), label]);
-                                    onStatusChange(task.id, next);
+                                  onToggleStatus={async (label, nextStatuses) => {
+                                    const isSelecting = (nextStatuses || []).includes(label);
+                                    const cleanNext = isSelecting ? [label] : [];
+                                    
+                                    if (label === 'To send') {
+                                      if (isSelecting) {
+                                        onStatusChange(task.id, cleanNext);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'CRM' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.success('Task marked To send — passed to CRM');
+                                      } else {
+                                        // User pressed 'To send' AGAIN in Auditing -> revert back to last status
+                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        onStatusChange(task.id, []);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: revertStatus });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info(`Reverted 'To send' — returned to ${revertStatus}`);
+                                      }
+                                    } else if (label === 'Revision') {
+                                      if (isSelecting) {
+                                        onStatusChange(task.id, cleanNext);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'Revision' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'Revision' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.warning('Task marked for Revision');
+                                      } else {
+                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        onStatusChange(task.id, []);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: revertStatus });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
+                                      }
+                                    } else if (label === 'Done Review') {
+                                      if (isSelecting) {
+                                        onStatusChange(task.id, cleanNext);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'Done Review' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'Done Review' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.success('Task marked Done Review');
+                                      } else {
+                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        onStatusChange(task.id, []);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: revertStatus });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info(`Reverted 'Done Review' — returned to ${revertStatus}`);
+                                      }
+                                    } else {
+                                      onStatusChange(task.id, cleanNext);
+                                    }
                                   }}
                                   onOptionsUpdated={onOptionsUpdated}
                                   readOnly={false}

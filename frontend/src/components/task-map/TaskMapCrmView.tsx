@@ -8,7 +8,6 @@ import { TaskDescriptionButton } from './TaskDescriptionButton';
 import {
   UserCheck,
   Pin,
-  PinOff,
   ChevronLeft,
   ChevronRight,
   Search,
@@ -215,10 +214,35 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return fName === 'admin' || fName.includes('admin') || lName === 'admin';
   };
 
-  // Filter out Admin tasks if toggled off
+  // Check if a task belongs on the CRM board (status == 'CRM' or has CRM workflow statuses)
+  const isCrmStatus = (t: TaskMapItem) => {
+    const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+    const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
+      x.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    return (
+      s === 'CRM' ||
+      s === 'SENT' ||
+      s === 'OUTREACH' ||
+      s === 'OUTREACHSENT' ||
+      s === 'FOLLOWUP' ||
+      s === 'TOSEND' ||
+      mapStatuses.includes('CRM') ||
+      mapStatuses.includes('TOSEND') ||
+      mapStatuses.includes('SENT') ||
+      mapStatuses.includes('FOLLOWUP') ||
+      mapStatuses.includes('OUTREACH') ||
+      mapStatuses.includes('OUTREACHSENT') ||
+      mapStatuses.includes('CLIENTSENT')
+    );
+  };
+
+  // Filter out Admin tasks if toggled off, and strictly require CRM status
   const filteredCrmTasks = React.useMemo(() => {
     return combinedTasks.filter((t) => {
       if (!showAdminTasks && isTaskUnderAdmin(t)) return false;
+      // CRITICAL: A task MUST have CRM status to appear on the CRM board!
+      if (!isCrmStatus(t)) return false;
       return true;
     });
   }, [combinedTasks, showAdminTasks]);
@@ -232,6 +256,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       s === 'CLOSED' ||
       s === 'SENT' ||
       s === 'OUTREACH SENT' ||
+      mapStatuses.includes('SENT') ||
       mapStatuses.includes('OUTREACH SENT') ||
       mapStatuses.includes('CLIENT SENT')
     );
@@ -240,6 +265,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
   // Check if task is assigned to a specific CRM member
   const isTaskAssignedToCrmMember = (task: TaskMapItem, crmMember: any) => {
     if (isCrmCompleted(task)) return false;
+    // Task must be in CRM status
+    if (!isCrmStatus(task)) return false;
 
     // Direct assignee check
     if (task.assignee?.id === crmMember.id) return true;
@@ -251,6 +278,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
     const first = memberNameUpper.split(' ')[0];
     if (mapStatuses.includes(memberNameUpper)) return true;
     if (first && mapStatuses.includes(first)) return true;
+    if (mapStatuses.includes(crmMember.id.toUpperCase())) return true;
 
     return false;
   };
@@ -258,23 +286,10 @@ export const TaskMapCrmView: React.FC<Props> = ({
   // General CRM Pool: tasks needing client outreach / CRM that are not yet assigned to a specific CRM member
   const isGeneralCrmPool = (t: TaskMapItem) => {
     if (isCrmCompleted(t)) return false;
+    if (!isCrmStatus(t)) return false;
     if (crmUsers.some((u) => isTaskAssignedToCrmMember(t, u))) return false;
 
-    const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
-    const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
-      x.toUpperCase().replace(/[\s_-]+/g, '')
-    );
-
-    return (
-      s === 'CRM' ||
-      s === 'TOCONTACT' ||
-      s === 'OUTREACH' ||
-      s === 'FOLLOWUP' ||
-      mapStatuses.includes('CRM') ||
-      mapStatuses.includes('TOSEND') ||
-      mapStatuses.includes('FOLLOWUP') ||
-      mapStatuses.includes('OUTREACH')
-    );
+    return true;
   };
 
   const poolTasks = filteredCrmTasks.filter(isGeneralCrmPool);
@@ -332,8 +347,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
       const memberId = targetColumnId.replace('col-crm-member-', '');
       const member = crmUsers.find((u) => u.id === memberId);
       if (member) {
-        const first = (member.name || '').split(' ')[0].toUpperCase();
-        updatedStatuses.push(first);
+        // Only assign to member, never mark as Sent
+        updatedStatuses = updatedStatuses.filter((s) => s.toUpperCase() !== 'SENT' && s.toUpperCase() !== 'OUTREACH SENT');
         if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
         toast.success(`Task assigned to ${member.name} for CRM outreach`);
         onStatusChange(taskId, updatedStatuses);
@@ -349,28 +364,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
     }
   };
 
-  // Helper options for sub-status dropdown in CRM
-  const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => {
-    const base: TaskMapOption[] = [
-      { id: 'opt-crm-active', label: 'CRM', color: '#22A3AE', textColor: '#ffffff', order: 1 },
-      { id: 'opt-crm-sent', label: 'Outreach Sent', color: '#10b981', textColor: '#ffffff', order: 2 },
-      { id: 'opt-crm-followup', label: 'Follow up', color: '#f59e0b', textColor: '#ffffff', order: 3 },
-      { id: 'opt-crm-waiting', label: 'Waiting Client', color: '#8b5cf6', textColor: '#ffffff', order: 4 },
-    ];
-
-    crmUsers.forEach((u, idx) => {
-      const first = (u.name || '').split(' ')[0].toUpperCase();
-      base.push({
-        id: `opt-crm-${u.id}`,
-        label: first,
-        color: '#22A3AE',
-        textColor: '#ffffff',
-        order: 10 + idx,
-      });
-    });
-
-    return base;
-  };
+  // Helper options for sub-status dropdown in CRM (includes 'To send' so users can see/revert if misclicked)
+  const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => [
+    { id: 'opt-crm-tosend', label: 'To send', color: '#22A3AE', textColor: '#ffffff', order: 0 },
+    { id: 'opt-crm-sent', label: 'Sent', color: '#10b981', textColor: '#ffffff', order: 1 },
+    { id: 'opt-crm-followup', label: 'Follow up', color: '#f59e0b', textColor: '#ffffff', order: 2 },
+  ];
 
   // Assemble full columns array
   interface CrmColumnDef {
@@ -481,39 +480,40 @@ export const TaskMapCrmView: React.FC<Props> = ({
             // Collapsed Column Bar
             if (isCollapsed) {
               return (
-                <div
-                  key={col.id}
-                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/80 border border-zinc-800 rounded-2xl shadow-md h-[calc(100vh-130px)] transition-all ${
-                    isPinned ? 'border-[#22A3AE]/50 ring-1 ring-[#22A3AE]/30' : ''
+                <DroppableColumn
+                  key={`${col.id}-collapsed`}
+                  id={col.id}
+                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-[calc(100vh-130px)] transition-all cursor-pointer hover:border-[#22A3AE]/50 ${
+                    isPinned ? 'ring-1 ring-[#22A3AE]/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
                   }`}
                 >
                   <button
                     type="button"
                     onClick={() => toggleCollapseColumn(col.id)}
-                    className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer mb-3"
+                    className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800/60 mb-2 cursor-pointer"
                     title="Expand column"
                   >
-                    <ChevronRight className="size-4" />
+                    <ChevronRight className="size-4 text-[#22A3AE]" />
                   </button>
 
-                  <span
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border mb-4 ${
-                      col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                    }`}
-                  >
+                  {isPinned && (
+                    <Pin className="size-3 text-[#22A3AE] fill-[#22A3AE]/40 rotate-45 mb-2" />
+                  )}
+
+                  <span className={`size-2.5 rounded-full ${col.dotColor} mb-2 shrink-0`} />
+
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#22A3AE]/20 text-[#22A3AE] border border-[#22A3AE]/30 mb-4">
                     {col.tasks.length}
                   </span>
 
-                  <div className="flex-1 flex items-center justify-center">
-                    <span className="text-xs font-bold text-zinc-300 tracking-wider [writing-mode:vertical-lr] rotate-180 truncate max-h-[300px]">
-                      {col.title}
-                    </span>
-                  </div>
-
-                  {isPinned && (
-                    <Pin className="size-3 text-[#22A3AE] mt-2 shrink-0 fill-[#22A3AE]/30" />
-                  )}
-                </div>
+                  <span
+                    onClick={() => toggleCollapseColumn(col.id)}
+                    style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}
+                    className="text-xs font-bold text-zinc-300 tracking-wider whitespace-nowrap mt-2 cursor-pointer hover:text-white select-none"
+                  >
+                    {col.title}
+                  </span>
+                </DroppableColumn>
               );
             }
 
@@ -522,149 +522,144 @@ export const TaskMapCrmView: React.FC<Props> = ({
               <DroppableColumn
                 key={col.id}
                 id={col.id}
-                className={`w-[340px] shrink-0 flex flex-col bg-card/90 border rounded-2xl p-3.5 shadow-xl h-[calc(100vh-130px)] transition-all ${
-                  isPinned
-                    ? 'border-[#22A3AE]/40 ring-1 ring-[#22A3AE]/20 bg-card'
-                    : 'border-border'
+                className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-[calc(100vh-130px)] ${
+                  isPinned ? 'ring-1 ring-[#22A3AE]/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
                 }`}
               >
-                {/* Column Header */}
-                <div className="pb-2 border-b border-zinc-800/80 mb-2">
-                  <div className="flex items-center justify-between gap-1">
-                    {/* Left: Avatar/Dot + Title + Role Badge */}
-                    <div className="flex items-center gap-2 min-w-0">
-                      {col.memberUser ? (
-                        col.memberUser.avatarUrl ? (
-                          <img
-                            src={col.memberUser.avatarUrl}
-                            alt={col.title}
-                            className="size-6 rounded-full object-cover shrink-0 ring-1 ring-[#22A3AE]/40"
-                          />
-                        ) : (
-                          <div className="size-6 rounded-full bg-cyan-950/80 border border-[#22A3AE]/40 text-[#22A3AE] flex items-center justify-center text-[10px] font-bold shrink-0">
-                            {(col.title || 'U').charAt(0).toUpperCase()}
-                          </div>
-                        )
+                {/* Header Top Row: Left side has dot/avatar & title & badge & count; Right side has Collapse, Pin, Search */}
+                <div className="flex items-center justify-between pb-2 border-b border-border/80 mb-2">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                    {col.memberUser ? (
+                      col.memberUser.avatarUrl ? (
+                        <img
+                          src={col.memberUser.avatarUrl}
+                          alt={col.title}
+                          className="size-6 rounded-full object-cover shrink-0 ring-1 ring-[#22A3AE]/40"
+                        />
                       ) : (
-                        <span className={`size-2.5 rounded-full ${col.dotColor} shrink-0`} />
-                      )}
-
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <h3 className="text-xs font-bold text-zinc-100 truncate" title={col.title}>
-                            {col.title}
-                          </h3>
-                          <span
-                            className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border truncate ${
-                              col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                            }`}
-                          >
-                            {col.badgeLabel || 'CRM'}
-                          </span>
+                        <div className="size-6 rounded-full bg-cyan-950/80 border border-[#22A3AE]/40 text-[#22A3AE] flex items-center justify-center text-[10px] font-bold shrink-0">
+                          {(col.title || 'U').charAt(0).toUpperCase()}
                         </div>
-                      </div>
-                    </div>
+                      )
+                    ) : (
+                      <span className={`size-2 rounded-full ${col.dotColor} shrink-0`} />
+                    )}
 
-                    {/* Right: Task Count Badge */}
+                    <h3 className="text-sm font-bold text-zinc-100 truncate" title={col.title}>
+                      {col.title}
+                    </h3>
+
+                    {col.badgeLabel && (
+                      <span
+                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 truncate ${
+                          col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                        }`}
+                      >
+                        {col.badgeLabel}
+                      </span>
+                    )}
+
                     <span
-                      className={`text-xs font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${
                         col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
                       }`}
                     >
-                      {visibleTasks.length !== col.tasks.length
-                        ? `${visibleTasks.length}/${col.tasks.length}`
-                        : col.tasks.length}
+                      {col.tasks.length}
                     </span>
                   </div>
 
-                  {/* Column Controls Row: Priority Filter on Left, [Collapse] [Pin] [Search] on Right */}
-                  <div className="flex items-center justify-between gap-1 pt-2">
-                    {/* Left: Priority Filter */}
-                    <ColumnPriorityDropdown
-                      columnId={col.id}
-                      tasks={col.tasks}
-                      activeFilter={activePriority}
-                      onSelectFilter={(cId, filter) =>
-                        setColumnPriorityFilters((prev) => ({ ...prev, [cId]: filter }))
-                      }
-                    />
+                  {/* Top Right: Collapse, Pin, Search (Search on right side) */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleCollapseColumn(col.id)}
+                      className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
+                      title="Collapse column"
+                    >
+                      <ChevronLeft className="size-3.5" />
+                    </button>
 
-                    {/* Right: Controls in requested order: Collapse, Pin, Search */}
-                    <div className="flex items-center gap-1">
-                      {/* 1. Collapse */}
-                      <button
-                        type="button"
-                        onClick={() => toggleCollapseColumn(col.id)}
-                        className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
-                        title="Collapse column"
-                      >
-                        <ChevronLeft className="size-3.5" />
-                      </button>
+                    <button
+                      type="button"
+                      onClick={() => togglePinColumn(col.id)}
+                      className={`p-1 rounded-md transition-colors cursor-pointer ${
+                        isPinned
+                          ? 'text-[#22A3AE] bg-[#22A3AE]/15 border border-[#22A3AE]/30'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                      }`}
+                      title={isPinned ? 'Unpin column' : 'Pin column'}
+                    >
+                      <Pin className={`size-3.5 rotate-45 ${isPinned ? 'fill-[#22A3AE]/40' : ''}`} />
+                    </button>
 
-                      {/* 2. Pin */}
-                      <button
-                        type="button"
-                        onClick={() => togglePinColumn(col.id)}
-                        className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                          isPinned
-                            ? 'text-[#22A3AE] bg-cyan-950/50 hover:bg-cyan-950'
-                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                        }`}
-                        title={isPinned ? 'Unpin column' : 'Pin column to left'}
-                      >
-                        {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-                      </button>
-
-                      {/* 3. Search */}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setColumnSearchOpen((prev) => ({ ...prev, [col.id]: !prev[col.id] }))
-                        }
-                        className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                          isSearchOpen || searchQuery
-                            ? 'text-blue-400 bg-blue-950/50 hover:bg-blue-950'
-                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                        }`}
-                        title="Search tasks in this column"
-                      >
-                        <Search className="size-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Inline Expandable Search Bar */}
-                  {(isSearchOpen || searchQuery) && (
-                    <div className="mt-2 relative">
-                      <Search className="size-3 text-zinc-500 absolute left-2.5 top-2 pointer-events-none" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) =>
-                          setColumnSearches((prev) => ({ ...prev, [col.id]: e.target.value }))
-                        }
-                        placeholder="Filter in column..."
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-7 py-1 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-[#22A3AE]"
-                        autoFocus={isSearchOpen && !searchQuery}
-                      />
-                      {searchQuery && (
+                    {isSearchOpen ? (
+                      <div className="flex items-center bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-0.5 max-w-[130px] text-xs">
+                        <Search className="size-3 text-zinc-400 shrink-0 mr-1" />
+                        <input
+                          autoFocus
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) =>
+                            setColumnSearches((prev) => ({ ...prev, [col.id]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              setColumnSearchOpen((prev) => ({ ...prev, [col.id]: false }));
+                            }
+                          }}
+                          placeholder="Search..."
+                          className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+                        />
                         <button
                           type="button"
                           onClick={() => {
                             setColumnSearches((prev) => ({ ...prev, [col.id]: '' }));
                             setColumnSearchOpen((prev) => ({ ...prev, [col.id]: false }));
                           }}
-                          className="absolute right-2 top-1.5 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                          className="text-zinc-400 hover:text-zinc-200 ml-0.5 p-0.5 cursor-pointer"
+                          title="Close search"
                         >
                           <X className="size-3" />
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setColumnSearchOpen((prev) => ({ ...prev, [col.id]: true }))
+                        }
+                        className={`p-1 rounded-md transition-colors cursor-pointer ${
+                          searchQuery
+                            ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                        }`}
+                        title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
+                      >
+                        <Search className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Next Line: Filters on the left side */}
+                <div className="flex items-center gap-1.5 justify-start mb-3">
+                  <ColumnPriorityDropdown
+                    columnId={col.id}
+                    tasks={col.tasks}
+                    activeFilter={activePriority}
+                    onSelectFilter={(cId, filter) =>
+                      setColumnPriorityFilters((prev) => ({ ...prev, [cId]: filter }))
+                    }
+                  />
+                  {searchQuery && (
+                    <span className="text-[10px] text-zinc-400 italic">
+                      ({visibleTasks.length} of {col.tasks.length})
+                    </span>
                   )}
                 </div>
 
                 {/* Cards List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2.5 pr-1">
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                   {visibleTasks.length === 0 ? (
                     <p className="text-xs text-zinc-600 italic text-center py-12">
                       {searchQuery || activePriority !== 'ALL'
@@ -757,13 +752,43 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                 <TaskMapStatusDropdown
                                   selectedStatuses={task.taskMap?.statuses || []}
                                   options={getCrmOptions(task)}
-                                  onToggleStatus={(label, nextStatuses) => {
-                                    const next =
-                                      nextStatuses ||
-                                      ((task.taskMap?.statuses || []).includes(label)
-                                        ? (task.taskMap?.statuses || []).filter((s) => s !== label)
-                                        : [...(task.taskMap?.statuses || []), label]);
-                                    onStatusChange(task.id, next);
+                                  onToggleStatus={async (label, nextStatuses) => {
+                                    const isSelecting = (nextStatuses || []).includes(label);
+                                    const cleanNext = isSelecting ? [label] : [];
+
+                                    if (label === 'To send') {
+                                      if (isSelecting) {
+                                        onStatusChange(task.id, cleanNext);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'CRM' });
+                                        }
+                                      } else {
+                                        // User clicked 'To send' AGAIN in CRM -> revert misclick back to last status
+                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        onStatusChange(task.id, []);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: revertStatus });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info(`Reverted 'To send' — returned to ${revertStatus}`);
+                                      }
+                                    } else if (label === 'Sent' && isSelecting) {
+                                      onStatusChange(task.id, cleanNext);
+                                      if (onTaskUpdate) {
+                                        await onTaskUpdate(task.id, { status: 'Closed' });
+                                      } else {
+                                        await tasksApi.updateTask(task.id, { status: 'Closed' } as any).catch(console.error);
+                                        onDataRefresh();
+                                      }
+                                      toast.success('Task marked Sent — outreach complete');
+                                    } else if (label === 'Follow up' && isSelecting) {
+                                      onStatusChange(task.id, cleanNext);
+                                      toast.warning('Task marked for Follow up');
+                                    } else {
+                                      onStatusChange(task.id, cleanNext);
+                                    }
                                   }}
                                   onOptionsUpdated={onOptionsUpdated}
                                   readOnly={false}

@@ -4,7 +4,9 @@ import { TaskMapItem, TaskMapOption, taskMapApi } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
-import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X } from 'lucide-react';
+import { CardStatusDropdown, CardPriorityDropdown, TaskTimeProgressSlot } from './TaskMapCardControls';
+
+import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { getPriorityConfig } from '@/lib/priority';
 import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions } from '@/lib/taskTokens';
@@ -288,19 +290,66 @@ const ColumnPriorityDropdown: React.FC<{
   onSelectFilter: (columnId: string, filter: string) => void;
 }> = ({ columnId, tasks, activeFilter, onSelectFilter }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const counts = getColumnPriorityCounts(tasks);
   const currentKey = activeFilter || 'ALL';
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+  const calcPos = (rect: DOMRect) => {
+    const width = 160;
+    const height = 220;
+    let top = rect.bottom + 4;
+    if (top + height > window.innerHeight - 10) {
+      top = Math.max(10, rect.top - height - 4);
+    }
+    // Open to the right away from the sidebar!
+    let left = rect.left;
+    if (left + width > window.innerWidth - 10) {
+      left = Math.max(10, window.innerWidth - width - 10);
+    }
+    return { top, left };
+  };
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isOpen) {
+      setIsOpen(false);
+      setCoords(null);
+      return;
+    }
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const pos = calcPos(rect);
+    setCoords(pos);
+    setIsOpen(true);
+  };
+
+  useLayoutEffect(() => {
+    if (!isOpen || !triggerRef.current) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        triggerRef.current &&
+        !triggerRef.current.contains(e.target as Node) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setIsOpen(false);
+        setCoords(null);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    const handleScrollOrResize = () => {
+      setIsOpen(false);
+      setCoords(null);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
   }, [isOpen]);
 
   const getDisplayDetails = () => {
@@ -352,195 +401,198 @@ const ColumnPriorityDropdown: React.FC<{
 
   return (
     <div
-      ref={dropdownRef}
       className="relative inline-block text-left shrink-0"
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleToggle}
         className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer shadow-xs select-none ${details.btnClass}`}
         title={details.label ? `Filtered by ${details.label}` : "Filter by priority"}
       >
         <Flag className={`size-3 shrink-0 ${details.flagClass}`} />
         {details.label && <span className="font-semibold">{details.label}</span>}
-        {details.count > 0 && (
-          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${details.badgeClass}`}>
-            {details.count}
-          </span>
-        )}
-        <ChevronDown
-          className={`size-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
-            isOpen ? 'rotate-180' : ''
-          }`}
-        />
       </button>
 
-      {isOpen && (
-        <div className="absolute right-0 top-full mt-1.5 w-40 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 flex flex-col gap-0.5 text-zinc-200 z-50 animate-in fade-in zoom-in-95 duration-100">
-          {/* All */}
-          <button
-            type="button"
-            onClick={() => {
-              onSelectFilter(columnId, 'ALL');
-              setIsOpen(false);
+      {isOpen &&
+        coords &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: `${coords.top}px`,
+              left: `${coords.left}px`,
+              zIndex: 999999,
             }}
-            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-              currentKey === 'ALL'
-                ? 'bg-zinc-800 text-zinc-100 font-semibold'
-                : 'text-zinc-300 hover:bg-zinc-800/60'
-            }`}
+            className="w-40 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 flex flex-col gap-0.5 text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
           >
-            <div className="flex items-center gap-2 min-w-0">
-              <Flag className="size-3 text-zinc-500 shrink-0" />
-              <span className="truncate">All</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400">
-                {counts.ALL}
-              </span>
-              {currentKey === 'ALL' && <Check className="size-3.5 text-blue-400" />}
-            </div>
-          </button>
+            {/* All */}
+            <button
+              type="button"
+              onClick={() => {
+                onSelectFilter(columnId, 'ALL');
+                setIsOpen(false);
+                setCoords(null);
+              }}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                currentKey === 'ALL'
+                  ? 'bg-zinc-800 text-zinc-100 font-semibold'
+                  : 'text-zinc-300 hover:bg-zinc-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Flag className="size-3 text-zinc-500 shrink-0" />
+                <span className="truncate">All</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400">
+                  {counts.ALL}
+                </span>
+                {currentKey === 'ALL' && <Check className="size-3.5 text-blue-400" />}
+              </div>
+            </button>
 
-          {/* Urgent */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = currentKey === 'URGENT' ? 'ALL' : 'URGENT';
-              onSelectFilter(columnId, next);
-              setIsOpen(false);
-            }}
-            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-              currentKey === 'URGENT'
-                ? 'bg-red-950/60 text-red-200 border border-red-700/60 font-semibold'
-                : 'text-zinc-300 hover:bg-zinc-800/60'
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Flag className="size-3 text-red-400 shrink-0" />
-              <span className="truncate">Urgent</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span
-                className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                  currentKey === 'URGENT' ? 'bg-red-900/50 text-red-300' : 'bg-zinc-800/80 text-zinc-400'
-                }`}
-              >
-                {counts.URGENT}
-              </span>
-              {currentKey === 'URGENT' && <Check className="size-3.5 text-red-400" />}
-            </div>
-          </button>
+            {/* Urgent */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = currentKey === 'URGENT' ? 'ALL' : 'URGENT';
+                onSelectFilter(columnId, next);
+                setIsOpen(false);
+                setCoords(null);
+              }}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                currentKey === 'URGENT'
+                  ? 'bg-red-950/60 text-red-200 border border-red-700/60 font-semibold'
+                  : 'text-zinc-300 hover:bg-zinc-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Flag className="size-3 text-red-400 shrink-0" />
+                <span className="truncate">Urgent</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                    currentKey === 'URGENT'
+                      ? 'bg-red-900/50 text-red-300'
+                      : 'bg-zinc-800/80 text-zinc-400'
+                  }`}
+                >
+                  {counts.URGENT}
+                </span>
+                {currentKey === 'URGENT' && <Check className="size-3.5 text-red-400" />}
+              </div>
+            </button>
 
-          {/* High */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = currentKey === 'HIGH' ? 'ALL' : 'HIGH';
-              onSelectFilter(columnId, next);
-              setIsOpen(false);
-            }}
-            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-              currentKey === 'HIGH'
-                ? 'bg-amber-950/60 text-amber-200 border border-amber-700/60 font-semibold'
-                : 'text-zinc-300 hover:bg-zinc-800/60'
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Flag className="size-3 text-amber-400 shrink-0" />
-              <span className="truncate">High</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span
-                className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                  currentKey === 'HIGH' ? 'bg-amber-900/50 text-amber-300' : 'bg-zinc-800/80 text-zinc-400'
-                }`}
-              >
-                {counts.HIGH}
-              </span>
-              {currentKey === 'HIGH' && <Check className="size-3.5 text-amber-400" />}
-            </div>
-          </button>
+            {/* High */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = currentKey === 'HIGH' ? 'ALL' : 'HIGH';
+                onSelectFilter(columnId, next);
+                setIsOpen(false);
+                setCoords(null);
+              }}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                currentKey === 'HIGH'
+                  ? 'bg-amber-950/60 text-amber-200 border border-amber-700/60 font-semibold'
+                  : 'text-zinc-300 hover:bg-zinc-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Flag className="size-3 text-amber-400 shrink-0" />
+                <span className="truncate">High</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                    currentKey === 'HIGH'
+                      ? 'bg-amber-900/50 text-amber-300'
+                      : 'bg-zinc-800/80 text-zinc-400'
+                  }`}
+                >
+                  {counts.HIGH}
+                </span>
+                {currentKey === 'HIGH' && <Check className="size-3.5 text-amber-400" />}
+              </div>
+            </button>
 
-          {/* Normal */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = currentKey === 'NORMAL' ? 'ALL' : 'NORMAL';
-              onSelectFilter(columnId, next);
-              setIsOpen(false);
-            }}
-            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-              currentKey === 'NORMAL'
-                ? 'bg-blue-950/60 text-blue-200 border border-blue-700/60 font-semibold'
-                : 'text-zinc-300 hover:bg-zinc-800/60'
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Flag className="size-3 text-blue-400 shrink-0" />
-              <span className="truncate">Normal</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span
-                className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                  currentKey === 'NORMAL' ? 'bg-blue-900/50 text-blue-300' : 'bg-zinc-800/80 text-zinc-400'
-                }`}
-              >
-                {counts.NORMAL}
-              </span>
-              {currentKey === 'NORMAL' && <Check className="size-3.5 text-blue-400" />}
-            </div>
-          </button>
+            {/* Normal */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = currentKey === 'NORMAL' ? 'ALL' : 'NORMAL';
+                onSelectFilter(columnId, next);
+                setIsOpen(false);
+                setCoords(null);
+              }}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                currentKey === 'NORMAL'
+                  ? 'bg-blue-950/60 text-blue-200 border border-blue-700/60 font-semibold'
+                  : 'text-zinc-300 hover:bg-zinc-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Flag className="size-3 text-blue-400 shrink-0" />
+                <span className="truncate">Normal</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                    currentKey === 'NORMAL'
+                      ? 'bg-blue-900/50 text-blue-300'
+                      : 'bg-zinc-800/80 text-zinc-400'
+                  }`}
+                >
+                  {counts.NORMAL}
+                </span>
+                {currentKey === 'NORMAL' && <Check className="size-3.5 text-blue-400" />}
+              </div>
+            </button>
 
-          {/* Low */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = currentKey === 'LOW' ? 'ALL' : 'LOW';
-              onSelectFilter(columnId, next);
-              setIsOpen(false);
-            }}
-            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-              currentKey === 'LOW'
-                ? 'bg-zinc-800 text-zinc-200 border border-zinc-700 font-semibold'
-                : 'text-zinc-300 hover:bg-zinc-800/60'
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Flag className="size-3 text-zinc-400 shrink-0" />
-              <span className="truncate">Low</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span
-                className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                  currentKey === 'LOW' ? 'bg-zinc-700 text-zinc-300' : 'bg-zinc-800/80 text-zinc-400'
-                }`}
-              >
-                {counts.LOW}
-              </span>
-              {currentKey === 'LOW' && <Check className="size-3.5 text-zinc-400" />}
-            </div>
-          </button>
-
-          {currentKey !== 'ALL' && (
-            <>
-              <div className="h-px bg-zinc-800 my-1" />
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectFilter(columnId, 'ALL');
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center justify-center py-1 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 rounded-md transition-colors cursor-pointer"
-              >
-                Reset to All
-              </button>
-            </>
-          )}
-        </div>
-      )}
+            {/* Low */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = currentKey === 'LOW' ? 'ALL' : 'LOW';
+                onSelectFilter(columnId, next);
+                setIsOpen(false);
+                setCoords(null);
+              }}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                currentKey === 'LOW'
+                  ? 'bg-zinc-800 text-zinc-200 border border-zinc-700 font-semibold'
+                  : 'text-zinc-300 hover:bg-zinc-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Flag className="size-3 text-zinc-400 shrink-0" />
+                <span className="truncate">Low</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                    currentKey === 'LOW'
+                      ? 'bg-zinc-700 text-zinc-300'
+                      : 'bg-zinc-800/80 text-zinc-400'
+                  }`}
+                >
+                  {counts.LOW}
+                </span>
+                {currentKey === 'LOW' && <Check className="size-3.5 text-zinc-400" />}
+              </div>
+            </button>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
@@ -565,20 +617,68 @@ const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
   isTaskUnderAdmin,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close on outside click
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+  const calcPos = (rect: DOMRect) => {
+    const width = 240;
+    const height = 320;
+    let top = rect.bottom + 4;
+    if (top + height > window.innerHeight - 10) {
+      top = Math.max(10, rect.top - height - 4);
+    }
+    // Open to the right away from the sidebar!
+    let left = rect.left;
+    if (left + width > window.innerWidth - 10) {
+      left = Math.max(10, window.innerWidth - width - 10);
+    }
+    return { top, left };
+  };
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isOpen) {
+      setIsOpen(false);
+      setCoords(null);
+      setSearchQuery('');
+      return;
+    }
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const pos = calcPos(rect);
+    setCoords(pos);
+    setIsOpen(true);
+  };
+
+  useLayoutEffect(() => {
+    if (!isOpen || !triggerRef.current) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        triggerRef.current &&
+        !triggerRef.current.contains(e.target as Node) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setIsOpen(false);
+        setCoords(null);
         setSearchQuery('');
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    const handleScrollOrResize = () => {
+      setIsOpen(false);
+      setCoords(null);
+      setSearchQuery('');
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
   }, [isOpen]);
 
   // Compute distinct clients and task counts
@@ -761,14 +861,14 @@ const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
 
   return (
     <div
-      ref={dropdownRef}
       className="relative inline-block text-left shrink-0"
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleToggle}
         className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer shadow-xs select-none ${details.btnClass}`}
         title={
           details.label
@@ -778,481 +878,166 @@ const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
       >
         <Building2 className={`size-3 shrink-0 ${details.iconClass}`} />
         {details.label && <span className="font-semibold max-w-[80px] truncate">{details.label}</span>}
-        {matchingCount > 0 && (
-          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${details.badgeClass}`}>
-            {matchingCount}
-          </span>
-        )}
-        <ChevronDown
-          className={`size-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
-            isOpen ? 'rotate-180' : ''
-          }`}
-        />
       </button>
 
-      {isOpen && (
-        <div className="absolute right-0 top-full mt-1.5 w-60 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 text-zinc-200 z-50 animate-in fade-in zoom-in-95 duration-100">
-          {/* Search if > 4 clients */}
-          {clientsList.length > 4 && (
-            <div className="px-1.5 py-0.5 relative">
-              <Search className="size-3 text-zinc-500 absolute left-3.5 top-2.5" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search clients..."
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2 py-1 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-                autoFocus
-              />
-            </div>
-          )}
-
-          {/* Master Options: All Clients & Admin Tasks */}
-          <div className="flex flex-col gap-0.5">
-            {/* All Clients Option */}
-            <button
-              type="button"
-              onClick={handleToggleAllClients}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                allClientsChecked
-                  ? 'bg-blue-600/15 text-blue-200 font-semibold'
-                  : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <div
-                  className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                    allClientsChecked
-                      ? 'bg-blue-600 border-blue-500 text-white'
-                      : 'border-zinc-700 bg-zinc-900 text-transparent'
-                  }`}
-                >
-                  <Check className="size-2.5" />
-                </div>
-                <Building2 className="size-3 text-blue-400 shrink-0" />
-                <span className="truncate">All Clients</span>
+      {isOpen &&
+        coords &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: `${coords.top}px`,
+              left: `${coords.left}px`,
+              zIndex: 999999,
+            }}
+            className="w-60 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
+          >
+            {/* Search if > 4 clients */}
+            {clientsList.length > 4 && (
+              <div className="px-1.5 py-0.5 relative">
+                <Search className="size-3 text-zinc-500 absolute left-3.5 top-2.5" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search clients..."
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2 py-1 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                  autoFocus
+                />
               </div>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 shrink-0">
-                {totalClientCount}
-              </span>
-            </button>
-
-            {/* Admin Tasks Option */}
-            <button
-              type="button"
-              onClick={onToggleAdmin}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                showAdmin
-                  ? 'bg-purple-950/60 text-purple-200 border border-purple-800/60 font-semibold'
-                  : 'text-zinc-400 hover:bg-zinc-800/60'
-              }`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <div
-                  className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                    showAdmin
-                      ? 'bg-purple-600 border-purple-500 text-white'
-                      : 'border-zinc-700 bg-zinc-900 text-transparent'
-                  }`}
-                >
-                  <Check className="size-2.5" />
-                </div>
-                <Shield className="size-3 text-purple-400 shrink-0" />
-                <span className="truncate">Admin Tasks</span>
-              </div>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 border border-purple-800/40 shrink-0">
-                {adminCount}
-              </span>
-            </button>
-          </div>
-
-          <div className="h-px bg-zinc-800/80 my-0.5" />
-
-          {/* List of individual clients */}
-          <div className="max-h-52 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
-            {filteredClients.length === 0 ? (
-              <p className="text-[11px] text-zinc-500 italic text-center py-2">
-                No clients found
-              </p>
-            ) : (
-              filteredClients.map((client) => {
-                const checked = isClientChecked(client.id, client.name);
-                return (
-                  <div
-                    key={client.id}
-                    onClick={() => handleToggleClient(client.id)}
-                    className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                      checked
-                        ? 'bg-zinc-800/60 text-zinc-100 font-medium'
-                        : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div
-                        className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                          checked
-                            ? 'bg-blue-600 border-blue-500 text-white'
-                            : 'border-zinc-700 bg-zinc-900 text-transparent'
-                        }`}
-                      >
-                        <Check className="size-2.5" />
-                      </div>
-                      <span className="truncate">{client.name}</span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {/* 'Only' button visible on group hover */}
-                      <button
-                        type="button"
-                        onClick={(e) => handleSelectOnlyClient(client.id, e)}
-                        className="opacity-0 group-hover:opacity-100 px-1 py-0.2 text-[9px] text-zinc-400 hover:text-blue-300 hover:bg-blue-950/60 rounded transition-all cursor-pointer"
-                        title={`Show only ${client.name}`}
-                      >
-                        only
-                      </button>
-                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400">
-                        {client.count}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
             )}
-          </div>
 
-          {/* Reset button if filtered */}
-          {isFiltered && (
-            <>
-              <div className="h-px bg-zinc-800/80 my-0.5" />
+            {/* Master Options: All Clients & Admin Tasks */}
+            <div className="flex flex-col gap-0.5">
+              {/* All Clients Option */}
               <button
                 type="button"
-                onClick={handleReset}
-                className="w-full flex items-center justify-center py-1 text-[11px] text-blue-400 hover:text-blue-300 hover:bg-blue-950/40 rounded-md transition-colors cursor-pointer font-medium"
+                onClick={handleToggleAllClients}
+                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                  allClientsChecked
+                    ? 'bg-blue-600/15 text-blue-200 font-semibold'
+                    : 'text-zinc-300 hover:bg-zinc-800/60'
+                }`}
               >
-                Reset to All
+                <div className="flex items-center gap-2 min-w-0">
+                  <div
+                    className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                      allClientsChecked
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'border-zinc-700 bg-zinc-900 text-transparent'
+                    }`}
+                  >
+                    <Check className="size-2.5" />
+                  </div>
+                  <Building2 className="size-3 text-blue-400 shrink-0" />
+                  <span className="truncate">All Clients</span>
+                </div>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 shrink-0">
+                  {totalClientCount}
+                </span>
               </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
 
-// ---------------------------------------------------------------------------
-// Card Status & Priority Interactive Dropdowns
-// ---------------------------------------------------------------------------
-const CardStatusDropdown: React.FC<{
-  taskId: string;
-  currentStatus: string;
-  onSelect: (newStatus: string) => void;
-}> = ({ taskId, currentStatus, onSelect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
-
-  const statusList = [
-    { label: 'In progress', color: '#D04A7C' },
-    { label: 'Pending', color: '#D29A2A' },
-    { label: 'To review', color: '#1d4ed8' },
-    { label: 'Revision', color: '#5B6BD6' },
-    { label: 'Done', color: '#166534' },
-    { label: 'Closed', color: '#10b981', isClosed: true },
-    { label: 'KYC', color: '#059669', isKyc: true },
-  ];
-
-  const calcPos = (rect: DOMRect) => {
-    const width = 160;
-    const height = 240;
-    let top = rect.bottom + 4;
-    if (top + height > window.innerHeight - 10) {
-      top = Math.max(10, rect.top - height - 4);
-    }
-    let left = rect.left;
-    if (left + width > window.innerWidth - 10) {
-      left = Math.max(10, window.innerWidth - width - 10);
-    }
-    return { top, left };
-  };
-
-  const handleToggle = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isOpen) {
-      setIsOpen(false);
-      setCoords(null);
-      return;
-    }
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const nextCoords = calcPos(rect);
-    setCoords(nextCoords);
-    setIsOpen(true);
-  };
-
-  useLayoutEffect(() => {
-    if (!isOpen || !triggerRef.current) return;
-
-    const handleOutside = (e: MouseEvent) => {
-      if (
-        triggerRef.current &&
-        !triggerRef.current.contains(e.target as Node) &&
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsOpen(false);
-        setCoords(null);
-      }
-    };
-
-    const handleScrollOrResize = () => {
-      setIsOpen(false);
-      setCoords(null);
-    };
-
-    document.addEventListener('mousedown', handleOutside);
-    window.addEventListener('scroll', handleScrollOrResize, true);
-    window.addEventListener('resize', handleScrollOrResize);
-    return () => {
-      document.removeEventListener('mousedown', handleOutside);
-      window.removeEventListener('scroll', handleScrollOrResize, true);
-      window.removeEventListener('resize', handleScrollOrResize);
-    };
-  }, [isOpen]);
-
-  const clean = (currentStatus || 'In progress').trim();
-  const isClosed = clean.toUpperCase() === 'CLOSED' || clean.toUpperCase() === 'DONE';
-  const isKyc = clean.toUpperCase() === 'KYC';
-
-  return (
-    <div
-      className="relative inline-flex items-center"
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={handleToggle}
-        className="flex items-center p-1 -m-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer select-none"
-        title={`Status: ${clean} (click to change)`}
-      >
-        {isClosed ? (
-          <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
-        ) : isKyc ? (
-          <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
-        ) : (
-          <CustomCircleDot
-            className="size-3.5 shrink-0"
-            style={{ color: getDotColor(clean) }}
-          />
-        )}
-      </button>
-
-      {isOpen &&
-        coords &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            ref={dropdownRef}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'fixed',
-              top: `${coords.top}px`,
-              left: `${coords.left}px`,
-              zIndex: 999999,
-            }}
-            className="w-40 p-1.5 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col gap-0.5 text-zinc-200 animate-in fade-in zoom-in-95 duration-75"
-          >
-            <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider px-2 py-1">
-              Change Status
-            </span>
-            {statusList.map((item) => {
-              const isSelected = clean.toUpperCase() === item.label.toUpperCase();
-              return (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => {
-                    setIsOpen(false);
-                    setCoords(null);
-                    onSelect(item.label);
-                  }}
-                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'bg-zinc-800 text-white font-semibold'
-                      : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    {item.isClosed ? (
-                      <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
-                    ) : item.isKyc ? (
-                      <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
-                    ) : (
-                      <CustomCircleDot
-                        className="size-3.5 shrink-0"
-                        style={{ color: item.color }}
-                      />
-                    )}
-                    <span className="truncate">{item.label}</span>
+              {/* Admin Tasks Option */}
+              <button
+                type="button"
+                onClick={onToggleAdmin}
+                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                  showAdmin
+                    ? 'bg-purple-950/60 text-purple-200 border border-purple-800/60 font-semibold'
+                    : 'text-zinc-400 hover:bg-zinc-800/60'
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div
+                    className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                      showAdmin
+                        ? 'bg-purple-600 border-purple-500 text-white'
+                        : 'border-zinc-700 bg-zinc-900 text-transparent'
+                    }`}
+                  >
+                    <Check className="size-2.5" />
                   </div>
-                  {isSelected && <Check className="size-3 text-blue-400 shrink-0" />}
-                </button>
-              );
-            })}
-          </div>,
-          document.body
-        )}
-    </div>
-  );
-};
+                  <Shield className="size-3 text-purple-400 shrink-0" />
+                  <span className="truncate">Admin Tasks</span>
+                </div>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 border border-purple-800/40 shrink-0">
+                  {adminCount}
+                </span>
+              </button>
+            </div>
 
-const CardPriorityDropdown: React.FC<{
-  taskId: string;
-  priority: string;
-  onSelect: (newPriority: string) => void;
-}> = ({ taskId, priority, onSelect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+            <div className="h-px bg-zinc-800/80 my-0.5" />
 
-  const priorities = [
-    { key: 'URGENT', label: 'Urgent', iconColor: 'text-red-500', color: 'text-red-400' },
-    { key: 'HIGH', label: 'High', iconColor: 'text-amber-500', color: 'text-amber-400' },
-    { key: 'NORMAL', label: 'Normal', iconColor: 'text-blue-500', color: 'text-blue-400' },
-    { key: 'LOW', label: 'Low', iconColor: 'text-zinc-400', color: 'text-zinc-400' },
-  ];
+            {/* List of individual clients */}
+            <div className="max-h-52 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+              {filteredClients.length === 0 ? (
+                <p className="text-[11px] text-zinc-500 italic text-center py-2">
+                  No clients found
+                </p>
+              ) : (
+                filteredClients.map((client) => {
+                  const checked = isClientChecked(client.id, client.name);
+                  return (
+                    <div
+                      key={client.id}
+                      onClick={() => handleToggleClient(client.id)}
+                      className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                        checked
+                          ? 'bg-zinc-800/60 text-zinc-100 font-medium'
+                          : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                            checked
+                              ? 'bg-blue-600 border-blue-500 text-white'
+                              : 'border-zinc-700 bg-zinc-900 text-transparent'
+                          }`}
+                        >
+                          <Check className="size-2.5" />
+                        </div>
+                        <span className="truncate">{client.name}</span>
+                      </div>
 
-  const priorityConfig = getPriorityConfig(priority);
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* 'Only' button visible on group hover */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleSelectOnlyClient(client.id, e)}
+                          className="opacity-0 group-hover:opacity-100 px-1 py-0.2 text-[9px] text-zinc-400 hover:text-blue-300 hover:bg-blue-950/60 rounded transition-all cursor-pointer"
+                          title={`Show only ${client.name}`}
+                        >
+                          only
+                        </button>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400">
+                          {client.count}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
 
-  const calcPos = (rect: DOMRect) => {
-    const width = 140;
-    const height = 180;
-    let top = rect.bottom + 4;
-    if (top + height > window.innerHeight - 10) {
-      top = Math.max(10, rect.top - height - 4);
-    }
-    let left = rect.left;
-    if (left + width > window.innerWidth - 10) {
-      left = Math.max(10, window.innerWidth - width - 10);
-    }
-    return { top, left };
-  };
-
-  const handleToggle = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isOpen) {
-      setIsOpen(false);
-      setCoords(null);
-      return;
-    }
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const nextCoords = calcPos(rect);
-    setCoords(nextCoords);
-    setIsOpen(true);
-  };
-
-  useLayoutEffect(() => {
-    if (!isOpen || !triggerRef.current) return;
-
-    const handleOutside = (e: MouseEvent) => {
-      if (
-        triggerRef.current &&
-        !triggerRef.current.contains(e.target as Node) &&
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsOpen(false);
-        setCoords(null);
-      }
-    };
-
-    const handleScrollOrResize = () => {
-      setIsOpen(false);
-      setCoords(null);
-    };
-
-    document.addEventListener('mousedown', handleOutside);
-    window.addEventListener('scroll', handleScrollOrResize, true);
-    window.addEventListener('resize', handleScrollOrResize);
-    return () => {
-      document.removeEventListener('mousedown', handleOutside);
-      window.removeEventListener('scroll', handleScrollOrResize, true);
-      window.removeEventListener('resize', handleScrollOrResize);
-    };
-  }, [isOpen]);
-
-  const currentKey = (priority || 'NORMAL').toUpperCase();
-
-  return (
-    <div
-      className="relative inline-flex items-center"
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={handleToggle}
-        className="flex items-center gap-1 font-medium text-[11px] px-1.5 py-0.5 rounded hover:bg-zinc-800/80 transition-colors cursor-pointer select-none"
-        title={`Priority: ${priorityConfig.label} (click to change)`}
-      >
-        <Flag className={`size-3 ${priorityConfig.iconColor}`} />
-        <span className={priorityConfig.color}>{priorityConfig.label}</span>
-      </button>
-
-      {isOpen &&
-        coords &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            ref={dropdownRef}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'fixed',
-              top: `${coords.top}px`,
-              left: `${coords.left}px`,
-              zIndex: 999999,
-            }}
-            className="w-36 p-1.5 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col gap-0.5 text-zinc-200 animate-in fade-in zoom-in-95 duration-75"
-          >
-            <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider px-2 py-1">
-              Set Priority
-            </span>
-            {priorities.map((item) => {
-              const isSelected =
-                currentKey === item.key ||
-                (item.key === 'NORMAL' && currentKey === 'MEDIUM');
-              return (
+            {/* Reset Filter Button */}
+            {isFiltered && (
+              <>
+                <div className="h-px bg-zinc-800/80 my-0.5" />
                 <button
-                  key={item.key}
                   type="button"
-                  onClick={() => {
-                    setIsOpen(false);
-                    setCoords(null);
-                    onSelect(item.key);
-                  }}
-                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'bg-zinc-800 text-white font-semibold'
-                      : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
-                  }`}
+                  onClick={handleReset}
+                  className="w-full text-center py-1 text-[11px] text-zinc-400 hover:text-white rounded hover:bg-zinc-800/60 transition-colors cursor-pointer"
                 >
-                  <div className="flex items-center gap-2">
-                    <Flag className={`size-3 ${item.iconColor}`} />
-                    <span className={item.color}>{item.label}</span>
-                  </div>
-                  {isSelected && <Check className="size-3 text-blue-400 shrink-0" />}
+                  Reset Client Filter
                 </button>
-              );
-            })}
+              </>
+            )}
           </div>,
           document.body
         )}
@@ -1280,6 +1065,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const currentUser = useAppStore((s) => s.currentUser);
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
   const workspaceTeams = useAppStore((s) => s.workspaceTeams) || [];
+  const upworkClients = useAppStore((s) => s.upworkClients);
   const isPmUser = isProjectManagerOrAdmin(currentUser);
 
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
@@ -1307,6 +1093,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
   });
   const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
+
+  // Live ticking clock to update in-progress elapsed minutes and hours
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   const togglePinColumn = (columnId: string) => {
     setPinnedColumns((prev) => {
@@ -1557,7 +1350,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const sortedUserColumns = Object.entries(userColumnsMap)
     .filter(([id]) => {
       // If Custom shift is selected and specific MAs are chosen, filter by them
-      if (currentShift === 'CUSTOM' && selectedCustomMAs.length > 0) {
+      const activeShifts = (currentShift || '').toUpperCase().split(',').map((s) => s.trim());
+      if (activeShifts.includes('CUSTOM') && selectedCustomMAs.length > 0) {
         return selectedCustomMAs.includes(id);
       }
       return true;
@@ -1675,29 +1469,40 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
   };
 
-  // Unified Status Presets: pure statuses only (no Upwork, no PM names)
+  // Unified Status Presets: pure workflow statuses for Task Map
+  // Excluded: Revision, To send, Sent, Follow up, Done Review, and Done (reserved for Audit/CRM/Completion workflows)
   const getUnifiedTaskMapOptions = (task: TaskMapItem, _user?: any): TaskMapOption[] => {
     const list: TaskMapOption[] = [
       { id: 'opt-status-avail', label: 'Available Task', color: '#1d4ed8', textColor: '#ffffff', order: 0 },
-      { id: 'opt-status-sent', label: 'Sent', color: '#15803d', textColor: '#ffffff', order: 1 },
-      { id: 'opt-status-tosend', label: 'To send', color: '#b91c1c', textColor: '#ffffff', order: 2 },
-      { id: 'opt-status-followup', label: 'Follow up', color: '#fbcfe8', textColor: '#831843', order: 3 },
-      { id: 'opt-status-donereview', label: 'Done Review', color: '#99f6e4', textColor: '#134e4a', order: 4 },
-      { id: 'opt-status-revision', label: 'Revision', color: '#e9d5ff', textColor: '#581c87', order: 5 },
-      { id: 'opt-status-inprog', label: 'In progress', color: '#ca8a04', textColor: '#fef08a', order: 6 },
-      { id: 'opt-status-notstarted', label: 'Not started', color: '#52525b', textColor: '#f4f4f5', order: 7 },
-      { id: 'opt-status-done', label: 'Done', color: '#166534', textColor: '#dcfce7', order: 8 },
-      { id: 'opt-status-toreview', label: 'To review', color: '#1d4ed8', textColor: '#dbeafe', order: 9 },
-      { id: 'opt-status-handedover', label: 'Handed-over/Ready for Next Steps', color: '#e9d5ff', textColor: '#581c87', order: 10 },
+      { id: 'opt-status-inprog', label: 'In progress', color: '#ca8a04', textColor: '#fef08a', order: 1 },
+      { id: 'opt-status-notstarted', label: 'Not started', color: '#52525b', textColor: '#f4f4f5', order: 2 },
+      { id: 'opt-status-toreview', label: 'To review', color: '#1d4ed8', textColor: '#dbeafe', order: 3 },
+      { id: 'opt-status-handedover', label: 'Handed-over/Ready for Next Steps', color: '#e9d5ff', textColor: '#581c87', order: 4 },
     ];
 
-    // Ensure any currently selected statuses on this task are also present so user can toggle them off
-    (task.taskMap.statuses || []).forEach((st: string) => {
+    const EXCLUDED_FROM_TASK_MAP = new Set([
+      'REVISION',
+      'TO SEND',
+      'TOSEND',
+      'SENT',
+      'FOLLOW UP',
+      'FOLLOWUP',
+      'DONE REVIEW',
+      'DONEREVIEW',
+      'DONE',
+    ]);
+
+    // Ensure any currently selected statuses on this task are also present so user can toggle them off,
+    // but strictly exclude Revision, To send, Sent, Follow up, Done Review, and Done from Task Map dropdown.
+    (task.taskMap?.statuses || []).forEach((st: string) => {
       const up = (st || '').toUpperCase().trim();
+      const norm = up.replace(/[\s_-]+/g, '');
       const isUpwork = up.startsWith('UPWORK');
       const isPmName = up === 'CHE' || up === 'PAU' || up === 'HAN' || up.includes('PM');
       const isUrgent = up === 'URGENT';
-      if (!isUpwork && !isPmName && !isUrgent && !list.some((o) => o.label.toLowerCase() === st.toLowerCase())) {
+      const isExcluded = EXCLUDED_FROM_TASK_MAP.has(up) || EXCLUDED_FROM_TASK_MAP.has(norm);
+
+      if (!isUpwork && !isPmName && !isUrgent && !isExcluded && !list.some((o) => o.label.toLowerCase() === st.toLowerCase())) {
         list.push({
           id: `opt-cur-${st}`,
           label: st,
@@ -1893,18 +1698,60 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       (task.status || '').toUpperCase() === 'CLOSED' ||
                       (task.status || '').toUpperCase() === 'DONE';
 
+                    const clientName = task.progress?.client || task.list?.name || '';
+                    const isClientConfiguredUpwork = upworkClients.some(
+                      (c) => c.toLowerCase() === clientName.toLowerCase()
+                    );
+                    const isUpwork = Boolean(
+                      task.progress?.isUpwork ||
+                      isClientConfiguredUpwork ||
+                      task.list?.name?.toLowerCase().includes('upwork') ||
+                      (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
+                    );
+                    const isMissingTime = Boolean(task.progress?.isMissingTime);
+                    // Only "live" when the MA actually clocked in (Time In) and has not clocked out
+                    const isInProgress = Boolean(
+                      task.progress?.timeIn && !task.progress?.timeOut && !task.progress?.isMissingTime
+                    );
+
+                    const cardBorderClass = isUpwork && isInProgress
+                      ? 'border-white/60 ring-1 ring-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)]'
+                      : isMissingTime
+                      ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
+                      : isInProgress
+                      ? 'border-[#D04A7C]/80 ring-1 ring-[#D04A7C]/30 shadow-[0_0_14px_rgba(208,74,124,0.15)]'
+                      : 'border-border hover:border-zinc-700 shadow-md';
+
                     return (
                       <DraggableTaskCard
                         key={task.id}
                         task={task}
                         disabled={!isPmUser}
                       >
-                        <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[94px] flex items-stretch gap-3 transition-all group">
+                        <div className={`p-3 bg-zinc-900 border rounded-xl min-h-[94px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}>
                           {/* Left: Task Info (Task title only in title line, circle dot beside bulletin below) */}
                           <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                             {/* Client Name */}
-                            <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[190px] mb-1">
-                              {task.list?.name || 'General'}
+                            <div className="text-[11px] font-medium truncate max-w-[190px] mb-1 flex items-center gap-1.5">
+                              {isUpwork && isInProgress ? (
+                                <span className="text-white font-bold uppercase tracking-wider flex items-center gap-1">
+                                  <span className="size-1.5 rounded-full bg-white animate-pulse shrink-0" />
+                                  {task.progress?.client || task.list?.name || 'Upwork'}
+                                </span>
+                              ) : isMissingTime ? (
+                                <span className="text-red-400 font-semibold truncate flex items-center gap-1">
+                                  <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
+                                  {task.progress?.client || task.list?.name || 'General'}
+                                </span>
+                              ) : isInProgress ? (
+                                <span className="text-[#D04A7C] font-semibold truncate">
+                                  {task.progress?.client || task.list?.name || 'General'}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-400 truncate">
+                                  {task.progress?.client || task.list?.name || 'General'}
+                                </span>
+                              )}
                             </div>
 
                             {/* Title only - zero icons beside it */}
@@ -1922,7 +1769,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <CardStatusDropdown
                                 taskId={task.id}
                                 currentStatus={task.status || 'In progress'}
-                                onSelect={(newStatus) => {
+                                excludeStatuses={['Revision', 'Done', 'To Send', 'Sent', 'Follow up', 'Done Review']}
+                                onSelect={(newStatus: string) => {
                                   if (onTaskUpdate) {
                                     onTaskUpdate(task.id, { status: newStatus });
                                   } else {
@@ -1944,7 +1792,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <CardPriorityDropdown
                                 taskId={task.id}
                                 priority={task.priority || 'NORMAL'}
-                                onSelect={(newPriority) => {
+                                onSelect={(newPriority: string) => {
                                   if (onTaskUpdate) {
                                     onTaskUpdate(task.id, { priority: newPriority });
                                   } else {
@@ -1961,12 +1809,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           {/* Separator */}
                           <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
 
-                          {/* Right: Section where Sub-Status is (with Posted date in top right corner) */}
+                          {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
                           <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
                             <div className="flex justify-end items-center">
-                              <span className="text-[10px] font-medium text-zinc-500">
-                                Posted {format(new Date(task.createdAt), 'MMM d')}
-                              </span>
+                              <TaskTimeProgressSlot task={task} now={currentTime} />
                             </div>
 
                             <div
@@ -1980,15 +1826,32 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <TaskMapStatusDropdown
                                 selectedStatuses={task.taskMap.statuses || []}
                                 options={getUnifiedTaskMapOptions(task)}
-                                onToggleStatus={(label, nextStatuses) => {
-                                  const next =
-                                    nextStatuses ||
-                                    ((task.taskMap.statuses || []).includes(label)
-                                      ? (task.taskMap.statuses || []).filter(
-                                          (s) => s !== label
-                                        )
-                                      : [...(task.taskMap.statuses || []), label]);
-                                  onStatusChange(task.id, next);
+                                onToggleStatus={async (label, nextStatuses) => {
+                                  const isSelecting = (nextStatuses || []).includes(label);
+                                  const cleanNext = isSelecting ? [label] : [];
+                                  onStatusChange(task.id, cleanNext);
+
+                                  if (label === 'To review') {
+                                    if (isSelecting) {
+                                      if (onTaskUpdate) {
+                                        await onTaskUpdate(task.id, { status: 'To review' });
+                                      } else {
+                                        await tasksApi.updateTask(task.id, { status: 'To review' } as any).catch(console.error);
+                                        onDataRefresh();
+                                      }
+                                      toast.info('Task marked To review — queued for auditing');
+                                    } else {
+                                      // User pressed 'To review' AGAIN to revert misclick!
+                                      const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In progress' : 'Pending');
+                                      if (onTaskUpdate) {
+                                        await onTaskUpdate(task.id, { status: revertStatus });
+                                      } else {
+                                        await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                                        onDataRefresh();
+                                      }
+                                      toast.info(`Reverted 'To review' — returned to ${revertStatus}`);
+                                    }
+                                  }
                                 }}
                                 onOptionsUpdated={onOptionsUpdated}
                                 readOnly={false}
@@ -2221,14 +2084,56 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       (task.status || '').toUpperCase() === 'CLOSED' ||
                       (task.status || '').toUpperCase() === 'DONE';
 
+                    const clientName = task.progress?.client || task.list?.name || '';
+                    const isClientConfiguredUpwork = upworkClients.some(
+                      (c) => c.toLowerCase() === clientName.toLowerCase()
+                    );
+                    const isUpwork = Boolean(
+                      task.progress?.isUpwork ||
+                      isClientConfiguredUpwork ||
+                      task.list?.name?.toLowerCase().includes('upwork') ||
+                      (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
+                    );
+                    const isMissingTime = Boolean(task.progress?.isMissingTime);
+                    // Only "live" when the MA actually clocked in (Time In) and has not clocked out
+                    const isInProgress = Boolean(
+                      task.progress?.timeIn && !task.progress?.timeOut && !task.progress?.isMissingTime
+                    );
+
+                    const cardBorderClass = isUpwork && isInProgress
+                      ? 'border-white/60 ring-1 ring-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)]'
+                      : isMissingTime
+                      ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
+                      : isInProgress
+                      ? 'border-[#D04A7C]/80 ring-1 ring-[#D04A7C]/30 shadow-[0_0_14px_rgba(208,74,124,0.15)]'
+                      : 'border-zinc-800/90 hover:border-zinc-700 shadow-sm';
+
                     return (
                       <DraggableTaskCard key={task.id} task={task} disabled={!isPmUser}>
-                        <div className="p-3 bg-zinc-900 border border-zinc-800/90 hover:border-zinc-700 rounded-xl shadow-sm min-h-[94px] flex items-stretch gap-3 transition-all group">
+                        <div className={`p-3 bg-zinc-900 border rounded-xl min-h-[94px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}>
                           {/* LEFT: Task Info (Title only in title line, circle dot beside bulletin below) */}
                           <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                             {/* Client Name */}
-                            <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[190px] mb-1">
-                              {task.list?.name || 'General'}
+                            <div className="text-[11px] font-medium truncate max-w-[190px] mb-1 flex items-center gap-1.5">
+                              {isUpwork && isInProgress ? (
+                                <span className="text-white font-bold uppercase tracking-wider flex items-center gap-1">
+                                  <span className="size-1.5 rounded-full bg-white animate-pulse shrink-0" />
+                                  {task.progress?.client || task.list?.name || 'Upwork'}
+                                </span>
+                              ) : isMissingTime ? (
+                                <span className="text-red-400 font-semibold truncate flex items-center gap-1">
+                                  <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
+                                  {task.progress?.client || task.list?.name || 'General'}
+                                </span>
+                              ) : isInProgress ? (
+                                <span className="text-[#D04A7C] font-semibold truncate">
+                                  {task.progress?.client || task.list?.name || 'General'}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-400 truncate">
+                                  {task.progress?.client || task.list?.name || 'General'}
+                                </span>
+                              )}
                             </div>
 
                             {/* Title only - zero icons beside it */}
@@ -2246,7 +2151,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <CardStatusDropdown
                                 taskId={task.id}
                                 currentStatus={task.status || 'In progress'}
-                                onSelect={(newStatus) => {
+                                excludeStatuses={['Revision', 'Done', 'To Send', 'Sent', 'Follow up', 'Done Review']}
+                                onSelect={(newStatus: string) => {
                                   if (onTaskUpdate) {
                                     onTaskUpdate(task.id, { status: newStatus });
                                   } else {
@@ -2268,7 +2174,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <CardPriorityDropdown
                                 taskId={task.id}
                                 priority={task.priority || 'NORMAL'}
-                                onSelect={(newPriority) => {
+                                onSelect={(newPriority: string) => {
                                   if (onTaskUpdate) {
                                     onTaskUpdate(task.id, { priority: newPriority });
                                   } else {
@@ -2285,12 +2191,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           {/* SEPARATOR: Vertical line between task info and statuses */}
                           <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
 
-                          {/* RIGHT: Section where Sub-Status is (with Posted date in top right corner) */}
+                          {/* RIGHT: Section where Sub-Status is (with Time Progress in top right corner) */}
                           <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
                             <div className="flex justify-end items-center">
-                              <span className="text-[10px] font-medium text-zinc-500">
-                                Posted {format(new Date(task.createdAt), 'MMM d')}
-                              </span>
+                              <TaskTimeProgressSlot task={task} now={currentTime} />
                             </div>
 
                             <div
@@ -2304,15 +2208,32 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <TaskMapStatusDropdown
                                 selectedStatuses={task.taskMap.statuses || []}
                                 options={getUnifiedTaskMapOptions(task, user)}
-                                onToggleStatus={(label, nextStatuses) => {
-                                  const next =
-                                    nextStatuses ||
-                                    ((task.taskMap.statuses || []).includes(label)
-                                      ? (task.taskMap.statuses || []).filter(
-                                          (s) => s !== label
-                                        )
-                                      : [...(task.taskMap.statuses || []), label]);
-                                  onStatusChange(task.id, next);
+                                onToggleStatus={async (label, nextStatuses) => {
+                                  const isSelecting = (nextStatuses || []).includes(label);
+                                  const cleanNext = isSelecting ? [label] : [];
+                                  onStatusChange(task.id, cleanNext);
+
+                                  if (label === 'To review') {
+                                    if (isSelecting) {
+                                      if (onTaskUpdate) {
+                                        await onTaskUpdate(task.id, { status: 'To review' });
+                                      } else {
+                                        await tasksApi.updateTask(task.id, { status: 'To review' } as any).catch(console.error);
+                                        onDataRefresh();
+                                      }
+                                      toast.info('Task marked To review — queued for auditing');
+                                    } else {
+                                      // User pressed 'To review' AGAIN to revert misclick!
+                                      const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In progress' : 'Pending');
+                                      if (onTaskUpdate) {
+                                        await onTaskUpdate(task.id, { status: revertStatus });
+                                      } else {
+                                        await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                                        onDataRefresh();
+                                      }
+                                      toast.info(`Reverted 'To review' — returned to ${revertStatus}`);
+                                    }
+                                  }
                                 }}
                                 onOptionsUpdated={onOptionsUpdated}
                                 readOnly={false}
@@ -2382,9 +2303,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
               {/* Right: Sub-Status snapshot */}
               <div className="w-[125px] shrink-0 flex flex-col justify-between py-0.5">
                 <div className="flex justify-end items-center">
-                  <span className="text-[10px] font-medium text-zinc-500">
-                    Posted {format(new Date(activeDragTask.createdAt), 'MMM d')}
-                  </span>
+                  <TaskTimeProgressSlot task={activeDragTask} now={currentTime} />
                 </div>
                 <div className="w-full">
                   <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
-import { TaskMapShift, UpworkSession } from '@/api/taskMap';
-import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Kanban, UserCheck } from 'lucide-react';
+import { TaskMapShift, UpworkSession, taskMapApi } from '@/api/taskMap';
+import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Kanban, UserCheck, X, Briefcase, Plus } from 'lucide-react';
+import { useAppStore } from '@/lib/store';
 
 export interface ClientOption {
   id: string;
@@ -100,6 +101,47 @@ export const TaskMapHeader: React.FC<Props> = ({
   const [clientSearch, setClientSearch] = useState('');
   const clientDropdownRef = useRef<HTMLDivElement>(null);
 
+  // Upwork Clients state
+  const [upworkModalOpen, setUpworkModalOpen] = useState(false);
+  const [upworkSearch, setUpworkSearch] = useState('');
+  const [newUpworkClient, setNewUpworkClient] = useState('');
+  const upworkClients = useAppStore((s) => s.upworkClients);
+  const setUpworkClients = useAppStore((s) => s.setUpworkClients);
+
+  const handleToggleUpworkClient = async (clientName: string) => {
+    const trimmed = clientName.trim();
+    if (!trimmed) return;
+    const exists = upworkClients.some((c) => c.toLowerCase() === trimmed.toLowerCase());
+    const nextList = exists
+      ? upworkClients.filter((c) => c.toLowerCase() !== trimmed.toLowerCase())
+      : [...upworkClients, trimmed];
+    setUpworkClients(nextList);
+    try {
+      await taskMapApi.toggleUpworkClient({ clientName: trimmed, isUpwork: !exists });
+    } catch (err) {
+      console.error('Failed to toggle upwork client:', err);
+      setUpworkClients(upworkClients);
+    }
+  };
+
+  const handleAddNewUpworkClient = async () => {
+    const trimmed = newUpworkClient.trim();
+    if (!trimmed) return;
+    if (!upworkClients.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+      const nextList = [...upworkClients, trimmed];
+      setUpworkClients(nextList);
+      setNewUpworkClient('');
+      try {
+        await taskMapApi.toggleUpworkClient({ clientName: trimmed, isUpwork: true });
+      } catch (err) {
+        console.error('Failed to add upwork client:', err);
+        setUpworkClients(upworkClients);
+      }
+    } else {
+      setNewUpworkClient('');
+    }
+  };
+
   // Custom MA filter dropdown state
   const [maDropdownOpen, setMaDropdownOpen] = useState(false);
   const [maSearch, setMaSearch] = useState('');
@@ -137,6 +179,20 @@ export const TaskMapHeader: React.FC<Props> = ({
     c.name.toLowerCase().includes(clientSearch.toLowerCase())
   );
 
+  // Combine clients from tasks with any custom configured upwork clients
+  const allCombinedClients = React.useMemo(() => {
+    const map = new Map<string, { id: string; name: string }>();
+    clients.forEach((c) => map.set(c.name.toLowerCase(), { id: c.id, name: c.name }));
+    upworkClients.forEach((u) => {
+      if (!map.has(u.toLowerCase())) {
+        map.set(u.toLowerCase(), { id: u, name: u });
+      }
+    });
+    return Array.from(map.values())
+      .filter((c) => c.name.toLowerCase().includes(upworkSearch.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [clients, upworkClients, upworkSearch]);
+
   const filteredMAs = (availableMAs || []).filter((m) =>
     (m.name || '').toLowerCase().includes(maSearch.toLowerCase())
   );
@@ -146,7 +202,7 @@ export const TaskMapHeader: React.FC<Props> = ({
   const formattedDate = format(dateObj, 'MMMM d, yyyy');
   const dayOfWeek = format(dateObj, 'EEEE');
 
-  const shiftOptions = [
+const shiftOptions = [
     { key: 'ALL', label: 'All' },
     { key: 'DAY', label: 'Day' },
     { key: 'NOON', label: 'Noon' },
@@ -154,11 +210,22 @@ export const TaskMapHeader: React.FC<Props> = ({
     { key: 'CUSTOM', label: 'Custom' },
   ];
 
+  const activeShiftTokens = React.useMemo(() => {
+    return (currentShift || 'ALL')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+  }, [currentShift]);
+
+  const isAllActive = activeShiftTokens.includes('ALL') || activeShiftTokens.length === 0;
+
   return (
-    <header className="px-6 pt-4 pb-3 flex flex-col gap-3 select-none">
-      {/* Line 1: Dedicated View Mode Tabs (Task Map | Auditing | CRM) on the left, Search on the right */}
-      {onViewChange && (
-        <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/60">
+    <>
+      <header className="px-6 pt-4 pb-2.5 flex flex-col gap-2.5 select-none">
+      {/* LINE 1: Dedicated View Mode Line (Task Map | Audito Map | CRM Map) & Search Bar on Right */}
+      <div className="flex items-center justify-between gap-4">
+        {/* Left: View switcher tabs */}
+        {onViewChange && (
           <div className="flex items-center bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-semibold shadow-xs">
             <button
               type="button"
@@ -201,58 +268,77 @@ export const TaskMapHeader: React.FC<Props> = ({
               </button>
             )}
           </div>
+        )}
 
-          {/* Search moved to right side of Line 1 */}
-          <div className="relative flex items-center">
-            <Search className="size-3 text-zinc-500 absolute left-2.5 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search..."
-              className="w-36 sm:w-48 pl-7 pr-3 py-1.5 bg-card border border-zinc-800/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 transition-colors"
-            />
-          </div>
+        {/* Right: Clean Search Input with clear button */}
+        <div className="relative flex items-center">
+          <Search className="size-3.5 text-zinc-500 absolute left-3 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search tasks..."
+            className="w-48 sm:w-64 pl-8 pr-8 py-1.5 bg-card border border-zinc-800/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 transition-colors"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => onSearchChange('')}
+              className="absolute right-2.5 text-zinc-500 hover:text-zinc-300 p-0.5 cursor-pointer"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* Line 2: Date on the left, Shift switcher & Client selector on the right */}
-      <div className="flex items-start justify-between gap-4">
+      {/* LINE 2: Date & Day on left, Multi-select Shift Switcher, Manage Shifts & Client Selector on right */}
+      <div className="flex items-center justify-between gap-4">
         {/* Left: Date & Day of Week */}
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-zinc-100 tracking-tight">
+        <div className="flex items-baseline gap-2.5">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-zinc-100 tracking-tight">
             {formattedDate}
           </h1>
-          <p className="text-sm font-medium text-zinc-400 mt-0.5">
+          <span className="text-xs sm:text-sm font-medium text-zinc-400">
             {dayOfWeek}
-          </p>
+          </span>
         </div>
 
-        {/* Right: Shift Switcher & Search Bar */}
-        <div className="flex items-center gap-3">
-
+        {/* Right: Shift Switcher, Manage Shifts & Client Selector */}
+        <div className="flex items-center gap-2.5 sm:gap-3">
           {/* Shift pills [All] [Day] [Noon] [Night] [Custom] */}
           <div className="flex items-center bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-medium">
             {shiftOptions.map((opt) => {
-              const isActive = currentShift.toUpperCase() === opt.key;
               const isCustom = opt.key === 'CUSTOM';
+              const isActive = opt.key === 'ALL'
+                ? isAllActive
+                : (!isAllActive && activeShiftTokens.includes(opt.key));
 
               return (
                 <div key={opt.key} className="relative">
                   <button
                     type="button"
                     onClick={() => {
+                      if (opt.key === 'ALL') {
+                        onShiftChange('ALL');
+                        return;
+                      }
+                      if (isAllActive) {
+                        onShiftChange(opt.key);
+                        if (isCustom) setMaDropdownOpen(true);
+                        return;
+                      }
                       if (isActive) {
-                        if (isCustom) {
-                          setMaDropdownOpen(!maDropdownOpen);
-                        } else {
+                        const remaining = activeShiftTokens.filter((k) => k !== opt.key && k !== 'ALL');
+                        if (remaining.length === 0) {
                           onShiftChange('ALL');
+                        } else {
+                          onShiftChange(remaining.join(','));
                         }
                       } else {
-                        onShiftChange(opt.key);
-                        if (isCustom) {
-                          setMaDropdownOpen(true);
-                        }
+                        const next = [...activeShiftTokens.filter((k) => k !== 'ALL'), opt.key];
+                        onShiftChange(next.join(','));
+                        if (isCustom) setMaDropdownOpen(true);
                       }
                     }}
                     className={`flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg transition-all cursor-pointer ${
@@ -265,7 +351,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                         ? isCustom
                           ? 'Configure custom MAs (or click again to deselect)'
                           : `Click to deselect (${opt.label})`
-                        : `Filter by ${opt.label} shift`
+                        : `Filter by ${opt.label} shift (multi-select supported)`
                     }
                   >
                     <span>{opt.label}</span>
@@ -281,7 +367,14 @@ export const TaskMapHeader: React.FC<Props> = ({
                         }`}
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (!isActive) onShiftChange('CUSTOM');
+                          if (!isActive) {
+                            if (isAllActive) {
+                              onShiftChange('CUSTOM');
+                            } else {
+                              const next = [...activeShiftTokens.filter((k) => k !== 'ALL'), 'CUSTOM'];
+                              onShiftChange(next.join(','));
+                            }
+                          }
                           setMaDropdownOpen(!maDropdownOpen);
                         }}
                       />
@@ -294,35 +387,14 @@ export const TaskMapHeader: React.FC<Props> = ({
                       className="absolute left-0 top-full mt-1.5 w-64 bg-popover border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-100"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="flex items-center justify-between px-1 pb-1 border-b border-zinc-800">
-                        <span className="text-xs font-bold text-zinc-200">Filter Specific MAs</span>
-                        <div className="flex items-center gap-1.5 text-[10px]">
-                          <button
-                            type="button"
-                            onClick={() => onSelectedMAsChange?.(availableMAs.map((m) => m.id))}
-                            className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
-                          >
-                            All
-                          </button>
-                          <span className="text-zinc-600">·</span>
-                          <button
-                            type="button"
-                            onClick={() => onSelectedMAsChange?.([])}
-                            className="text-zinc-400 hover:text-zinc-300 font-semibold cursor-pointer"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-
                       {/* Search */}
                       <div className="relative">
-                        <Search className="size-3 text-zinc-500 absolute left-2.5 top-2 pointer-events-none" />
+                        <Search className="size-3 text-zinc-500 absolute left-2 top-2" />
                         <input
                           type="text"
                           value={maSearch}
                           onChange={(e) => setMaSearch(e.target.value)}
-                          placeholder="Search team members..."
+                          placeholder="Search members..."
                           className="w-full bg-zinc-900 border border-zinc-800 rounded-md pl-7 pr-2 py-1 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
                           autoFocus
                         />
@@ -391,6 +463,22 @@ export const TaskMapHeader: React.FC<Props> = ({
             <Users className="size-3.5 text-indigo-400" />
             <span className="hidden sm:inline">Manage Shifts</span>
           </Link>
+
+          {/* Upwork Clients Configuration Button */}
+          <button
+            type="button"
+            onClick={() => setUpworkModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-emerald-500/50 rounded-xl text-xs font-medium text-zinc-300 hover:text-emerald-300 transition-colors cursor-pointer"
+            title="Configure which clients are UPWORK clients"
+          >
+            <Briefcase className="size-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">Upwork Clients</span>
+            {upworkClients.length > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold ml-0.5">
+                {upworkClients.length}
+              </span>
+            )}
+          </button>
 
           {/* Client Selector Dropdown */}
           <div className="relative" ref={clientDropdownRef}>
@@ -489,9 +577,16 @@ export const TaskMapHeader: React.FC<Props> = ({
                               : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
                           }`}
                         >
-                          <span className="truncate max-w-[150px]" title={c.name}>
-                            {c.name}
-                          </span>
+                          <div className="flex items-center gap-1.5 truncate max-w-[150px]">
+                            <span className="truncate" title={c.name}>
+                              {c.name}
+                            </span>
+                            {upworkClients.some((u) => u.toLowerCase() === c.name.toLowerCase()) && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold shrink-0">
+                                UW
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1.5 shrink-0">
                             <span className="text-[10px] font-mono text-zinc-400 px-1.5 py-0.5 rounded bg-zinc-800/80">
                               {c.count}
@@ -502,38 +597,152 @@ export const TaskMapHeader: React.FC<Props> = ({
                       );
                     })
                   )}
+
+                  <div className="h-px bg-zinc-800/80 my-1" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientDropdownOpen(false);
+                      setUpworkModalOpen(true);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-emerald-400 hover:bg-emerald-950/30 transition-colors cursor-pointer font-semibold"
+                  >
+                    <Briefcase className="size-3.5" />
+                    <span>Manage Upwork Clients</span>
+                  </button>
                 </div>
               </div>
             )}
           </div>
         </div>
       </div>
+    </header>
 
-      {/* Upwork Live Master Banner (Shows only when contracts are actively in use) */}
-      {activeUpworkSessions.length > 0 && (
-        <div className="w-full">
-          <div className="w-full flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-red-950/80 border border-red-800/80 text-red-200 shadow-lg shadow-red-950/40 animate-in fade-in duration-200">
-            <div className="flex items-center gap-2.5 truncate text-xs sm:text-sm font-bold tracking-wide">
-              <span className="relative flex size-2.5 shrink-0">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                <span className="relative inline-flex rounded-full size-2.5 bg-red-500" />
-              </span>
-              <span className="truncate">
-                {activeUpworkSessions.map((s) => {
-                  const name = getCleanUpworkName(s);
-                  const sinceTime = formatManilaTime(s.startedAt);
-                  const elapsed = formatElapsed(s.startedAt, now);
-                  const timePart = sinceTime ? `(since ${sinceTime} · ${elapsed})` : `(${elapsed})`;
-                  return `${name} - UPWORK ACTIVE ${timePart}`;
-                }).join('  |  ')}
-              </span>
+      {/* Upwork Clients Management Modal */}
+      {upworkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setUpworkModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-popover border border-zinc-800 rounded-2xl shadow-2xl p-5 flex flex-col gap-4 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="size-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                  <Briefcase className="size-4 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-100">Upwork Clients</h3>
+                  <p className="text-[11px] text-zinc-400">Designate clients tracked under Upwork timers</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUpworkModalOpen(false)}
+                className="size-7 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X className="size-4" />
+              </button>
             </div>
-            <span className="hidden sm:inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-900/80 border border-red-700/60 text-red-100 shrink-0">
-              Contract In Use
-            </span>
+
+            {/* Quick Add Custom Client */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={newUpworkClient}
+                  onChange={(e) => setNewUpworkClient(e.target.value)}
+                  placeholder="Add client name (e.g. Melinda, ScaleUp)..."
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddNewUpworkClient();
+                    }
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleAddNewUpworkClient}
+                disabled={!newUpworkClient.trim()}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors flex items-center gap-1 shrink-0"
+              >
+                <Plus className="size-3.5" />
+                <span>Add</span>
+              </button>
+            </div>
+
+            {/* Search filter within known clients */}
+            <div className="relative">
+              <Search className="size-3 text-zinc-500 absolute left-2.5 top-2.5 pointer-events-none" />
+              <input
+                type="text"
+                value={upworkSearch}
+                onChange={(e) => setUpworkSearch(e.target.value)}
+                placeholder="Search clients..."
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            {/* Client List with 1-Click Toggles */}
+            <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-1 pr-1">
+              {allCombinedClients.length === 0 ? (
+                <p className="text-xs text-zinc-500 italic text-center py-4">No clients match search</p>
+              ) : (
+                allCombinedClients.map((client) => {
+                  const isUpwork = upworkClients.some((u) => u.toLowerCase() === client.name.toLowerCase());
+                  return (
+                    <div
+                      key={client.id || client.name}
+                      className={`flex items-center justify-between px-3 py-2 rounded-xl border transition-all ${
+                        isUpwork
+                          ? 'bg-emerald-950/20 border-emerald-500/30'
+                          : 'bg-zinc-900/50 border-zinc-800/80 hover:border-zinc-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <Building2 className={`size-3.5 shrink-0 ${isUpwork ? 'text-emerald-400' : 'text-zinc-500'}`} />
+                        <span className={`text-xs font-medium truncate ${isUpwork ? 'text-zinc-100 font-semibold' : 'text-zinc-300'}`}>
+                          {client.name}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleToggleUpworkClient(client.name)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                          isUpwork
+                            ? 'bg-emerald-500 text-zinc-950 shadow-xs hover:bg-emerald-400'
+                            : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+                        }`}
+                      >
+                        {isUpwork ? 'UPWORK CLIENT' : 'MARK UPWORK'}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-[11px] text-zinc-400">
+              <span>{upworkClients.length} clients marked as Upwork</span>
+              <button
+                type="button"
+                onClick={() => setUpworkModalOpen(false)}
+                className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}
-    </header>
+    </>
   );
 };
+

@@ -819,3 +819,11 @@ span[data-badge] {
 
 
 
+
+/* Sub-status pill hover brightening */
+.substatus-pill {
+  transition: filter 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.substatus-pill:hover:not(:disabled) {
+  filter: brightness(1.25) contrast(1.05);
+}

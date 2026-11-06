@@ -19,6 +19,10 @@ import {
   toTaskMapShiftKey,
   fromTaskMapShiftKey,
   TaskMapRecordData,
+  getUpworkClients,
+  addUpworkClient,
+  removeUpworkClient,
+  setUpworkClients,
 } from '../services/taskMapService';
 
 // Closed status check matching Nexus conventions
@@ -37,7 +41,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const searchQuery = (req.query.search as string || '').toLowerCase().trim();
     const clientQuery = (req.query.client as string || '').trim();
 
-    const isAllShifts = shiftQuery === 'ALL';
+    const shiftTokens = shiftQuery
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+
+    const isAllShifts =
+      shiftTokens.length === 0 ||
+      shiftTokens.includes('ALL') ||
+      (shiftTokens.includes('DAY') && shiftTokens.includes('NOON') && shiftTokens.includes('NIGHT'));
+
     const activeShift = await getCurrentActiveShift();
     const currentShift = isAllShifts ? 'ALL' : (shiftQuery || activeShift);
 
@@ -117,14 +130,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
       }
     } else {
-      const auditShiftKey = fromTaskMapShiftKey(currentShift);
-      const activeShiftConfig = await (prisma as any).auditShiftConfig.findFirst({
-        where: { shiftKey: auditShiftKey, isActive: true },
+      const auditShiftKeys = Array.from(new Set(shiftTokens.map(fromTaskMapShiftKey)));
+      const activeShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
+        where: { shiftKey: { in: auditShiftKeys }, isActive: true },
       });
-      (activeShiftConfig?.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
-      (activeShiftConfig?.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
-      (activeShiftConfig?.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
-      (activeShiftConfig?.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+      for (const cfg of activeShiftConfigs) {
+        (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+        (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+        (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+        (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+      }
     }
 
     const shiftUsers = allUsers
@@ -357,7 +372,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     for (const t of openTasks as any[]) {
       const upworkTag = (t.taskMap?.statuses || []).find((s: string) => s.toUpperCase().startsWith('UPWORK'));
-      const isSheetUpworkActive = Boolean(t.progress?.isUpwork && !t.progress?.timeOut);
+      const isSheetUpworkActive = Boolean(t.progress?.isUpwork && t.progress?.timeIn && !t.progress?.timeOut);
       const isSessionActive = Boolean(t.upworkSession && (t.upworkSession.active || isSheetUpworkActive));
 
       if (upworkTag || isSheetUpworkActive || isSessionActive) {
@@ -494,6 +509,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       logger.warn({ err }, 'Failed to query client dashboard folders');
     }
 
+    const upworkClients = await getUpworkClients();
+
     res.json({
       success: true,
       tasks: openTasks,
@@ -511,6 +528,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       allUsers,
       shiftUsers,
       activeUpworkSessions,
+      upworkClients,
     });
   } catch (error: any) {
     logger.error({ error }, 'Error fetching task map data');
@@ -1364,5 +1382,69 @@ export const getTaskTimeline = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error({ error }, 'Error fetching timeline');
     res.status(500).json({ error: 'Failed to fetch timeline' });
+  }
+};
+
+/**
+ * Get configured Upwork clients
+ */
+export const getUpworkClientsHandler = async (req: Request, res: Response) => {
+  try {
+    const clients = await getUpworkClients();
+    res.json({ success: true, clients });
+  } catch (error: any) {
+    logger.error({ error }, 'Error getting upwork clients');
+    res.status(500).json({ error: 'Failed to get upwork clients' });
+  }
+};
+
+/**
+ * Update Upwork clients configuration (add, remove, toggle, or set full list)
+ */
+export const updateUpworkClientsHandler = async (req: Request, res: Response) => {
+  try {
+    const { clientName, isUpwork, action, clients } = req.body || {};
+    let updatedClients: string[] = [];
+
+    if (Array.isArray(clients)) {
+      updatedClients = await setUpworkClients(clients);
+    } else if (clientName) {
+      const current = await getUpworkClients();
+      const exists = current.some((c) => c.toLowerCase() === String(clientName).trim().toLowerCase());
+      const shouldBeUpwork = isUpwork !== undefined ? Boolean(isUpwork) : (action === 'add' ? true : action === 'remove' ? false : !exists);
+
+      if (shouldBeUpwork) {
+        updatedClients = await addUpworkClient(clientName);
+      } else {
+        updatedClients = await removeUpworkClient(clientName);
+      }
+    } else {
+      return res.status(400).json({ error: 'clientName or clients array required' });
+    }
+
+    io.emit('upwork:clients_updated', { clients: updatedClients });
+    res.json({ success: true, clients: updatedClients });
+  } catch (error: any) {
+    logger.error({ error }, 'Error updating upwork clients');
+    res.status(500).json({ error: 'Failed to update upwork clients' });
+  }
+};
+
+/**
+ * Get active Upwork sessions across the workspace
+ */
+export const getActiveUpworkSessionsHandler = async (req: Request, res: Response) => {
+  try {
+    let activeUpworkSessions: any[] = [];
+    if (isRedisReady()) {
+      const rawMap = await redis.hgetall('task_map:upwork_active');
+      if (rawMap && Object.keys(rawMap).length > 0) {
+        activeUpworkSessions = Object.values(rawMap).map((val) => JSON.parse(val));
+      }
+    }
+    res.json({ success: true, activeUpworkSessions });
+  } catch (error: any) {
+    logger.error({ error }, 'Error fetching active upwork sessions');
+    res.status(500).json({ error: 'Failed to fetch active upwork sessions' });
   }
 };

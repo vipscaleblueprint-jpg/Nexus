@@ -254,16 +254,31 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
 
-      // Exclude waiting, recurring, daily, weekly, monthly tasks
+      // Exclude waiting, recurring, daily, weekly, monthly, and on-hold tasks
       const isExcluded =
         s === 'WAITING' ||
+        s.includes('WAITING') ||
         s === 'DAILY' ||
+        s.includes('DAILY') ||
         s === 'WEEKLY' ||
+        s.includes('WEEKLY') ||
         s === 'MONTHLY' ||
+        s.includes('MONTHLY') ||
         s === 'RECURRING' ||
+        s.includes('RECURRING') ||
+        s === 'ONHOLD' ||
+        s.includes('ONHOLD') ||
+        s.includes('HOLD') ||
         !!t.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st)
+          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'ONHOLD'].includes(st) ||
+          st.includes('WAITING') ||
+          st.includes('DAILY') ||
+          st.includes('WEEKLY') ||
+          st.includes('MONTHLY') ||
+          st.includes('RECURRING') ||
+          st.includes('ONHOLD') ||
+          st.includes('HOLD')
         );
 
       if (isExcluded) return false;

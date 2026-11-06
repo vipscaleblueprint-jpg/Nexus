@@ -300,17 +300,35 @@ export const TaskMapContainer: React.FC = () => {
     );
 
     // Available Tasks pool strictly holds Pending and Revision statuses only.
-    // Explicitly exclude Waiting, Recurring, Daily, Weekly, and Monthly tasks.
+    // Explicitly exclude Waiting, Recurring, Daily, Weekly, Monthly, and On-Hold tasks.
     const s = (existingTask?.status || '').toUpperCase().replace(/[\s_-]+/g, '');
     const upStatuses = newStatuses.map((st) => st.toUpperCase().replace(/[\s_-]+/g, ''));
     const isExcluded =
       s === 'WAITING' ||
+      s.includes('WAITING') ||
       s === 'DAILY' ||
+      s.includes('DAILY') ||
       s === 'WEEKLY' ||
+      s.includes('WEEKLY') ||
       s === 'MONTHLY' ||
+      s.includes('MONTHLY') ||
       s === 'RECURRING' ||
+      s.includes('RECURRING') ||
+      s === 'ONHOLD' ||
+      s.includes('ONHOLD') ||
+      s.includes('HOLD') ||
       !!(existingTask as any)?.recurringConfig ||
-      upStatuses.some((st) => ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st));
+      upStatuses.some(
+        (st) =>
+          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'ONHOLD'].includes(st) ||
+          st.includes('WAITING') ||
+          st.includes('DAILY') ||
+          st.includes('WEEKLY') ||
+          st.includes('MONTHLY') ||
+          st.includes('RECURRING') ||
+          st.includes('ONHOLD') ||
+          st.includes('HOLD')
+      );
 
     const isNowAvailable =
       !isExcluded &&

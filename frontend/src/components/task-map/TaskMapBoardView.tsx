@@ -582,13 +582,28 @@ const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
       );
       const isExcluded =
         s === 'WAITING' ||
+        s.includes('WAITING') ||
         s === 'DAILY' ||
+        s.includes('DAILY') ||
         s === 'WEEKLY' ||
+        s.includes('WEEKLY') ||
         s === 'MONTHLY' ||
+        s.includes('MONTHLY') ||
         s === 'RECURRING' ||
+        s.includes('RECURRING') ||
+        s === 'ONHOLD' ||
+        s.includes('ONHOLD') ||
+        s.includes('HOLD') ||
         !!(t as any)?.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st)
+          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'ONHOLD'].includes(st) ||
+          st.includes('WAITING') ||
+          st.includes('DAILY') ||
+          st.includes('WEEKLY') ||
+          st.includes('MONTHLY') ||
+          st.includes('RECURRING') ||
+          st.includes('ONHOLD') ||
+          st.includes('HOLD')
         );
       if (isExcluded) continue;
       const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
@@ -965,13 +980,28 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
       const isExcluded =
         s === 'WAITING' ||
+        s.includes('WAITING') ||
         s === 'DAILY' ||
+        s.includes('DAILY') ||
         s === 'WEEKLY' ||
+        s.includes('WEEKLY') ||
         s === 'MONTHLY' ||
+        s.includes('MONTHLY') ||
         s === 'RECURRING' ||
+        s.includes('RECURRING') ||
+        s === 'ONHOLD' ||
+        s.includes('ONHOLD') ||
+        s.includes('HOLD') ||
         !!(t as any)?.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st)
+          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'ONHOLD'].includes(st) ||
+          st.includes('WAITING') ||
+          st.includes('DAILY') ||
+          st.includes('WEEKLY') ||
+          st.includes('MONTHLY') ||
+          st.includes('RECURRING') ||
+          st.includes('ONHOLD') ||
+          st.includes('HOLD')
         );
       if (isExcluded) return false;
       const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
@@ -1034,6 +1064,39 @@ export const TaskMapBoardView: React.FC<Props> = ({
     );
   };
 
+  // Helper to check if a task has an excluded status for user shift columns:
+  // User columns must not show waiting, daily, monthly, weekly, recurring, or on-hold tasks
+  const isExcludedForUser = (task: TaskMapItem) => {
+    const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    const mapStatuses = (task.taskMap?.statuses || []).map((x: string) =>
+      (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+    );
+
+    const isExcludedStatus = (str: string) => {
+      return (
+        str === 'WAITING' ||
+        str.includes('WAITING') ||
+        str === 'DAILY' ||
+        str.includes('DAILY') ||
+        str === 'WEEKLY' ||
+        str.includes('WEEKLY') ||
+        str === 'MONTHLY' ||
+        str.includes('MONTHLY') ||
+        str === 'RECURRING' ||
+        str.includes('RECURRING') ||
+        str === 'ONHOLD' ||
+        str.includes('ONHOLD') ||
+        str.includes('HOLD')
+      );
+    };
+
+    return (
+      isExcludedStatus(s) ||
+      !!(task as any)?.recurringConfig ||
+      mapStatuses.some((st: string) => isExcludedStatus(st))
+    );
+  };
+
   // Group non-pool tasks by assignee
   const poolIds = new Set(availablePool.map((p) => p.id));
   const userColumnsMap: Record<string, { user: any; tasks: TaskMapItem[] }> = {};
@@ -1050,7 +1113,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   if (shiftUsers.length === 0) {
     tasks.forEach((task) => {
       if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
-      if (poolIds.has(task.id) || isClosedTask(task)) return;
+      if (poolIds.has(task.id) || isClosedTask(task) || isExcludedForUser(task)) return;
       const u = task.assignee || (task.assignees && task.assignees[0]);
       const userId = u?.id;
       if (!userId || userId === 'unassigned') return;
@@ -1063,11 +1126,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
     });
   }
 
-  // 2. Add non-closed tasks strictly to the users on this shift
+  // 2. Add non-closed, non-excluded tasks strictly to the users on this shift
   tasks.forEach((task) => {
     if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
     if (poolIds.has(task.id)) return;
-    if (isClosedTask(task)) return; // Don't show closed task to users!
+    if (isClosedTask(task) || isExcludedForUser(task)) return; // Don't show closed, waiting, daily, monthly, weekly, or on-hold tasks to users!
 
     const u = task.assignee || (task.assignees && task.assignees[0]);
     const userId = u?.id;

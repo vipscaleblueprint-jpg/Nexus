@@ -21,9 +21,48 @@ const PAGE_TITLES: Record<string, string> = {
 
 const MAX_UPWORK_CONTINUOUS_MS = 14 * 60 * 60 * 1000; // 14 hours max continuous shift window
 
-function formatUpworkElapsed(startedAt: string | Date | undefined, now: Date): string {
-  if (!startedAt) return '0 hr 00 mins';
-  const startMs = new Date(startedAt).getTime();
+function parseManilaTimeInToMs(timeIn?: string | null, dateStr?: string | null): number | null {
+  if (!timeIn || typeof timeIn !== 'string') return null;
+  const cleanTime = timeIn.trim();
+  const ampmMatch = cleanTime.match(/(\d{1,2}):(\d{1,2})(?::\d{2})?\s*(am|pm)/i);
+  const hourAmPmMatch = !ampmMatch ? cleanTime.match(/^(\d{1,2})\s*(am|pm)$/i) : null;
+  if (!ampmMatch && !hourAmPmMatch) return null;
+
+  let hours = parseInt(ampmMatch ? ampmMatch[1] : hourAmPmMatch![1], 10);
+  const mins = ampmMatch ? parseInt(ampmMatch[2], 10) : 0;
+  const ampm = (ampmMatch ? ampmMatch[3] : hourAmPmMatch![2]).toUpperCase();
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+
+  let datePart = dateStr ? dateStr.trim().split('T')[0] : '';
+  if (!datePart || !/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    const nowManila = new Date(Date.now() + 8 * 3600 * 1000);
+    datePart = nowManila.toISOString().split('T')[0];
+  }
+
+  const iso = `${datePart}T${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00+08:00`;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function resolveSessionStartMs(session: any): number {
+  if (session?.timeIn) {
+    const fromTimeIn = parseManilaTimeInToMs(session.timeIn, session.date);
+    if (fromTimeIn) return fromTimeIn;
+  }
+  if (session?.startedAt) {
+    const ms = new Date(session.startedAt).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  return NaN;
+}
+
+function formatUpworkElapsed(sessionOrDate: any, now: Date): string {
+  if (!sessionOrDate) return '0 hr 00 mins';
+  const startMs = typeof sessionOrDate === 'string' || sessionOrDate instanceof Date
+    ? new Date(sessionOrDate).getTime()
+    : resolveSessionStartMs(sessionOrDate);
+
   if (isNaN(startMs)) return '0 hr 00 mins';
   const diffMs = Math.max(0, now.getTime() - startMs);
   // Guard against runaway / stale sessions
@@ -76,11 +115,9 @@ export function Header() {
     if (s.timeOut || s.stoppedAt || (s as any).active === false) {
       return false;
     }
-    if (s.startedAt) {
-      const startMs = new Date(s.startedAt).getTime();
-      if (!isNaN(startMs) && (now.getTime() - startMs > MAX_UPWORK_CONTINUOUS_MS)) {
-        return false;
-      }
+    const startMs = resolveSessionStartMs(s);
+    if (!isNaN(startMs) && (now.getTime() - startMs > MAX_UPWORK_CONTINUOUS_MS)) {
+      return false;
     }
     const name = `${s.clientName || ''} ${s.pmName || ''} ${s.taskTitle || ''}`.toLowerCase();
     if (name.includes('lauren')) {
@@ -92,7 +129,7 @@ export function Header() {
   const upworkTickerText = validUpworkSessions
     .map((s) => {
       const name = getSessionDisplayName(s);
-      const elapsed = formatUpworkElapsed(s.startedAt, now);
+      const elapsed = formatUpworkElapsed(s, now);
       return `${name} ${elapsed}`;
     })
     .join(' | ');

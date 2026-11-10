@@ -170,7 +170,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
               window.location.reload();
             }
           })
-          .catch(() => {});
+          .catch(() => { });
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -205,7 +205,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
           notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
             setUnreadNotifications(res.unreadCount ?? res.notifications.filter((n) => !n.isRead).length);
-          }).catch(() => {});
+          }).catch(() => { });
         })
         .catch(() => {
           // Truly unauthenticated or session revoked — preserve destination link so login returns to it
@@ -260,7 +260,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
           } else if (sess.user) {
             setCurrentUser(sess.user);
           }
-        }).catch(() => {});
+        }).catch(() => { });
         lastTouchAt = now;
         return;
       }
@@ -268,7 +268,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       // While continuously active, throttle session touch to once every 2 minutes
       if (timeSinceLastTouch >= TOUCH_INTERVAL_MS) {
         lastTouchAt = now;
-        authApi.touchSession().catch(() => {});
+        authApi.touchSession().catch(() => { });
       }
     };
 
@@ -314,17 +314,17 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         if (typeof res.unreadCount === 'number') {
           setUnreadNotifications(res.unreadCount);
         }
-      }).catch(() => {});
+      }).catch(() => { });
       taskMapApi.getUpworkActiveSessions().then((res) => {
         if (res?.activeUpworkSessions) {
           useAppStore.getState().setActiveUpworkSessions(res.activeUpworkSessions);
         }
-      }).catch(() => {});
+      }).catch(() => { });
       taskMapApi.getUpworkClients().then((res) => {
         if (res?.clients) {
           useAppStore.getState().setUpworkClients(res.clients);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     });
     if (isPerfEnabled()) s.onAny((event) => recordSocketEvent(event));
 
@@ -356,7 +356,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     // "For Me" notifications (forMeCondition in notification.controller). Only chime when the filtered
     // unread count actually grows, so users never hear a sound for a notification they can't see.
     let lastSoundAt = 0;
-    s.on('notification_received', (data?: { type?: string; [key: string]: any }) => {
+    s.on('notification_received', (data?: { type?: string;[key: string]: any }) => {
       const prevUnread = useAppStore.getState().unreadNotifications;
       window.dispatchEvent(new CustomEvent('notification_received', { detail: data }));
       notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
@@ -368,7 +368,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
           const notifType = res.notifications?.[0]?.type || data?.type;
           playNotificationSound(undefined, undefined, undefined, notifType);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     });
 
     s.on('notification_read', (data: { id: string }) => {
@@ -414,7 +414,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         if (typeof res.unreadCount === 'number') {
           setUnreadNotifications(res.unreadCount);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     });
 
     s.on('task:comment_reaction', (payload: any) => {
@@ -507,6 +507,8 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
               userId: data.userId || '',
               userName: data.userName || 'MA Member',
               pmName: data.clientName || data.pmName || 'UPWORK',
+              timeIn: data.timeIn,
+              date: data.date,
               startedAt: data.startedAt || new Date().toISOString(),
             };
             if (idx >= 0) {

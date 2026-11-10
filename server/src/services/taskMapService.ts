@@ -499,6 +499,53 @@ export function getTaskMapOperationalDateStr(date?: Date | string | null): strin
   }
 }
 
+/**
+ * Converts a Manila schedule date (e.g. "2026-11-11") and time (e.g. "8:05 AM") into a canonical UTC ISO string.
+ * This guarantees that live elapsed timers (such as Upwork tracking in Header and TaskMap) count from the
+ * actual entered clock-in time rather than the moment the webhook hit the server.
+ */
+export function parseManilaTimeToIso(dateInput?: string | null, timeInput?: string | null): string {
+  if (!timeInput || typeof timeInput !== 'string') return new Date().toISOString();
+
+  const cleanTime = timeInput.trim();
+  const ampmMatch = cleanTime.match(/(\d{1,2}):(\d{1,2})(?::\d{2})?\s*(am|pm)/i);
+  const hourAmPmMatch = !ampmMatch ? cleanTime.match(/^(\d{1,2})\s*(am|pm)$/i) : null;
+
+  if (!ampmMatch && !hourAmPmMatch) return new Date().toISOString();
+
+  let hours = parseInt(ampmMatch ? ampmMatch[1] : hourAmPmMatch![1], 10);
+  const mins = ampmMatch ? parseInt(ampmMatch[2], 10) : 0;
+  const ampm = (ampmMatch ? ampmMatch[3] : hourAmPmMatch![2]).toUpperCase();
+
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+
+  let datePart = '';
+  if (dateInput && typeof dateInput === 'string' && dateInput.trim()) {
+    const s = dateInput.trim();
+    const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      datePart = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    } else {
+      const parsed = new Date(s);
+      if (!isNaN(parsed.getTime())) {
+        const y = parsed.getFullYear();
+        const m = String(parsed.getMonth() + 1).padStart(2, '0');
+        const d = String(parsed.getDate()).padStart(2, '0');
+        datePart = `${y}-${m}-${d}`;
+      }
+    }
+  }
+
+  if (!datePart) {
+    datePart = getTaskMapOperationalDateStr();
+  }
+
+  const isoWithTz = `${datePart}T${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00+08:00`;
+  const d = new Date(isoWithTz);
+  return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+}
+
 export async function getEffectiveUserId(userId?: string | null): Promise<string> {
   if (userId) {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });

@@ -32,7 +32,7 @@ import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients } from '../services/taskMapService';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, parseManilaTimeToIso } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -821,10 +821,10 @@ function cleanTimeString(val?: unknown): string | null {
   const s = val.trim();
   if (!s || s.toLowerCase() === 'none' || s === '-' || s.toLowerCase() === 'n/a') return null;
 
-  const ampmMatch = s.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  const ampmMatch = s.match(/(\d{1,2}):(\d{1,2})\s*(am|pm)/i);
   if (ampmMatch) {
     const hours = parseInt(ampmMatch[1], 10);
-    const mins = ampmMatch[2];
+    const mins = ampmMatch[2].padStart(2, '0');
     const ampm = ampmMatch[3].toUpperCase();
     const h12 = (hours % 12 || 12).toString().padStart(2, '0');
     return `${h12}:${mins} ${ampm}`;
@@ -1141,7 +1141,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       if (isUpwork) {
         const sessionId = `upwork_${(maNameStr || 'ma').toLowerCase().replace(/\s+/g, '_')}_${(clientStr || 'client').toLowerCase().replace(/\s+/g, '_')}`;
         const effectiveClientName = clientStr || 'UPWORK';
+        const sessionDate = date ? String(date).trim() : new Date().toISOString().split('T')[0];
         if (!cleanTimeOut && cleanTimeIn) {
+          const startedAtIso = parseManilaTimeToIso(date, cleanTimeIn);
           // A single user can only have one active Upwork session at a time; clean up any old session for this user first
           if (isRedisReady()) {
             if (maNameStr) {
@@ -1163,7 +1165,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 userName: maNameStr || 'MA Member',
                 pmName: effectiveClientName,
                 clientName: effectiveClientName,
-                startedAt: new Date().toISOString(),
+                timeIn: cleanTimeIn,
+                date: sessionDate,
+                startedAt: startedAtIso,
               })
             );
           }
@@ -1174,7 +1178,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             userName: maNameStr,
             pmName: effectiveClientName,
             clientName: effectiveClientName,
-            startedAt: new Date().toISOString(),
+            timeIn: cleanTimeIn,
+            date: sessionDate,
+            startedAt: startedAtIso,
           });
         } else if (cleanTimeOut) {
           if (isRedisReady()) {
@@ -1203,6 +1209,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         // Also update ma_active_sessions so the assistant's column on TaskMap displays the active Upwork session
         if (maNameStr) {
           const maKey = maNameStr.toLowerCase().trim();
+          const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
           const sessionData = {
             maName: maNameStr,
             timeIn: cleanTimeIn,
@@ -1214,6 +1221,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             isUpwork: true,
             isMissingTime,
             rowNumber: sheet_row ? Number(sheet_row) : undefined,
+            startedAt: startedAtIso || new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             active: !cleanTimeOut && Boolean(cleanTimeIn),
           };
@@ -1255,6 +1263,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   : 'No task inputted'));
         const sessionDate = date ? String(date).trim() : new Date().toISOString().split('T')[0];
         const sessionStatus = statusStr || (cleanTimeOut ? 'Done' : 'In progress');
+        const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
 
         const sessionData = {
           maName: maNameStr,
@@ -1267,16 +1276,38 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           isUpwork,
           isMissingTime,
           rowNumber: sheet_row ? Number(sheet_row) : undefined,
+          startedAt: startedAtIso || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           active: !cleanTimeOut && Boolean(cleanTimeIn),
         };
 
+        const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
+        let isOlderRowEdit = false;
+
         if (isRedisReady()) {
           const maKey = maNameStr.toLowerCase().trim();
-          if (cleanTimeOut) {
-            await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
-          } else {
-            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => {});
+          let currentActiveRowNum = -1;
+          const currentActiveRaw = await redis.hget('task_map:ma_active_sessions', maKey).catch(() => null);
+          if (currentActiveRaw) {
+            try {
+              const parsed = JSON.parse(currentActiveRaw);
+              if (parsed.rowNumber) currentActiveRowNum = Number(parsed.rowNumber);
+            } catch (_) {}
+          }
+
+          isOlderRowEdit = incomingRowNum > 0 && currentActiveRowNum > 0 && incomingRowNum < currentActiveRowNum;
+
+          if (!isOlderRowEdit) {
+            if (cleanTimeOut) {
+              await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
+            } else {
+              await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => {});
+            }
+            io.emit('ma:session_updated', sessionData);
+            io.emit('task_map:ma_progress_changed', sessionData);
+            io.emit('task_map:updated', {
+              maSession: sessionData,
+            });
           }
         }
 
@@ -1309,7 +1340,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   }
                   return false;
                 }
-                if (matchesMa && r.timeIn && !r.timeOut) {
+                const isOlderRow = !r.sheetRow || (incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum);
+                if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
                   r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
                   mod = true;
                   if (r.isUpwork) {
@@ -1351,11 +1383,13 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           console.warn('[Sheets] Failed to clean up stale unlinked sessions for MA:', cleanErr);
         }
 
-        io.emit('ma:session_updated', sessionData);
-        io.emit('task_map:ma_progress_changed', sessionData);
-        io.emit('task_map:updated', {
-          maSession: sessionData,
-        });
+        if (!isRedisReady()) {
+          io.emit('ma:session_updated', sessionData);
+          io.emit('task_map:ma_progress_changed', sessionData);
+          io.emit('task_map:updated', {
+            maSession: sessionData,
+          });
+        }
 
         return res.status(200).json({
           success: true,
@@ -1434,6 +1468,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // Filter out previous SHEET_PROGRESS entry
     reviewsList = reviewsList.filter((r: any) => r.type !== 'SHEET_PROGRESS');
 
+    const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
     const progressObj = {
       type: 'SHEET_PROGRESS',
       timeIn: cleanTimeIn,
@@ -1448,6 +1483,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       sheetRow: sheet_row ? Number(sheet_row) : undefined,
       taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
       taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
+      startedAt: startedAtIso,
       updatedAt: new Date().toISOString(),
     };
 
@@ -1488,8 +1524,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 }
                 return false;
               }
-              // If this MA had an open unclosed session on another task, close it
-              if (matchesMa && r.timeIn && !r.timeOut) {
+              // If this MA had an open unclosed session on an older task, close it
+              const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
+              const isOlderRow = !r.sheetRow || (incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum);
+              if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
                 r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
                 modified = true;
                 if (r.isUpwork) {
@@ -1541,38 +1579,60 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // Also update MA's latest active session in Redis for Task Map display
     if (maNameStr) {
       const maKey = maNameStr.toLowerCase().trim();
-      const maSession = {
-        maName: maNameStr,
-        taskId: target.taskId,
-        timeIn: cleanTimeIn,
-        timeOut: cleanTimeOut,
-        client: clientStr || 'General',
-        taskName: task || 'General Task',
-        date: date ? String(date).trim() : new Date().toISOString().split('T')[0],
-        status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
-        isUpwork,
-        isMissingTime,
-        rowNumber: sheet_row ? Number(sheet_row) : undefined,
-        updatedAt: progressObj.updatedAt,
-        active: !cleanTimeOut && Boolean(cleanTimeIn),
-      };
-      if (cleanTimeOut) {
-        await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
-      } else {
-        await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => {});
+      let currentActiveRowNum = -1;
+      if (isRedisReady()) {
+        const currentActiveRaw = await redis.hget('task_map:ma_active_sessions', maKey).catch(() => null);
+        if (currentActiveRaw) {
+          try {
+            const parsed = JSON.parse(currentActiveRaw);
+            if (parsed.rowNumber) currentActiveRowNum = Number(parsed.rowNumber);
+          } catch (_) {}
+        }
       }
-      io.emit('ma:session_updated', maSession);
-      io.emit('task_map:ma_progress_changed', maSession);
+
+      const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
+      const isOlderRowEdit = incomingRowNum > 0 && currentActiveRowNum > 0 && incomingRowNum < currentActiveRowNum;
+
+      if (!isOlderRowEdit) {
+        const maSession = {
+          maName: maNameStr,
+          taskId: target.taskId,
+          timeIn: cleanTimeIn,
+          timeOut: cleanTimeOut,
+          client: clientStr || 'General',
+          taskName: task || 'General Task',
+          date: date ? String(date).trim() : new Date().toISOString().split('T')[0],
+          status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
+          isUpwork,
+          isMissingTime,
+          rowNumber: sheet_row ? Number(sheet_row) : undefined,
+          startedAt: startedAtIso,
+          updatedAt: progressObj.updatedAt,
+          active: !cleanTimeOut && Boolean(cleanTimeIn),
+        };
+        if (isRedisReady()) {
+          if (cleanTimeOut) {
+            await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
+          } else {
+            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => {});
+          }
+        }
+        io.emit('ma:session_updated', maSession);
+        io.emit('task_map:ma_progress_changed', maSession);
+      }
     }
 
     // Handle Upwork session tracking if Upwork client/task and in progress (no time_out)
     if (isUpwork) {
       const activeIdx = reviewsList.findIndex((r: any) => r.type === 'UPWORK_SESSION' && r.active);
       const effectiveClientName = clientStr || 'UPWORK';
-      if (!cleanTimeOut) {
+      if (!cleanTimeOut && cleanTimeIn) {
+        const sessionStartedAt = startedAtIso || new Date().toISOString();
         if (activeIdx >= 0) {
           reviewsList[activeIdx].userName = maNameStr || reviewsList[activeIdx].userName;
           reviewsList[activeIdx].clientName = effectiveClientName;
+          reviewsList[activeIdx].startedAt = sessionStartedAt;
+          reviewsList[activeIdx].timeIn = cleanTimeIn;
         } else {
           reviewsList.push({
             type: 'UPWORK_SESSION',
@@ -1583,7 +1643,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             userName: maNameStr || 'MA Member',
             pmName: effectiveClientName,
             clientName: effectiveClientName,
-            startedAt: new Date().toISOString(),
+            timeIn: cleanTimeIn,
+            startedAt: sessionStartedAt,
           });
         }
 
@@ -1609,7 +1670,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               userName: maNameStr || 'MA Member',
               pmName: effectiveClientName,
               clientName: effectiveClientName,
-              startedAt: progressObj.updatedAt,
+              timeIn: cleanTimeIn,
+              date: date ? String(date).trim() : null,
+              startedAt: sessionStartedAt,
             })
           ).catch(() => { });
         }
@@ -1621,7 +1684,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           userName: maNameStr || 'MA Member',
           pmName: effectiveClientName,
           clientName: effectiveClientName,
-          startedAt: progressObj.updatedAt,
+          timeIn: cleanTimeIn,
+          date: date ? String(date).trim() : null,
+          startedAt: sessionStartedAt,
         });
       } else if (cleanTimeOut) {
         // Deactivate all active Upwork session entries on this task
@@ -1699,6 +1764,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         isUpwork,
         isMissingTime,
         rowNumber: sheet_row ? Number(sheet_row) : undefined,
+        startedAt: startedAtIso,
         updatedAt: progressObj.updatedAt,
         active: !cleanTimeOut && Boolean(cleanTimeIn),
       };

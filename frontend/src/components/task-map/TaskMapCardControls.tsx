@@ -755,16 +755,16 @@ export function computeDuration(timeInStr?: string | null, timeOutStr?: string |
   const remM = diffMins % 60;
 
   if (h > 0) {
-    return `${h}h ${remM}m`;
+    return `${h} hr ${remM.toString().padStart(2, '0')}m`;
   }
   return `${remM}m`;
 }
 
-/** Checks whether a live session exceeds the maximum allowable shift window (>14h) */
-export function isStaleLiveSession(timeInStr?: string | null, dateStr?: string | null, now = new Date()): boolean {
-  if (!timeInStr) return true;
+/** Computes the duration in milliseconds between timeIn and now, resilient to sheet date offsets and midnight shifts */
+export function getSessionDiffMs(timeInStr?: string | null, dateStr?: string | null, now = new Date()): number | null {
+  if (!timeInStr) return null;
   const m = timeInStr.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
-  if (!m) return true;
+  if (!m) return null;
 
   let hrs = parseInt(m[1], 10);
   const mins = parseInt(m[2], 10);
@@ -772,43 +772,50 @@ export function isStaleLiveSession(timeInStr?: string | null, dateStr?: string |
   if (ampm === 'PM' && hrs < 12) hrs += 12;
   if (ampm === 'AM' && hrs === 12) hrs = 0;
 
-  const start = dateStr ? new Date(dateStr) : new Date(now);
-  start.setHours(hrs, mins, 0, 0);
+  // 1. Try relative to current day first (handles sheets edited across midnight or timezone date differences)
+  const startToday = new Date(now);
+  startToday.setHours(hrs, mins, 0, 0);
 
-  let diffMs = now.getTime() - start.getTime();
-  if (!dateStr && diffMs < 0) {
-    start.setDate(start.getDate() - 1);
-    diffMs = now.getTime() - start.getTime();
+  let diffMs = now.getTime() - startToday.getTime();
+  if (diffMs < 0) {
+    // If clocked in before midnight and current time is after midnight (e.g. 11:30 PM to 01:00 AM)
+    startToday.setDate(startToday.getDate() - 1);
+    diffMs = now.getTime() - startToday.getTime();
   }
+
+  // If today-relative calculation produces an active session within normal shift window (<= 14h), use it!
+  if (diffMs >= 0 && diffMs <= MAX_LIVE_SHIFT_MS) {
+    return diffMs;
+  }
+
+  // 2. If dateStr is provided and today-relative diff exceeded 14h, try explicit dateStr (parsed in local timezone)
+  if (dateStr) {
+    const parts = dateStr.trim().split(/[-/]/);
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const explicitStart = new Date(year, month, day, hrs, mins, 0, 0);
+      const explicitDiff = now.getTime() - explicitStart.getTime();
+      if (explicitDiff >= 0 && explicitDiff <= MAX_LIVE_SHIFT_MS) {
+        return explicitDiff;
+      }
+    }
+  }
+
+  return diffMs;
+}
+
+/** Checks whether a live session exceeds the maximum allowable shift window (>14h) */
+export function isStaleLiveSession(timeInStr?: string | null, dateStr?: string | null, now = new Date()): boolean {
+  const diffMs = getSessionDiffMs(timeInStr, dateStr, now);
+  if (diffMs == null) return true;
   return diffMs > MAX_LIVE_SHIFT_MS;
 }
 
 export function computeElapsed(timeInStr?: string | null, dateStr?: string | null, now = new Date()): string {
-  if (!timeInStr) return '';
-  const m = timeInStr.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
-  if (!m) return '';
-
-  let hrs = parseInt(m[1], 10);
-  const mins = parseInt(m[2], 10);
-  const ampm = (m[3] || '').toUpperCase();
-  if (ampm === 'PM' && hrs < 12) hrs += 12;
-  if (ampm === 'AM' && hrs === 12) hrs = 0;
-
-  const start = dateStr ? new Date(dateStr) : new Date(now);
-  start.setHours(hrs, mins, 0, 0);
-
-  let diffMs = now.getTime() - start.getTime();
-  if (!dateStr && diffMs < 0) {
-    // If clocked in before midnight and current time is after midnight
-    start.setDate(start.getDate() - 1);
-    diffMs = now.getTime() - start.getTime();
-  }
-  if (diffMs < 0) diffMs = 0;
-
-  // Stale / runaway session guard: stop live ticking if older than 14 hours
-  if (diffMs > MAX_LIVE_SHIFT_MS) {
-    return '';
-  }
+  const diffMs = getSessionDiffMs(timeInStr, dateStr, now);
+  if (diffMs == null || diffMs < 0 || diffMs > MAX_LIVE_SHIFT_MS) return '';
 
   const totalMins = Math.floor(diffMs / 60000);
   const h = Math.floor(totalMins / 60);
@@ -818,7 +825,7 @@ export function computeElapsed(timeInStr?: string | null, dateStr?: string | nul
     return '0hr 0m';
   }
   if (h > 0) {
-    return `${h}h ${remM}m`;
+    return `${h} hr ${remM.toString().padStart(2, '0')}m`;
   }
   return `${remM}m`;
 }
@@ -882,12 +889,12 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
 
   // 3. In-Progress Live Time: Time In | Mins or Hrs with mins (Counting elapsed)
   if (prog?.timeIn && !prog?.timeOut) {
-    const isStale = isStaleLiveSession(prog.timeIn, prog.date, now);
-    const elapsed = computeElapsed(prog.timeIn, prog.date, now);
+    const isStale = task.isAssumptionBlock ? false : isStaleLiveSession(prog.timeIn, prog.date, now);
+    const elapsed = computeElapsed(prog.timeIn, prog.date, now) || (task.isAssumptionBlock ? '0hr 0m' : '');
     const timeInDisplay = cleanDisplayTime(prog.timeIn);
 
     // If session is runaway / stale (>14h or unclosed old date), or not marked as active live task, display static Time In without live pinging beacon
-    if (!isLive || isStale || !elapsed) {
+    if ((!isLive && !task.isAssumptionBlock) || isStale || !elapsed) {
       return (
         <div
           className="text-[10px] font-mono text-zinc-400 font-medium truncate max-w-full px-1.5 py-0.5 rounded bg-zinc-800/40 border border-zinc-700/40 select-none"

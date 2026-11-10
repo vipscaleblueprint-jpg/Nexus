@@ -1282,6 +1282,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
     // Check if user already has an assigned task card actively matching this session (by taskId or active progress)
     const hasActiveAssignedTask = col.tasks.some((t) => {
       if (activeSession?.taskId && t.id === activeSession.taskId) return true;
+      // If the active session has no taskId, it is an unlinked sheet row and must NEVER be suppressed by unrelated assigned cards
+      if (!activeSession?.taskId) return false;
       const isMyProg = doesProgressMatchUser(t.progress?.maName, col.user.name);
       if (!isMyProg || !t.progress?.timeIn || t.progress?.timeOut || t.progress?.isMissingTime) return false;
       // Stale sessions (>14h or past date) can never act as active assigned task
@@ -1290,7 +1292,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (activeSession?.rowNumber && t.progress?.sheetRow) {
         return Number(t.progress.sheetRow) === Number(activeSession.rowNumber);
       }
-      return true;
+      return false;
     });
 
     // ONLY insert an assumption block if the user has an active session from their sheet that is not attached to an existing task card!
@@ -2385,7 +2387,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     (task.status || '').toUpperCase() === 'DONE';
 
                   // Worker isolation: only display sheet progress if it was logged by THIS column's user!
-                  const isMyProgress = doesProgressMatchUser(task.progress?.maName, user.name);
+                  const isMyProgress = Boolean(task.isAssumptionBlock || doesProgressMatchUser(task.progress?.maName, user.name));
                   const effectiveProgress = isMyProgress ? task.progress : null;
 
                   const clientName = effectiveProgress?.client || task.progress?.client || task.list?.name || '';
@@ -2413,7 +2415,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     effectiveProgress?.timeIn &&
                     !effectiveProgress?.timeOut &&
                     !effectiveProgress?.isMissingTime &&
-                    !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, currentTime)
+                    (task.isAssumptionBlock || !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, currentTime))
                   );
                   // Only highlight tasks that are actively live working (with a counting timer)
                   const cardBorderClass = isUpwork && isLiveWorking

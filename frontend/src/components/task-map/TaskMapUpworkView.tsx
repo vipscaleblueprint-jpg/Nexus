@@ -29,8 +29,48 @@ function formatManilaTime(dateOrIso: string | Date | null | undefined): string {
   }
 }
 
-function formatElapsed(startedAt: string, now: Date): string {
-  const startMs = new Date(startedAt).getTime();
+function parseManilaTimeInToMs(timeIn?: string | null, dateStr?: string | null): number | null {
+  if (!timeIn || typeof timeIn !== 'string') return null;
+  const cleanTime = timeIn.trim();
+  const ampmMatch = cleanTime.match(/(\d{1,2}):(\d{1,2})(?::\d{2})?\s*(am|pm)/i);
+  const hourAmPmMatch = !ampmMatch ? cleanTime.match(/^(\d{1,2})\s*(am|pm)$/i) : null;
+  if (!ampmMatch && !hourAmPmMatch) return null;
+
+  let hours = parseInt(ampmMatch ? ampmMatch[1] : hourAmPmMatch![1], 10);
+  const mins = ampmMatch ? parseInt(ampmMatch[2], 10) : 0;
+  const ampm = (ampmMatch ? ampmMatch[3] : hourAmPmMatch![2]).toUpperCase();
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+
+  let datePart = dateStr ? dateStr.trim().split('T')[0] : '';
+  if (!datePart || !/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    const nowManila = new Date(Date.now() + 8 * 3600 * 1000);
+    datePart = nowManila.toISOString().split('T')[0];
+  }
+
+  const iso = `${datePart}T${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00+08:00`;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function resolveSessionStartMs(session: any): number {
+  if (session?.timeIn) {
+    const fromTimeIn = parseManilaTimeInToMs(session.timeIn, session.date);
+    if (fromTimeIn) return fromTimeIn;
+  }
+  if (session?.startedAt) {
+    const ms = new Date(session.startedAt).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  return NaN;
+}
+
+function formatElapsed(sessionOrStartedAt: any, now: Date): string {
+  const startMs = typeof sessionOrStartedAt === 'string' || sessionOrStartedAt instanceof Date
+    ? new Date(sessionOrStartedAt).getTime()
+    : resolveSessionStartMs(sessionOrStartedAt);
+
+  if (isNaN(startMs)) return '0h 00m 00s';
   const diffMs = Math.max(0, now.getTime() - startMs);
   const totalSecs = Math.floor(diffMs / 1000);
   const hrs = Math.floor(totalSecs / 3600);
@@ -183,8 +223,8 @@ export const TaskMapUpworkView: React.FC<Props> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {activeUpworkSessions.map((session) => {
               const taskObj = combinedTasks.find((t) => t.id === session.taskId);
-              const elapsed = formatElapsed(session.startedAt, now);
-              const startedManila = formatManilaTime(session.startedAt);
+              const elapsed = formatElapsed(session, now);
+              const startedManila = session.timeIn || formatManilaTime(session.startedAt);
 
               return (
                 <div

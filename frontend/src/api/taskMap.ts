@@ -107,6 +107,8 @@ export interface UpworkSession {
   userName: string;
   pmName: string;
   clientName?: string;
+  timeIn?: string | null;
+  date?: string | null;
   startedAt: string;
   stoppedAt?: string | null;
   timeOut?: string | null;

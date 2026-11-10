@@ -29,6 +29,7 @@ import {
   executeTaskMapDailyRollover,
   getManilaDateStr,
   getTaskMapOperationalDateStr,
+  parseManilaTimeToIso,
 } from '../services/taskMapService';
 
 // Closed status check matching Nexus conventions
@@ -287,7 +288,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const upworkStatus = (mapRecord.statuses || []).find(s => s.toUpperCase().startsWith('UPWORK'));
       if (upworkStatus) {
         upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
-        upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
+        upworkStartedAt = upworkSession?.startedAt || null;
       }
 
       // Check sheet progress
@@ -308,13 +309,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (!upworkSession && (!isLauren || upworkStatus)) {
         upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active) || null;
         if (upworkSession) {
-          upworkStartedAt = upworkSession.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
+          upworkStartedAt = upworkSession.startedAt || null;
         }
       }
 
       // If sheet progress indicates Upwork and task is currently in progress (no timeOut)
       if (progress?.isUpwork && !progress?.timeOut && !upworkSession && (!isLauren || upworkStatus)) {
-        upworkStartedAt = progress.updatedAt || new Date().toISOString();
+        upworkStartedAt = progress.timeIn
+          ? parseManilaTimeToIso(progress.date, progress.timeIn)
+          : (progress.startedAt || progress.updatedAt || new Date().toISOString());
         upworkSession = {
           taskId: task.id,
           taskTitle: task.title,
@@ -322,8 +325,13 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           userName: progress.maName || 'Team Member',
           pmName: 'UPWORK',
           clientName: progress.client,
+          timeIn: progress.timeIn,
           startedAt: upworkStartedAt,
         };
+      } else if (upworkSession && !upworkStartedAt) {
+        upworkStartedAt = progress?.timeIn
+          ? parseManilaTimeToIso(progress.date, progress.timeIn)
+          : (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
       }
 
       const folderName = (task.list?.folder?.name || '').toLowerCase();
@@ -1874,6 +1882,10 @@ export const getCanonicalActiveUpworkSessions = async (): Promise<any[]> => {
               }
               continue;
             }
+            if (currentMa.timeIn) {
+              s.startedAt = parseManilaTimeToIso(currentMa.date, currentMa.timeIn);
+              s.timeIn = currentMa.timeIn;
+            }
           }
 
           activeUpworkSessions.push(s);
@@ -2042,7 +2054,14 @@ export const getCanonicalActiveUpworkSessions = async (): Promise<any[]> => {
             if (m && m[1]) pmName = m[1].trim().toUpperCase();
           }
           const userName = activeReview?.userName || sheetProgress?.maName || rec.task?.assignee?.name || pmName || 'Team Member';
-          const startedAt = activeReview?.startedAt || sheetProgress?.updatedAt || rec.updatedAt.toISOString();
+          let startedAt: string;
+          if (sheetProgress?.timeIn) {
+            startedAt = parseManilaTimeToIso(sheetProgress.date, sheetProgress.timeIn);
+          } else if (activeReview?.startedAt) {
+            startedAt = activeReview.startedAt;
+          } else {
+            startedAt = sheetProgress?.startedAt || sheetProgress?.updatedAt || rec.updatedAt.toISOString();
+          }
 
           const sessionItem = {
             taskId: rec.taskId,
@@ -2051,6 +2070,7 @@ export const getCanonicalActiveUpworkSessions = async (): Promise<any[]> => {
             userName,
             pmName,
             clientName: pmName,
+            timeIn: sheetProgress?.timeIn,
             startedAt,
           };
           activeUpworkSessions.push(sessionItem);

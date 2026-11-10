@@ -257,7 +257,6 @@ export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
         entityId: taskId,
         OR: [
           { action: 'STATUS_CHANGE' },
-          { action: 'COMMENT' },
           { action: 'MA_UPDATE' },
         ],
       },
@@ -273,6 +272,8 @@ export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
     const maUpdaterNames = new Set<string>();
 
     for (const log of logs) {
+      if (log.action === 'COMMENT' || log.action === 'REPLY') continue;
+
       const details = (log.details as any) || {};
       const newStatus = String(details.newStatus || '').toUpperCase().replace(/[^A-Z]/g, '');
 
@@ -3409,15 +3410,36 @@ export async function createChecklistItem(req: Request, res: Response) {
       data.completed = Boolean(completed);
       if (completed && userId) {
         if (isAuditChecklistName(checklist?.name)) {
-          const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId);
-          const reqUser = (req as any).user;
-          const reqUserName = reqUser?.name?.trim().toLowerCase();
-          const isBlocked = (userId && (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId))) ||
-            (reqUserName && maUpdaterNames.some((n: string) => n && n.trim().toLowerCase() === reqUserName));
-          if (isBlocked) {
-            return res.status(403).json({
-              error: 'You cannot audit this task because you or your group contributed to this task iteration. Please have another team member with the required audit role perform this audit.',
-            });
+          const targetTask = await prisma.task.findUnique({
+            where: { id: taskId },
+            select: {
+              status: true,
+              assigneeId: true,
+              assignees: { select: { id: true } },
+              subtasks: {
+                select: {
+                  id: true,
+                  status: true,
+                  assigneeId: true,
+                  assignees: { select: { id: true } },
+                },
+              },
+            },
+          });
+          const isRevision = targetTask?.status?.toUpperCase() === 'REVISION';
+          if (!isRevision && targetTask) {
+            const taskAssigneeIds = new Set<string>([
+              targetTask.assigneeId,
+              ...targetTask.assignees.map((a) => a.id),
+              ...targetTask.subtasks.map((s) => s.assigneeId),
+              ...targetTask.subtasks.flatMap((s) => s.assignees.map((a) => a.id)),
+            ].filter(Boolean) as string[]);
+
+            if (userId && taskAssigneeIds.has(userId)) {
+              return res.status(403).json({
+                error: 'You cannot audit this task because you are an assignee of this task. Please have another team member with the required audit role perform this audit.',
+              });
+            }
           }
         }
         data.checkedById = userId;
@@ -3757,19 +3779,50 @@ export async function updateChecklistItem(req: Request, res: Response) {
       if (completed && userId) {
         const checkItem = await prisma.checklistItem.findUnique({
           where: { id: itemId },
-          select: { checklist: { select: { name: true, taskId: true } } },
+          select: { checklist: { select: { name: true, taskId: true, subtaskId: true } } },
         });
         const targetTaskId = checkItem?.checklist?.taskId || req.params.id;
         if (isAuditChecklistName(checkItem?.checklist?.name) && targetTaskId) {
-          const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(targetTaskId);
-          const reqUser = (req as any).user;
-          const reqUserName = reqUser?.name?.trim().toLowerCase();
-          const isBlocked = (userId && (userId === inProgressMovedBy?.id || maUpdaterIds.includes(userId))) ||
-            (reqUserName && maUpdaterNames.some((n: string) => n && n.trim().toLowerCase() === reqUserName));
-          if (isBlocked) {
-            return res.status(403).json({
-              error: 'You cannot audit this task because you or your group contributed to this task iteration. Please have another team member with the required audit role perform this audit.',
-            });
+          const targetTask = await prisma.task.findUnique({
+            where: { id: targetTaskId },
+            select: {
+              status: true,
+              assigneeId: true,
+              assignees: { select: { id: true } },
+              subtasks: {
+                select: {
+                  id: true,
+                  status: true,
+                  assigneeId: true,
+                  assignees: { select: { id: true } },
+                },
+              },
+            },
+          });
+
+          const currentSubtask = checkItem?.checklist?.subtaskId
+            ? targetTask?.subtasks.find((s) => s.id === checkItem.checklist.subtaskId)
+            : null;
+          const currentStatus = (currentSubtask?.status || targetTask?.status || '').toUpperCase();
+          const isRevision = currentStatus === 'REVISION';
+
+          if (!isRevision && targetTask) {
+            const taskAssigneeIds = new Set<string>([
+              targetTask.assigneeId,
+              ...targetTask.assignees.map((a) => a.id),
+              ...(currentSubtask
+                ? [currentSubtask.assigneeId, ...currentSubtask.assignees.map((a) => a.id)]
+                : [
+                    ...targetTask.subtasks.map((s) => s.assigneeId),
+                    ...targetTask.subtasks.flatMap((s) => s.assignees.map((a) => a.id)),
+                  ]),
+            ].filter(Boolean) as string[]);
+
+            if (userId && taskAssigneeIds.has(userId)) {
+              return res.status(403).json({
+                error: 'You cannot audit this task because you are an assignee of this task. Please have another team member with the required audit role perform this audit.',
+              });
+            }
           }
         }
         data.checkedById = userId;

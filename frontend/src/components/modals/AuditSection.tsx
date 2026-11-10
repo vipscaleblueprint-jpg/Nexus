@@ -70,27 +70,29 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
     const currentStatus = (currentSubtask?.status || task.status || '').toUpperCase();
     if (currentStatus === 'REVISION') return false;
 
-    if (task.inProgressMovedBy?.id === currentUser.id) return true;
-    if (task.maUpdaterIds?.includes(currentUser.id)) return true;
-
+    // Contributor is the assignees only: auditors commenting on the task can check audit tasks
     const cName = (currentUser.name || '').trim().toLowerCase();
     const cEmail = (currentUser.email || '').trim().toLowerCase();
-
-    const matchesName = (target?: string | null) => {
-      if (!target) return false;
-      const t = target.trim().toLowerCase();
-      if (!t || (!cName && !cEmail)) return false;
-      if (cName && (t === cName || cName.includes(t) || t.includes(cName))) return true;
-      if (cEmail && (cEmail.includes(t) || t.includes(cEmail))) return true;
-      const tTokens = t.split(/[\s\-_\/]+/).filter(w => w.length > 2);
-      const cTokens = cName.split(/[\s\-_\/]+/).filter(w => w.length > 2);
-      return tTokens.some(tok => cTokens.includes(tok));
+    const matchesUser = (u?: { id?: string | null; name?: string | null; email?: string | null } | null) => {
+      if (!u) return false;
+      if (u.id && u.id === currentUser.id) return true;
+      const uName = (u.name || '').trim().toLowerCase();
+      const uEmail = (u.email || '').trim().toLowerCase();
+      if (cName && uName && (cName === uName || cName.includes(uName) || uName.includes(cName))) return true;
+      if (cEmail && uEmail && (cEmail === uEmail || cEmail.includes(uEmail) || uEmail.includes(cEmail))) return true;
+      return false;
     };
 
-    if (matchesName(task.inProgressMovedBy?.name)) return true;
-    if (task.maUpdaterNames && task.maUpdaterNames.some(matchesName)) return true;
-    return false;
-  }, [currentUser?.id, currentUser?.name, currentUser?.email, task.inProgressMovedBy, task.maUpdaterIds, task.maUpdaterNames, task.status, task.subtasks, subtaskId]);
+    const isDirectAssignee = task.assigneeId === currentUser.id ||
+      matchesUser(task.assignee) ||
+      (task.assignees || []).some((a: any) => matchesUser(a));
+
+    const isSubtaskAssignee = currentSubtask
+      ? ((currentSubtask.assigneeIds && currentSubtask.assigneeIds.includes(currentUser.id)) || (currentSubtask.assignees || []).some((a: any) => matchesUser(a)))
+      : (task.subtasks || []).some((s: any) => (s.assigneeIds && s.assigneeIds.includes(currentUser.id)) || (s.assignees || []).some((a: any) => matchesUser(a)));
+
+    return isDirectAssignee || isSubtaskAssignee;
+  }, [currentUser?.id, currentUser?.name, currentUser?.email, task.assigneeId, task.assignee, task.assignees, task.subtasks, task.status, subtaskId]);
 
   // Synchronize incoming checklists prop changes smoothly, preserving pending local updates
   useEffect(() => {
@@ -1245,22 +1247,29 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                 {/* Strictly holders of this audit's auditor role */}
                                 {users.filter(u => !isSystemUser(u) && isAuditorFor(text, u.roles)).map(u => {
                                   const isUserContributor = (() => {
-                                    if (task.inProgressMovedBy?.id === u.id) return true;
-                                    if (task.maUpdaterIds?.includes(u.id)) return true;
+                                    // Contributor is the assignees only
+                                    const currentSubtask = subtaskId ? task.subtasks?.find((s: any) => s.id === subtaskId) : null;
                                     const uName = (u.name || '').trim().toLowerCase();
                                     const uEmail = (u.email || '').trim().toLowerCase();
-                                    const matches = (target?: string | null) => {
-                                      if (!target || (!uName && !uEmail)) return false;
-                                      const t = target.trim().toLowerCase();
-                                      if (t === uName || uName.includes(t) || t.includes(uName)) return true;
-                                      if (uEmail && (uEmail.includes(t) || t.includes(uEmail))) return true;
-                                      const tTokens = t.split(/[\s\-_\/]+/).filter(w => w.length > 2);
-                                      const uTokens = uName.split(/[\s\-_\/]+/).filter(w => w.length > 2);
-                                      return tTokens.some(tok => uTokens.includes(tok));
+                                    const matchesUser = (a?: { id?: string | null; name?: string | null; email?: string | null } | null) => {
+                                      if (!a) return false;
+                                      if (a.id && a.id === u.id) return true;
+                                      const aName = (a.name || '').trim().toLowerCase();
+                                      const aEmail = (a.email || '').trim().toLowerCase();
+                                      if (uName && aName && (uName === aName || uName.includes(aName) || aName.includes(uName))) return true;
+                                      if (uEmail && aEmail && (uEmail === aEmail || uEmail.includes(aEmail) || aEmail.includes(uEmail))) return true;
+                                      return false;
                                     };
-                                    if (matches(task.inProgressMovedBy?.name)) return true;
-                                    if (task.maUpdaterNames?.some(matches)) return true;
-                                    return false;
+
+                                    const isDirectAssignee = task.assigneeId === u.id ||
+                                      matchesUser(task.assignee) ||
+                                      (task.assignees || []).some((a: any) => matchesUser(a));
+
+                                    const isSubtaskAssignee = currentSubtask
+                                      ? ((currentSubtask.assigneeIds && currentSubtask.assigneeIds.includes(u.id)) || (currentSubtask.assignees || []).some((a: any) => matchesUser(a)))
+                                      : (task.subtasks || []).some((s: any) => (s.assigneeIds && s.assigneeIds.includes(u.id)) || (s.assignees || []).some((a: any) => matchesUser(a)));
+
+                                    return isDirectAssignee || isSubtaskAssignee;
                                   })();
 
                                   return (
@@ -1283,7 +1292,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                     )}
                                     <span className="flex-1 truncate">{u.name}</span>
                                     {isUserContributor && (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0" title="Edited task on MA Daily / moved in-progress">
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0" title="Task assignee">
                                         Contributor
                                       </span>
                                     )}

@@ -312,8 +312,7 @@ export async function autoAssignAudits(
   });
   const shiftAuditors = allUsers.filter((u) => isUserInShift(u, currentShift, shiftConfigs));
 
-  // Align with audit restrictions: exclude task assignees, inProgress mover, and MA updaters for this iteration
-  const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
+  // Align with audit restrictions: exclude task assignees (contributors are assignees only)
   const taskAssigneeIds = new Set(
     [
       task.assigneeId,
@@ -323,15 +322,8 @@ export async function autoAssignAudits(
     ].filter(Boolean) as string[]
   );
 
-  const blockedUserIds = new Set<string>([
-    ...taskAssigneeIds,
-    ...maUpdaterIds,
-    ...(inProgressMovedBy?.id ? [inProgressMovedBy.id] : []),
-  ]);
-  const blockedNames = new Set<string>([
-    ...maUpdaterNames.map((n) => n.trim().toLowerCase()),
-    ...(inProgressMovedBy?.name ? [inProgressMovedBy.name.trim().toLowerCase()] : []),
-  ]);
+  const blockedUserIds = new Set<string>([...taskAssigneeIds]);
+  const blockedNames = new Set<string>();
 
   const isUserBlocked = (u: { id: string; name?: string | null; email?: string | null }) => {
     if (blockedUserIds.has(u.id)) return true;

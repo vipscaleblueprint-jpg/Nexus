@@ -7,6 +7,8 @@ import {
   TaskMapOption,
   TaskMapShift,
   UpworkSession,
+  extractAuditorRoles,
+  AuditorRoleOption,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapSidebar } from './TaskMapSidebar';
@@ -16,10 +18,24 @@ import { TaskMapAuditingView } from './TaskMapAuditingView';
 import { TaskMapCrmView } from './TaskMapCrmView';
 import { TaskMapUpworkView } from './TaskMapUpworkView';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
-import { hasCrmAccess } from '@/lib/permissions';
+import { hasCrmAccess, canTransitionTaskStatus } from '@/lib/permissions';
+
+const getTodayDateStr = () => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().split('T')[0];
+  }
+};
 
 export const TaskMapContainer: React.FC = () => {
   const [tasks, setTasks] = useState<TaskMapItem[]>([]);
@@ -28,39 +44,86 @@ export const TaskMapContainer: React.FC = () => {
   const [shifts, setShifts] = useState<TaskMapShift[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [shiftUsers, setShiftUsers] = useState<any[]>([]);
-  const [activeUpworkSessions, setActiveUpworkSessions] = useState<UpworkSession[]>([]);
+  const [activeUpworkSessions, setActiveUpworkSessions] = useState<UpworkSession[]>(() => useAppStore.getState().activeUpworkSessions || []);
   const [allDbClients, setAllDbClients] = useState<Array<{ id: string; name: string }>>([]);
   const currentUser = useAppStore((s) => s.currentUser);
   const upworkClients = useAppStore((s) => s.upworkClients);
   const spaces = useAppStore((s) => s.spaces);
   const allLists = useAppStore((s) => s.allLists);
   const loadSpaces = useAppStore((s) => s.loadSpaces);
+  const workspaceTeams = useAppStore((s) => s.workspaceTeams);
+  const loadTeams = useAppStore((s) => s.loadTeams);
 
-  // Load spaces if not already in store to ensure all sidebar Client Dashboard lists are available
+  // Load spaces & teams if not already in store
   useEffect(() => {
     if (!spaces || spaces.length === 0) {
       loadSpaces();
     }
   }, [spaces, loadSpaces]);
 
+  useEffect(() => {
+    if (!workspaceTeams || workspaceTeams.length === 0) {
+      loadTeams();
+    }
+  }, [workspaceTeams?.length, loadTeams]);
+
+  // Auditor Type filter state & dynamic DB roles
+  const [auditorTypeFilter, setAuditorTypeFilter] = useState<string>('ALL');
+  const auditorRoles = React.useMemo(() => {
+    return extractAuditorRoles(workspaceTeams, allUsers);
+  }, [workspaceTeams, allUsers]);
+
   // Track pending optimistic status updates to avoid race conditions & background fetch overwrites
   const pendingUpdatesRef = useRef<
     Map<string, { statuses: string[]; timer?: NodeJS.Timeout | null; timestamp: number }>
   >(new Map());
 
-  // Shift, Date, Client & View mode state (defaults to Nov 5, 2026 or today)
+  // User manual selection tracker: ensures automatic latest-date navigation only applies on initial open
+  const userSelectedDateRef = useRef<boolean>(false);
+
+  // Shift, Date, Client & View mode state (defaults to today Manila, or ?date= URL param if supplied)
   const [currentShift, setCurrentShift] = useState<string>('DAY');
-  const [currentDate, setCurrentDate] = useState<string>('2026-11-05');
+  const [currentDate, setCurrentDate] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const qDate = urlParams.get('date');
+        if (qDate) {
+          userSelectedDateRef.current = true;
+          return qDate.trim();
+        }
+      } catch { }
+    }
+    return getTodayDateStr();
+  });
   const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK'>('BOARD');
-  const [selectedClient, setSelectedClient] = useState<string>('ALL');
+  const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
+
+  // Daily Rollover & Historical Archive State
+  const [isHistoryView, setIsHistoryView] = useState<boolean>(false);
+  const [historyDates, setHistoryDates] = useState<string[]>([]);
+  const [isRollingOver, setIsRollingOver] = useState<boolean>(false);
 
   const [loading, setLoading] = useState(true);
 
   // Task Detail Modal
   const [selectedTaskModal, setSelectedTaskModal] = useState<any | null>(null);
+  const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
+    isOpen: boolean;
+    task: TaskMapItem | null;
+    targetStatus: string;
+    uncheckedAudits: string[];
+    openSubtasks: string[];
+  }>({
+    isOpen: false,
+    task: null,
+    targetStatus: '',
+    uncheckedAudits: [],
+    openSubtasks: [],
+  });
 
   // Fetch data
   const loadData = useCallback(async (silent = false) => {
@@ -79,7 +142,7 @@ export const TaskMapContainer: React.FC = () => {
         shift: apiShift,
         date: currentDate,
         search,
-        client: selectedClient !== 'ALL' ? selectedClient : undefined,
+        client: Array.isArray(selectedClients) && selectedClients.length === 1 ? selectedClients[0] : undefined,
       });
 
       if (res.success) {
@@ -133,15 +196,35 @@ export const TaskMapContainer: React.FC = () => {
         if (res.upworkClients) {
           useAppStore.getState().setUpworkClients(res.upworkClients);
         }
-        if (res.maActiveSessions) {
-          useAppStore.getState().setMaActiveSessions(res.maActiveSessions);
-        }
+        const enrichedSessions = { ...(res.maActiveSessions || {}) };
+        (res.tasks || []).forEach((t: any) => {
+          if (t.progress?.maName && t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime) {
+            const key = t.progress.maName.toLowerCase().trim();
+            if (!enrichedSessions[key]) {
+              enrichedSessions[key] = {
+                maName: t.progress.maName,
+                taskId: t.id,
+                timeIn: t.progress.timeIn,
+                timeOut: null,
+                client: t.progress.client || t.list?.name || 'No client inputted',
+                taskName: t.progress.taskDeliverables || t.title || 'No task inputted',
+                date: t.progress.date,
+                status: t.progress.status || 'In progress',
+                isUpwork: Boolean(t.progress.isUpwork),
+                rowNumber: t.progress.sheetRow,
+                active: true,
+              };
+            }
+          }
+        });
+        useAppStore.getState().setMaActiveSessions(enrichedSessions);
         if (res.allClients) {
           setAllDbClients(res.allClients);
         }
         if (!currentShift && res.activeShift) {
           setCurrentShift(res.activeShift);
         }
+        setIsHistoryView(Boolean(res.isHistory));
       }
     } catch (err: any) {
       console.error('Failed to load task map data:', err);
@@ -149,12 +232,54 @@ export const TaskMapContainer: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [currentShift, currentDate, search, selectedClient]);
+  }, [currentShift, currentDate, search, selectedClients]);
 
   // Initial load & when shift or date changes
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Load history dates for journal & ensure Task Map opens on latest date
+  useEffect(() => {
+    taskMapApi.getHistoryDates().then((res) => {
+      if (res.success && res.dates) {
+        setHistoryDates(res.dates);
+        const latest = res.latestDate || (res.dates.length > 0 ? res.dates[0] : null);
+        if (latest && !userSelectedDateRef.current) {
+          setCurrentDate((prev) => (prev !== latest ? latest : prev));
+        }
+      }
+    }).catch(() => { });
+  }, []);
+
+  const handleTriggerDailyRollover = async () => {
+    if (isRollingOver) return;
+    setIsRollingOver(true);
+    try {
+      const res = await taskMapApi.runDailyRollover({
+        fromDate: currentDate,
+      });
+      if (res.success) {
+        toast.success(`Daily rollover complete! Retained ${res.retainedDate} with ${res.retainedTasksCount} tasks.`);
+        if (res.newDate) {
+          userSelectedDateRef.current = false;
+          setCurrentDate(res.newDate);
+        }
+        await loadData();
+        const datesRes = await taskMapApi.getHistoryDates();
+        if (datesRes.success && datesRes.dates) {
+          setHistoryDates(datesRes.dates);
+        }
+      } else {
+        toast.error('Failed to execute daily rollover');
+      }
+    } catch (e: any) {
+      console.error(e);
+      toast.error('Error executing daily rollover');
+    } finally {
+      setIsRollingOver(false);
+    }
+  };
 
   // Clean up pending debounce timers on unmount
   useEffect(() => {
@@ -213,6 +338,9 @@ export const TaskMapContainer: React.FC = () => {
           if (t.id !== taskId) return t;
           return {
             ...t,
+            assigneeId: data.assigneeId !== undefined ? data.assigneeId : t.assigneeId,
+            assignee: data.assignee !== undefined ? data.assignee : t.assignee,
+            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : []) : t.assignees,
             upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
             upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
             progress: data.progress !== undefined ? data.progress : t.progress,
@@ -230,6 +358,9 @@ export const TaskMapContainer: React.FC = () => {
           if (t.id !== taskId) return t;
           return {
             ...t,
+            assigneeId: data.assigneeId !== undefined ? data.assigneeId : t.assigneeId,
+            assignee: data.assignee !== undefined ? data.assignee : t.assignee,
+            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : []) : t.assignees,
             upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
             upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
             progress: data.progress !== undefined ? data.progress : t.progress,
@@ -345,17 +476,17 @@ export const TaskMapContainer: React.FC = () => {
       prev.map((t) =>
         t.id === taskId
           ? {
-              ...t,
-              upworkStartedAt: optimisticStartedAt,
-              upworkSession: optimisticSession,
-              taskMap: { ...t.taskMap, statuses: finalStatuses },
-            }
+            ...t,
+            upworkStartedAt: optimisticStartedAt,
+            upworkSession: optimisticSession,
+            taskMap: { ...t.taskMap, statuses: finalStatuses },
+          }
           : t
       )
     );
 
-    // Available Tasks pool strictly holds Pending and Revision statuses only.
-    // Explicitly exclude Waiting, Recurring, Daily, Weekly, Monthly, and On-Hold tasks.
+    // Available Tasks pool holds Pending, Revision, Hand-over, and On-hold tasks.
+    // Exclude Waiting (routed to CRM Map) and recurring, daily, weekly, monthly tasks.
     const s = (existingTask?.status || '').toUpperCase().replace(/[\s_-]+/g, '');
     const upStatuses = finalStatuses.map((st) => st.toUpperCase().replace(/[\s_-]+/g, ''));
     const isExcluded =
@@ -369,26 +500,27 @@ export const TaskMapContainer: React.FC = () => {
       s.includes('MONTHLY') ||
       s === 'RECURRING' ||
       s.includes('RECURRING') ||
-      s === 'ONHOLD' ||
-      s.includes('ONHOLD') ||
-      s.includes('HOLD') ||
       !!(existingTask as any)?.recurringConfig ||
       upStatuses.some(
         (st) =>
-          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'ONHOLD'].includes(st) ||
+          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
           st.includes('WAITING') ||
           st.includes('DAILY') ||
           st.includes('WEEKLY') ||
           st.includes('MONTHLY') ||
-          st.includes('RECURRING') ||
-          st.includes('ONHOLD') ||
-          st.includes('HOLD')
+          st.includes('RECURRING')
       );
 
     const isNowAvailable =
       !isExcluded &&
       (s === 'PENDING' ||
         s === 'REVISION' ||
+        s === 'ONHOLD' ||
+        s.includes('HOLD') ||
+        upStatuses.includes('HANDOVER') ||
+        upStatuses.includes('HAND-OVER') ||
+        upStatuses.includes('ONHOLD') ||
+        upStatuses.includes('ON-HOLD') ||
         upStatuses.includes('PENDING') ||
         upStatuses.includes('REVISION'));
 
@@ -401,11 +533,11 @@ export const TaskMapContainer: React.FC = () => {
         return prev.map((t) =>
           t.id === taskId
             ? {
-                ...t,
-                upworkStartedAt: optimisticStartedAt,
-                upworkSession: optimisticSession,
-                taskMap: { ...t.taskMap, statuses: finalStatuses },
-              }
+              ...t,
+              upworkStartedAt: optimisticStartedAt,
+              upworkSession: optimisticSession,
+              taskMap: { ...t.taskMap, statuses: finalStatuses },
+            }
             : t
         );
       }
@@ -485,35 +617,93 @@ export const TaskMapContainer: React.FC = () => {
 
   // Handler for direct task property updates (e.g. main workflow status, priority)
   const handleTaskUpdate = async (taskId: string, fields: Partial<TaskMapItem>) => {
+    const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
+    if (fields.status && currentTask && fields.status.toUpperCase() !== (currentTask.status || '').toUpperCase()) {
+      const transitionCheck = canTransitionTaskStatus(currentTask, fields.status);
+      if (!transitionCheck.allowed) {
+        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent('task:highlight-audits', {
+              detail: {
+                taskId,
+                targetStatus: fields.status,
+                uncheckedAudits: transitionCheck.uncheckedAudits,
+                openSubtasks: transitionCheck.openSubtasks,
+              },
+            })
+          );
+        }
+        setBlockedAuditAlert({
+          isOpen: true,
+          task: currentTask,
+          targetStatus: fields.status,
+          uncheckedAudits: transitionCheck.uncheckedAudits,
+          openSubtasks: transitionCheck.openSubtasks,
+        });
+        toast.error(transitionCheck.reason || `Cannot move task to ${fields.status}`);
+        return;
+      }
+    }
+
     // 1. Optimistically update local tasks & availablePool while tracking previous status for undo/misclick support
+    const nextStatusUp = (fields.status || '').toUpperCase().trim();
+    const isMovingToAvailable = fields.assigneeId === null || nextStatusUp === 'ON-HOLD' || nextStatusUp === 'ONHOLD';
+    const isMovingOutOfAvailable = nextStatusUp === 'IN REVIEW' || nextStatusUp === 'WAITING' || (fields.assigneeId && fields.assigneeId !== null);
+
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
           ? {
+            ...t,
+            ...fields,
+            ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
+            _previousStatus:
+              fields.status && fields.status !== t.status
+                ? t.status
+                : (t as any)._previousStatus,
+          }
+          : t
+      )
+    );
+
+    setAvailablePool((prev) => {
+      if (isMovingOutOfAvailable) {
+        return prev.filter((t) => t.id !== taskId);
+      }
+      const exists = prev.some((t) => t.id === taskId);
+      if (exists) {
+        return prev.map((t) =>
+          t.id === taskId
+            ? {
               ...t,
               ...fields,
+              ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
               _previousStatus:
                 fields.status && fields.status !== t.status
                   ? t.status
                   : (t as any)._previousStatus,
             }
-          : t
-      )
-    );
-    setAvailablePool((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? {
-              ...t,
-              ...fields,
-              _previousStatus:
-                fields.status && fields.status !== t.status
-                  ? t.status
-                  : (t as any)._previousStatus,
-            }
-          : t
-      )
-    );
+            : t
+        );
+      }
+      if (isMovingToAvailable && currentTask) {
+        return [
+          ...prev,
+          {
+            ...currentTask,
+            ...fields,
+            assigneeId: null,
+            assignee: null,
+            assignees: [],
+            _previousStatus:
+              fields.status && fields.status !== currentTask.status
+                ? currentTask.status
+                : (currentTask as any)._previousStatus,
+          },
+        ];
+      }
+      return prev;
+    });
 
     // 2. Persist to backend
     try {
@@ -575,6 +765,26 @@ export const TaskMapContainer: React.FC = () => {
       }
     }
 
+    // Admin list names from sidebar Admin folder
+    const ADMIN_LIST_NAMES = new Set([
+      'admin | jenesia red',
+      'harmony',
+      'jenesia red',
+      'jenesia red | personal',
+      'snaply',
+      'vip scale',
+      'xfnite',
+    ]);
+
+    const isTaskUnderAdmin = (t: TaskMapItem): boolean => {
+      if (t.isAdminTask) return true;
+      const folderName = (t.list?.folder?.name || '').trim().toLowerCase();
+      const listName = (t.list?.name || '').trim().toLowerCase();
+      if (folderName === 'admin' || folderName.includes('admin') || listName === 'admin') return true;
+      if (ADMIN_LIST_NAMES.has(listName)) return true;
+      return false;
+    };
+
     // 4. Count active tasks for each client (excluding Admin tasks)
     const allPoolAndTasks = [...tasks, ...availablePool];
     const seenTaskIds = new Set<string>();
@@ -583,15 +793,8 @@ export const TaskMapContainer: React.FC = () => {
       if (seenTaskIds.has(t.id)) continue;
       seenTaskIds.add(t.id);
 
-      // Skip admin tasks from client task count
-      const folderName = (t.list?.folder?.name || '').toLowerCase();
-      const listName = (t.list?.name || '').toLowerCase();
-      const isAdmin =
-        t.isAdminTask ||
-        folderName === 'admin' ||
-        folderName.includes('admin') ||
-        listName === 'admin';
-      if (isAdmin) continue;
+      // Skip admin tasks from regular client task count
+      if (isTaskUnderAdmin(t)) continue;
 
       const listId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
       const name = t.list?.name || 'General';
@@ -607,22 +810,121 @@ export const TaskMapContainer: React.FC = () => {
     return Array.from(clientMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [spaces, allLists, allDbClients, tasks, availablePool]);
 
-  // Instant 0ms frontend filtering by selected client
+  // Compute Admin tasks count and distinct Admin folder clients
+  const { adminTasksCount, adminClients } = React.useMemo(() => {
+    const ADMIN_LIST_NAMES = new Set([
+      'admin | jenesia red',
+      'harmony',
+      'jenesia red',
+      'jenesia red | personal',
+      'snaply',
+      'vip scale',
+      'xfnite',
+    ]);
+
+    const isTaskUnderAdmin = (t: TaskMapItem): boolean => {
+      if (t.isAdminTask) return true;
+      const folderName = (t.list?.folder?.name || '').trim().toLowerCase();
+      const listName = (t.list?.name || '').trim().toLowerCase();
+      if (folderName === 'admin' || folderName.includes('admin') || listName === 'admin') return true;
+      if (ADMIN_LIST_NAMES.has(listName)) return true;
+      return false;
+    };
+
+    const adminClientMap = new Map<string, { id: string; name: string; count: number }>();
+    let totalAdminCount = 0;
+
+    // Seed the 7 known Admin lists so they always appear in the dropdown
+    const knownAdminNames = [
+      'Admin | Jenesia Red',
+      'Harmony',
+      'Jenesia Red',
+      'Jenesia Red | Personal',
+      'Snaply',
+      'VIP Scale',
+      'Xfnite',
+    ];
+    for (const name of knownAdminNames) {
+      adminClientMap.set(name.toLowerCase(), { id: `admin-${name}`, name, count: 0 });
+    }
+
+    const allPoolAndTasks = [...tasks, ...availablePool];
+    const seenTaskIds = new Set<string>();
+
+    for (const t of allPoolAndTasks) {
+      if (seenTaskIds.has(t.id)) continue;
+      seenTaskIds.add(t.id);
+
+      if (isTaskUnderAdmin(t)) {
+        totalAdminCount++;
+        const listId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
+        const listName = t.list?.name || 'Admin';
+        const key = listName.toLowerCase();
+
+        const existing = adminClientMap.get(key);
+        if (existing) {
+          existing.id = listId;
+          existing.count++;
+        } else {
+          adminClientMap.set(key, { id: listId, name: listName, count: 1 });
+        }
+      }
+    }
+
+    return {
+      adminTasksCount: totalAdminCount,
+      adminClients: Array.from(adminClientMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }, [tasks, availablePool]);
+
+  // Instant 0ms frontend filtering by selected clients and showAdminTasks
+  const isTaskVisible = React.useCallback(
+    (t: TaskMapItem) => {
+      const ADMIN_LIST_NAMES = new Set([
+        'admin | jenesia red',
+        'harmony',
+        'jenesia red',
+        'jenesia red | personal',
+        'snaply',
+        'vip scale',
+        'xfnite',
+      ]);
+      const folderName = (t.list?.folder?.name || '').trim().toLowerCase();
+      const listName = (t.list?.name || '').trim().toLowerCase();
+      const isAdmin =
+        t.isAdminTask ||
+        folderName === 'admin' ||
+        folderName.includes('admin') ||
+        listName === 'admin' ||
+        ADMIN_LIST_NAMES.has(listName);
+
+      // Hide all admin tasks by default unless showAdminTasks is toggled ON.
+      // (Their active work is represented cleanly via the General Task block in the user's column)
+      if (isAdmin && !showAdminTasks) return false;
+
+      if (selectedClients === 'ALL') {
+        return true;
+      }
+
+      if (Array.isArray(selectedClients)) {
+        const listId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
+        const lName = t.list?.name || 'General';
+        const matchesClient = selectedClients.includes(listId) || selectedClients.includes(lName);
+        if (!matchesClient) return false;
+      }
+
+      return true;
+    },
+    [showAdminTasks, selectedClients]
+  );
+
   const displayedTasks = React.useMemo(() => {
-    if (selectedClient === 'ALL') return tasks;
-    return tasks.filter((t) => {
-      const listId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
-      return listId === selectedClient || t.list?.name === selectedClient;
-    });
-  }, [tasks, selectedClient]);
+    return tasks.filter(isTaskVisible);
+  }, [tasks, isTaskVisible]);
 
   const displayedPool = React.useMemo(() => {
-    if (selectedClient === 'ALL') return availablePool;
-    return availablePool.filter((t) => {
-      const listId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
-      return listId === selectedClient || t.list?.name === selectedClient;
-    });
-  }, [availablePool, selectedClient]);
+    return availablePool.filter(isTaskVisible);
+  }, [availablePool, isTaskVisible]);
 
   // Compute count of tasks waiting for review / auditing
   const auditingCount = React.useMemo(() => {
@@ -665,7 +967,13 @@ export const TaskMapContainer: React.FC = () => {
 
   // Merge activeUpworkSessions with any open tasks actively in progress under Upwork
   const effectiveUpworkSessions = React.useMemo(() => {
-    const list = [...activeUpworkSessions];
+    // Purge any session that has a recorded timeOut or belongs to a task that clocked out
+    const list = (activeUpworkSessions || []).filter((s) => {
+      if (s.timeOut || s.stoppedAt || (s as any).active === false) return false;
+      const matchingTask = tasks.find((t) => t.id === s.taskId);
+      if (matchingTask?.progress?.timeOut) return false;
+      return true;
+    });
     const seenTaskIds = new Set(list.map((s) => s.taskId));
 
     for (const t of tasks) {
@@ -677,11 +985,11 @@ export const TaskMapContainer: React.FC = () => {
       const isUpwork = t.progress?.timeTracker
         ? Boolean(t.progress?.isUpwork)
         : Boolean(
-            t.progress?.isUpwork ||
-            isClientConfiguredUpwork ||
-            t.list?.name?.toLowerCase().includes('upwork') ||
-            (t.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
-          );
+          t.progress?.isUpwork ||
+          isClientConfiguredUpwork ||
+          t.list?.name?.toLowerCase().includes('upwork') ||
+          (t.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'))
+        );
       // Only count as live when the MA clocked in and has not clocked out
       const isActivelyWorking = Boolean(
         t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime
@@ -721,36 +1029,37 @@ export const TaskMapContainer: React.FC = () => {
       {/* 1. Left: Dedicated Date Sidebar (Matches Image 1) */}
       <TaskMapSidebar
         currentDate={currentDate}
+        historyDates={historyDates}
         onSelectDate={(newDate) => {
+          userSelectedDateRef.current = true;
           setCurrentDate(newDate);
         }}
       />
 
       {/* 2. Right: Main Area */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-background">
-        {/* Above-Header Master Upwork Alert Banner */}
-        {effectiveUpworkSessions.length > 0 && (
+        {/* Historical Archive Banner */}
+        {isHistoryView && (
           <div className="w-full px-6 pt-3 pb-0 shrink-0">
-            <div className="w-full flex items-center justify-between gap-3 px-4 py-2 rounded-xl bg-red-950/90 border border-red-700/80 text-white shadow-lg shadow-red-950/50 animate-in fade-in duration-200">
-              <div className="flex items-center gap-2.5 truncate text-xs sm:text-sm font-bold tracking-wide">
-                <span className="relative flex size-2.5 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full size-2.5 bg-red-500" />
-                </span>
-                <span className="truncate">
-                  {effectiveUpworkSessions.map((s) => {
-                    const rawName = s.userName || 'MA';
-                    const name = rawName.toUpperCase();
-                    const taskName = s.taskTitle ? ` · ${s.taskTitle}` : '';
-                    return `⚡ ${name} is actively doing an UPWORK task${taskName}`;
-                  }).join('   |   ')}
+            <div className="w-full flex items-center justify-between gap-3 px-4 py-2 rounded-xl bg-purple-950/40 border border-purple-800/60 text-purple-200 shadow-md">
+              <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
+                <span className="text-base">📜</span>
+                <span>
+                  <strong>Historical Journal Archive</strong> · Viewing preserved board from{' '}
+                  <span className="text-purple-300 font-semibold">{currentDate}</span>. Tasks and statuses are retained as they were.
                 </span>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded bg-white text-zinc-950 shadow-xs">
-                  Upwork Active
-                </span>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  userSelectedDateRef.current = false;
+                  const latest = historyDates[0] || getTodayDateStr();
+                  setCurrentDate(latest);
+                }}
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition-colors cursor-pointer shrink-0"
+              >
+                Return to Today
+              </button>
             </div>
           </div>
         )}
@@ -767,17 +1076,27 @@ export const TaskMapContainer: React.FC = () => {
           currentView={currentView}
           onViewChange={setCurrentView}
           clients={clients}
-          selectedClient={selectedClient}
-          onClientChange={setSelectedClient}
+          adminClients={adminClients}
+          adminCount={adminTasksCount}
+          showAdmin={showAdminTasks}
+          onToggleAdmin={() => setShowAdminTasks((prev) => !prev)}
+          selectedClients={selectedClients}
+          onSelectClients={setSelectedClients}
           auditingCount={auditingCount}
           availableMAs={availableMAs}
           selectedMAs={selectedCustomMAs}
           onSelectedMAsChange={setSelectedCustomMAs}
           hasCrmAccess={hasCrmAccess(currentUser)}
+          onTriggerDailyRollover={handleTriggerDailyRollover}
+          isRollingOver={isRollingOver}
+          isHistory={isHistoryView}
+          auditorRoles={auditorRoles}
+          auditorTypeFilter={auditorTypeFilter}
+          onAuditorTypeFilterChange={setAuditorTypeFilter}
         />
 
         {/* Viewport: Board View OR Auditing View OR CRM View OR Upwork Tab View */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           {currentView === 'BOARD' ? (
             <TaskMapBoardView
               tasks={displayedTasks}
@@ -795,6 +1114,8 @@ export const TaskMapContainer: React.FC = () => {
               selectedCustomMAs={selectedCustomMAs}
               clients={clients}
               onTaskUpdate={handleTaskUpdate}
+              isHistory={isHistoryView}
+              search={search}
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView
@@ -808,6 +1129,11 @@ export const TaskMapContainer: React.FC = () => {
               onOpenDetail={setSelectedTaskModal}
               onDataRefresh={() => loadData(true)}
               onTaskUpdate={handleTaskUpdate}
+              auditorTypeFilter={auditorTypeFilter}
+              clients={clients}
+              showAdminTasks={showAdminTasks}
+              onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
+              search={search}
             />
           ) : currentView === 'CRM' ? (
             <TaskMapCrmView
@@ -822,6 +1148,10 @@ export const TaskMapContainer: React.FC = () => {
               onDataRefresh={() => loadData(true)}
               onTaskUpdate={handleTaskUpdate}
               onSwitchToBoard={() => setCurrentView('BOARD')}
+              clients={clients}
+              showAdminTasks={showAdminTasks}
+              onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
+              search={search}
             />
           ) : (
             <TaskMapUpworkView
@@ -847,6 +1177,42 @@ export const TaskMapContainer: React.FC = () => {
           onUpdateTask={() => loadData(true)}
         />
       )}
+
+      {/* Blocked Audits / Subtasks Modal */}
+      <UncheckedAuditsModal
+        isOpen={blockedAuditAlert.isOpen}
+        onClose={() => setBlockedAuditAlert((prev) => ({ ...prev, isOpen: false }))}
+        taskTitle={blockedAuditAlert.task?.title || ''}
+        targetStatus={blockedAuditAlert.targetStatus}
+        uncheckedAudits={blockedAuditAlert.uncheckedAudits}
+        openSubtasks={blockedAuditAlert.openSubtasks}
+        onReviewAudits={() => {
+          if (blockedAuditAlert.task) {
+            setSelectedTaskModal(blockedAuditAlert.task);
+            if (blockedAuditAlert.uncheckedAudits && blockedAuditAlert.uncheckedAudits.length > 0) {
+              const pendingHighlight = {
+                taskId: blockedAuditAlert.task.id,
+                targetStatus: blockedAuditAlert.targetStatus,
+                uncheckedAudits: blockedAuditAlert.uncheckedAudits,
+                openSubtasks: blockedAuditAlert.openSubtasks,
+              };
+              if (typeof window !== 'undefined') {
+                (window as any).__pendingAuditHighlight = pendingHighlight;
+              }
+              setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent('task:highlight-audits', { detail: pendingHighlight })
+                );
+              }, 350);
+            }
+          }
+        }}
+        reviewButtonText={
+          blockedAuditAlert.uncheckedAudits.length > 0
+            ? 'Open Task & Review Audits'
+            : 'Open Task & Review Subtasks'
+        }
+      />
     </div>
   );
 };

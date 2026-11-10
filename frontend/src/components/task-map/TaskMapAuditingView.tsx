@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { TaskMapItem, TaskMapOption } from '@/api/taskMap';
+import { TaskMapItem, TaskMapOption, taskMapApi } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -15,9 +15,11 @@ import {
   X,
   User,
   Infinity as InfinityIcon,
+  RotateCcw,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { isAuditorUser } from '@/lib/permissions';
+import { isAuditorUser, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
+import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { toast } from '@/lib/toast';
 import {
   CardStatusDropdown,
@@ -26,6 +28,10 @@ import {
   matchesPriorityFilter,
   matchesSearchFilter,
 } from './TaskMapCardControls';
+import { ColumnClientDropdown } from './ColumnClientDropdown';
+import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
+import { TaskCardAuditChecklist } from './TaskCardAuditChecklist';
+import { useAppStore } from '@/lib/store';
 import {
   DndContext,
   DragOverlay,
@@ -51,6 +57,11 @@ interface Props {
   onOpenDetail: (task: TaskMapItem) => void;
   onDataRefresh: () => void;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
+  auditorTypeFilter?: string;
+  clients?: Array<{ id: string; name: string; count?: number }>;
+  showAdminTasks?: boolean;
+  onToggleAdminTasks?: () => void;
+  search?: string;
 }
 
 // Draggable Card Wrapper
@@ -102,21 +113,55 @@ const DroppableColumn: React.FC<{
 };
 
 // Helper: Determine auditor specialization badge label & color
+// Helper: Determine auditor specialization badge label & color
 const getAuditorBadge = (user: any) => {
-  const roles = (user.roles || []).map((r: string) => (r || '').toLowerCase());
-  if (roles.some((r: string) => r.includes('ui') || r.includes('ux'))) {
-    return { label: 'UI/UX Auditor', color: 'bg-cyan-950/80 text-cyan-300 border-cyan-800/60' };
-  }
-  if (roles.some((r: string) => r.includes('design'))) {
-    return { label: 'Design Auditor', color: 'bg-pink-950/80 text-pink-300 border-pink-800/60' };
-  }
+  const roles = [
+    ...(user.roles || []),
+    user.role || '',
+    user.title || '',
+    user.department || '',
+    user.name || '',
+  ].map((r: string) => (r || '').toLowerCase());
+
   if (roles.some((r: string) => r.includes('funnel'))) {
     return { label: 'Funnel Auditor', color: 'bg-amber-950/80 text-amber-300 border-amber-800/60' };
   }
-  if (roles.some((r: string) => r.includes('instruction'))) {
+  if (roles.some((r: string) => r.includes('ui') || r.includes('ux'))) {
+    return { label: 'UI/UX Auditor', color: 'bg-cyan-950/80 text-cyan-300 border-cyan-800/60' };
+  }
+  if (roles.some((r: string) => r.includes('design') || r.includes('graphic'))) {
+    return { label: 'Design Auditor', color: 'bg-pink-950/80 text-pink-300 border-pink-800/60' };
+  }
+  if (roles.some((r: string) => r.includes('instruction') || r.includes('copy'))) {
     return { label: 'Instruction Auditor', color: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60' };
   }
   return { label: 'Auditor', color: 'bg-purple-950/80 text-purple-300 border-purple-800/60' };
+};
+
+// Helper: Determine designated audit type when dragging task to this auditor
+export const getDesignatedAuditType = (user: any): string => {
+  if (!user) return 'Instruction Audit';
+  const roles = [
+    ...(user.roles || []),
+    user.role || '',
+    user.title || '',
+    user.department || '',
+    user.name || '',
+  ].map((r: string) => (r || '').toLowerCase());
+
+  if (roles.some((r: string) => r.includes('funnel'))) {
+    return 'Funnel Audit';
+  }
+  if (roles.some((r: string) => r.includes('ui') || r.includes('ux'))) {
+    return 'UI UX Audit';
+  }
+  if (roles.some((r: string) => r.includes('design') || r.includes('graphic'))) {
+    return 'Design Audit';
+  }
+  if (roles.some((r: string) => r.includes('instruction') || r.includes('copy'))) {
+    return 'Instruction Audit';
+  }
+  return 'Instruction Audit';
 };
 
 function computeElapsed(timeInStr?: string | null, dateStr?: string | null, now = new Date()): string {
@@ -211,8 +256,27 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   onOpenDetail,
   onDataRefresh,
   onTaskUpdate,
+  auditorTypeFilter = 'ALL',
+  clients = [],
+  showAdminTasks = false,
+  onToggleAdminTasks,
+  search = '',
 }) => {
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
+  const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
+    isOpen: boolean;
+    task: TaskMapItem | null;
+    targetStatus: string;
+    uncheckedAudits: string[];
+    openSubtasks: string[];
+  }>({
+    isOpen: false,
+    task: null,
+    targetStatus: '',
+    uncheckedAudits: [],
+    openSubtasks: [],
+  });
+  const boardScrollRef = useRef<HTMLDivElement>(null);
 
   // Live ticking clock to update in-progress elapsed minutes and hours
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
@@ -220,10 +284,28 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     const timer = setInterval(() => setCurrentTime(new Date()), 10000);
     return () => clearInterval(timer);
   }, []);
-  const [showAdminTasks, setShowAdminTasks] = useState(false);
 
-  // Column controls: Priority filter, search, pin, collapse
+  const cleanSearch = (search || '').trim().toLowerCase();
+  const isAuditorSearchMatch = (u: any) => {
+    if (!cleanSearch || !u) return false;
+    const name = (u.name || '').trim().toLowerCase();
+    const email = (u.email || '').trim().toLowerCase();
+    return name.includes(cleanSearch) || email.includes(cleanSearch);
+  };
+
+  useEffect(() => {
+    if (cleanSearch && boardScrollRef.current) {
+      boardScrollRef.current.scrollTo({ left: 0, behavior: 'smooth' });
+    }
+  }, [cleanSearch]);
+
+  const currentUser = useAppStore((s) => s.currentUser);
+
+  // Column controls: Priority filter, Sub-status filter, Client filter, Admin toggle, search, pin, collapse
   const [columnPriorityFilters, setColumnPriorityFilters] = useState<Record<string, string>>({});
+  const [columnSubStatusFilters, setColumnSubStatusFilters] = useState<Record<string, string>>({});
+  const [columnClientFilters, setColumnClientFilters] = useState<Record<string, string[] | 'ALL'>>({});
+  const [columnShowAdmin, setColumnShowAdmin] = useState<Record<string, boolean>>({});
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [columnSearchOpen, setColumnSearchOpen] = useState<Record<string, boolean>>({});
 
@@ -271,6 +353,32 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     });
   };
 
+  const handleResetAuditorColumn = async (columnId: string, auditorName: string, colTasks: TaskMapItem[]) => {
+    const auditorId = columnId.replace(/^col-auditor-/, '');
+    if (!colTasks || colTasks.length === 0) {
+      toast.info(`No review tasks to reset in ${auditorName}'s column`);
+      return;
+    }
+
+    // Optimistically unassign and set status to To review
+    for (const t of colTasks) {
+      t.assignee = null;
+      t.assigneeId = null;
+      t.assignees = [];
+      t.status = 'To review';
+      if (t.taskMap) t.taskMap.statuses = [];
+    }
+    toast.success(`Reset ${auditorName}'s column: ${colTasks.length} task(s) returned to Review queue`);
+
+    try {
+      await taskMapApi.resetColumnTasks(auditorId, 'AUDIT');
+      onDataRefresh();
+    } catch (err: any) {
+      console.error('Failed to reset auditor column on server:', err);
+      toast.error('Failed to reset auditor column');
+    }
+  };
+
   // DnD sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -297,6 +405,39 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [allUsers, shiftUsers]);
 
+  // Filter auditors by selected auditor type (based on real team roles from DB)
+  const filteredAuditorUsers = React.useMemo(() => {
+    if (!auditorTypeFilter || auditorTypeFilter === 'ALL') {
+      return auditorUsers;
+    }
+    const filterTokens = auditorTypeFilter
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (filterTokens.length === 0 || filterTokens.includes('all')) {
+      return auditorUsers;
+    }
+
+    if (filterTokens.includes('none')) {
+      return [];
+    }
+
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normTokens = filterTokens.map(normalize);
+
+    return auditorUsers.filter((auditor) => {
+      const userRoles = (auditor.roles || []).map((r: string) => (r || '').toLowerCase().trim());
+      const normUserRoles = userRoles.map(normalize);
+
+      return normTokens.some((targetNorm: string) => {
+        return normUserRoles.some((rNorm: string) => {
+          return rNorm === targetNorm || rNorm.includes(targetNorm) || targetNorm.includes(rNorm);
+        });
+      });
+    });
+  }, [auditorUsers, auditorTypeFilter]);
+
   // Combine tasks to search for review/auditing candidates
   const combinedTasks = React.useMemo(() => {
     const map = new Map<string, TaskMapItem>();
@@ -309,30 +450,22 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // Check if a task is under Admin folder
   const isTaskUnderAdmin = (t: TaskMapItem) => {
     if (t.isAdminTask) return true;
-    const fName = (t.list?.folder?.name || '').toLowerCase();
-    const lName = (t.list?.name || '').toLowerCase();
-    return fName === 'admin' || fName.includes('admin') || lName === 'admin';
+    const fName = (t.list?.folder?.name || '').toLowerCase().trim();
+    const lName = (t.list?.name || '').toLowerCase().trim();
+    const ADMIN_LIST_NAMES = new Set([
+      'admin | jenesia red',
+      'harmony',
+      'jenesia red',
+      'jenesia red | personal',
+      'snaply',
+      'vip scale',
+      'xfnite',
+    ]);
+    return fName === 'admin' || fName.includes('admin') || lName === 'admin' || ADMIN_LIST_NAMES.has(lName);
   };
 
-  // Filter out Admin tasks if toggled off
-  const filteredReviewTasks = React.useMemo(() => {
-    return combinedTasks.filter((t) => {
-      if (!showAdminTasks && isTaskUnderAdmin(t)) return false;
-      return true;
-    });
-  }, [combinedTasks, showAdminTasks]);
-
-  // Categorize tasks
-  const isDoneReview = (t: TaskMapItem) => {
-    const s = (t.status || '').toUpperCase();
-    const mapStatuses = (t.taskMap?.statuses || []).map((x) => x.toUpperCase().trim());
-    return (
-      s === 'DONE REVIEW' ||
-      s === 'DONEREVIEW' ||
-      mapStatuses.includes('DONE REVIEW') ||
-      mapStatuses.includes('DONEREVIEW')
-    );
-  };
+  // All combined review candidates (admin & client filtering applied per column)
+  const filteredReviewTasks = combinedTasks;
 
   // Check if a task has review status
   const isReviewStatus = (t: TaskMapItem) => {
@@ -344,18 +477,14 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       s === 'TOREVIEW' ||
       s === 'INREVIEW' ||
       s === 'REVIEW' ||
-      s === 'DONEREVIEW' ||
       mapStatuses.includes('TOREVIEW') ||
       mapStatuses.includes('INREVIEW') ||
-      mapStatuses.includes('REVIEW') ||
-      mapStatuses.includes('DONEREVIEW')
+      mapStatuses.includes('REVIEW')
     );
   };
 
   // Check if a task is assigned to a specific auditor
   const isTaskAssignedToAuditor = (task: TaskMapItem, auditor: any) => {
-    if (isDoneReview(task)) return false;
-
     // 1. Check taskMap.statuses for tag matching (e.g. initials CHE, PAU, HAN or auditor name)
     const mapStatuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
     const audNameUpper = (auditor.name || '').toUpperCase().trim();
@@ -382,7 +511,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
   // General "To Review" queue: tasks needing review that are not yet assigned to an auditor
   const isGeneralToReview = (t: TaskMapItem) => {
-    if (isDoneReview(t)) return false;
     // If it's already assigned to any discovered auditor, not general queue
     if (auditorUsers.some((a) => isTaskAssignedToAuditor(t, a))) return false;
 
@@ -403,7 +531,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
   // Build the list of columns
   const toReviewTasks = filteredReviewTasks.filter(isGeneralToReview);
-  const doneReviewTasks = filteredReviewTasks.filter(isDoneReview);
 
   // DnD Handlers
   const handleDragStart = (event: DragStartEvent) => {
@@ -425,10 +552,19 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
     const currentStatuses = task.taskMap?.statuses || [];
 
-    // Strip previous review & auditor tags
+    // Strip previous review & auditor tags and audit substatuses
     let updatedStatuses = currentStatuses.filter((s) => {
       const up = s.toUpperCase().trim();
-      if (up === 'TO REVIEW' || up === 'DONE REVIEW' || up === 'IN REVIEW') return false;
+      if (
+        up === 'TO REVIEW' ||
+        up === 'IN REVIEW' ||
+        up === 'DESIGN AUDIT' ||
+        up === 'UI UX AUDIT' ||
+        up === 'UI/UX AUDIT' ||
+        up === 'INSTRUCTION AUDIT' ||
+        up === 'INSTRUCTIONS AUDIT' ||
+        up === 'FUNNEL AUDIT'
+      ) return false;
       return !auditorUsers.some((a) => {
         const nameUp = (a.name || '').toUpperCase().trim();
         const first = nameUp.split(' ')[0];
@@ -438,24 +574,25 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     });
 
     if (targetColumnId === 'col-to-review') {
-      updatedStatuses = ['To review'];
+      updatedStatuses = [];
       toast.info('Task moved to General Review queue');
       onStatusChange(taskId, updatedStatuses);
-    } else if (targetColumnId === 'col-done-review') {
-      updatedStatuses = ['Done Review'];
-      toast.success('Task marked Done Review');
-      onStatusChange(taskId, updatedStatuses);
+
       if (onTaskUpdate) {
-        await onTaskUpdate(taskId, { status: 'Done Review' });
+        await onTaskUpdate(taskId, { assigneeId: null, status: 'To review' });
       } else {
-        await tasksApi.updateTask(taskId, { status: 'Done Review' } as any).catch(console.error);
+        await tasksApi
+          .updateTask(taskId, { assigneeId: null, status: 'To review' } as any)
+          .catch(console.error);
+        onDataRefresh();
       }
     } else if (targetColumnId.startsWith('col-auditor-')) {
       const auditorId = targetColumnId.replace('col-auditor-', '');
       const auditor = auditorUsers.find((a) => a.id === auditorId);
       if (auditor) {
-        updatedStatuses = ['To review'];
-        toast.success(`Task assigned to ${auditor.name} for review`);
+        const auditType = getDesignatedAuditType(auditor);
+        updatedStatuses = [auditType];
+        toast.success(`Task assigned to ${auditor.name} (${auditType})`);
         onStatusChange(taskId, updatedStatuses);
 
         if (onTaskUpdate) {
@@ -464,16 +601,22 @@ export const TaskMapAuditingView: React.FC<Props> = ({
           await tasksApi
             .updateTask(taskId, { assigneeId: auditor.id, status: 'In Review' } as any)
             .catch(console.error);
+          onDataRefresh();
         }
       }
     }
   };
 
   // Helper options for sub-status dropdown in Auditing
-  const getAuditingOptions = (task: TaskMapItem): TaskMapOption[] => [
-    { id: 'opt-audit-tosend', label: 'To send', color: '#22A3AE', textColor: '#ffffff', order: 1 },
-    { id: 'opt-audit-revision', label: 'Revision', color: '#5B6BD6', textColor: '#ffffff', order: 2 },
-    { id: 'opt-audit-donereview', label: 'Done Review', color: '#2dd4bf', textColor: '#134e4a', order: 3 },
+  const getAuditingOptions = (_task: TaskMapItem): TaskMapOption[] => [
+    { id: 'opt-audit-design', label: 'Design Audit', color: '#ec4899', textColor: '#ffffff', order: 1 },
+    { id: 'opt-audit-uiux', label: 'UI UX Audit', color: '#06b6d4', textColor: '#ffffff', order: 2 },
+    { id: 'opt-audit-instruction', label: 'Instruction Audit', color: '#10b981', textColor: '#ffffff', order: 3 },
+    { id: 'opt-audit-funnel', label: 'Funnel Audit', color: '#f59e0b', textColor: '#ffffff', order: 4 },
+    { id: 'opt-audit-waiting', label: 'Waiting', color: '#ef4444', textColor: '#ffffff', order: 5 },
+    { id: 'opt-audit-tosend', label: 'To Send', color: '#22A3AE', textColor: '#ffffff', order: 6 },
+    { id: 'opt-audit-askclient', label: 'Ask Client', color: '#2dd4bf', textColor: '#ffffff', order: 7 },
+    { id: 'opt-audit-revision', label: 'Revision', color: '#5B6BD6', textColor: '#ffffff', order: 8 },
   ];
 
   // Assemble full columns array
@@ -499,7 +642,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       dotColor: 'bg-blue-500',
       tasks: toReviewTasks,
     },
-    ...auditorUsers.map((auditor) => {
+    ...filteredAuditorUsers.map((auditor) => {
       const audBadge = getAuditorBadge(auditor);
       const audTasks = filteredReviewTasks.filter((t) => isTaskAssignedToAuditor(t, auditor));
       return {
@@ -514,21 +657,22 @@ export const TaskMapAuditingView: React.FC<Props> = ({
         auditorUser: auditor,
       };
     }),
-    {
-      id: 'col-done-review',
-      title: 'Done Review',
-      subtitle: 'Approved & verified reviews',
-      badgeLabel: 'Verified',
-      badgeClass: 'bg-emerald-950 text-emerald-300 border-emerald-800',
-      dotColor: 'bg-emerald-500',
-      tasks: doneReviewTasks,
-    },
   ];
 
-  // Separate pinned and unpinned columns
-  const pinnedCols = allColumns.filter((c) => pinnedColumns[c.id]);
-  const unpinnedCols = allColumns.filter((c) => !pinnedColumns[c.id]);
-  const orderedColumns = [...pinnedCols, ...unpinnedCols];
+  // Separate pinned and unpinned columns, moving search-matched auditor columns to the most left side
+  const auditorSearchMatches = allColumns.filter((c) => c.isAuditor && isAuditorSearchMatch(c.auditorUser));
+  const searchMatchedIds = new Set(auditorSearchMatches.map((c) => c.id));
+  const otherPinnedCols = allColumns.filter((c) => pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
+  const otherUnpinnedCols = allColumns.filter((c) => !pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
+
+  const orderedColumns: AuditingColumnDef[] = cleanSearch && auditorSearchMatches.length > 0
+    ? [
+        allColumns[0], // col-to-review
+        ...auditorSearchMatches,
+        ...otherPinnedCols.filter((c) => c.id !== 'col-to-review'),
+        ...otherUnpinnedCols.filter((c) => c.id !== 'col-to-review'),
+      ]
+    : [...otherPinnedCols, ...otherUnpinnedCols];
 
   return (
     <DndContext
@@ -539,18 +683,36 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     >
       <div className="flex flex-col h-full bg-background select-none">
         {/* Board Columns Horizontal Scroll */}
-        <div className="flex-1 flex gap-4 px-6 py-4 overflow-x-auto custom-scrollbar select-none">
+        <div ref={boardScrollRef} className="flex-1 flex gap-5 px-6 pb-4 overflow-x-auto overflow-y-hidden min-h-0 custom-scrollbar select-none">
           {orderedColumns.map((col) => {
             const isPinned = !!pinnedColumns[col.id];
             const isCollapsed = !!collapsedColumns[col.id];
             const activePriority = columnPriorityFilters[col.id] || 'ALL';
+            const activeSubStatus = columnSubStatusFilters[col.id] || 'ALL';
+            const colClientFilter = columnClientFilters[col.id] || 'ALL';
+            const colShowAdmin = columnShowAdmin[col.id] ?? showAdminTasks;
             const searchQuery = columnSearches[col.id] || '';
             const isSearchOpen = !!columnSearchOpen[col.id];
 
-            // Apply priority & search filter inside column
+            // Apply priority, sub-status, search, admin, and client filter inside column
             const visibleTasks = col.tasks.filter((t) => {
               if (!matchesPriorityFilter(t, activePriority)) return false;
+              if (!matchesSubStatusFilter(t, activeSubStatus)) return false;
               if (!matchesSearchFilter(t, searchQuery)) return false;
+
+              // Admin task check
+              const isAdmin = isTaskUnderAdmin(t);
+              if (isAdmin && !colShowAdmin) return false;
+
+              // Client filter check
+              if (colClientFilter !== 'ALL') {
+                const clientId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
+                const clientName = t.list?.name || 'General';
+                if (!colClientFilter.includes(clientId) && !colClientFilter.includes(clientName)) {
+                  return false;
+                }
+              }
+
               return true;
             });
 
@@ -560,7 +722,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                 <DroppableColumn
                   key={`${col.id}-collapsed`}
                   id={col.id}
-                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-[calc(100vh-130px)] transition-all cursor-pointer hover:border-amber-500/50 ${isPinned ? 'ring-1 ring-amber-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-full max-h-full min-h-0 transition-all cursor-pointer hover:border-amber-500/50 ${isPinned ? 'ring-1 ring-amber-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
                     }`}
                 >
                   <button
@@ -598,12 +760,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
               <DroppableColumn
                 key={col.id}
                 id={col.id}
-                className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-[calc(100vh-130px)] ${isPinned ? 'ring-1 ring-amber-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${isPinned ? 'ring-1 ring-amber-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
                   }`}
               >
                 {/* Header Top Row: Left side has dot/avatar & title & badge & count; Right side has Collapse, Pin, Search */}
-                <div className="flex items-center justify-between pb-2 border-b border-border/80 mb-2">
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                <div className="flex items-center justify-between h-9 pb-2 border-b border-border/80 mb-2">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2 h-7">
                     {col.auditorUser ? (
                       col.auditorUser.avatarUrl ? (
                         <img
@@ -644,8 +806,19 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                     </span>
                   </div>
 
-                  {/* Top Right: Collapse, Pin, Search (Search on right side) */}
-                  <div className="flex items-center gap-1 shrink-0">
+                  {/* Top Right: Reset (for auditor columns), Collapse, Pin, Search (Search on right side) */}
+                  <div className="flex items-center gap-1 shrink-0 h-7">
+                    {col.isAuditor && (
+                      <button
+                        type="button"
+                        onClick={() => handleResetAuditorColumn(col.id, col.title, col.tasks)}
+                        className="p-1 text-zinc-400 hover:text-amber-400 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
+                        title={`Reset ${col.title}'s column (return review tasks to Queue)`}
+                      >
+                        <RotateCcw className="size-3.5" />
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => toggleCollapseColumn(col.id)}
@@ -717,6 +890,26 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
                 {/* Next Line: Filters on the left side */}
                 <div className="flex items-center gap-1.5 justify-start mb-3">
+                  <ColumnClientDropdown
+                    tasks={col.tasks}
+                    clients={clients}
+                    showAdmin={colShowAdmin}
+                    onToggleAdmin={() =>
+                      setColumnShowAdmin((prev) => ({
+                        ...prev,
+                        [col.id]: !colShowAdmin,
+                      }))
+                    }
+                    selectedClients={colClientFilter}
+                    onSelectClients={(nextClients) =>
+                      setColumnClientFilters((prev) => ({
+                        ...prev,
+                        [col.id]: nextClients,
+                      }))
+                    }
+                    isTaskUnderAdmin={isTaskUnderAdmin}
+                  />
+
                   <ColumnPriorityDropdown
                     columnId={col.id}
                     tasks={col.tasks}
@@ -725,7 +918,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                       setColumnPriorityFilters((prev) => ({ ...prev, [cId]: filter }))
                     }
                   />
-                  {searchQuery && (
+
+                  <ColumnSubStatusDropdown
+                    columnId={col.id}
+                    tasks={col.tasks}
+                    activeFilter={activeSubStatus}
+                    onSelectFilter={(cId, filter) =>
+                      setColumnSubStatusFilters((prev) => ({ ...prev, [cId]: filter }))
+                    }
+                  />
+
+                  {(searchQuery || activePriority !== 'ALL' || activeSubStatus !== 'ALL' || colClientFilter !== 'ALL') && (
                     <span className="text-[10px] text-zinc-400 italic">
                       ({visibleTasks.length} of {col.tasks.length})
                     </span>
@@ -735,7 +938,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                 {/* Cards List */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                   {visibleTasks.length === 0 ? (
-                    <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[94px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
+                    <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
                       <span className="text-xs font-semibold text-zinc-400">
                         No tasks to review
                       </span>
@@ -749,8 +952,9 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                     visibleTasks.map((task) => {
                       return (
                         <DraggableTaskCard key={task.id} task={task} disabled={false}>
-                          <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[94px] flex items-stretch gap-3 transition-all group">
-                            {/* Left: Task Info */}
+                          <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group">
+                            <div className="flex items-stretch gap-3">
+                              {/* Left: Task Info */}
                             <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                               {/* Client / List Name */}
                               <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[170px] mb-1">
@@ -760,7 +964,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                               {/* Title */}
                               <h4
                                 onClick={() => onOpenDetail(task)}
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5"
+                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
                                 title={task.title}
                               >
                                 {task.title}
@@ -773,6 +977,31 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                   taskId={task.id}
                                   currentStatus={task.status || 'In progress'}
                                   onSelect={async (newStatus) => {
+                                    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+                                    if (!transitionCheck.allowed) {
+                                      if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                        window.dispatchEvent(
+                                          new CustomEvent('task:highlight-audits', {
+                                            detail: {
+                                              taskId: task.id,
+                                              targetStatus: newStatus,
+                                              uncheckedAudits: transitionCheck.uncheckedAudits,
+                                              openSubtasks: transitionCheck.openSubtasks,
+                                            },
+                                          })
+                                        );
+                                      }
+                                      setBlockedAuditAlert({
+                                        isOpen: true,
+                                        task,
+                                        targetStatus: newStatus,
+                                        uncheckedAudits: transitionCheck.uncheckedAudits,
+                                        openSubtasks: transitionCheck.openSubtasks,
+                                      });
+                                      toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
+                                      return;
+                                    }
+
                                     if (onTaskUpdate) {
                                       await onTaskUpdate(task.id, { status: newStatus });
                                     } else {
@@ -832,9 +1061,35 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                   onToggleStatus={async (label, nextStatuses) => {
                                     const isSelecting = (nextStatuses || []).includes(label);
                                     const cleanNext = isSelecting ? [label] : [];
+                                    const norm = label.toLowerCase().trim();
                                     
-                                    if (label === 'To send') {
+                                    if (norm === 'to send') {
                                       if (isSelecting) {
+                                        const transitionCheck = canTransitionTaskStatus(task, 'CRM');
+                                        if (!transitionCheck.allowed) {
+                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                            window.dispatchEvent(
+                                              new CustomEvent('task:highlight-audits', {
+                                                detail: {
+                                                  taskId: task.id,
+                                                  targetStatus: 'CRM',
+                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
+                                                  openSubtasks: transitionCheck.openSubtasks,
+                                                },
+                                              })
+                                            );
+                                          }
+                                          setBlockedAuditAlert({
+                                            isOpen: true,
+                                            task,
+                                            targetStatus: 'CRM',
+                                            uncheckedAudits: transitionCheck.uncheckedAudits,
+                                            openSubtasks: transitionCheck.openSubtasks,
+                                          });
+                                          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
+                                          return;
+                                        }
+
                                         onStatusChange(task.id, cleanNext);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'CRM' });
@@ -842,9 +1097,9 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                           await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.success('Task marked To send — passed to CRM');
+                                        toast.success('Task marked To Send — transferred to CRM Map pool');
                                       } else {
-                                        // User pressed 'To send' AGAIN in Auditing -> revert back to last status
+                                        // User pressed 'To Send' AGAIN in Auditing -> revert back to last status
                                         const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {
@@ -853,18 +1108,54 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                           await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.info(`Reverted 'To send' — returned to ${revertStatus}`);
+                                        toast.info(`Reverted 'To Send' — returned to ${revertStatus}`);
                                       }
-                                    } else if (label === 'Revision') {
+                                    } else if (norm === 'waiting') {
                                       if (isSelecting) {
                                         onStatusChange(task.id, cleanNext);
                                         if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'Revision' });
+                                          await onTaskUpdate(task.id, { status: 'Waiting' });
                                         } else {
-                                          await tasksApi.updateTask(task.id, { status: 'Revision' } as any).catch(console.error);
+                                          await tasksApi.updateTask(task.id, { status: 'Waiting' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.warning('Task marked for Revision');
+                                        toast.success('Task moved to Waiting — transferred to CRM Map');
+                                      } else {
+                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        onStatusChange(task.id, []);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: revertStatus });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info(`Reverted 'Waiting' — returned to ${revertStatus}`);
+                                      }
+                                    } else if (norm === 'ask client' || norm === 'askclient') {
+                                      if (isSelecting) {
+                                        onStatusChange(task.id, cleanNext);
+                                        if (task.status !== 'In Review') {
+                                          if (onTaskUpdate) {
+                                            await onTaskUpdate(task.id, { status: 'In Review' });
+                                          } else {
+                                            await tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
+                                          }
+                                        }
+                                        toast.info("Task marked 'Ask Client' — transferred to CRM Map pool (stays In Review)");
+                                      } else {
+                                        onStatusChange(task.id, []);
+                                        toast.info("Removed 'Ask Client'");
+                                      }
+                                    } else if (norm === 'revision') {
+                                      if (isSelecting) {
+                                        onStatusChange(task.id, cleanNext);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'Revision', assigneeId: null } as any);
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'Revision', assigneeId: null } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.warning('Task marked for Revision — returned to Task Map available tasks');
                                       } else {
                                         const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
                                         onStatusChange(task.id, []);
@@ -876,29 +1167,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                         }
                                         toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
                                       }
-                                    } else if (label === 'Done Review') {
-                                      if (isSelecting) {
-                                        onStatusChange(task.id, cleanNext);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'Done Review' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'Done Review' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.success('Task marked Done Review');
-                                      } else {
-                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
-                                        onStatusChange(task.id, []);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: revertStatus });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info(`Reverted 'Done Review' — returned to ${revertStatus}`);
-                                      }
                                     } else {
+                                      // Designated audit types: Design Audit, UI UX Audit, Instruction Audit, Funnel Audit
                                       onStatusChange(task.id, cleanNext);
+                                      if (isSelecting) {
+                                        toast.success(`Sub-status set to ${label}`);
+                                      }
                                     }
                                   }}
                                   onOptionsUpdated={onOptionsUpdated}
@@ -906,6 +1180,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                 />
                               </div>
                             </div>
+                          </div>
+
+                          {/* Under-the-card Audit Checklist */}
+                            <TaskCardAuditChecklist
+                              task={task}
+                              isQueueColumn={col.id === 'col-to-review'}
+                              currentUser={currentUser}
+                              onChecklistsUpdated={(updatedCls) => {
+                                task.checklists = updatedCls;
+                              }}
+                            />
                           </div>
                         </DraggableTaskCard>
                       );
@@ -931,6 +1216,42 @@ export const TaskMapAuditingView: React.FC<Props> = ({
           </div>
         ) : null}
       </DragOverlay>
+
+      {/* Blocked Audits / Subtasks Modal */}
+      <UncheckedAuditsModal
+        isOpen={blockedAuditAlert.isOpen}
+        onClose={() => setBlockedAuditAlert((prev) => ({ ...prev, isOpen: false }))}
+        taskTitle={blockedAuditAlert.task?.title || ''}
+        targetStatus={blockedAuditAlert.targetStatus}
+        uncheckedAudits={blockedAuditAlert.uncheckedAudits}
+        openSubtasks={blockedAuditAlert.openSubtasks}
+        onReviewAudits={() => {
+          if (blockedAuditAlert.task) {
+            onOpenDetail(blockedAuditAlert.task);
+            if (blockedAuditAlert.uncheckedAudits && blockedAuditAlert.uncheckedAudits.length > 0) {
+              const pendingHighlight = {
+                taskId: blockedAuditAlert.task.id,
+                targetStatus: blockedAuditAlert.targetStatus,
+                uncheckedAudits: blockedAuditAlert.uncheckedAudits,
+                openSubtasks: blockedAuditAlert.openSubtasks,
+              };
+              if (typeof window !== 'undefined') {
+                (window as any).__pendingAuditHighlight = pendingHighlight;
+              }
+              setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent('task:highlight-audits', { detail: pendingHighlight })
+                );
+              }, 350);
+            }
+          }
+        }}
+        reviewButtonText={
+          blockedAuditAlert.uncheckedAudits.length > 0
+            ? 'Open Task & Review Audits'
+            : 'Open Task & Review Subtasks'
+        }
+      />
     </DndContext>
   );
 };

@@ -17,7 +17,8 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { isCrmUser, hasCrmAccess } from '@/lib/permissions';
+import { isCrmUser, hasCrmAccess, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
+import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import {
@@ -27,6 +28,8 @@ import {
   matchesPriorityFilter,
   matchesSearchFilter,
 } from './TaskMapCardControls';
+import { ColumnClientDropdown } from './ColumnClientDropdown';
+import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
 import {
   DndContext,
   DragOverlay,
@@ -53,6 +56,10 @@ interface Props {
   onDataRefresh: () => void;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
   onSwitchToBoard?: () => void;
+  clients?: Array<{ id: string; name: string; count?: number }>;
+  showAdminTasks?: boolean;
+  onToggleAdminTasks?: () => void;
+  search?: string;
 }
 
 // Draggable Card Wrapper
@@ -72,13 +79,12 @@ const DraggableTaskCard: React.FC<{
       ref={setNodeRef}
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
-      className={`touch-none transition-all duration-200 ease-out ${
-        isDragging
+      className={`touch-none transition-all duration-200 ease-out ${isDragging
           ? 'opacity-25 scale-[0.98] border border-dashed border-[#22A3AE] rounded-xl bg-zinc-900/40 pointer-events-none'
           : disabled
-          ? 'cursor-default'
-          : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
-      }`}
+            ? 'cursor-default'
+            : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
+        }`}
     >
       {children}
     </div>
@@ -96,9 +102,8 @@ const DroppableColumn: React.FC<{
   return (
     <div
       ref={setNodeRef}
-      className={`${className || ''} transition-all duration-200 ${
-        isOver ? 'ring-2 ring-[#22A3AE]/70 bg-cyan-950/25 shadow-xl shadow-cyan-950/40 scale-[1.005]' : ''
-      }`}
+      className={`${className || ''} transition-all duration-200 ${isOver ? 'ring-2 ring-[#22A3AE]/70 bg-cyan-950/25 shadow-xl shadow-cyan-950/40 scale-[1.005]' : ''
+        }`}
     >
       {children}
     </div>
@@ -117,15 +122,49 @@ export const TaskMapCrmView: React.FC<Props> = ({
   onDataRefresh,
   onTaskUpdate,
   onSwitchToBoard,
+  clients = [],
+  showAdminTasks = false,
+  onToggleAdminTasks,
+  search = '',
 }) => {
   const currentUser = useAppStore((s) => s.currentUser);
   const userHasAccess = hasCrmAccess(currentUser);
 
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
-  const [showAdminTasks, setShowAdminTasks] = useState(false);
+  const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
+    isOpen: boolean;
+    task: TaskMapItem | null;
+    targetStatus: string;
+    uncheckedAudits: string[];
+    openSubtasks: string[];
+  }>({
+    isOpen: false,
+    task: null,
+    targetStatus: '',
+    uncheckedAudits: [],
+    openSubtasks: [],
+  });
+  const boardScrollRef = useRef<HTMLDivElement>(null);
 
-  // Column controls: Priority filter, search, pin, collapse
+  const cleanSearch = (search || '').trim().toLowerCase();
+  const isCrmMemberSearchMatch = (u: any) => {
+    if (!cleanSearch || !u) return false;
+    const name = (u.name || '').trim().toLowerCase();
+    const email = (u.email || '').trim().toLowerCase();
+    return name.includes(cleanSearch) || email.includes(cleanSearch);
+  };
+
+  useEffect(() => {
+    if (cleanSearch && boardScrollRef.current) {
+      boardScrollRef.current.scrollTo({ left: 0, behavior: 'smooth' });
+    }
+  }, [cleanSearch]);
+
+  // Column controls: Priority filter, Sub-status filter, Client filter, Admin toggle, search, pin, collapse
   const [columnPriorityFilters, setColumnPriorityFilters] = useState<Record<string, string>>({});
+  const [columnSubStatusFilters, setColumnSubStatusFilters] = useState<Record<string, string>>({});
+  const [columnClientFilters, setColumnClientFilters] = useState<Record<string, string[] | 'ALL'>>({});
+  const [columnShowAdmin, setColumnShowAdmin] = useState<Record<string, boolean>>({});
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [columnSearchOpen, setColumnSearchOpen] = useState<Record<string, boolean>>({});
 
@@ -210,9 +249,18 @@ export const TaskMapCrmView: React.FC<Props> = ({
   // Check if a task is under Admin folder
   const isTaskUnderAdmin = (t: TaskMapItem) => {
     if (t.isAdminTask) return true;
-    const fName = (t.list?.folder?.name || '').toLowerCase();
-    const lName = (t.list?.name || '').toLowerCase();
-    return fName === 'admin' || fName.includes('admin') || lName === 'admin';
+    const fName = (t.list?.folder?.name || '').toLowerCase().trim();
+    const lName = (t.list?.name || '').toLowerCase().trim();
+    const ADMIN_LIST_NAMES = new Set([
+      'admin | jenesia red',
+      'harmony',
+      'jenesia red',
+      'jenesia red | personal',
+      'snaply',
+      'vip scale',
+      'xfnite',
+    ]);
+    return fName === 'admin' || fName.includes('admin') || lName === 'admin' || ADMIN_LIST_NAMES.has(lName);
   };
 
   // Check if a task belongs on the CRM board (status == 'CRM' or has CRM workflow statuses)
@@ -221,34 +269,41 @@ export const TaskMapCrmView: React.FC<Props> = ({
     const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
       x.toUpperCase().replace(/[\s_-]+/g, '')
     );
-    return (
-      s === 'CRM' ||
-      s === 'SENT' ||
-      s === 'OUTREACH' ||
-      s === 'OUTREACHSENT' ||
-      s === 'FOLLOWUP' ||
-      s === 'TOSEND' ||
+    const hasCrmMarker =
       mapStatuses.includes('CRM') ||
       mapStatuses.includes('TOSEND') ||
       mapStatuses.includes('SENT') ||
       mapStatuses.includes('FOLLOWUP') ||
       mapStatuses.includes('OUTREACH') ||
       mapStatuses.includes('OUTREACHSENT') ||
-      mapStatuses.includes('CLIENTSENT')
+      mapStatuses.includes('CLIENTSENT') ||
+      mapStatuses.includes('ASKCLIENT') ||
+      mapStatuses.includes('ASK CLIENT') ||
+      mapStatuses.includes('WAITING');
+
+    return (
+      s === 'CRM' ||
+      s === 'WAITING' ||
+      s === 'SENT' ||
+      s === 'OUTREACH' ||
+      s === 'OUTREACHSENT' ||
+      s === 'FOLLOWUP' ||
+      s === 'TOSEND' ||
+      ((s === 'CLOSED' || s === 'DONE') && hasCrmMarker) ||
+      hasCrmMarker
     );
   };
 
-  // Filter out Admin tasks if toggled off, and strictly require CRM status
+  // Filter for CRM status (Admin & Client filtering applied per column)
   const filteredCrmTasks = React.useMemo(() => {
     return combinedTasks.filter((t) => {
-      if (!showAdminTasks && isTaskUnderAdmin(t)) return false;
       // CRITICAL: A task MUST have CRM status to appear on the CRM board!
       if (!isCrmStatus(t)) return false;
       return true;
     });
-  }, [combinedTasks, showAdminTasks]);
+  }, [combinedTasks]);
 
-  // Check if task is CRM completed
+  // Check if task is CRM completed / closed
   const isCrmCompleted = (t: TaskMapItem) => {
     const s = (t.status || '').toUpperCase().trim();
     const mapStatuses = (t.taskMap?.statuses || []).map((x) => x.toUpperCase().trim());
@@ -297,7 +352,9 @@ export const TaskMapCrmView: React.FC<Props> = ({
   const completedTasks = filteredCrmTasks.filter(
     (t) =>
       isCrmCompleted(t) &&
-      ((t.status || '').toUpperCase() === 'CRM' ||
+      ((t.status || '').toUpperCase() === 'CLOSED' ||
+        (t.status || '').toUpperCase() === 'DONE' ||
+        (t.status || '').toUpperCase() === 'CRM' ||
         (t.taskMap?.statuses || []).some((s) => s.toUpperCase().includes('CRM')))
   );
 
@@ -335,9 +392,73 @@ export const TaskMapCrmView: React.FC<Props> = ({
       if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
       toast.info('Task moved to General CRM Pool');
       onStatusChange(taskId, updatedStatuses);
-    } else if (targetColumnId === 'col-crm-completed') {
+      if ((task.status || '').toUpperCase() !== 'CRM') {
+        const transitionCheck = canTransitionTaskStatus(task, 'CRM');
+        if (!transitionCheck.allowed) {
+          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+            window.dispatchEvent(
+              new CustomEvent('task:highlight-audits', {
+                detail: {
+                  taskId: task.id,
+                  targetStatus: 'CRM',
+                  uncheckedAudits: transitionCheck.uncheckedAudits,
+                  openSubtasks: transitionCheck.openSubtasks,
+                },
+              })
+            );
+          }
+          setBlockedAuditAlert({
+            isOpen: true,
+            task,
+            targetStatus: 'CRM',
+            uncheckedAudits: transitionCheck.uncheckedAudits,
+            openSubtasks: transitionCheck.openSubtasks,
+          });
+          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
+          return;
+        }
+        if (onTaskUpdate) {
+          await onTaskUpdate(taskId, { status: 'CRM' });
+        } else {
+          await tasksApi.updateTask(taskId, { status: 'CRM' } as any).catch(console.error);
+        }
+      }
+    } else if (targetColumnId === 'col-crm-closed' || targetColumnId === 'col-crm-completed') {
+      // 1. Task edit permission
+      const editCheck = canUserEditTask(task as any, currentUser);
+      if (!editCheck.allowed) {
+        toast.error(editCheck.reason || 'You do not have permission to edit this task.');
+        return;
+      }
+
+      // 2. Status transition rulings: all subtasks closed, all required audits checked!
+      const transitionCheck = canTransitionTaskStatus(task, 'Closed');
+      if (!transitionCheck.allowed) {
+        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent('task:highlight-audits', {
+              detail: {
+                taskId: task.id,
+                targetStatus: 'Closed',
+                uncheckedAudits: transitionCheck.uncheckedAudits,
+                openSubtasks: transitionCheck.openSubtasks,
+              },
+            })
+          );
+        }
+        setBlockedAuditAlert({
+          isOpen: true,
+          task,
+          targetStatus: 'Closed',
+          uncheckedAudits: transitionCheck.uncheckedAudits,
+          openSubtasks: transitionCheck.openSubtasks,
+        });
+        toast.error(transitionCheck.reason || 'Cannot move task to Closed');
+        return;
+      }
+
       if (!updatedStatuses.includes('Outreach Sent')) updatedStatuses.push('Outreach Sent');
-      toast.success('Task marked Outreach Sent / Done');
+      toast.success('Task marked Closed');
       onStatusChange(taskId, updatedStatuses);
       if (onTaskUpdate) {
         await onTaskUpdate(taskId, { status: 'Closed' });
@@ -410,20 +531,31 @@ export const TaskMapCrmView: React.FC<Props> = ({
       };
     }),
     {
-      id: 'col-crm-completed',
-      title: 'Outreach Completed',
-      subtitle: 'Communications sent & verified',
-      badgeLabel: 'Sent',
+      id: 'col-crm-closed',
+      title: 'Closed',
+      subtitle: 'Closed & verified tasks',
+      badgeLabel: 'Closed',
       badgeClass: 'bg-emerald-950 text-emerald-300 border-emerald-800',
       dotColor: 'bg-emerald-500',
       tasks: completedTasks,
     },
   ];
 
-  // Separate pinned and unpinned columns
-  const pinnedCols = allColumns.filter((c) => pinnedColumns[c.id]);
-  const unpinnedCols = allColumns.filter((c) => !pinnedColumns[c.id]);
-  const orderedColumns = [...pinnedCols, ...unpinnedCols];
+  // Separate pinned and unpinned columns, moving search-matched CRM member columns to the most left side
+  const crmSearchMatches = allColumns.filter((c) => c.isMember && isCrmMemberSearchMatch(c.memberUser));
+  const searchMatchedIds = new Set(crmSearchMatches.map((c) => c.id));
+  const otherPinnedCols = allColumns.filter((c) => pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
+  const otherUnpinnedCols = allColumns.filter((c) => !pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
+
+  const orderedColumns: CrmColumnDef[] = cleanSearch && crmSearchMatches.length > 0
+    ? [
+        allColumns[0], // col-crm-pool
+        ...crmSearchMatches,
+        ...otherPinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-closed'),
+        ...otherUnpinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-closed'),
+        allColumns[allColumns.length - 1], // col-crm-closed
+      ]
+    : [...otherPinnedCols, ...otherUnpinnedCols];
 
   // If user does not have permission, show access restricted screen
   if (!userHasAccess) {
@@ -463,18 +595,36 @@ export const TaskMapCrmView: React.FC<Props> = ({
     >
       <div className="flex flex-col h-full bg-background select-none">
         {/* Board Columns Horizontal Scroll */}
-        <div className="flex-1 flex gap-4 px-6 py-4 overflow-x-auto custom-scrollbar select-none">
+        <div ref={boardScrollRef} className="flex-1 flex gap-5 px-6 pb-4 overflow-x-auto overflow-y-hidden min-h-0 custom-scrollbar select-none">
           {orderedColumns.map((col) => {
             const isPinned = !!pinnedColumns[col.id];
             const isCollapsed = !!collapsedColumns[col.id];
             const activePriority = columnPriorityFilters[col.id] || 'ALL';
+            const activeSubStatus = columnSubStatusFilters[col.id] || 'ALL';
+            const colClientFilter = columnClientFilters[col.id] || 'ALL';
+            const colShowAdmin = columnShowAdmin[col.id] ?? showAdminTasks;
             const searchQuery = columnSearches[col.id] || '';
             const isSearchOpen = !!columnSearchOpen[col.id];
 
-            // Apply priority & search filter inside column
+            // Apply priority, sub-status, search, admin, and client filter inside column
             const visibleTasks = col.tasks.filter((t) => {
               if (!matchesPriorityFilter(t, activePriority)) return false;
+              if (!matchesSubStatusFilter(t, activeSubStatus)) return false;
               if (!matchesSearchFilter(t, searchQuery)) return false;
+
+              // Admin task check
+              const isAdmin = isTaskUnderAdmin(t);
+              if (isAdmin && !colShowAdmin) return false;
+
+              // Client filter check
+              if (colClientFilter !== 'ALL') {
+                const clientId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
+                const clientName = t.list?.name || 'General';
+                if (!colClientFilter.includes(clientId) && !colClientFilter.includes(clientName)) {
+                  return false;
+                }
+              }
+
               return true;
             });
 
@@ -484,9 +634,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
                 <DroppableColumn
                   key={`${col.id}-collapsed`}
                   id={col.id}
-                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-[calc(100vh-130px)] transition-all cursor-pointer hover:border-[#22A3AE]/50 ${
-                    isPinned ? 'ring-1 ring-[#22A3AE]/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
-                  }`}
+                  className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-full max-h-full min-h-0 transition-all cursor-pointer hover:border-[#22A3AE]/50 ${isPinned ? 'ring-1 ring-[#22A3AE]/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                    }`}
                 >
                   <button
                     type="button"
@@ -523,13 +672,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
               <DroppableColumn
                 key={col.id}
                 id={col.id}
-                className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-[calc(100vh-130px)] ${
-                  isPinned ? 'ring-1 ring-[#22A3AE]/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
-                }`}
+                className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${isPinned ? 'ring-1 ring-[#22A3AE]/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                  }`}
               >
                 {/* Header Top Row: Left side has dot/avatar & title & badge & count; Right side has Collapse, Pin, Search */}
-                <div className="flex items-center justify-between pb-2 border-b border-border/80 mb-2">
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                <div className="flex items-center justify-between h-9 pb-2 border-b border-border/80 mb-2">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2 h-7">
                     {col.memberUser ? (
                       col.memberUser.avatarUrl ? (
                         <img
@@ -554,25 +702,23 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       <UserRoleBadge user={col.memberUser} />
                     ) : col.badgeLabel ? (
                       <span
-                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 truncate ${
-                          col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                        }`}
+                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 truncate ${col.badgeClass || 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                          }`}
                       >
                         {col.badgeLabel}
                       </span>
                     ) : null}
 
                     <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${
-                        col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                      }`}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
+                        }`}
                     >
                       {col.tasks.length}
                     </span>
                   </div>
 
                   {/* Top Right: Collapse, Pin, Search (Search on right side) */}
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0 h-7">
                     <button
                       type="button"
                       onClick={() => toggleCollapseColumn(col.id)}
@@ -585,11 +731,10 @@ export const TaskMapCrmView: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => togglePinColumn(col.id)}
-                      className={`p-1 rounded-md transition-colors cursor-pointer ${
-                        isPinned
+                      className={`p-1 rounded-md transition-colors cursor-pointer ${isPinned
                           ? 'text-[#22A3AE] bg-[#22A3AE]/15 border border-[#22A3AE]/30'
                           : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                      }`}
+                        }`}
                       title={isPinned ? 'Unpin column' : 'Pin column'}
                     >
                       <Pin className={`size-3.5 rotate-45 ${isPinned ? 'fill-[#22A3AE]/40' : ''}`} />
@@ -631,11 +776,10 @@ export const TaskMapCrmView: React.FC<Props> = ({
                         onClick={() =>
                           setColumnSearchOpen((prev) => ({ ...prev, [col.id]: true }))
                         }
-                        className={`p-1 rounded-md transition-colors cursor-pointer ${
-                          searchQuery
+                        className={`p-1 rounded-md transition-colors cursor-pointer ${searchQuery
                             ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
                             : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                        }`}
+                          }`}
                         title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
                       >
                         <Search className="size-3.5" />
@@ -646,6 +790,26 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
                 {/* Next Line: Filters on the left side */}
                 <div className="flex items-center gap-1.5 justify-start mb-3">
+                  <ColumnClientDropdown
+                    tasks={col.tasks}
+                    clients={clients}
+                    showAdmin={colShowAdmin}
+                    onToggleAdmin={() =>
+                      setColumnShowAdmin((prev) => ({
+                        ...prev,
+                        [col.id]: !colShowAdmin,
+                      }))
+                    }
+                    selectedClients={colClientFilter}
+                    onSelectClients={(nextClients) =>
+                      setColumnClientFilters((prev) => ({
+                        ...prev,
+                        [col.id]: nextClients,
+                      }))
+                    }
+                    isTaskUnderAdmin={isTaskUnderAdmin}
+                  />
+
                   <ColumnPriorityDropdown
                     columnId={col.id}
                     tasks={col.tasks}
@@ -654,7 +818,17 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       setColumnPriorityFilters((prev) => ({ ...prev, [cId]: filter }))
                     }
                   />
-                  {searchQuery && (
+
+                  <ColumnSubStatusDropdown
+                    columnId={col.id}
+                    tasks={col.tasks}
+                    activeFilter={activeSubStatus}
+                    onSelectFilter={(cId, filter) =>
+                      setColumnSubStatusFilters((prev) => ({ ...prev, [cId]: filter }))
+                    }
+                  />
+
+                  {(searchQuery || activePriority !== 'ALL' || activeSubStatus !== 'ALL' || colClientFilter !== 'ALL') && (
                     <span className="text-[10px] text-zinc-400 italic">
                       ({visibleTasks.length} of {col.tasks.length})
                     </span>
@@ -664,7 +838,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                 {/* Cards List */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                   {visibleTasks.length === 0 ? (
-                    <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[94px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
+                    <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
                       <span className="text-xs font-semibold text-zinc-400">
                         No CRM tasks
                       </span>
@@ -678,7 +852,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                     visibleTasks.map((task) => {
                       return (
                         <DraggableTaskCard key={task.id} task={task} disabled={false}>
-                          <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[94px] flex items-stretch gap-3 transition-all group">
+                          <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group">
                             {/* Left: Task Info */}
                             <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                               {/* Client / List Name */}
@@ -689,7 +863,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                               {/* Title */}
                               <h4
                                 onClick={() => onOpenDetail(task)}
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5"
+                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
                                 title={task.title}
                               >
                                 {task.title}
@@ -702,6 +876,31 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                   taskId={task.id}
                                   currentStatus={task.status || 'In progress'}
                                   onSelect={async (newStatus) => {
+                                    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+                                    if (!transitionCheck.allowed) {
+                                      if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                        window.dispatchEvent(
+                                          new CustomEvent('task:highlight-audits', {
+                                            detail: {
+                                              taskId: task.id,
+                                              targetStatus: newStatus,
+                                              uncheckedAudits: transitionCheck.uncheckedAudits,
+                                              openSubtasks: transitionCheck.openSubtasks,
+                                            },
+                                          })
+                                        );
+                                      }
+                                      setBlockedAuditAlert({
+                                        isOpen: true,
+                                        task,
+                                        targetStatus: newStatus,
+                                        uncheckedAudits: transitionCheck.uncheckedAudits,
+                                        openSubtasks: transitionCheck.openSubtasks,
+                                      });
+                                      toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
+                                      return;
+                                    }
+
                                     if (onTaskUpdate) {
                                       await onTaskUpdate(task.id, { status: newStatus });
                                     } else {
@@ -766,6 +965,31 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
                                     if (label === 'To send') {
                                       if (isSelecting) {
+                                        const transitionCheck = canTransitionTaskStatus(task, 'CRM');
+                                        if (!transitionCheck.allowed) {
+                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                            window.dispatchEvent(
+                                              new CustomEvent('task:highlight-audits', {
+                                                detail: {
+                                                  taskId: task.id,
+                                                  targetStatus: 'CRM',
+                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
+                                                  openSubtasks: transitionCheck.openSubtasks,
+                                                },
+                                              })
+                                            );
+                                          }
+                                          setBlockedAuditAlert({
+                                            isOpen: true,
+                                            task,
+                                            targetStatus: 'CRM',
+                                            uncheckedAudits: transitionCheck.uncheckedAudits,
+                                            openSubtasks: transitionCheck.openSubtasks,
+                                          });
+                                          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
+                                          return;
+                                        }
+
                                         onStatusChange(task.id, cleanNext);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'CRM' });
@@ -783,6 +1007,31 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         toast.info(`Reverted 'To send' — returned to ${revertStatus}`);
                                       }
                                     } else if (label === 'Sent' && isSelecting) {
+                                      const transitionCheck = canTransitionTaskStatus(task, 'Closed');
+                                      if (!transitionCheck.allowed) {
+                                        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                          window.dispatchEvent(
+                                            new CustomEvent('task:highlight-audits', {
+                                              detail: {
+                                                taskId: task.id,
+                                                targetStatus: 'Closed',
+                                                uncheckedAudits: transitionCheck.uncheckedAudits,
+                                                openSubtasks: transitionCheck.openSubtasks,
+                                              },
+                                            })
+                                          );
+                                        }
+                                        setBlockedAuditAlert({
+                                          isOpen: true,
+                                          task,
+                                          targetStatus: 'Closed',
+                                          uncheckedAudits: transitionCheck.uncheckedAudits,
+                                          openSubtasks: transitionCheck.openSubtasks,
+                                        });
+                                        toast.error(transitionCheck.reason || 'Cannot move task to Closed');
+                                        return;
+                                      }
+
                                       onStatusChange(task.id, cleanNext);
                                       if (onTaskUpdate) {
                                         await onTaskUpdate(task.id, { status: 'Closed' });
@@ -790,7 +1039,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         await tasksApi.updateTask(task.id, { status: 'Closed' } as any).catch(console.error);
                                         onDataRefresh();
                                       }
-                                      toast.success('Task marked Sent — outreach complete');
+                                      toast.success('Task marked Closed — outreach complete');
                                     } else if (label === 'Follow up' && isSelecting) {
                                       onStatusChange(task.id, cleanNext);
                                       toast.warning('Task marked for Follow up');
@@ -828,6 +1077,42 @@ export const TaskMapCrmView: React.FC<Props> = ({
           </div>
         ) : null}
       </DragOverlay>
+
+      {/* Blocked Audits / Subtasks Modal */}
+      <UncheckedAuditsModal
+        isOpen={blockedAuditAlert.isOpen}
+        onClose={() => setBlockedAuditAlert((prev) => ({ ...prev, isOpen: false }))}
+        taskTitle={blockedAuditAlert.task?.title || ''}
+        targetStatus={blockedAuditAlert.targetStatus}
+        uncheckedAudits={blockedAuditAlert.uncheckedAudits}
+        openSubtasks={blockedAuditAlert.openSubtasks}
+        onReviewAudits={() => {
+          if (blockedAuditAlert.task) {
+            onOpenDetail(blockedAuditAlert.task);
+            if (blockedAuditAlert.uncheckedAudits && blockedAuditAlert.uncheckedAudits.length > 0) {
+              const pendingHighlight = {
+                taskId: blockedAuditAlert.task.id,
+                targetStatus: blockedAuditAlert.targetStatus,
+                uncheckedAudits: blockedAuditAlert.uncheckedAudits,
+                openSubtasks: blockedAuditAlert.openSubtasks,
+              };
+              if (typeof window !== 'undefined') {
+                (window as any).__pendingAuditHighlight = pendingHighlight;
+              }
+              setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent('task:highlight-audits', { detail: pendingHighlight })
+                );
+              }, 350);
+            }
+          }
+        }}
+        reviewButtonText={
+          blockedAuditAlert.uncheckedAudits.length > 0
+            ? 'Open Task & Review Audits'
+            : 'Open Task & Review Subtasks'
+        }
+      />
     </DndContext>
   );
 };

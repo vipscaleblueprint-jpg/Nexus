@@ -17,6 +17,8 @@ import {
 import { runRecurringDailyRollover } from '../services/recurringTaskService';
 import { sweepInReviewTasksForShiftAudits } from '../services/auditAutoAssign';
 import { executeTaskMapShiftRollover } from './taskMapRollover.worker';
+import { executeTaskMapDailyRollover } from '../services/taskMapService';
+import { checkAndHandoverInactiveMaTasks } from '../services/maInactivityService';
 
 // KYC, Closed, and Pin Board items never roll over (status is free text, so match any casing)
 const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
@@ -324,6 +326,7 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
 export const JOURNAL_CATCH_UP_JOB = 'journalCatchUp';
 export const SHIFT_AUDIT_JOB = 'shiftAuditSweep';
 export const TASK_MAP_SHIFT_ROLLOVER_JOB = 'taskMapShiftRollover';
+export const MA_AUTO_HANDOVER_JOB = 'maAutoHandoverJob';
 
 // What the previous catch-up run found missing, per day page. A task is only added once two runs in a row miss it, so
 // the append made when it was created, or a user's erase still being recorded, always finishes first.
@@ -426,6 +429,7 @@ export const dailyRolloverWorker = new Worker(
     if (job.name === JOURNAL_CATCH_UP_JOB) return appendMissingTasksToJournal();
     if (job.name === SHIFT_AUDIT_JOB) return sweepInReviewTasksForShiftAudits(job.data?.shift);
     if (job.name === TASK_MAP_SHIFT_ROLLOVER_JOB) return executeTaskMapShiftRollover(job.data?.fromShift);
+    if (job.name === MA_AUTO_HANDOVER_JOB) return checkAndHandoverInactiveMaTasks();
     logger.info('Running DailyRollover job (Dynamic Generation)...');
     await runDailyRollover(job.data);
     logger.info('Running Daily Recurring Tasks Rollover...');
@@ -435,6 +439,14 @@ export const dailyRolloverWorker = new Worker(
     } catch (recErr) {
       logger.error(`Recurring Tasks Rollover failed: ${errMsg(recErr)}`);
     }
+    logger.info('Running Task Map Daily Rollover & Snapshot...');
+    try {
+      const taskMapRes = await executeTaskMapDailyRollover();
+      logger.info(`Finished Task Map Daily Rollover: rolled ${taskMapRes.rolledCount} tasks to ${taskMapRes.newDate}`);
+    } catch (tmErr) {
+      logger.error(`Task Map Daily Rollover failed: ${errMsg(tmErr)}`);
+    }
+
     logger.info('Finished DailyRollover job.');
   },
   { connection: redis }
@@ -442,7 +454,7 @@ export const dailyRolloverWorker = new Worker(
 
 // Listeners for logging
 dailyRolloverWorker.on('completed', (job) => {
-  if (job.name === JOURNAL_CATCH_UP_JOB || job.name === SHIFT_AUDIT_JOB || job.name === TASK_MAP_SHIFT_ROLLOVER_JOB) return; // runs every few minutes; it logs when it adds something
+  if (job.name === JOURNAL_CATCH_UP_JOB || job.name === SHIFT_AUDIT_JOB || job.name === TASK_MAP_SHIFT_ROLLOVER_JOB || job.name === MA_AUTO_HANDOVER_JOB) return; // runs every few minutes; it logs when it adds something
   logger.info(`DailyRollover job ${job.id} has completed!`);
 });
 

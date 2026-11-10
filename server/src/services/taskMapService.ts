@@ -1,8 +1,15 @@
 import { prisma } from '../config/prisma';
 import { randomUUID } from 'crypto';
-import { io } from '../server';
 import { getActiveManilaShift } from './auditAutoAssign';
-import { redis, isRedisReady } from './redisService';
+import { redis, isRedisReady, invalidateCache } from './redisService';
+
+function getIo() {
+  try {
+    return require('../server').io;
+  } catch {
+    return null;
+  }
+}
 
 export function toTaskMapShiftKey(key: string): string {
   const norm = (key || '').trim().toUpperCase();
@@ -437,4 +444,310 @@ export async function setUpworkClients(clients: string[]): Promise<string[]> {
     } catch {}
   }
   return cleanList;
+}
+
+// ---------------------------------------------------------------------------
+// Daily Rollover & Historical Snapshots
+// ---------------------------------------------------------------------------
+
+export const isClosedStatus = (status?: string | null) => {
+  const s = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  return s === 'CLOSED' || s === 'DONE' || s === 'COMPLETE' || s === 'COMPLETED' || s === 'RESOLVED' || s === 'CANCELLED';
+};
+
+export function getManilaDateStr(date?: Date | string | null): string {
+  const d = date ? (typeof date === 'string' ? new Date(date) : date) : new Date();
+  if (isNaN(d.getTime())) return new Date().toISOString().split('T')[0];
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+  } catch {
+    return d.toISOString().split('T')[0];
+  }
+}
+
+/**
+ * Returns operational date in Asia/Manila where each new day begins at 6:00 AM (not midnight).
+ * Between 12:00 AM and 5:59 AM, operational date belongs to yesterday's shift.
+ * At 6:00 AM, it rolls over to today's date.
+ */
+export function getTaskMapOperationalDateStr(date?: Date | string | null): string {
+  const d = date ? (typeof date === 'string' ? new Date(date) : date) : new Date();
+  if (isNaN(d.getTime())) return getManilaDateStr();
+
+  try {
+    const manilaHour = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Manila',
+        hour: 'numeric',
+        hour12: false,
+      }).format(d)
+    );
+
+    // If before 6:00 AM Manila, operational date is yesterday
+    if (manilaHour < 6) {
+      const yesterday = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+      return getManilaDateStr(yesterday);
+    }
+    return getManilaDateStr(d);
+  } catch {
+    return getManilaDateStr(d);
+  }
+}
+
+export async function getEffectiveUserId(userId?: string | null): Promise<string> {
+  if (userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (user) return user.id;
+  }
+  const admin = await prisma.user.findFirst({
+    where: { systemRole: 'ADMIN' },
+    select: { id: true },
+  });
+  if (admin) return admin.id;
+
+  const anyUser = await prisma.user.findFirst({ select: { id: true } });
+  return anyUser?.id || '';
+}
+
+export async function captureTaskMapDailySnapshot(
+  snapshotDate: string,
+  snapshotPayload: any,
+  actorId = 'system'
+): Promise<any> {
+  const cleanDate = (snapshotDate || getManilaDateStr()).trim().split('T')[0];
+  const validUserId = await getEffectiveUserId(actorId);
+
+  const existing = await prisma.auditLog.findFirst({
+    where: {
+      action: 'TASK_MAP_DAILY_SNAPSHOT',
+      entity: 'TASK_MAP',
+      entityId: cleanDate,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const payloadWithMeta = {
+    ...snapshotPayload,
+    snapshotDate: cleanDate,
+    capturedAt: new Date().toISOString(),
+    capturedBy: actorId,
+  };
+
+  if (existing) {
+    await prisma.auditLog.update({
+      where: { id: existing.id },
+      data: {
+        userId: validUserId || existing.userId,
+        details: payloadWithMeta,
+        createdAt: new Date(),
+      },
+    });
+    return payloadWithMeta;
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'TASK_MAP_DAILY_SNAPSHOT',
+      entity: 'TASK_MAP',
+      entityId: cleanDate,
+      userId: validUserId,
+      details: payloadWithMeta,
+    },
+  });
+
+  return payloadWithMeta;
+}
+
+export async function getTaskMapDailySnapshot(snapshotDate: string): Promise<any | null> {
+  const cleanDate = (snapshotDate || '').trim().split('T')[0];
+  if (!cleanDate) return null;
+
+  const log = await prisma.auditLog.findFirst({
+    where: {
+      action: 'TASK_MAP_DAILY_SNAPSHOT',
+      entity: 'TASK_MAP',
+      entityId: cleanDate,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!log || !log.details) return null;
+  return typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+}
+
+export async function getAvailableHistoryDates(): Promise<string[]> {
+  const [snapshotLogs, rolloverLogs, latestRecords] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: {
+        action: 'TASK_MAP_DAILY_SNAPSHOT',
+        entity: 'TASK_MAP',
+      },
+      select: { entityId: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        action: 'TASK_MAP_DAILY_ROLLOVER',
+        entity: 'TASK_MAP',
+      },
+      select: { entityId: true },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    }),
+    prisma.$queryRawUnsafe<Array<{ shiftDate: Date }>>(
+      `SELECT "shiftDate" FROM "TaskMapRecord" ORDER BY "shiftDate" DESC LIMIT 1`
+    ).catch(() => []),
+  ]);
+
+  const set = new Set<string>();
+
+  snapshotLogs.forEach((l) => {
+    if (l.entityId) set.add(l.entityId.trim().split('T')[0]);
+  });
+
+  rolloverLogs.forEach((l) => {
+    if (l.entityId && l.entityId.includes('->')) {
+      const parts = l.entityId.split('->');
+      const target = parts[1]?.trim().split('T')[0];
+      const source = parts[0]?.trim().split('T')[0];
+      if (target) set.add(target);
+      if (source) set.add(source);
+    }
+  });
+
+  if (latestRecords && latestRecords[0]?.shiftDate) {
+    const shiftDateStr = getManilaDateStr(latestRecords[0].shiftDate);
+    if (shiftDateStr) set.add(shiftDateStr);
+  }
+
+  // Always include today in Manila time
+  set.add(getManilaDateStr());
+
+  // Also include the reference mock dates Nov 1-5, 2026 for seamless UI journal browsing
+  ['2026-11-05', '2026-11-04', '2026-11-03', '2026-11-02', '2026-11-01'].forEach((d) => set.add(d));
+
+  return Array.from(set).sort((a, b) => b.localeCompare(a));
+}
+
+export async function executeTaskMapDailyRollover(params?: {
+  fromDate?: string;
+  toDate?: string;
+  actorId?: string;
+  snapshotPayload?: any;
+}): Promise<{
+  success: boolean;
+  rolledCount: number;
+  retainedDate: string;
+  newDate: string;
+  retainedTasksCount: number;
+}> {
+  // If fromDate is not passed, use yesterday relative to 6:00 AM new day
+  const fromDate = (params?.fromDate || getManilaDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000))).trim().split('T')[0];
+  
+  // Default toDate is today in Manila
+  let toDate = (params?.toDate || getManilaDateStr()).trim().split('T')[0];
+  if (!toDate || toDate === fromDate) {
+    const fromD = new Date(`${fromDate}T00:00:00Z`);
+    const nextD = new Date(fromD.getTime() + 24 * 60 * 60 * 1000);
+    toDate = nextD.toISOString().split('T')[0];
+  }
+
+  // 1. Snapshot preservation for the previous date (if not provided, build from current TaskMap state)
+  let retainedTasksCount = 0;
+  let snapshotData = params?.snapshotPayload;
+  if (!snapshotData) {
+    // Query current tasks & pool to preserve yesterday's exact historical assignment
+    const currentTasks = await prisma.task.findMany({
+      where: { status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] } },
+      include: {
+        list: { select: { id: true, name: true, folder: { select: { id: true, name: true } } } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+      },
+    });
+    const taskMapRecs = await prisma.taskMapRecord.findMany();
+    const recMap = new Map(taskMapRecs.map((r) => [r.taskId, r]));
+    const mappedTasks = currentTasks.map((t) => {
+      const rec = recMap.get(t.id);
+      return {
+        ...t,
+        taskMap: rec ? { id: rec.id, taskId: rec.taskId, statuses: rec.statuses, shift: rec.shift, shiftDate: rec.shiftDate } : null,
+      };
+    });
+    snapshotData = {
+      tasks: mappedTasks.filter((t) => Boolean(t.assigneeId)),
+      availablePool: mappedTasks.filter((t) => !t.assigneeId),
+      snapshotDate: fromDate,
+    };
+  }
+
+  await captureTaskMapDailySnapshot(fromDate, snapshotData, params?.actorId || 'system');
+  retainedTasksCount = snapshotData.tasks?.length || 0;
+
+  // 2. Auto-reset all active workflow tasks to go back to Available tasks on the new 6:00 AM Task Map page
+  // Set assigneeId to null and status to 'Pending' for all non-closed/non-CRM tasks
+  await prisma.$executeRawUnsafe(
+    `UPDATE "Task"
+     SET "assigneeId" = NULL,
+         "status" = 'Pending',
+         "updatedAt" = NOW()
+     WHERE UPPER("status") NOT IN ('CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING')
+       AND "assigneeId" IS NOT NULL`
+  );
+
+  // Update TaskMapRecord for all active tasks: shiftDate to new date, status to Available Task, reset handedOver
+  const toDateObj = new Date(`${toDate}T08:00:00+08:00`);
+  const updateResult: any = await prisma.$executeRawUnsafe(
+    `UPDATE "TaskMapRecord" tmr
+     SET "shiftDate" = $1,
+         "statuses" = ARRAY['Available Task']::text[],
+         "rolloverCount" = tmr."rolloverCount" + 1,
+         "originShift" = COALESCE(tmr."originShift", tmr."shift"),
+         "originDate" = COALESCE(tmr."originDate", tmr."shiftDate"),
+         "handedOver" = false,
+         "updatedAt" = NOW()
+     FROM "Task" t
+     WHERE tmr."taskId" = t."id"
+       AND UPPER(t."status") NOT IN ('CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING')`,
+    toDateObj
+  );
+
+  const rolledCount = typeof updateResult === 'number' ? updateResult : 0;
+
+  // Log daily rollover in AuditLog
+  const validRolloverUserId = await getEffectiveUserId(params?.actorId);
+  await prisma.auditLog.create({
+    data: {
+      action: 'TASK_MAP_DAILY_ROLLOVER',
+      entity: 'TASK_MAP',
+      entityId: `${fromDate}->${toDate}`,
+      userId: validRolloverUserId,
+      details: {
+        fromDate,
+        toDate,
+        rolledCount,
+        retainedTasksCount,
+        note: '6:00 AM daily turnover: previous date snapshotted; active tasks reset to Available tasks',
+        timestamp: new Date().toISOString(),
+      },
+    },
+  });
+
+  await invalidateCache('task:*', 'tasks:all', 'task_map:*');
+
+  getIo()?.emit('task_map:updated');
+  getIo()?.emit('task_map:daily_rollover', { fromDate, toDate, rolledCount, retainedTasksCount });
+
+  return {
+    success: true,
+    rolledCount,
+    retainedDate: fromDate,
+    newDate: toDate,
+    retainedTasksCount,
+  };
 }

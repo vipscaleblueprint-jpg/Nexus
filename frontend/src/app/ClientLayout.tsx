@@ -603,7 +603,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1 relative overflow-hidden">
           <main
             id="main-scroll-container"
-            className={`w-full h-full ${pathname?.startsWith('/lists') ? 'overflow-hidden' : 'overflow-y-auto pb-20 md:pb-0'} bg-background relative z-0 isolate`}
+            className={`w-full h-full ${pathname?.startsWith('/lists') || pathname?.includes('/task-map') ? 'overflow-hidden' : 'overflow-y-auto pb-20 md:pb-0'} bg-background relative z-0 isolate`}
           >
             {children}
           </main>

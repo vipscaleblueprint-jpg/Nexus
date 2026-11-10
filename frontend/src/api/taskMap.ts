@@ -76,6 +76,7 @@ export interface TaskMapItem {
   assignees: any[];
   creator: any;
   subtasks: any[];
+  checklists?: any[];
   taskMap: TaskMapRecord;
   pmTags: string[];
   isWaitingPmReview: boolean;
@@ -107,11 +108,25 @@ export interface UpworkSession {
   pmName: string;
   clientName?: string;
   startedAt: string;
+  stoppedAt?: string | null;
+  timeOut?: string | null;
+  active?: boolean;
   isManuallyMarkedUpwork?: boolean;
+}
+
+export interface DailyRolloverResult {
+  success: boolean;
+  rolledCount: number;
+  retainedDate: string;
+  newDate: string;
+  retainedTasksCount: number;
 }
 
 export interface TaskMapDataResponse {
   success: boolean;
+  isHistory?: boolean;
+  snapshotDate?: string;
+  latestDate?: string;
   tasks: TaskMapItem[];
   availablePool: TaskMapItem[];
   allClients?: Array<{ id: string; name: string }>;
@@ -206,6 +221,19 @@ export const taskMapApi = {
     });
   },
 
+  resetColumnTasks: async (
+    columnId: string,
+    type: 'BOARD' | 'AUDIT' = 'BOARD'
+  ): Promise<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }> => {
+    return apiClient<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }>(
+      `/api/task-map/columns/${columnId}/reset`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ type }),
+      }
+    );
+  },
+
   pmReview: async (taskId: string, data: { action: 'APPROVE' | 'REQUEST_REVISION'; pmTag?: string; comment?: string }): Promise<{ success: boolean; taskMap: TaskMapRecord }> => {
     return apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/pm-review`, {
       method: 'POST',
@@ -213,11 +241,32 @@ export const taskMapApi = {
     });
   },
 
-  runRollover: async (data?: { taskId?: string; shift?: string }): Promise<{ success: boolean; rolledCount?: number; nextShift?: string; taskMap?: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; rolledCount?: number; nextShift?: string; taskMap?: TaskMapRecord }>('/api/task-map/rollover', {
+  runRollover: async (data?: {
+    taskId?: string;
+    shift?: string;
+    isDaily?: boolean;
+    fromDate?: string;
+    toDate?: string;
+  }): Promise<{ success: boolean; rolledCount?: number; nextShift?: string; taskMap?: TaskMapRecord; retainedDate?: string; newDate?: string }> => {
+    return apiClient('/api/task-map/rollover', {
       method: 'POST',
       body: JSON.stringify(data || {}),
     });
+  },
+
+  runDailyRollover: async (data?: {
+    fromDate?: string;
+    toDate?: string;
+    retainCurrent?: boolean;
+  }): Promise<DailyRolloverResult> => {
+    return apiClient<DailyRolloverResult>('/api/task-map/daily-rollover', {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    });
+  },
+
+  getHistoryDates: async (): Promise<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }> => {
+    return apiClient<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }>(`/api/task-map/history-dates?_t=${Date.now()}`);
   },
 
   updateTaskMeta: async (taskId: string, meta: { dontRollover?: boolean; handedOver?: boolean; stepOrder?: number; shift?: string }): Promise<{ success: boolean; taskMap: TaskMapRecord }> => {
@@ -301,6 +350,85 @@ export const ROLE_SHORT_NAMES: Record<string, string> = {
 };
 
 export const USER_ROLE_DEFINITIONS: Record<string, UserRoleMapping> = {};
+
+export interface AuditorRoleOption {
+  key: string;
+  label: string;
+  fullRole: string;
+}
+
+export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] = []): AuditorRoleOption[] {
+  const roleNameMap = new Map<string, string>();
+
+  // 1. Discover all teamRoles from teams with "audit" in the name (e.g. "Audit Team")
+  for (const team of workspaceTeams || []) {
+    if (/audit/i.test(team?.name || '')) {
+      for (const tr of team.teamRoles || []) {
+        if (tr?.name && typeof tr.name === 'string') {
+          const canonical = tr.name.trim();
+          roleNameMap.set(canonical.toLowerCase(), canonical);
+        }
+      }
+    }
+  }
+
+  // 2. Discover roles from allUsers where role includes "audit" or "auditor"
+  for (const u of allUsers || []) {
+    for (const r of u?.roles || []) {
+      if (typeof r === 'string' && /audit/i.test(r.trim())) {
+        const canonical = r.trim();
+        if (!roleNameMap.has(canonical.toLowerCase())) {
+          roleNameMap.set(canonical.toLowerCase(), canonical);
+        }
+      }
+    }
+  }
+
+  // Fallbacks if DB queries haven't loaded yet
+  const standardAuditorRoles = ['UI UX Auditor', 'Design Auditor', 'Funnel Auditor', 'Instruction Auditor'];
+  for (const r of standardAuditorRoles) {
+    if (!roleNameMap.has(r.toLowerCase())) {
+      roleNameMap.set(r.toLowerCase(), r);
+    }
+  }
+
+  const formatLabel = (roleName: string) => {
+    const clean = roleName.trim();
+    if (/^ui\s*\/?\s*ux\s*(auditor|audit)?$/i.test(clean)) return 'UI/UX';
+    if (/^funnel\s*(auditor|audit)$/i.test(clean)) return 'Funnel Audit';
+    if (/^design\s*(auditor|audit)$/i.test(clean)) return 'Design';
+    if (/^instruction\s*(auditor|audit)$/i.test(clean)) return 'Instruction';
+    return clean.replace(/\s+(auditor|audit)$/i, '').trim() || clean;
+  };
+
+  const options: AuditorRoleOption[] = [
+    { key: 'ALL', label: 'All', fullRole: 'ALL' },
+  ];
+
+  const orderWeight = (k: string) => {
+    const l = k.toLowerCase();
+    if (l.includes('ui') || l.includes('ux')) return 1;
+    if (l.includes('design')) return 2;
+    if (l.includes('funnel')) return 3;
+    if (l.includes('instruction')) return 4;
+    return 10;
+  };
+
+  const sortedRoles = Array.from(roleNameMap.values()).sort((a, b) => {
+    const diff = orderWeight(a) - orderWeight(b);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
+
+  for (const role of sortedRoles) {
+    options.push({
+      key: role,
+      label: formatLabel(role),
+      fullRole: role,
+    });
+  }
+
+  return options;
+}
 
 export function getRoleBadgeClass(shortOrFullRole: string): string {
   const r = (shortOrFullRole || '').toLowerCase().trim();
@@ -387,8 +515,12 @@ export function createEmptyUserBlock(params?: {
   isUpwork?: boolean;
   rowNumber?: number;
 }): TaskMapItem {
-  const assumedClient = (params?.client || '').trim() || 'General';
-  const assumedTitle = (params?.taskTitle || '').trim() || 'General Task';
+  const rawClient = (params?.client || '').trim();
+  const assumedClient =
+    rawClient && rawClient.toLowerCase() !== 'general' ? rawClient : 'No client inputted';
+  const rawTitle = (params?.taskTitle || '').trim();
+  const assumedTitle =
+    rawTitle && rawTitle.toLowerCase() !== 'general task' ? rawTitle : 'No task inputted';
   const assumedDay = params?.day || new Date().toISOString().split('T')[0];
   const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
   const id = `general-slot-${params?.userId || 'user'}`;
@@ -438,7 +570,11 @@ export function createEmptyUserBlock(params?: {
       type: 'SHEET_PROGRESS',
       timeIn: params?.timeIn || null,
       timeOut: params?.timeOut || null,
-      isMissingTime: Boolean(!params?.timeIn && (params?.timeOut || params?.status)),
+      isMissingTime: Boolean(
+        params?.rowNumber &&
+        !params?.timeIn &&
+        (params?.timeOut || (params?.status && params?.status.toLowerCase() !== 'in progress'))
+      ),
       isUpwork: Boolean(params?.isUpwork),
       client: assumedClient,
       timeTracker: params?.isUpwork ? 'Upwork' : null,

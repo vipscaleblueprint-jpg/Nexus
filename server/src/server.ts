@@ -35,7 +35,7 @@ import { taskMapRouter } from './routes/taskMap.routes';
 // Import workers to initialize them
 import './workers/task.worker';
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
-import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB } from './workers/dailyRollover.worker';
+import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
@@ -43,13 +43,21 @@ import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 const app = express();
 const server = http.createServer(app);
 
-// Initialize daily rollover cron job
+// Initialize daily rollover cron job at 6:00 AM Manila Time (operational day turnover)
 (async () => {
   await dailyRolloverQueue.add('checkRollovers', {}, {
     repeat: {
-      pattern: '0 0 * * *', // Every day at midnight
-      tz: 'Asia/Singapore'
-    }
+      pattern: '0 6 * * *', // Every day at 6:00 AM Manila Time
+      tz: 'Asia/Manila',
+    },
+  });
+
+  // Safety net for inactive MA shift duty end & inactivity handover (runs every 5 minutes)
+  await dailyRolloverQueue.add(MA_AUTO_HANDOVER_JOB, {}, {
+    repeat: { every: 5 * 60 * 1000 },
+    jobId: 'ma-auto-handover',
+    attempts: 1,
+    removeOnFail: 50,
   });
 
   // Safety net for the journal auto-append (appendMissingTasksToJournal), every 5 minutes. Kept in Redis, so a

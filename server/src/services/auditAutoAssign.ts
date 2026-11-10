@@ -1,6 +1,13 @@
 import { prisma } from '../config/prisma';
-import { io } from '../server';
 import { invalidateCache } from './redisService';
+
+function getIo() {
+  try {
+    return require('../server').io;
+  } catch {
+    return null;
+  }
+}
 import { getRequiredAudits, getTaskMoverAndUpdaters } from '../controllers/task.controller';
 import {
   getAiPickedAudits,
@@ -420,7 +427,7 @@ export async function autoAssignAudits(
     where: { taskId: task.id, subtaskId: null },
     include: { items: true },
   });
-  io.emit('task:updated', { id: task.id, checklists });
+  getIo()?.emit('task:updated', { id: task.id, checklists });
 
   const notifierId = actorId || task.creatorId;
   for (const { text, userId } of assigned) {
@@ -436,7 +443,7 @@ export async function autoAssignAudits(
         title: `You were assigned "${text}" in Audit on ${task.title}`,
       },
     });
-    io.to(`user:${userId}`).emit('notification_received');
+    getIo()?.to(`user:${userId}`).emit('notification_received');
   }
 
   return { success: true, assignedCount: assigned.length };

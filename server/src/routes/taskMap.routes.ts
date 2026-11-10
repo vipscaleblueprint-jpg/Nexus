@@ -9,8 +9,11 @@ import {
   updateTaskStatuses,
   claimTask,
   assignTaskMapTask,
+  resetColumnTasksHandler,
   handlePmReviewAction,
   runRollover,
+  runDailyRollover,
+  getHistoryDates,
   updateTaskMeta,
   getTaskTimeline,
   getUpworkClientsHandler,
@@ -39,7 +42,10 @@ taskMapRouter.put('/shifts', updateShifts);
 taskMapRouter.patch('/tasks/:id/statuses', updateTaskStatuses);
 taskMapRouter.patch('/tasks/:id/claim', claimTask);
 taskMapRouter.patch('/tasks/:id/assign', assignTaskMapTask);
+taskMapRouter.post('/columns/:columnId/reset', resetColumnTasksHandler);
 taskMapRouter.post('/tasks/:id/pm-review', handlePmReviewAction);
 taskMapRouter.post('/rollover', runRollover);
+taskMapRouter.post('/daily-rollover', runDailyRollover);
+taskMapRouter.get('/history-dates', getHistoryDates);
 taskMapRouter.patch('/tasks/:id/meta', updateTaskMeta);
 taskMapRouter.get('/tasks/:id/timeline', getTaskTimeline);

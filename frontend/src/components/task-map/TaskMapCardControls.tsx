@@ -8,6 +8,8 @@ import { getPriorityConfig } from '@/lib/priority';
 import { TaskMapItem } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
+export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
+
 
 export const getDotColor = (status?: string) => {
   if (!status) return '#3b82f6';
@@ -253,11 +255,10 @@ export const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'ALL'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'ALL'
                   ? 'bg-zinc-800 text-zinc-100 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-zinc-500 shrink-0" />
@@ -276,11 +277,10 @@ export const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'URGENT'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'URGENT'
                   ? 'bg-red-950/60 text-red-200 border border-red-700/60 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-red-400 shrink-0" />
@@ -288,9 +288,8 @@ export const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'URGENT' ? 'bg-red-900/50 text-red-300' : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'URGENT' ? 'bg-red-900/50 text-red-300' : 'bg-zinc-800/80 text-zinc-400'
+                    }`}
                 >
                   {counts.URGENT}
                 </span>
@@ -306,11 +305,10 @@ export const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'HIGH'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'HIGH'
                   ? 'bg-amber-950/60 text-amber-200 border border-amber-700/60 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-amber-400 shrink-0" />
@@ -318,9 +316,8 @@ export const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'HIGH' ? 'bg-amber-900/50 text-amber-300' : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'HIGH' ? 'bg-amber-900/50 text-amber-300' : 'bg-zinc-800/80 text-zinc-400'
+                    }`}
                 >
                   {counts.HIGH}
                 </span>
@@ -336,11 +333,10 @@ export const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'NORMAL'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'NORMAL'
                   ? 'bg-blue-950/60 text-blue-200 border border-blue-700/60 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-blue-400 shrink-0" />
@@ -348,9 +344,8 @@ export const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'NORMAL' ? 'bg-blue-900/50 text-blue-300' : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'NORMAL' ? 'bg-blue-900/50 text-blue-300' : 'bg-zinc-800/80 text-zinc-400'
+                    }`}
                 >
                   {counts.NORMAL}
                 </span>
@@ -366,11 +361,10 @@ export const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'LOW'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'LOW'
                   ? 'bg-zinc-800 text-zinc-200 border border-zinc-700 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-zinc-400 shrink-0" />
@@ -378,9 +372,8 @@ export const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'LOW' ? 'bg-zinc-700 text-zinc-300' : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'LOW' ? 'bg-zinc-700 text-zinc-300' : 'bg-zinc-800/80 text-zinc-400'
+                    }`}
                 >
                   {counts.LOW}
                 </span>
@@ -540,11 +533,10 @@ export const CardStatusDropdown: React.FC<{
                     setCoords(null);
                     onSelect(item.label);
                   }}
-                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                    isSelected
+                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${isSelected
                       ? 'bg-zinc-800 text-white font-semibold'
                       : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2 truncate">
                     {item.isClosed ? (
@@ -701,11 +693,10 @@ export const CardPriorityDropdown: React.FC<{
                     setCoords(null);
                     onSelect(item.key);
                   }}
-                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                    isSelected
+                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${isSelected
                       ? 'bg-zinc-800 text-white font-semibold'
                       : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2">
                     <Flag className={`size-3 ${item.iconColor}`} />
@@ -723,6 +714,74 @@ export const CardPriorityDropdown: React.FC<{
 };
 
 
+
+export const MAX_LIVE_SHIFT_MS = 14 * 60 * 60 * 1000; // 14 hours max continuous shift window
+
+/** Formats "09:15 AM" -> "9:15 AM" to save space */
+export function cleanDisplayTime(timeStr?: string | null): string {
+  if (!timeStr) return '';
+  return timeStr.trim().replace(/^0(\d:)/, '$1');
+}
+
+/** Computes the duration between two time strings into "Mins" (e.g. 48m) or "Hrs with mins" (e.g. 1h 24m) */
+export function computeDuration(timeInStr?: string | null, timeOutStr?: string | null): string {
+  if (!timeInStr || !timeOutStr) return '';
+  const mIn = timeInStr.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+  const mOut = timeOutStr.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+  if (!mIn || !mOut) return '';
+
+  let hIn = parseInt(mIn[1], 10);
+  const minIn = parseInt(mIn[2], 10);
+  const ampmIn = (mIn[3] || '').toUpperCase();
+  if (ampmIn === 'PM' && hIn < 12) hIn += 12;
+  if (ampmIn === 'AM' && hIn === 12) hIn = 0;
+
+  let hOut = parseInt(mOut[1], 10);
+  const minOut = parseInt(mOut[2], 10);
+  const ampmOut = (mOut[3] || '').toUpperCase();
+  if (ampmOut === 'PM' && hOut < 12) hOut += 12;
+  if (ampmOut === 'AM' && hOut === 12) hOut = 0;
+
+  let startMinutes = hIn * 60 + minIn;
+  let endMinutes = hOut * 60 + minOut;
+
+  // Handle shift wrapping across midnight (e.g. 11:00 PM to 02:00 AM)
+  if (endMinutes < startMinutes) {
+    endMinutes += 24 * 60;
+  }
+
+  const diffMins = Math.max(1, endMinutes - startMinutes);
+  const h = Math.floor(diffMins / 60);
+  const remM = diffMins % 60;
+
+  if (h > 0) {
+    return `${h}h ${remM}m`;
+  }
+  return `${remM}m`;
+}
+
+/** Checks whether a live session exceeds the maximum allowable shift window (>14h) */
+export function isStaleLiveSession(timeInStr?: string | null, dateStr?: string | null, now = new Date()): boolean {
+  if (!timeInStr) return true;
+  const m = timeInStr.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+  if (!m) return true;
+
+  let hrs = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  const ampm = (m[3] || '').toUpperCase();
+  if (ampm === 'PM' && hrs < 12) hrs += 12;
+  if (ampm === 'AM' && hrs === 12) hrs = 0;
+
+  const start = dateStr ? new Date(dateStr) : new Date(now);
+  start.setHours(hrs, mins, 0, 0);
+
+  let diffMs = now.getTime() - start.getTime();
+  if (!dateStr && diffMs < 0) {
+    start.setDate(start.getDate() - 1);
+    diffMs = now.getTime() - start.getTime();
+  }
+  return diffMs > MAX_LIVE_SHIFT_MS;
+}
 
 export function computeElapsed(timeInStr?: string | null, dateStr?: string | null, now = new Date()): string {
   if (!timeInStr) return '';
@@ -746,22 +805,31 @@ export function computeElapsed(timeInStr?: string | null, dateStr?: string | nul
   }
   if (diffMs < 0) diffMs = 0;
 
+  // Stale / runaway session guard: stop live ticking if older than 14 hours
+  if (diffMs > MAX_LIVE_SHIFT_MS) {
+    return '';
+  }
+
   const totalMins = Math.floor(diffMs / 60000);
   const h = Math.floor(totalMins / 60);
   const remM = totalMins % 60;
 
+  if (totalMins === 0) {
+    return '0hr 0m';
+  }
   if (h > 0) {
     return `${h}h ${remM}m`;
   }
-  return `${Math.max(1, remM)}m`;
+  return `${remM}m`;
 }
 
 export interface TaskTimeProgressSlotProps {
   task: TaskMapItem;
   now: Date;
+  isLive?: boolean;
 }
 
-export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now }) => {
+export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now, isLive = true }) => {
   const prog = task.progress;
   const upworkClients = useAppStore((s) => s.upworkClients);
 
@@ -774,12 +842,12 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
   const isUpwork = isLauren
     ? hasManualUpworkTag
     : Boolean(
-        isClientConfiguredUpwork ||
-        prog?.isUpwork ||
-        prog?.timeTracker?.toLowerCase().includes('upwork') ||
-        task.list?.name?.toLowerCase().includes('upwork') ||
-        hasManualUpworkTag
-      );
+      isClientConfiguredUpwork ||
+      prog?.isUpwork ||
+      prog?.timeTracker?.toLowerCase().includes('upwork') ||
+      task.list?.name?.toLowerCase().includes('upwork') ||
+      hasManualUpworkTag
+    );
 
   // 1. Missing Time Alert: Red badge with infinity icon
   if (prog?.isMissingTime) {
@@ -794,34 +862,56 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
     );
   }
 
-  // 2. Completed Time: Formatted time span
-  if (prog?.timeIn && prog?.timeOut) {
+  // 2. Completed Time: Time In - Time Out (or Time Out alone)
+  // When a task has a timeout, display the actual logged time range (e.g. 9:40 AM - 10:38 AM or 8:20 PM)
+  if (prog?.timeOut) {
+    const timeOutDisplay = cleanDisplayTime(prog.timeOut);
+    const timeInDisplay = cleanDisplayTime(prog.timeIn);
+    const duration = prog.timeIn ? computeDuration(prog.timeIn, prog.timeOut) : '';
+    const label = timeInDisplay ? `${timeInDisplay} - ${timeOutDisplay}` : timeOutDisplay;
+
     return (
       <div
-        className="text-[10px] font-mono text-zinc-300 font-medium truncate max-w-[125px] px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/60 shadow-xs select-none"
-        title={`Logged time: ${prog.timeIn} - ${prog.timeOut}${prog.maName ? ` (${prog.maName})` : ''}`}
+        className="text-[9.5px] font-mono text-zinc-300 font-medium truncate max-w-full px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/60 shadow-xs select-none tracking-tight"
+        title={`Logged time: ${prog.timeIn ? `${prog.timeIn} - ` : ''}${prog.timeOut}${duration ? ` (${duration})` : ''}${prog.maName ? ` • ${prog.maName}` : ''}`}
       >
-        {prog.timeIn} - {prog.timeOut}
+        {label}
       </div>
     );
   }
 
-  // 3. In-Progress Live Time: Counting elapsed minutes to hours
+  // 3. In-Progress Live Time: Time In | Mins or Hrs with mins (Counting elapsed)
   if (prog?.timeIn && !prog?.timeOut) {
+    const isStale = isStaleLiveSession(prog.timeIn, prog.date, now);
     const elapsed = computeElapsed(prog.timeIn, prog.date, now);
+    const timeInDisplay = cleanDisplayTime(prog.timeIn);
+
+    // If session is runaway / stale (>14h or unclosed old date), or not marked as active live task, display static Time In without live pinging beacon
+    if (!isLive || isStale || !elapsed) {
+      return (
+        <div
+          className="text-[10px] font-mono text-zinc-400 font-medium truncate max-w-full px-1.5 py-0.5 rounded bg-zinc-800/40 border border-zinc-700/40 select-none"
+          title={`Clocked in at ${prog.timeIn}${prog.date ? ` on ${prog.date}` : ''} (session ended or unclosed)`}
+        >
+          {timeInDisplay}
+        </div>
+      );
+    }
+
+    const liveText = `${timeInDisplay} | ${elapsed}`;
 
     // If it's an Upwork task, highlight the time badge in pure white!
     if (isUpwork) {
       return (
         <div
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/15 border border-white/50 text-white font-bold text-[10px] shadow-[0_0_8px_rgba(255,255,255,0.12)] select-none"
-          title={`Upwork task in progress since ${prog.timeIn} (${elapsed || '0m'} elapsed)`}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/15 border border-white/50 text-white font-bold text-[10px] shadow-[0_0_8px_rgba(255,255,255,0.12)] select-none truncate max-w-full"
+          title={`Upwork task in progress since ${prog.timeIn} (${elapsed} elapsed)`}
         >
           <span className="relative flex size-1.5 shrink-0">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
             <span className="relative inline-flex rounded-full size-1.5 bg-white" />
           </span>
-          <span className="font-mono">{elapsed || '0m'}</span>
+          <span className="font-mono truncate">{liveText}</span>
         </div>
       );
     }
@@ -829,14 +919,14 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
     // Typical In-Progress task: Highlight the time badge in canonical #D04A7C magenta!
     return (
       <div
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D04A7C]/15 border border-[#D04A7C]/40 text-[#D04A7C] font-bold text-[10px] shadow-[0_0_8px_rgba(208,74,124,0.12)] select-none"
-        title={`In progress since ${prog.timeIn} (${elapsed || '0m'} elapsed)`}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D04A7C]/15 border border-[#D04A7C]/40 text-[#D04A7C] font-bold text-[10px] shadow-[0_0_8px_rgba(208,74,124,0.12)] select-none truncate max-w-full"
+        title={`In progress since ${prog.timeIn} (${elapsed} elapsed)`}
       >
         <span className="relative flex size-1.5 shrink-0">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D04A7C] opacity-75" />
           <span className="relative inline-flex rounded-full size-1.5 bg-[#D04A7C]" />
         </span>
-        <span className="font-mono">{elapsed || '0m'}</span>
+        <span className="font-mono truncate">{liveText}</span>
       </div>
     );
   }

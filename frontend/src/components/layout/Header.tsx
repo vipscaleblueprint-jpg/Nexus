@@ -19,11 +19,17 @@ const PAGE_TITLES: Record<string, string> = {
   "/settings/users": "Admin Settings",
 };
 
+const MAX_UPWORK_CONTINUOUS_MS = 14 * 60 * 60 * 1000; // 14 hours max continuous shift window
+
 function formatUpworkElapsed(startedAt: string | Date | undefined, now: Date): string {
   if (!startedAt) return '0 hr 00 mins';
   const startMs = new Date(startedAt).getTime();
   if (isNaN(startMs)) return '0 hr 00 mins';
   const diffMs = Math.max(0, now.getTime() - startMs);
+  // Guard against runaway / stale sessions
+  if (diffMs > MAX_UPWORK_CONTINUOUS_MS) {
+    return '0 hr 00 mins';
+  }
   const totalMins = Math.floor(diffMs / 60000);
   const hrs = Math.floor(totalMins / 60);
   const mins = totalMins % 60;
@@ -64,8 +70,18 @@ export function Header() {
     return () => clearInterval(interval);
   }, [activeUpworkSessions?.length]);
 
-  // Lauren is project-based; strictly ignore unless explicitly marked as UPWORK
+  // Filter out Lauren (unless explicitly marked UPWORK), sessions with a recorded timeOut or stoppedAt,
+  // and runaway stale sessions exceeding maximum shift duration (> 14h)
   const validUpworkSessions = (activeUpworkSessions || []).filter((s) => {
+    if (s.timeOut || s.stoppedAt || (s as any).active === false) {
+      return false;
+    }
+    if (s.startedAt) {
+      const startMs = new Date(s.startedAt).getTime();
+      if (!isNaN(startMs) && (now.getTime() - startMs > MAX_UPWORK_CONTINUOUS_MS)) {
+        return false;
+      }
+    }
     const name = `${s.clientName || ''} ${s.pmName || ''} ${s.taskTitle || ''}`.toLowerCase();
     if (name.includes('lauren')) {
       return Boolean((s as any).isManuallyMarkedUpwork);

@@ -660,8 +660,20 @@ export async function resetPassword(req: Request, res: Response) {
 // -----------------------------------------------------------------------------
 
 export async function ssoAuth(req: Request, res: Response) {
-  const token = req.query.token as string;
+  const token = (req.cookies?.sso_token as string) || (req.query.token as string);
   const returnTo = (req.query.returnTo || req.query.next) as string | undefined;
+
+  // Clear handoff cookie immediately so it cannot be reused
+  if (req.cookies?.sso_token) {
+    res.clearCookie('sso_token', {
+      domain: req.hostname.endsWith('vipscaleph.com') ? '.vipscaleph.com' : undefined,
+      path: '/',
+      httpOnly: true,
+      secure: IS_PROD,
+      sameSite: IS_PROD ? 'none' : 'lax',
+    });
+  }
+
   if (!token) {
     return res.redirect('https://tools.vipscaleph.com/api/sso/nexus');
   }

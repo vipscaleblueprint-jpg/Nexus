@@ -25,7 +25,9 @@ export default function LoginPage() {
       const params = new URLSearchParams(window.location.search);
       const urlError = params.get('error');
       if (urlError) {
-        setErrorMsg(decodeURIComponent(urlError));
+        const decoded = decodeURIComponent(urlError);
+        const isTechnicalLeak = /prisma|database|invocation|p100\d|connect|econnrefused/i.test(decoded);
+        setErrorMsg(isTechnicalLeak ? 'Authentication service temporarily unavailable. Please try again shortly.' : decoded);
       }
 
       // If user already has an active session, automatically forward to destination link or workspace

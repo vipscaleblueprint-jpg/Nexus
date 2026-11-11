@@ -390,7 +390,13 @@ export async function googleCallback(req: Request, res: Response) {
     return res.redirect(targetUrl);
   } catch (err: any) {
     log.error({ err }, `Google OAuth callback failed: ${errMsg(err)}`);
-    return res.redirect(`${frontendLoginUrl}?error=${encodeURIComponent(err.message)}`);
+    const rawMsg = typeof err?.message === 'string' ? err.message : '';
+    // Avoid leaking internal database, Prisma, or stack trace details to client URL
+    const isTechnicalLeak = /prisma|database|invocation|p100\d|connect|econnrefused|vps2|table|column/i.test(rawMsg);
+    const clientMsg = isTechnicalLeak || !rawMsg
+      ? 'Authentication service temporarily unavailable. Please try again shortly.'
+      : rawMsg;
+    return res.redirect(`${frontendLoginUrl}?error=${encodeURIComponent(clientMsg)}`);
   }
 }
 

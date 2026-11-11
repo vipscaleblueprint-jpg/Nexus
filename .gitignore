@@ -280,3 +280,4 @@ Leo - MA Daily Schedule - 2025.csv
 server/scripts/backfill-emoji-comment-images.ts
 server/scripts/check-mason.ts
 server/scripts/restore-clickup-mirrored-comments.ts
+server/src/scripts/scratch-query-luse.ts

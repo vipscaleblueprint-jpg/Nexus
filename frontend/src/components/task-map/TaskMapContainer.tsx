@@ -501,6 +501,8 @@ export const TaskMapContainer: React.FC = () => {
     const isExcluded =
       s === 'WAITING' ||
       s.includes('WAITING') ||
+      s === 'CRM' ||
+      s.includes('CRM') ||
       s === 'DAILY' ||
       s.includes('DAILY') ||
       s === 'WEEKLY' ||
@@ -512,8 +514,9 @@ export const TaskMapContainer: React.FC = () => {
       !!(existingTask as any)?.recurringConfig ||
       upStatuses.some(
         (st) =>
-          ['WAITING', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
           st.includes('WAITING') ||
+          st.includes('CRM') ||
           st.includes('DAILY') ||
           st.includes('WEEKLY') ||
           st.includes('MONTHLY') ||
@@ -526,6 +529,9 @@ export const TaskMapContainer: React.FC = () => {
         s === 'REVISION' ||
         s === 'ONHOLD' ||
         s.includes('HOLD') ||
+        !existingTask?.assigneeId ||
+        upStatuses.includes('AVAILABLETASK') ||
+        upStatuses.some((st) => st.includes('AVAILABLE')) ||
         upStatuses.includes('HANDOVER') ||
         upStatuses.includes('HAND-OVER') ||
         upStatuses.includes('ONHOLD') ||

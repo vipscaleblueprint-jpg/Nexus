@@ -172,33 +172,33 @@ export const ColumnPriorityDropdown: React.FC<{
       case 'URGENT':
         return {
           label: 'Urgent',
-          flagClass: 'text-red-400',
-          btnClass: 'bg-red-950/70 hover:bg-red-950 text-red-200 border-red-700/80',
-          badgeClass: 'bg-black/40 text-red-300',
+          flagClass: 'text-red-500 dark:text-red-400',
+          btnClass: 'bg-red-100 hover:bg-red-200 text-red-700 border-red-300 dark:bg-red-950/70 dark:hover:bg-red-950 dark:text-red-200 dark:border-red-700/80',
+          badgeClass: 'bg-red-200/60 text-red-800 dark:bg-black/40 dark:text-red-300',
           count: counts.URGENT,
         };
       case 'HIGH':
         return {
           label: 'High',
-          flagClass: 'text-amber-400',
-          btnClass: 'bg-amber-950/70 hover:bg-amber-950 text-amber-200 border-amber-700/80',
-          badgeClass: 'bg-black/40 text-amber-300',
+          flagClass: 'text-amber-500 dark:text-amber-400',
+          btnClass: 'bg-amber-100 hover:bg-amber-200 text-amber-800 border-amber-300 dark:bg-amber-950/70 dark:hover:bg-amber-950 dark:text-amber-200 dark:border-amber-700/80',
+          badgeClass: 'bg-amber-200/60 text-amber-900 dark:bg-black/40 dark:text-amber-300',
           count: counts.HIGH,
         };
       case 'NORMAL':
         return {
           label: 'Normal',
-          flagClass: 'text-blue-400',
-          btnClass: 'bg-blue-950/70 hover:bg-blue-950 text-blue-200 border-blue-700/80',
-          badgeClass: 'bg-black/40 text-blue-300',
+          flagClass: 'text-blue-500 dark:text-blue-400',
+          btnClass: 'bg-blue-100 hover:bg-blue-200 text-blue-700 border-blue-300 dark:bg-blue-950/70 dark:hover:bg-blue-950 dark:text-blue-200 dark:border-blue-700/80',
+          badgeClass: 'bg-blue-200/60 text-blue-800 dark:bg-black/40 dark:text-blue-300',
           count: counts.NORMAL,
         };
       case 'LOW':
         return {
           label: 'Low',
-          flagClass: 'text-zinc-400',
-          btnClass: 'bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border-zinc-700',
-          badgeClass: 'bg-black/40 text-zinc-300',
+          flagClass: 'text-zinc-500 dark:text-zinc-400',
+          btnClass: 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-750 dark:text-zinc-200 dark:border-zinc-700',
+          badgeClass: 'bg-zinc-200 text-zinc-700 dark:bg-black/40 dark:text-zinc-300',
           count: counts.LOW,
         };
       default:
@@ -403,6 +403,8 @@ export const CardStatusDropdown: React.FC<{
     { label: 'Pending', color: '#D29A2A' },
     { label: 'To review', color: '#1d4ed8' },
     { label: 'Revision', color: '#5B6BD6' },
+    { label: 'CRM', color: '#22A3AE' },
+    { label: 'Waiting', color: '#D9534F' },
     { label: 'Done', color: '#166534' },
     { label: 'Closed', color: '#10b981', isClosed: true },
     { label: 'KYC', color: '#059669', isKyc: true },

@@ -297,22 +297,51 @@ export const isFunnelAudit = (name: string): boolean => {
   return norm === 'funnel audit';
 };
 
+export function resolveTargetTaskOrSubtask(task: any, subtaskId?: string): any {
+  if (!task) return task;
+  if (!subtaskId || task.id === subtaskId || task.subtaskId === subtaskId) {
+    return task;
+  }
+  const found = (task.subtasks || []).find((s: any) => s.id === subtaskId);
+  if (found) {
+    const subChecklists = (found.checklists && found.checklists.length > 0)
+      ? found.checklists
+      : (task.checklists || []).filter((c: any) => c.subtaskId === subtaskId);
+    return {
+      ...found,
+      id: subtaskId,
+      taskId: task.id || found.taskId,
+      title: found.title || '',
+      assigneeRoleRestrictions: found.assigneeRoleRestrictions || [],
+      checklists: subChecklists,
+    };
+  }
+  return {
+    id: subtaskId,
+    taskId: task.id,
+    title: '',
+    checklists: (task.checklists || []).filter((c: any) => c.subtaskId === subtaskId),
+  };
+}
+
 /**
  * Checks if a task requires Level 1 audits (UI UX Audit or Design Audit).
  * If a task has no UI UX or Design audit, MA selecting "To Review" routes directly to Checking status.
  */
-export function hasUiUxOrDesignAudit(task: any): boolean {
+export function hasUiUxOrDesignAudit(task: any, subtaskId?: string): boolean {
   if (!task) return false;
-  const status = getTaskAuditStatus(task);
+  const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
+  const status = getTaskAuditStatus(targetTask);
   return status.requiredAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a));
 }
 
 /**
  * Checks whether all required Level 1 audits (UI UX Audit and Design Audit) are complete.
  */
-export function areLevel1AuditsComplete(task: any): boolean {
+export function areLevel1AuditsComplete(task: any, subtaskId?: string): boolean {
   if (!task) return true;
-  const status = getTaskAuditStatus(task);
+  const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
+  const status = getTaskAuditStatus(targetTask);
   const requiredLevel1 = status.requiredAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a));
   if (requiredLevel1.length === 0) return true;
   return !status.uncheckedAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a));
@@ -321,9 +350,10 @@ export function areLevel1AuditsComplete(task: any): boolean {
 /**
  * Checks whether Instruction Audit is complete.
  */
-export function isInstructionAuditComplete(task: any): boolean {
+export function isInstructionAuditComplete(task: any, subtaskId?: string): boolean {
   if (!task) return true;
-  const status = getTaskAuditStatus(task);
+  const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
+  const status = getTaskAuditStatus(targetTask);
   const requiredInstructions = status.requiredAudits.filter(isInstructionAudit);
   if (requiredInstructions.length === 0) return true;
   return !status.uncheckedAudits.some(isInstructionAudit);
@@ -341,7 +371,7 @@ export interface AuditPermissionCheck {
  * - Level 2 (Instruction): Blocked if task requires Level 1 audits and any are not yet done.
  * - Level 3 (Funnel): Blocked if Level 1 audits or Instruction Audit are not yet done.
  */
-export function canPerformAudit(auditName: string, task: any): AuditPermissionCheck {
+export function canPerformAudit(auditName: string, task: any, subtaskId?: string): AuditPermissionCheck {
   if (!task) return { allowed: true, missingPrerequisites: [] };
 
   const norm = normalizeAuditName(auditName);
@@ -351,7 +381,8 @@ export function canPerformAudit(auditName: string, task: any): AuditPermissionCh
     return { allowed: true, missingPrerequisites: [] };
   }
 
-  const status = getTaskAuditStatus(task);
+  const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
+  const status = getTaskAuditStatus(targetTask);
 
   // Uncompleted Level 1 audits
   const missingLevel1 = status.uncheckedAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a));

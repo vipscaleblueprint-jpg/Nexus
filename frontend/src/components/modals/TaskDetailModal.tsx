@@ -8652,6 +8652,7 @@ export function SubtaskDetailView({
               <div className="mt-8 flex flex-col gap-2 w-full">
                 <AuditSection
                   task={parentTask}
+                  subtask={subtask}
                   title={subtask.title}
                   subtaskId={subtask.id}
                   users={workspaceUsers || []}

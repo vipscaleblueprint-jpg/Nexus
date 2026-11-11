@@ -41,6 +41,7 @@ const generateTempExclusionId = () => `temp-ex-${Date.now()}-${Math.random().toS
 
 interface AuditSectionProps {
   task: Task;
+  subtask?: any;
   title: string;
   subtaskId?: string; 
   users: UserModel[];
@@ -50,7 +51,7 @@ interface AuditSectionProps {
   socket?: any;
 }
 
-function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUpdateChecklists, currentUser, socket }: AuditSectionProps) {
+function AuditSectionComponent({ task, subtask, title, subtaskId, users, checklists, onUpdateChecklists, currentUser, socket }: AuditSectionProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isShaking, setIsShaking] = useState(false);
   const [shakingAuditItem, setShakingAuditItem] = useState<string | null>(null);
@@ -374,6 +375,19 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
     if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
     return all.findIndex(t => normalizeAuditName(t) === norm) === i;
   }))), [title, auditorRoles, activeChecklistItems, excludedAudits, hasAiPickedAudits]);
+
+  const targetForAudit = useMemo(() => {
+    if (!subtaskId) return { ...task, checklists: localChecklists };
+    const sub = subtask || (task.subtasks || []).find((s: any) => s.id === subtaskId);
+    return {
+      ...sub,
+      id: subtaskId,
+      taskId: task.id,
+      title: title || sub?.title || '',
+      assigneeRoleRestrictions: auditorRoles,
+      checklists: localChecklists,
+    };
+  }, [task, subtask, subtaskId, title, auditorRoles, localChecklists]);
 
   // Unified lookup map for fast O(1) item access
   const auditItemsMap = useMemo(() => {
@@ -1160,7 +1174,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                   }
 
                   const displayLabel = text === 'UI UX Audit' ? 'UI/UX Audit' : text;
-                  const hierarchyCheck: AuditPermissionCheck = !isCompleted ? canPerformAudit(text, task) : { allowed: true, missingPrerequisites: [] };
+                  const hierarchyCheck: AuditPermissionCheck = !isCompleted ? canPerformAudit(text, targetForAudit, subtaskId) : { allowed: true, missingPrerequisites: [] };
                   const isLockedByHierarchy = !isCompleted && !hierarchyCheck.allowed;
 
                   return (
@@ -1203,7 +1217,7 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                               return;
                             }
                             if (!isCompleted) {
-                              const permCheck = canPerformAudit(text, task);
+                              const permCheck = canPerformAudit(text, targetForAudit, subtaskId);
                               if (!permCheck.allowed) {
                                 setShakingAuditItem(text);
                                 setIsShaking(true);

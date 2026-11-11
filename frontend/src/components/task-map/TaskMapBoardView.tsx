@@ -101,7 +101,7 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
     return {
       priority: 1,
       label: 'Instruction',
-      badgeClass: 'bg-emerald-950/70 text-emerald-300 border-emerald-800/60',
+      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/70 dark:text-emerald-300 dark:border-emerald-800/60',
     };
   }
 
@@ -113,7 +113,7 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
     return {
       priority: 2,
       label: 'Designer',
-      badgeClass: 'bg-pink-950/70 text-pink-300 border-pink-800/60',
+      badgeClass: 'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/70 dark:text-pink-300 dark:border-pink-800/60',
     };
   }
 
@@ -122,7 +122,7 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
     return {
       priority: 3,
       label: 'UI/UX',
-      badgeClass: 'bg-cyan-950/70 text-cyan-300 border-cyan-800/60',
+      badgeClass: 'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950/70 dark:text-cyan-300 dark:border-cyan-800/60',
     };
   }
 
@@ -131,7 +131,7 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
     return {
       priority: 4,
       label: 'Funnel',
-      badgeClass: 'bg-amber-950/70 text-amber-300 border-amber-800/60',
+      badgeClass: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60',
     };
   }
 
@@ -140,7 +140,7 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
     return {
       priority: 5,
       label: 'Auditor',
-      badgeClass: 'bg-purple-950/70 text-purple-300 border-purple-800/60',
+      badgeClass: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/70 dark:text-purple-300 dark:border-purple-800/60',
     };
   }
 
@@ -148,7 +148,7 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
   return {
     priority: 6,
     label: '',
-    badgeClass: 'bg-zinc-800 text-zinc-400 border-zinc-700/60',
+    badgeClass: 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700/60',
   };
 }
 
@@ -319,13 +319,12 @@ const DraggableTaskCard: React.FC<{
       ref={setNodeRef}
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
-      className={`touch-none transition-all duration-200 ease-out ${
-        isDragging
+      className={`touch-none transition-all duration-200 ease-out ${isDragging
           ? 'opacity-25 scale-[0.98] border border-dashed border-zinc-700 rounded-xl bg-zinc-900/40 pointer-events-none'
           : disabled
-          ? 'cursor-default'
-          : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
-      }`}
+            ? 'cursor-default'
+            : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
+        }`}
     >
       {children}
     </div>
@@ -347,9 +346,8 @@ const DroppableColumn: React.FC<{
   return (
     <div
       ref={setNodeRef}
-      className={`${className || ''} transition-all duration-200 ${
-        isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/25 shadow-xl shadow-blue-950/40 scale-[1.005]' : ''
-      }`}
+      className={`${className || ''} transition-all duration-200 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/25 shadow-xl shadow-blue-950/40 scale-[1.005]' : ''
+        }`}
     >
       {children}
     </div>
@@ -523,33 +521,33 @@ const ColumnPriorityDropdown: React.FC<{
       case 'URGENT':
         return {
           label: 'Urgent',
-          flagClass: 'text-red-400',
-          btnClass: 'bg-red-950/70 hover:bg-red-950 text-red-200 border-red-700/80',
-          badgeClass: 'bg-black/40 text-red-300',
+          flagClass: 'text-red-500 dark:text-red-400',
+          btnClass: 'bg-red-100 hover:bg-red-200 text-red-700 border-red-300 dark:bg-red-950/70 dark:hover:bg-red-950 dark:text-red-200 dark:border-red-700/80',
+          badgeClass: 'bg-red-200/60 text-red-800 dark:bg-black/40 dark:text-red-300',
           count: counts.URGENT,
         };
       case 'HIGH':
         return {
           label: 'High',
-          flagClass: 'text-amber-400',
-          btnClass: 'bg-amber-950/70 hover:bg-amber-950 text-amber-200 border-amber-700/80',
-          badgeClass: 'bg-black/40 text-amber-300',
+          flagClass: 'text-amber-500 dark:text-amber-400',
+          btnClass: 'bg-amber-100 hover:bg-amber-200 text-amber-800 border-amber-300 dark:bg-amber-950/70 dark:hover:bg-amber-950 dark:text-amber-200 dark:border-amber-700/80',
+          badgeClass: 'bg-amber-200/60 text-amber-900 dark:bg-black/40 dark:text-amber-300',
           count: counts.HIGH,
         };
       case 'NORMAL':
         return {
           label: 'Normal',
-          flagClass: 'text-blue-400',
-          btnClass: 'bg-blue-950/70 hover:bg-blue-950 text-blue-200 border-blue-700/80',
-          badgeClass: 'bg-black/40 text-blue-300',
+          flagClass: 'text-blue-500 dark:text-blue-400',
+          btnClass: 'bg-blue-100 hover:bg-blue-200 text-blue-700 border-blue-300 dark:bg-blue-950/70 dark:hover:bg-blue-950 dark:text-blue-200 dark:border-blue-700/80',
+          badgeClass: 'bg-blue-200/60 text-blue-800 dark:bg-black/40 dark:text-blue-300',
           count: counts.NORMAL,
         };
       case 'LOW':
         return {
           label: 'Low',
-          flagClass: 'text-zinc-400',
-          btnClass: 'bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border-zinc-700',
-          badgeClass: 'bg-black/40 text-zinc-300',
+          flagClass: 'text-zinc-500 dark:text-zinc-400',
+          btnClass: 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-750 dark:text-zinc-200 dark:border-zinc-700',
+          badgeClass: 'bg-zinc-200 text-zinc-700 dark:bg-black/40 dark:text-zinc-300',
           count: counts.LOW,
         };
       default:
@@ -607,11 +605,10 @@ const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'ALL'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'ALL'
                   ? 'bg-zinc-800 text-zinc-100 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-zinc-500 shrink-0" />
@@ -634,11 +631,10 @@ const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'URGENT'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'URGENT'
                   ? 'bg-red-950/60 text-red-200 border border-red-700/60 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-red-400 shrink-0" />
@@ -646,11 +642,10 @@ const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'URGENT'
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'URGENT'
                       ? 'bg-red-900/50 text-red-300'
                       : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                    }`}
                 >
                   {counts.URGENT}
                 </span>
@@ -667,11 +662,10 @@ const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'HIGH'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'HIGH'
                   ? 'bg-amber-950/60 text-amber-200 border border-amber-700/60 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-amber-400 shrink-0" />
@@ -679,11 +673,10 @@ const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'HIGH'
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'HIGH'
                       ? 'bg-amber-900/50 text-amber-300'
                       : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                    }`}
                 >
                   {counts.HIGH}
                 </span>
@@ -700,11 +693,10 @@ const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'NORMAL'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'NORMAL'
                   ? 'bg-blue-950/60 text-blue-200 border border-blue-700/60 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-blue-400 shrink-0" />
@@ -712,11 +704,10 @@ const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'NORMAL'
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'NORMAL'
                       ? 'bg-blue-900/50 text-blue-300'
                       : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                    }`}
                 >
                   {counts.NORMAL}
                 </span>
@@ -733,11 +724,10 @@ const ColumnPriorityDropdown: React.FC<{
                 setIsOpen(false);
                 setCoords(null);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                currentKey === 'LOW'
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${currentKey === 'LOW'
                   ? 'bg-zinc-800 text-zinc-200 border border-zinc-700 font-semibold'
                   : 'text-zinc-300 hover:bg-zinc-800/60'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Flag className="size-3 text-zinc-400 shrink-0" />
@@ -745,11 +735,10 @@ const ColumnPriorityDropdown: React.FC<{
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    currentKey === 'LOW'
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${currentKey === 'LOW'
                       ? 'bg-zinc-700 text-zinc-300'
                       : 'bg-zinc-800/80 text-zinc-400'
-                  }`}
+                    }`}
                 >
                   {counts.LOW}
                 </span>
@@ -964,11 +953,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
         !t.progress?.timeOut &&
         isTaskLiveWorking(t, t.progress.maName, currentTime) &&
         (shiftUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name)) ||
-         (allUsers && allUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name))))
+          (allUsers && allUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name))))
       );
       if (hasActiveWorker) return false;
 
       const isExcluded =
+        s === 'WAITING' ||
+        s.includes('WAITING') ||
+        s === 'CRM' ||
+        s.includes('CRM') ||
         s === 'DAILY' ||
         s.includes('DAILY') ||
         s === 'WEEKLY' ||
@@ -979,7 +972,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
         s.includes('RECURRING') ||
         !!(t as any)?.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          st.includes('WAITING') ||
+          st.includes('CRM') ||
           st.includes('DAILY') ||
           st.includes('WEEKLY') ||
           st.includes('MONTHLY') ||
@@ -988,9 +983,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (isExcluded) return false;
       const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
       const isRevision = s === 'REVISION' || mapStatuses.includes('REVISION');
-      const isWaiting = s === 'WAITING' || s.includes('WAITING') || mapStatuses.some((st: string) => st.includes('WAITING'));
       const isOnHold = s === 'ONHOLD' || s.includes('HOLD') || mapStatuses.some((st: string) => st.includes('HOLD'));
-      if (!isPending && !isRevision && !isWaiting && !isOnHold && !isAvailableSubStatus && !isUnassigned) return false;
+      if (!isPending && !isRevision && !isOnHold && !isAvailableSubStatus && !isUnassigned) return false;
 
       // Admin task check
       const isAdmin = isTaskUnderAdmin(t);
@@ -1548,14 +1542,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
         return;
       }
 
+      const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((currentTask?.status || '').toUpperCase().trim());
+      const nextStatus = isCadence ? currentTask!.status : 'In progress';
       try {
         await taskMapApi.assignTask(taskId, targetUserId);
         if (onTaskUpdate) {
-          await onTaskUpdate(taskId, { status: 'In progress', assigneeId: targetUserId });
+          await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
         } else {
-          await tasksApi.updateTask(taskId, { status: 'In progress', assigneeId: targetUserId } as any).catch(console.error);
+          await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
         }
-        toast.success(`Task set In Progress for ${targetUser?.name || 'user'}`);
+        toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
         onDataRefresh();
       } catch (err: any) {
         toast.error(err.message || 'Failed to set task In Progress');
@@ -1602,17 +1598,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const handleSelectInProgressTask = async (taskId: string, targetUserId: string) => {
     const targetUser = getUserProfile(targetUserId);
+    const existingTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
+    const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
+    const nextStatus = isCadence ? existingTask!.status : 'In progress';
     try {
       await taskMapApi.assignTask(taskId, targetUserId);
       if (onTaskUpdate) {
-        await onTaskUpdate(taskId, { status: 'In progress', assigneeId: targetUserId });
+        await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
       } else {
-        await tasksApi.updateTask(taskId, { status: 'In progress', assigneeId: targetUserId } as any).catch(console.error);
+        await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
       }
-      toast.success(`Task set In Progress for ${targetUser?.name || 'user'}`);
+      toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
       onDataRefresh();
     } catch (err: any) {
-      toast.error(err.message || 'Failed to set task In Progress');
+      toast.error(err.message || 'Failed to assign task');
     }
   };
 
@@ -1827,9 +1826,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
               <DroppableColumn
                 key="available-pool-collapsed"
                 id="available-pool"
-                className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-full max-h-full min-h-0 transition-all cursor-pointer hover:border-blue-500/50 ${
-                  isPinned ? 'sticky left-0 z-20 ring-1 ring-blue-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
-                }`}
+                className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-border rounded-2xl shadow-xl h-full max-h-full min-h-0 transition-all cursor-pointer hover:border-blue-500/50 ${isPinned ? 'sticky left-0 z-20 ring-1 ring-blue-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                  }`}
               >
                 <button
                   type="button"
@@ -1866,9 +1864,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
           return (
             <DroppableColumn
               id="available-pool"
-              className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${
-                isPinned ? 'sticky left-0 z-20 ring-1 ring-blue-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
-              }`}
+              className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-border rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${isPinned ? 'sticky left-0 z-20 ring-1 ring-blue-500/40 shadow-2xl backdrop-blur-md bg-card/95' : ''
+                }`}
             >
               {/* Header Top Row: Left side has dot & title; Right side has Search, Pin, and Collapse */}
               <div className="flex items-center justify-between h-9 pb-2 border-b border-border/80 mb-2">
@@ -1894,11 +1891,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => togglePinColumn('available')}
-                    className={`p-1 rounded-md transition-colors cursor-pointer ${
-                      isPinned
+                    className={`p-1 rounded-md transition-colors cursor-pointer ${isPinned
                         ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
                         : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                    }`}
+                      }`}
                     title={isPinned ? 'Unpin column' : 'Pin column'}
                   >
                     <Pin className={`size-3.5 rotate-45 ${isPinned ? 'fill-blue-400/40' : ''}`} />
@@ -1931,11 +1927,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => toggleColumnSearch('available')}
-                      className={`p-1 rounded-md transition-colors cursor-pointer ${
-                        searchQuery
+                      className={`p-1 rounded-md transition-colors cursor-pointer ${searchQuery
                           ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
                           : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                      }`}
+                        }`}
                       title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
                     >
                       <Search className="size-3.5" />
@@ -1984,7 +1979,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
               </div>
 
               {/* Cards List */}
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1 min-h-0">
+              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
                 {showAvailableCutout && (
                   <CardCutoutPlaceholder task={activeDragTask!} targetName="Available Tasks" isUnassign />
                 )}
@@ -2012,12 +2007,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     const isUpwork = isLauren
                       ? hasManualUpworkTag
                       : Boolean(
-                          isClientConfiguredUpwork ||
-                          task.progress?.isUpwork ||
-                          task.progress?.timeTracker?.toLowerCase().includes('upwork') ||
-                          task.list?.name?.toLowerCase().includes('upwork') ||
-                          hasManualUpworkTag
-                        );
+                        isClientConfiguredUpwork ||
+                        task.progress?.isUpwork ||
+                        task.progress?.timeTracker?.toLowerCase().includes('upwork') ||
+                        task.list?.name?.toLowerCase().includes('upwork') ||
+                        hasManualUpworkTag
+                      );
                     const isMissingTime = Boolean(task.progress?.isMissingTime);
                     // Only "live" when the MA actively clocked in (Time In) and has not clocked out
                     const isLive = Boolean(
@@ -2030,10 +2025,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     const cardBorderClass = isUpwork && isLive
                       ? 'border-white/60 ring-1 ring-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)]'
                       : isMissingTime
-                      ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
-                      : isLive
-                      ? 'border-[#D04A7C]/80 ring-1 ring-[#D04A7C]/30 shadow-[0_0_14px_rgba(208,74,124,0.15)]'
-                      : 'border-border hover:border-zinc-700 shadow-md';
+                        ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
+                        : isLive
+                          ? 'border-[#D04A7C]/80 ring-1 ring-[#D04A7C]/30 shadow-[0_0_14px_rgba(208,74,124,0.15)]'
+                          : 'border-border hover:border-zinc-700 shadow-md';
 
                     return (
                       <DraggableTaskCard
@@ -2201,9 +2196,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
               <DroppableColumn
                 key={userId}
                 id={`user-${userId}`}
-                className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-zinc-800/80 rounded-2xl shadow-xl h-full max-h-full min-h-0 transition-all cursor-pointer hover:border-zinc-700 ${
-                  isPinned ? 'ring-1 ring-blue-500/40 border-blue-500/30' : ''
-                }`}
+                className={`w-12 shrink-0 flex flex-col items-center py-4 bg-card/90 border border-zinc-800/80 rounded-2xl shadow-xl h-full max-h-full min-h-0 transition-all cursor-pointer hover:border-zinc-700 ${isPinned ? 'ring-1 ring-blue-500/40 border-blue-500/30' : ''
+                  }`}
               >
                 <button
                   type="button"
@@ -2250,9 +2244,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
             <DroppableColumn
               key={userId}
               id={`user-${userId}`}
-              className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-zinc-800/80 rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${
-                isPinned ? 'ring-1 ring-blue-500/30 border-blue-500/40 shadow-blue-950/20' : ''
-              }`}
+              className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-zinc-800/80 rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${isPinned ? 'ring-1 ring-blue-500/30 border-blue-500/40 shadow-blue-950/20' : ''
+                }`}
             >
               {/* User Column Header */}
               {(() => {
@@ -2313,11 +2306,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                         <button
                           type="button"
                           onClick={() => togglePinColumn(userId)}
-                          className={`p-1 rounded-md transition-colors cursor-pointer ${
-                            isPinned
+                          className={`p-1 rounded-md transition-colors cursor-pointer ${isPinned
                               ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
                               : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                          }`}
+                            }`}
                           title={isPinned ? 'Unpin column' : 'Pin column'}
                         >
                           <Pin className={`size-3.5 rotate-45 ${isPinned ? 'fill-blue-400/40' : ''}`} />
@@ -2350,11 +2342,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           <button
                             type="button"
                             onClick={() => toggleColumnSearch(userId)}
-                            className={`p-1 rounded-md transition-colors cursor-pointer ${
-                              searchQuery
+                            className={`p-1 rounded-md transition-colors cursor-pointer ${searchQuery
                                 ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
                                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                            }`}
+                              }`}
                             title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
                           >
                             <Search className="size-3.5" />
@@ -2433,12 +2424,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   const isUpwork = isLauren
                     ? hasManualUpworkTag
                     : Boolean(
-                        isClientConfiguredUpwork ||
-                        effectiveProgress?.isUpwork ||
-                        effectiveProgress?.timeTracker?.toLowerCase().includes('upwork') ||
-                        task.list?.name?.toLowerCase().includes('upwork') ||
-                        hasManualUpworkTag
-                      );
+                      isClientConfiguredUpwork ||
+                      effectiveProgress?.isUpwork ||
+                      effectiveProgress?.timeTracker?.toLowerCase().includes('upwork') ||
+                      task.list?.name?.toLowerCase().includes('upwork') ||
+                      hasManualUpworkTag
+                    );
                   const isMissingTime = Boolean(effectiveProgress?.isMissingTime);
                   // Live working when the MA actively clocked in (Time In) and has not clocked out (and not stale)
                   // STRICT RULE: Only the single task in the In Progress slot (activeInProgTask) can EVER be Live Working!
@@ -2453,10 +2444,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   const cardBorderClass = isUpwork && isLiveWorking
                     ? 'border-white/80 ring-2 ring-white/30 shadow-[0_0_18px_rgba(255,255,255,0.22)] animate-[pulse_3s_ease-in-out_infinite]'
                     : isMissingTime
-                    ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
-                    : isLiveWorking
-                    ? 'border-[#D04A7C] ring-2 ring-[#D04A7C]/50 shadow-[0_0_20px_rgba(208,74,124,0.35)] animate-[pulse_3s_ease-in-out_infinite]'
-                    : 'border-zinc-800/90 hover:border-zinc-700 shadow-sm';
+                      ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
+                      : isLiveWorking
+                        ? 'border-[#D04A7C] ring-2 ring-[#D04A7C]/50 shadow-[0_0_20px_rgba(208,74,124,0.35)] animate-[pulse_3s_ease-in-out_infinite]'
+                        : 'border-zinc-800/90 hover:border-zinc-700 shadow-sm';
 
                   return (
                     <DraggableTaskCard key={task.id} task={task} disabled={!isPmUser || task.isAssumptionBlock}>
@@ -2608,7 +2599,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 );
 
                 return (
-                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1 min-h-0">
+                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
                     {/* IN PROGRESS SLOT / CARD */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between px-1">
@@ -2620,14 +2611,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             <>
                               <div className="flex items-center gap-1.5">
                                 <span
-                                  className={`size-2 rounded-full ${
-                                    isColumnLiveWorking ? 'bg-[#D04A7C] animate-pulse' : 'bg-zinc-600'
-                                  }`}
+                                  className={`size-2 rounded-full ${isColumnLiveWorking ? 'bg-[#D04A7C] animate-pulse' : 'bg-zinc-600'
+                                    }`}
                                 />
                                 <span
-                                  className={`text-[10px] font-bold uppercase tracking-wider ${
-                                    isColumnLiveWorking ? 'text-[#D04A7C]' : 'text-zinc-400'
-                                  }`}
+                                  className={`text-[10px] font-bold uppercase tracking-wider ${isColumnLiveWorking ? 'text-[#D04A7C]' : 'text-zinc-400'
+                                    }`}
                                 >
                                   In Progress
                                 </span>

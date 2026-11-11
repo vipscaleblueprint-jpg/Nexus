@@ -434,31 +434,31 @@ export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] 
 
 export function getRoleBadgeClass(shortOrFullRole: string): string {
   const r = (shortOrFullRole || '').toLowerCase().trim();
-  if (r.includes('design aud')) return 'bg-pink-950/70 text-pink-300 border-pink-800/60';
-  if (r.includes('design') || r.includes('3d')) return 'bg-pink-950/70 text-pink-300 border-pink-800/60';
-  if (r.includes('prod pm') || r.includes('production project manager')) return 'bg-orange-950/70 text-orange-300 border-orange-800/60';
-  if (r.includes('prod')) return 'bg-orange-950/70 text-orange-300 border-orange-800/60';
-  if (r.includes('funnel aud')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
-  if (r.includes('funnel strat')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
-  if (r.includes('funnel')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
-  if (r.includes('ui ux') || r.includes('ui/ux') || r.includes('ui/ux aud')) return 'bg-cyan-950/70 text-cyan-300 border-cyan-800/60';
-  if (r.includes('instruction')) return 'bg-emerald-950/70 text-emerald-300 border-emerald-800/60';
-  if (r.includes('lead gen') || r.includes('lead generation')) return 'bg-emerald-950/70 text-emerald-300 border-emerald-800/60';
-  if (r.includes('dev pm') || r.includes('dev project manager')) return 'bg-violet-950/70 text-violet-300 border-violet-800/60';
-  if (r.includes('pm') || r.includes('project manager')) return 'bg-violet-950/70 text-violet-300 border-violet-800/60';
-  if (r.includes('crm') || r.includes('client relationship')) return 'bg-[#22A3AE]/20 text-[#22A3AE] border-[#22A3AE]/40';
-  if (r.includes('sales')) return 'bg-amber-950/70 text-amber-300 border-amber-800/60';
-  if (r.includes('marketing')) return 'bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-800/60';
-  if (r.includes('senior')) return 'bg-yellow-950/70 text-yellow-300 border-yellow-800/60';
-  if (r.includes('harmony')) return 'bg-indigo-950/70 text-indigo-300 border-indigo-800/60';
-  if (r.includes('dev ops') || r.includes('devops')) return 'bg-indigo-950/70 text-indigo-300 border-indigo-800/60';
-  if (r.includes('backend') || r.includes('back-end')) return 'bg-blue-950/70 text-blue-300 border-blue-800/60';
-  if (r.includes('dev') && !r.includes('dev ops')) return 'bg-sky-950/70 text-sky-300 border-sky-800/60';
-  if (r.includes('ai dir') || r.includes('ai director') || r.includes('ai scene')) return 'bg-teal-950/70 text-teal-300 border-teal-800/60';
-  if (r.includes('cyber sec') || r.includes('cybersecurity')) return 'bg-red-950/70 text-red-300 border-red-800/60';
-  if (r.includes('motion')) return 'bg-purple-950/70 text-purple-300 border-purple-800/60';
-  if (r.includes('super admin') || r.includes('admin')) return 'bg-rose-950/70 text-rose-300 border-rose-800/60';
-  return 'bg-zinc-800 text-zinc-300 border-zinc-700/60';
+  if (r.includes('design aud')) return 'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/70 dark:text-pink-300 dark:border-pink-800/60';
+  if (r.includes('design') || r.includes('3d')) return 'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/70 dark:text-pink-300 dark:border-pink-800/60';
+  if (r.includes('prod pm') || r.includes('production project manager')) return 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/70 dark:text-orange-300 dark:border-orange-800/60';
+  if (r.includes('prod')) return 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/70 dark:text-orange-300 dark:border-orange-800/60';
+  if (r.includes('funnel aud')) return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60';
+  if (r.includes('funnel strat')) return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60';
+  if (r.includes('funnel')) return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60';
+  if (r.includes('ui ux') || r.includes('ui/ux') || r.includes('ui/ux aud')) return 'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950/70 dark:text-cyan-300 dark:border-cyan-800/60';
+  if (r.includes('instruction')) return 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/70 dark:text-emerald-300 dark:border-emerald-800/60';
+  if (r.includes('lead gen') || r.includes('lead generation')) return 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/70 dark:text-emerald-300 dark:border-emerald-800/60';
+  if (r.includes('dev pm') || r.includes('dev project manager')) return 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/70 dark:text-violet-300 dark:border-violet-800/60';
+  if (r.includes('pm') || r.includes('project manager')) return 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/70 dark:text-violet-300 dark:border-violet-800/60';
+  if (r.includes('crm') || r.includes('client relationship')) return 'bg-[#22A3AE]/15 text-[#0e7490] border-[#22A3AE]/30 dark:bg-[#22A3AE]/20 dark:text-[#22A3AE] dark:border-[#22A3AE]/40';
+  if (r.includes('sales')) return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60';
+  if (r.includes('marketing')) return 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-950/70 dark:text-fuchsia-300 dark:border-fuchsia-800/60';
+  if (r.includes('senior')) return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-950/70 dark:text-yellow-300 dark:border-yellow-800/60';
+  if (r.includes('harmony')) return 'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950/70 dark:text-indigo-300 dark:border-indigo-800/60';
+  if (r.includes('dev ops') || r.includes('devops')) return 'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950/70 dark:text-indigo-300 dark:border-indigo-800/60';
+  if (r.includes('backend') || r.includes('back-end')) return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/70 dark:text-blue-300 dark:border-blue-800/60';
+  if (r.includes('dev') && !r.includes('dev ops')) return 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/70 dark:text-sky-300 dark:border-sky-800/60';
+  if (r.includes('ai dir') || r.includes('ai director') || r.includes('ai scene')) return 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950/70 dark:text-teal-300 dark:border-teal-800/60';
+  if (r.includes('cyber sec') || r.includes('cybersecurity')) return 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/70 dark:text-red-300 dark:border-red-800/60';
+  if (r.includes('motion')) return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/70 dark:text-purple-300 dark:border-purple-800/60';
+  if (r.includes('super admin') || r.includes('admin')) return 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/70 dark:text-rose-300 dark:border-rose-800/60';
+  return 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700/60';
 }
 
 export function getUserRoleDefinition(user: any): UserRoleMapping & { badgeClass: string } {

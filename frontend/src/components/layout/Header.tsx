@@ -191,25 +191,25 @@ export function Header() {
             const tone =
               count === 0
                 ? {
-                  pill: 'border-emerald-500/40 bg-emerald-500/10',
+                  pill: 'border-emerald-500/30 bg-emerald-500/10 dark:border-emerald-500/40',
                   dot: 'bg-emerald-500',
                   isConflict: false,
-                  text: 'text-emerald-300',
+                  text: 'text-emerald-700 dark:text-emerald-300 font-medium',
                   label: 'Upwork: not active',
                 }
                 : count === 1
                   ? {
-                    pill: 'border-orange-500/50 bg-orange-500/10',
+                    pill: 'border-orange-500/30 bg-orange-500/10 dark:border-orange-500/50',
                     dot: 'bg-orange-500',
                     isConflict: false,
-                    text: 'text-orange-300 font-medium',
+                    text: 'text-orange-700 dark:text-orange-300 font-semibold',
                     label: upworkTickerText,
                   }
                   : {
-                    pill: 'border-red-500/80 bg-red-500/20 ring-1 ring-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.4)] animate-pulse',
+                    pill: 'border-red-500/60 bg-red-500/15 dark:border-red-500/80 dark:bg-red-500/20 ring-1 ring-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.3)] animate-pulse',
                     dot: 'bg-red-500 ring-2 ring-red-400',
                     isConflict: true,
-                    text: 'text-red-200 font-bold',
+                    text: 'text-red-700 dark:text-red-200 font-bold',
                     label: `⚠️ CONFLICT (${count} ACTIVE): ${upworkTickerText}`,
                   };
             return (

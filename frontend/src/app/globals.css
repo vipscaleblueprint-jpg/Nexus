@@ -183,6 +183,39 @@
   --color-purple-300: #7e22ce;
   --color-purple-400: #9333ea;
 
+  /* Pale blue text (used for active filters/buttons on dark) → readable on light */
+  --color-blue-100: #1e3a8a;
+  --color-blue-200: #1d4ed8;
+  --color-blue-300: #2563eb;
+
+  /* Pale emerald/green text (used for status pills and badges on dark) → readable on light */
+  --color-emerald-100: #064e3b;
+  --color-emerald-200: #065f46;
+  --color-emerald-300: #047857;
+
+  /* Pale amber text → readable on light */
+  --color-amber-100: #78350f;
+  --color-amber-200: #92400e;
+  --color-amber-300: #b45309;
+
+  /* Pale orange text → readable on light */
+  --color-orange-100: #7c2d12;
+  --color-orange-200: #9a3412;
+  --color-orange-300: #c2410c;
+
+  /* Pale pink/rose text → readable on light */
+  --color-pink-100: #831843;
+  --color-pink-200: #9d174d;
+  --color-pink-300: #be185d;
+
+  /* Deep 950 backgrounds on dark → soft tinted backgrounds on light */
+  --color-purple-950: #f3e8ff;
+  --color-blue-950: #eff6ff;
+  --color-emerald-950: #ecfdf5;
+  --color-amber-950: #fffbeb;
+  --color-orange-950: #fff7ed;
+  --color-pink-950: #fdf2f8;
+
   /* Unread / New Notification Card Tokens (Light Mode) */
   --notif-unread-bg: #F0F5FF;
   --notif-unread-border: rgba(59, 130, 246, 0.35);

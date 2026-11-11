@@ -756,18 +756,19 @@ export async function executeTaskMapDailyRollover(params?: {
   await captureTaskMapDailySnapshot(fromDate, snapshotData, params?.actorId || 'system');
   retainedTasksCount = snapshotData.tasks?.length || 0;
 
-  // 2. Auto-reset all active workflow tasks to go back to Available tasks on the new 6:00 AM Task Map page
-  // Set assigneeId to null and status to 'Pending' for all non-closed/non-CRM tasks
+  // 2. Roll over active workflow tasks for the new 6:00 AM Task Map page
+  // Unassign active workflow tasks to return them to Available tasks, with ZERO status changes.
+  // The historical snapshot captures the previous date before rolling over for history purposes.
+  // No status gets changed at all during daily rollover (DAILY, WEEKLY, MONTHLY, and workflow statuses stay intact).
   await prisma.$executeRawUnsafe(
     `UPDATE "Task"
      SET "assigneeId" = NULL,
-         "status" = 'Pending',
          "updatedAt" = NOW()
      WHERE UPPER("status") NOT IN ('CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING')
        AND "assigneeId" IS NOT NULL`
   );
 
-  // Update TaskMapRecord for all active tasks: shiftDate to new date, status to Available Task, reset handedOver
+  // Update TaskMapRecord for all active tasks: advance shiftDate to new date, roll over back to Available Task, increment rolloverCount
   const toDateObj = new Date(`${toDate}T08:00:00+08:00`);
   const updateResult: any = await prisma.$executeRawUnsafe(
     `UPDATE "TaskMapRecord" tmr
@@ -799,7 +800,7 @@ export async function executeTaskMapDailyRollover(params?: {
         toDate,
         rolledCount,
         retainedTasksCount,
-        note: '6:00 AM daily turnover: previous date snapshotted; active tasks reset to Available tasks',
+        note: '6:00 AM daily rollover: previous date preserved in snapshot for history; active tasks rolled back to Available tasks with zero status changes',
         timestamp: new Date().toISOString(),
       },
     },

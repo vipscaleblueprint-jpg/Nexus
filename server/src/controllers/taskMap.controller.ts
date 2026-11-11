@@ -392,8 +392,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
 
-      // Exclude recurring, daily, weekly, and monthly tasks
+      // Exclude recurring, daily, weekly, monthly, and CRM/Waiting tasks
       const isExcluded =
+        s === 'WAITING' ||
+        s.includes('WAITING') ||
+        s === 'CRM' ||
+        s.includes('CRM') ||
         s === 'DAILY' ||
         s.includes('DAILY') ||
         s === 'WEEKLY' ||
@@ -404,7 +408,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         s.includes('RECURRING') ||
         !!t.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          st.includes('WAITING') ||
+          st.includes('CRM') ||
           st.includes('DAILY') ||
           st.includes('WEEKLY') ||
           st.includes('MONTHLY') ||
@@ -413,14 +419,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
       if (isExcluded) return false;
 
-      // Pending, Revision, Hand-over, and On-hold statuses belong in Available Tasks pool.
+      // Available tasks pool holds Available Task, unassigned tasks, Pending, Revision, Hand-over, and On-hold tasks.
       // Waiting is routed to CRM Map; daily, weekly, monthly, recurring are excluded.
+      const isAvailable = mapStatuses.includes('AVAILABLETASK') || mapStatuses.some((st: string) => st.includes('AVAILABLE'));
+      const isUnassigned = !t.assigneeId && (!t.assignees || t.assignees.length === 0);
       const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
       const isRevision = s === 'REVISION' || mapStatuses.includes('REVISION');
       const isHandOver = s === 'HANDOVER' || s.includes('HANDOVER') || mapStatuses.some((st: string) => st.includes('HANDOVER') || st.includes('HAND-OVER'));
       const isOnHold = s === 'ONHOLD' || s.includes('HOLD') || mapStatuses.some((st: string) => st.includes('HOLD'));
 
-      return isPending || isRevision || isHandOver || isOnHold;
+      return isAvailable || isUnassigned || isPending || isRevision || isHandOver || isOnHold;
     };
 
     const isTaskUrgent = (t: any) => {
@@ -1256,6 +1264,9 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
 
     // Prepare update data
     const updateData: any = {};
+    const currentStatusUpper = (currentTask.status || '').toUpperCase().trim();
+    const isCadenceTask = ['DAILY', 'WEEKLY', 'MONTHLY'].includes(currentStatusUpper);
+
     if (assigneeId) {
       const targetUser = await prisma.user.findUnique({
         where: { id: assigneeId },
@@ -1268,11 +1279,17 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
 
       updateData.assigneeId = assigneeId;
       updateData.assignees = { set: [{ id: assigneeId }] };
-      updateData.status = 'IN PROGRESS';
+      if (!isCadenceTask) {
+        updateData.status = 'IN PROGRESS';
+      }
     } else {
       updateData.assigneeId = null;
       updateData.assignees = { set: [] };
-      updateData.status = 'PENDING';
+      // Cadence tasks (DAILY, WEEKLY, MONTHLY) strictly preserve their status.
+      // Active tasks returned to the pool also preserve their status without being forced to PENDING.
+      if (!isCadenceTask) {
+        updateData.status = currentTask.status || 'Pending';
+      }
     }
 
     const updatedTask = await prisma.task.update({

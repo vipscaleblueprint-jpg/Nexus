@@ -600,7 +600,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                   type="button"
                   onClick={() => setAuditorDropdownOpen(!auditorDropdownOpen)}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer shadow-xs select-none ${auditorButtonDetails.isHighlight
-                    ? 'bg-amber-950/70 hover:bg-amber-950 text-amber-200 border border-amber-700/80 shadow-sm'
+                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 dark:bg-amber-950/70 dark:hover:bg-amber-950 dark:text-amber-200 dark:border-amber-700/80 shadow-sm'
                     : 'bg-card border border-zinc-800/80 hover:border-zinc-700 text-zinc-300 hover:text-zinc-100'
                     }`}
                   title={
@@ -647,20 +647,20 @@ export const TaskMapHeader: React.FC<Props> = ({
                         type="button"
                         onClick={handleToggleAllAuditors}
                         className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${allAuditorsChecked
-                          ? 'bg-amber-600/15 text-amber-200 font-semibold'
-                          : 'text-zinc-300 hover:bg-zinc-800/60'
+                          ? 'bg-amber-600/15 text-amber-800 dark:text-amber-200 font-semibold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                           }`}
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <div
                             className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allAuditorsChecked
                               ? 'bg-amber-600 border-amber-500 text-white'
-                              : 'border-zinc-700 bg-zinc-900 text-transparent'
+                              : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                               }`}
                           >
                             <Check className="size-2.5" />
                           </div>
-                          <ShieldCheck className="size-3 text-amber-400 shrink-0" />
+                          <ShieldCheck className="size-3 text-amber-600 dark:text-amber-400 shrink-0" />
                           <span className="truncate">All Auditors</span>
                         </div>
                         <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 shrink-0">
@@ -689,15 +689,15 @@ export const TaskMapHeader: React.FC<Props> = ({
                               key={role.key}
                               onClick={() => handleToggleAuditorRole(role.key)}
                               className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${checked
-                                ? 'bg-amber-600/15 text-amber-200 font-semibold'
-                                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                                ? 'bg-amber-600/15 text-amber-800 dark:text-amber-200 font-semibold'
+                                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                                 }`}
                             >
                               <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
                                 <div
                                   className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${checked
                                     ? 'bg-amber-600 border-amber-500 text-white'
-                                    : 'border-zinc-700 bg-zinc-900 text-transparent'
+                                    : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                                     }`}
                                 >
                                   <Check className="size-2.5" />
@@ -707,7 +707,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                               <button
                                 type="button"
                                 onClick={(e) => handleSelectOnlyAuditorRole(role.key, e)}
-                                className="opacity-0 group-hover:opacity-100 text-[10px] text-amber-400 hover:text-amber-300 hover:underline px-1 py-0.5 rounded transition-opacity"
+                                className="opacity-0 group-hover:opacity-100 text-[10px] text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:underline px-1 py-0.5 rounded transition-opacity"
                                 title={`Select only ${role.label}`}
                               >
                                 only
@@ -785,7 +785,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                     >
                       <span>{opt.label}</span>
                       {isCustom && selectedMAs.length > 0 && (
-                        <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-blue-500/30 text-blue-300 font-bold ml-0.5">
+                        <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-blue-500/20 text-blue-700 dark:text-blue-300 font-bold ml-0.5">
                           {selectedMAs.length}
                         </span>
                       )}
@@ -850,15 +850,15 @@ export const TaskMapHeader: React.FC<Props> = ({
                                     onSelectedMAsChange?.(next);
                                   }}
                                   className={`flex items-center justify-between px-2 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${isChecked
-                                    ? 'bg-blue-600/15 text-blue-200 font-semibold'
-                                    : 'text-zinc-300 hover:bg-zinc-800/60'
+                                    ? 'bg-blue-600/15 text-blue-700 dark:text-blue-200 font-semibold'
+                                    : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                                     }`}
                                 >
                                   <div className="flex items-center gap-2 truncate">
                                     <div
                                       className={`size-3.5 rounded border flex items-center justify-center shrink-0 ${isChecked
                                         ? 'bg-blue-600 border-blue-500 text-white'
-                                        : 'border-zinc-700 bg-zinc-900'
+                                        : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900'
                                         }`}
                                     >
                                       {isChecked && <Check className="size-2.5" />}
@@ -906,7 +906,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                 <Briefcase className="size-3.5 text-emerald-400" />
                 <span className="hidden sm:inline">Upwork Clients</span>
                 {upworkClients.length > 0 && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold ml-0.5">
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 font-bold ml-0.5">
                     {upworkClients.length}
                   </span>
                 )}
@@ -919,7 +919,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                 type="button"
                 onClick={() => setClientDropdownOpen(!clientDropdownOpen)}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer shadow-xs select-none ${buttonDetails.isHighlight
-                  ? 'bg-blue-950/70 hover:bg-blue-950 text-blue-200 border border-blue-700/80 shadow-sm'
+                  ? 'bg-blue-100 hover:bg-blue-200 text-blue-700 border border-blue-300 dark:bg-blue-950/70 dark:hover:bg-blue-950 dark:text-blue-200 dark:border-blue-700/80 shadow-sm'
                   : 'bg-card border border-zinc-800/80 hover:border-zinc-700 text-zinc-300 hover:text-zinc-100'
                   }`}
                 title={
@@ -967,20 +967,20 @@ export const TaskMapHeader: React.FC<Props> = ({
                       type="button"
                       onClick={handleToggleAllClients}
                       className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${allClientsChecked
-                        ? 'bg-blue-600/15 text-blue-200 font-semibold'
-                        : 'text-zinc-300 hover:bg-zinc-800/60'
+                        ? 'bg-blue-600/15 text-blue-700 dark:text-blue-200 font-semibold'
+                        : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                         }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <div
                           className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allClientsChecked
                             ? 'bg-blue-600 border-blue-500 text-white'
-                            : 'border-zinc-700 bg-zinc-900 text-transparent'
+                            : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                             }`}
                         >
                           <Check className="size-2.5" />
                         </div>
-                        <Building2 className="size-3 text-blue-400 shrink-0" />
+                        <Building2 className="size-3 text-blue-600 dark:text-blue-400 shrink-0" />
                         <span className="truncate">All Clients</span>
                       </div>
                       <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 shrink-0">
@@ -993,8 +993,8 @@ export const TaskMapHeader: React.FC<Props> = ({
                       type="button"
                       onClick={() => onToggleAdmin?.()}
                       className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${showAdmin
-                        ? 'bg-purple-950/60 text-purple-200 border border-purple-800/60 font-semibold'
-                        : 'text-zinc-400 hover:bg-zinc-800/60'
+                        ? 'bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-950/60 dark:text-purple-200 dark:border-purple-800/60 font-semibold'
+                        : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                         }`}
                       title="Toggle Admin folder tasks: Admin | Jenesia Red, Harmony, Jenesia Red, Snaply, VIP Scale, Xfnite"
                     >
@@ -1002,15 +1002,15 @@ export const TaskMapHeader: React.FC<Props> = ({
                         <div
                           className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${showAdmin
                             ? 'bg-purple-600 border-purple-500 text-white'
-                            : 'border-zinc-700 bg-zinc-900 text-transparent'
+                            : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                             }`}
                         >
                           <Check className="size-2.5" />
                         </div>
-                        <Shield className="size-3 text-purple-400 shrink-0" />
+                        <Shield className="size-3 text-purple-600 dark:text-purple-400 shrink-0" />
                         <span className="truncate">Admin Tasks</span>
                       </div>
-                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 border border-purple-800/40 shrink-0">
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40 shrink-0">
                         {adminCount ?? 0}
                       </span>
                     </button>
@@ -1036,15 +1036,15 @@ export const TaskMapHeader: React.FC<Props> = ({
                             key={client.id}
                             onClick={() => handleToggleClient(client.id)}
                             className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${checked
-                              ? 'bg-zinc-800/60 text-zinc-100 font-medium'
-                              : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
+                              ? 'bg-zinc-200/70 text-zinc-900 dark:bg-zinc-800/60 dark:text-zinc-100 font-medium'
+                              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/40 hover:text-zinc-900 dark:hover:text-zinc-200'
                               }`}
                           >
                             <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
                               <div
                                 className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${checked
                                   ? 'bg-blue-600 border-blue-500 text-white'
-                                  : 'border-zinc-700 bg-zinc-900 text-transparent'
+                                  : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                                   }`}
                               >
                                 <Check className="size-2.5" />
@@ -1053,7 +1053,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                                 {client.name}
                               </span>
                               {upworkClients.some((u) => u.toLowerCase() === client.name.toLowerCase()) && (
-                                <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold shrink-0">
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 font-semibold shrink-0">
                                   UW
                                 </span>
                               )}
@@ -1093,15 +1093,15 @@ export const TaskMapHeader: React.FC<Props> = ({
                                 key={ac.id}
                                 onClick={() => handleToggleClient(ac.id)}
                                 className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${checked
-                                  ? 'bg-purple-950/40 text-purple-200 font-medium'
-                                  : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
+                                  ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-200 font-medium'
+                                  : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/40 hover:text-zinc-900 dark:hover:text-zinc-200'
                                   }`}
                               >
                                 <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
                                   <div
                                     className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${checked
                                       ? 'bg-purple-600 border-purple-500 text-white'
-                                      : 'border-zinc-700 bg-zinc-900 text-transparent'
+                                      : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                                       }`}
                                   >
                                     <Check className="size-2.5" />
@@ -1114,12 +1114,12 @@ export const TaskMapHeader: React.FC<Props> = ({
                                   <button
                                     type="button"
                                     onClick={(e) => handleSelectOnlyClient(ac.id, e)}
-                                    className="opacity-0 group-hover:opacity-100 px-1 py-0.2 text-[9px] text-purple-400 hover:text-purple-200 hover:bg-purple-950/60 rounded transition-all cursor-pointer"
+                                    className="opacity-0 group-hover:opacity-100 px-1 py-0.2 text-[9px] text-purple-700 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-950/60 rounded transition-all cursor-pointer"
                                     title={`Show only ${ac.name}`}
                                   >
                                     only
                                   </button>
-                                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-950/60 text-purple-300 border border-purple-800/40">
+                                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40">
                                     {ac.count}
                                   </span>
                                 </div>

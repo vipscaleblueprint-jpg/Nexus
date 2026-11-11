@@ -188,9 +188,10 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
 
     return {
       label,
-      btnClass: 'bg-blue-950/70 hover:bg-blue-950 text-blue-200 border-blue-700/80 shadow-sm',
-      badgeClass: 'bg-black/40 text-blue-300',
-      iconClass: 'text-blue-400',
+      btnClass:
+        'bg-blue-100 hover:bg-blue-200 text-blue-700 border-blue-300 dark:bg-blue-950/70 dark:hover:bg-blue-950 dark:text-blue-200 dark:border-blue-700/80 shadow-sm',
+      badgeClass: 'bg-blue-200/60 text-blue-800 dark:bg-black/40 dark:text-blue-300',
+      iconClass: 'text-blue-600 dark:text-blue-400',
     };
   };
 
@@ -296,8 +297,8 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
                 onClick={handleToggleAllClients}
                 className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
                   allClientsChecked
-                    ? 'bg-blue-600/15 text-blue-200 font-semibold'
-                    : 'text-zinc-300 hover:bg-zinc-800/60'
+                    ? 'bg-blue-600/15 text-blue-700 dark:text-blue-200 font-semibold'
+                    : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                 }`}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -305,12 +306,12 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
                     className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
                       allClientsChecked
                         ? 'bg-blue-600 border-blue-500 text-white'
-                        : 'border-zinc-700 bg-zinc-900 text-transparent'
+                        : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                     }`}
                   >
                     <Check className="size-2.5" />
                   </div>
-                  <Building2 className="size-3 text-blue-400 shrink-0" />
+                  <Building2 className="size-3 text-blue-600 dark:text-blue-400 shrink-0" />
                   <span className="truncate">All Clients</span>
                 </div>
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800/80 text-zinc-400 shrink-0">
@@ -324,8 +325,8 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
                 onClick={onToggleAdmin}
                 className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
                   showAdmin
-                    ? 'bg-purple-950/60 text-purple-200 border border-purple-800/60 font-semibold'
-                    : 'text-zinc-400 hover:bg-zinc-800/60'
+                    ? 'bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-950/60 dark:text-purple-200 dark:border-purple-800/60 font-semibold'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                 }`}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -333,15 +334,15 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
                     className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
                       showAdmin
                         ? 'bg-purple-600 border-purple-500 text-white'
-                        : 'border-zinc-700 bg-zinc-900 text-transparent'
+                        : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                     }`}
                   >
                     <Check className="size-2.5" />
                   </div>
-                  <Shield className="size-3 text-purple-400 shrink-0" />
+                  <Shield className="size-3 text-purple-600 dark:text-purple-400 shrink-0" />
                   <span className="truncate">Admin Tasks</span>
                 </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 border border-purple-800/40 shrink-0">
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40 shrink-0">
                   {adminCount}
                 </span>
               </button>
@@ -364,8 +365,8 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
                       onClick={() => handleToggleClient(client.id)}
                       className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
                         checked
-                          ? 'bg-zinc-800/60 text-zinc-100 font-medium'
-                          : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
+                          ? 'bg-zinc-200/70 text-zinc-900 dark:bg-zinc-800/60 dark:text-zinc-100 font-medium'
+                          : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/40 hover:text-zinc-900 dark:hover:text-zinc-200'
                       }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
@@ -373,7 +374,7 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
                           className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
                             checked
                               ? 'bg-blue-600 border-blue-500 text-white'
-                              : 'border-zinc-700 bg-zinc-900 text-transparent'
+                              : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                           }`}
                         >
                           <Check className="size-2.5" />

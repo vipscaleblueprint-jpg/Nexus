@@ -124,18 +124,18 @@ const getAuditorBadge = (user: any) => {
   ].map((r: string) => (r || '').toLowerCase());
 
   if (roles.some((r: string) => r.includes('funnel'))) {
-    return { label: 'Funnel Auditor', color: 'bg-amber-950/80 text-amber-300 border-amber-800/60' };
+    return { label: 'Funnel Auditor', color: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800/60' };
   }
   if (roles.some((r: string) => r.includes('ui') || r.includes('ux'))) {
-    return { label: 'UI/UX Auditor', color: 'bg-cyan-950/80 text-cyan-300 border-cyan-800/60' };
+    return { label: 'UI/UX Auditor', color: 'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950/80 dark:text-cyan-300 dark:border-cyan-800/60' };
   }
   if (roles.some((r: string) => r.includes('design') || r.includes('graphic'))) {
-    return { label: 'Design Auditor', color: 'bg-pink-950/80 text-pink-300 border-pink-800/60' };
+    return { label: 'Design Auditor', color: 'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/80 dark:text-pink-300 dark:border-pink-800/60' };
   }
   if (roles.some((r: string) => r.includes('instruction') || r.includes('copy'))) {
-    return { label: 'Instruction Auditor', color: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60' };
+    return { label: 'Instruction Auditor', color: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-800/60' };
   }
-  return { label: 'Auditor', color: 'bg-purple-950/80 text-purple-300 border-purple-800/60' };
+  return { label: 'Auditor', color: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/80 dark:text-purple-300 dark:border-purple-800/60' };
 };
 
 // Helper: Determine designated audit type when dragging task to this auditor
@@ -657,7 +657,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       title: 'To Review',
       subtitle: 'Incoming tasks awaiting auditor assignment',
       badgeLabel: 'Queue',
-      badgeClass: 'bg-blue-950 text-blue-300 border-blue-800',
+      badgeClass: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800',
       dotColor: 'bg-blue-500',
       tasks: toReviewTasks,
     },
@@ -955,7 +955,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                 </div>
 
                 {/* Cards List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1">
                   {visibleTasks.length === 0 ? (
                     <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
                       <span className="text-xs font-semibold text-zinc-400">

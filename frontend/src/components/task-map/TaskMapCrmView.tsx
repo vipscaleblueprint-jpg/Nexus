@@ -80,10 +80,10 @@ const DraggableTaskCard: React.FC<{
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
       className={`touch-none transition-all duration-200 ease-out ${isDragging
-          ? 'opacity-25 scale-[0.98] border border-dashed border-[#22A3AE] rounded-xl bg-zinc-900/40 pointer-events-none'
-          : disabled
-            ? 'cursor-default'
-            : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
+        ? 'opacity-25 scale-[0.98] border border-dashed border-[#22A3AE] rounded-xl bg-zinc-900/40 pointer-events-none'
+        : disabled
+          ? 'cursor-default'
+          : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
         }`}
     >
       {children}
@@ -263,9 +263,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return fName === 'admin' || fName.includes('admin') || lName === 'admin' || ADMIN_LIST_NAMES.has(lName);
   };
 
-  // Check if a task belongs on the CRM board (status == 'CRM' or has CRM workflow statuses)
+  // Check if a task belongs on the CRM board:
+  // - CRM tasks (status == 'CRM')
+  // - Sent tasks (status == 'Waiting' or 'Sent')
+  // - Closed/Done tasks (with CRM markers/history)
   const isCrmStatus = (t: TaskMapItem) => {
-    const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+    const s = (t.status || '').toUpperCase().trim();
     const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
       x.toUpperCase().replace(/[\s_-]+/g, '')
     );
@@ -273,31 +276,22 @@ export const TaskMapCrmView: React.FC<Props> = ({
       mapStatuses.includes('CRM') ||
       mapStatuses.includes('TOSEND') ||
       mapStatuses.includes('SENT') ||
-      mapStatuses.includes('FOLLOWUP') ||
-      mapStatuses.includes('OUTREACH') ||
       mapStatuses.includes('OUTREACHSENT') ||
       mapStatuses.includes('CLIENTSENT') ||
-      mapStatuses.includes('ASKCLIENT') ||
-      mapStatuses.includes('ASK CLIENT') ||
-      mapStatuses.includes('WAITING');
+      mapStatuses.includes('FOLLOWUP');
 
     return (
       s === 'CRM' ||
       s === 'WAITING' ||
       s === 'SENT' ||
-      s === 'OUTREACH' ||
-      s === 'OUTREACHSENT' ||
-      s === 'FOLLOWUP' ||
-      s === 'TOSEND' ||
-      ((s === 'CLOSED' || s === 'DONE') && hasCrmMarker) ||
-      hasCrmMarker
+      ((s === 'CLOSED' || s === 'DONE') && hasCrmMarker)
     );
   };
 
   // Filter for CRM status (Admin & Client filtering applied per column)
   const filteredCrmTasks = React.useMemo(() => {
     return combinedTasks.filter((t) => {
-      // CRITICAL: A task MUST have CRM status to appear on the CRM board!
+      // CRITICAL: A task MUST have CRM/Waiting/Closed-CRM status to appear on the CRM board!
       if (!isCrmStatus(t)) return false;
       return true;
     });
@@ -306,23 +300,22 @@ export const TaskMapCrmView: React.FC<Props> = ({
   // Check if task is CRM completed / closed
   const isCrmCompleted = (t: TaskMapItem) => {
     const s = (t.status || '').toUpperCase().trim();
-    const mapStatuses = (t.taskMap?.statuses || []).map((x) => x.toUpperCase().trim());
-    return (
-      s === 'DONE' ||
-      s === 'CLOSED' ||
-      s === 'SENT' ||
-      s === 'OUTREACH SENT' ||
-      mapStatuses.includes('SENT') ||
-      mapStatuses.includes('OUTREACH SENT') ||
-      mapStatuses.includes('CLIENT SENT')
-    );
+    return s === 'DONE' || s === 'CLOSED';
   };
 
-  // Check if task is assigned to a specific CRM member
+  // Check if task is Sent (waiting for client response)
+  const isCrmSent = (t: TaskMapItem) => {
+    if (isCrmCompleted(t)) return false;
+    const s = (t.status || '').toUpperCase().trim();
+    return s === 'WAITING' || s === 'SENT';
+  };
+
+  // Check if task is assigned to a specific CRM member (strictly status CRM)
   const isTaskAssignedToCrmMember = (task: TaskMapItem, crmMember: any) => {
-    if (isCrmCompleted(task)) return false;
+    if (isCrmCompleted(task) || isCrmSent(task)) return false;
     // Task must be in CRM status
-    if (!isCrmStatus(task)) return false;
+    const s = (task.status || '').toUpperCase().trim();
+    if (s !== 'CRM') return false;
 
     // Direct assignee check
     if (task.assignee?.id === crmMember.id) return true;
@@ -339,23 +332,27 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return false;
   };
 
-  // General CRM Pool: tasks needing client outreach / CRM that are not yet assigned to a specific CRM member
+  // General CRM Pool: tasks needing client outreach / CRM that are not yet assigned to a specific CRM member (strictly status CRM)
   const isGeneralCrmPool = (t: TaskMapItem) => {
-    if (isCrmCompleted(t)) return false;
-    if (!isCrmStatus(t)) return false;
+    if (isCrmCompleted(t) || isCrmSent(t)) return false;
+    const s = (t.status || '').toUpperCase().trim();
+    if (s !== 'CRM') return false;
     if (crmUsers.some((u) => isTaskAssignedToCrmMember(t, u))) return false;
 
     return true;
   };
 
   const poolTasks = filteredCrmTasks.filter(isGeneralCrmPool);
+  const sentTasks = filteredCrmTasks.filter(isCrmSent);
   const completedTasks = filteredCrmTasks.filter(
     (t) =>
       isCrmCompleted(t) &&
       ((t.status || '').toUpperCase() === 'CLOSED' ||
         (t.status || '').toUpperCase() === 'DONE' ||
-        (t.status || '').toUpperCase() === 'CRM' ||
-        (t.taskMap?.statuses || []).some((s) => s.toUpperCase().includes('CRM')))
+        (t.taskMap?.statuses || []).some((s) => {
+          const up = s.toUpperCase();
+          return up.includes('CRM') || up.includes('SENT') || up.includes('OUTREACH');
+        }))
   );
 
   // DnD Handlers
@@ -389,6 +386,9 @@ export const TaskMapCrmView: React.FC<Props> = ({
     });
 
     if (targetColumnId === 'col-crm-pool') {
+      updatedStatuses = updatedStatuses.filter(
+        (s) => !['SENT', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
+      );
       if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
       toast.info('Task moved to General CRM Pool');
       onStatusChange(taskId, updatedStatuses);
@@ -422,6 +422,52 @@ export const TaskMapCrmView: React.FC<Props> = ({
         } else {
           await tasksApi.updateTask(taskId, { status: 'CRM' } as any).catch(console.error);
         }
+      }
+    } else if (targetColumnId === 'col-crm-sent') {
+      // 1. Task edit permission
+      const editCheck = canUserEditTask(task as any, currentUser);
+      if (!editCheck.allowed) {
+        toast.error(editCheck.reason || 'You do not have permission to edit this task.');
+        return;
+      }
+
+      // 2. Status transition check for Waiting
+      const transitionCheck = canTransitionTaskStatus(task, 'Waiting');
+      if (!transitionCheck.allowed) {
+        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent('task:highlight-audits', {
+              detail: {
+                taskId: task.id,
+                targetStatus: 'Waiting',
+                uncheckedAudits: transitionCheck.uncheckedAudits,
+                openSubtasks: transitionCheck.openSubtasks,
+              },
+            })
+          );
+        }
+        setBlockedAuditAlert({
+          isOpen: true,
+          task,
+          targetStatus: 'Waiting',
+          uncheckedAudits: transitionCheck.uncheckedAudits,
+          openSubtasks: transitionCheck.openSubtasks,
+        });
+        toast.error(transitionCheck.reason || 'Cannot move task to Waiting');
+        return;
+      }
+
+      updatedStatuses = updatedStatuses.filter(
+        (s) => s.toUpperCase() !== 'CRM' && s.toUpperCase() !== 'TO SEND'
+      );
+      if (!updatedStatuses.includes('Sent')) updatedStatuses.push('Sent');
+      toast.success('Task marked Sent — status updated to Waiting');
+      onStatusChange(taskId, updatedStatuses);
+      if (onTaskUpdate) {
+        await onTaskUpdate(taskId, { status: 'Waiting' });
+      } else {
+        await tasksApi.updateTask(taskId, { status: 'Waiting' } as any).catch(console.error);
+        onDataRefresh();
       }
     } else if (targetColumnId === 'col-crm-closed' || targetColumnId === 'col-crm-completed') {
       // 1. Task edit permission
@@ -470,7 +516,9 @@ export const TaskMapCrmView: React.FC<Props> = ({
       const member = crmUsers.find((u) => u.id === memberId);
       if (member) {
         // Only assign to member, never mark as Sent
-        updatedStatuses = updatedStatuses.filter((s) => s.toUpperCase() !== 'SENT' && s.toUpperCase() !== 'OUTREACH SENT');
+        updatedStatuses = updatedStatuses.filter(
+          (s) => !['SENT', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
+        );
         if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
         toast.success(`Task assigned to ${member.name} for CRM outreach`);
         onStatusChange(taskId, updatedStatuses);
@@ -486,11 +534,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
     }
   };
 
-  // Helper options for sub-status dropdown in CRM (includes 'To send' so users can see/revert if misclicked)
+  // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent', 'Follow up', 'Closed')
   const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => [
     { id: 'opt-crm-tosend', label: 'To send', color: '#22A3AE', textColor: '#ffffff', order: 0 },
-    { id: 'opt-crm-sent', label: 'Sent', color: '#10b981', textColor: '#ffffff', order: 1 },
-    { id: 'opt-crm-followup', label: 'Follow up', color: '#f59e0b', textColor: '#ffffff', order: 2 },
+    { id: 'opt-crm-sent', label: 'Sent', color: '#f59e0b', textColor: '#ffffff', order: 1 },
+    { id: 'opt-crm-followup', label: 'Follow up', color: '#38bdf8', textColor: '#ffffff', order: 2 },
+    { id: 'opt-crm-closed', label: 'Closed', color: '#10b981', textColor: '#ffffff', order: 3 },
   ];
 
   // Assemble full columns array
@@ -531,11 +580,20 @@ export const TaskMapCrmView: React.FC<Props> = ({
       };
     }),
     {
+      id: 'col-crm-sent',
+      title: 'Sent',
+      subtitle: 'Outreach sent — waiting for client response',
+      badgeLabel: 'Waiting',
+      badgeClass: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800',
+      dotColor: 'bg-amber-500',
+      tasks: sentTasks,
+    },
+    {
       id: 'col-crm-closed',
       title: 'Closed',
       subtitle: 'Closed & verified tasks',
       badgeLabel: 'Closed',
-      badgeClass: 'bg-emerald-950 text-emerald-300 border-emerald-800',
+      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800',
       dotColor: 'bg-emerald-500',
       tasks: completedTasks,
     },
@@ -547,14 +605,18 @@ export const TaskMapCrmView: React.FC<Props> = ({
   const otherPinnedCols = allColumns.filter((c) => pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
   const otherUnpinnedCols = allColumns.filter((c) => !pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
 
+  const sentCol = allColumns.find((c) => c.id === 'col-crm-sent');
+  const closedCol = allColumns.find((c) => c.id === 'col-crm-closed');
+
   const orderedColumns: CrmColumnDef[] = cleanSearch && crmSearchMatches.length > 0
     ? [
-        allColumns[0], // col-crm-pool
-        ...crmSearchMatches,
-        ...otherPinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-closed'),
-        ...otherUnpinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-closed'),
-        allColumns[allColumns.length - 1], // col-crm-closed
-      ]
+      allColumns[0], // col-crm-pool
+      ...crmSearchMatches,
+      ...otherPinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-sent' && c.id !== 'col-crm-closed'),
+      ...otherUnpinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-sent' && c.id !== 'col-crm-closed'),
+      ...(sentCol ? [sentCol] : []),
+      ...(closedCol ? [closedCol] : []),
+    ]
     : [...otherPinnedCols, ...otherUnpinnedCols];
 
   // If user does not have permission, show access restricted screen
@@ -732,8 +794,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       type="button"
                       onClick={() => togglePinColumn(col.id)}
                       className={`p-1 rounded-md transition-colors cursor-pointer ${isPinned
-                          ? 'text-[#22A3AE] bg-[#22A3AE]/15 border border-[#22A3AE]/30'
-                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                        ? 'text-[#22A3AE] bg-[#22A3AE]/15 border border-[#22A3AE]/30'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
                         }`}
                       title={isPinned ? 'Unpin column' : 'Pin column'}
                     >
@@ -777,8 +839,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
                           setColumnSearchOpen((prev) => ({ ...prev, [col.id]: true }))
                         }
                         className={`p-1 rounded-md transition-colors cursor-pointer ${searchQuery
-                            ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
-                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                          ? 'text-blue-400 bg-blue-500/15 border border-blue-500/30'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
                           }`}
                         title={searchQuery ? `Searching "${searchQuery}"` : 'Search tasks in this column'}
                       >
@@ -836,16 +898,24 @@ export const TaskMapCrmView: React.FC<Props> = ({
                 </div>
 
                 {/* Cards List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1">
                   {visibleTasks.length === 0 ? (
                     <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
                       <span className="text-xs font-semibold text-zinc-400">
-                        No CRM tasks
+                        {col.id === 'col-crm-sent'
+                          ? 'No sent tasks'
+                          : col.id === 'col-crm-closed'
+                            ? 'No closed tasks'
+                            : 'No CRM tasks'}
                       </span>
                       <span className="text-[11px] text-zinc-500 mt-1">
                         {searchQuery || activePriority !== 'ALL'
                           ? 'No tasks match filter'
-                          : `Drop client communication tasks here to assign to ${col.title}`}
+                          : col.id === 'col-crm-sent'
+                            ? 'Drop tasks here when outreach has been sent to client'
+                            : col.id === 'col-crm-closed'
+                              ? 'Closed and verified tasks appear here'
+                              : `Drop client communication tasks here to assign to ${col.title}`}
                       </span>
                     </div>
                   ) : (
@@ -993,6 +1063,9 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         onStatusChange(task.id, cleanNext);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'CRM' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                                          onDataRefresh();
                                         }
                                       } else {
                                         // User clicked 'To send' AGAIN in CRM -> revert misclick back to last status
@@ -1006,40 +1079,98 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         }
                                         toast.info(`Reverted 'To send' — returned to ${revertStatus}`);
                                       }
-                                    } else if (label === 'Sent' && isSelecting) {
-                                      const transitionCheck = canTransitionTaskStatus(task, 'Closed');
-                                      if (!transitionCheck.allowed) {
-                                        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                          window.dispatchEvent(
-                                            new CustomEvent('task:highlight-audits', {
-                                              detail: {
-                                                taskId: task.id,
-                                                targetStatus: 'Closed',
-                                                uncheckedAudits: transitionCheck.uncheckedAudits,
-                                                openSubtasks: transitionCheck.openSubtasks,
-                                              },
-                                            })
-                                          );
+                                    } else if (label === 'Sent') {
+                                      if (isSelecting) {
+                                        const transitionCheck = canTransitionTaskStatus(task, 'Waiting');
+                                        if (!transitionCheck.allowed) {
+                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                            window.dispatchEvent(
+                                              new CustomEvent('task:highlight-audits', {
+                                                detail: {
+                                                  taskId: task.id,
+                                                  targetStatus: 'Waiting',
+                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
+                                                  openSubtasks: transitionCheck.openSubtasks,
+                                                },
+                                              })
+                                            );
+                                          }
+                                          setBlockedAuditAlert({
+                                            isOpen: true,
+                                            task,
+                                            targetStatus: 'Waiting',
+                                            uncheckedAudits: transitionCheck.uncheckedAudits,
+                                            openSubtasks: transitionCheck.openSubtasks,
+                                          });
+                                          toast.error(transitionCheck.reason || 'Cannot move task to Waiting');
+                                          return;
                                         }
-                                        setBlockedAuditAlert({
-                                          isOpen: true,
-                                          task,
-                                          targetStatus: 'Closed',
-                                          uncheckedAudits: transitionCheck.uncheckedAudits,
-                                          openSubtasks: transitionCheck.openSubtasks,
-                                        });
-                                        toast.error(transitionCheck.reason || 'Cannot move task to Closed');
-                                        return;
-                                      }
 
-                                      onStatusChange(task.id, cleanNext);
-                                      if (onTaskUpdate) {
-                                        await onTaskUpdate(task.id, { status: 'Closed' });
+                                        onStatusChange(task.id, cleanNext);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'Waiting' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'Waiting' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.success('Task marked Sent — status updated to Waiting');
                                       } else {
-                                        await tasksApi.updateTask(task.id, { status: 'Closed' } as any).catch(console.error);
-                                        onDataRefresh();
+                                        // Toggled off Sent -> revert back to CRM
+                                        onStatusChange(task.id, ['CRM']);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'CRM' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info("Reverted 'Sent' — returned to CRM");
                                       }
-                                      toast.success('Task marked Closed — outreach complete');
+                                    } else if (label === 'Closed') {
+                                      if (isSelecting) {
+                                        const transitionCheck = canTransitionTaskStatus(task, 'Closed');
+                                        if (!transitionCheck.allowed) {
+                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                            window.dispatchEvent(
+                                              new CustomEvent('task:highlight-audits', {
+                                                detail: {
+                                                  taskId: task.id,
+                                                  targetStatus: 'Closed',
+                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
+                                                  openSubtasks: transitionCheck.openSubtasks,
+                                                },
+                                              })
+                                            );
+                                          }
+                                          setBlockedAuditAlert({
+                                            isOpen: true,
+                                            task,
+                                            targetStatus: 'Closed',
+                                            uncheckedAudits: transitionCheck.uncheckedAudits,
+                                            openSubtasks: transitionCheck.openSubtasks,
+                                          });
+                                          toast.error(transitionCheck.reason || 'Cannot move task to Closed');
+                                          return;
+                                        }
+
+                                        onStatusChange(task.id, cleanNext);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'Closed' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'Closed' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.success('Task marked Closed');
+                                      } else {
+                                        // Toggled off Closed -> revert back to Waiting
+                                        onStatusChange(task.id, ['Sent']);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'Waiting' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'Waiting' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info("Reverted 'Closed' — returned to Waiting");
+                                      }
                                     } else if (label === 'Follow up' && isSelecting) {
                                       onStatusChange(task.id, cleanNext);
                                       toast.warning('Task marked for Follow up');

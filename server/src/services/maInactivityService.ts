@@ -279,13 +279,14 @@ export async function checkAndHandoverInactiveMaTasks(): Promise<{
       const handedOverTaskIds: string[] = [];
 
       for (const t of tasks) {
-        // Set sub-status to "Hand-over", keep "In progress" main status, unassign MA to move to Available tasks
+        // Set sub-status to "Hand-over", keep cadence or in-progress main status, unassign MA to move to Available tasks
+        const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((t.status || '').toUpperCase().trim());
         await prisma.task.update({
           where: { id: t.id },
           data: {
             assigneeId: null,
             assignees: { set: [] },
-            status: 'In progress', // strictly retain in-progress main status
+            status: isCadence ? t.status : (t.status || 'In progress'), // preserve cadence status or retain in-progress
           },
         });
 

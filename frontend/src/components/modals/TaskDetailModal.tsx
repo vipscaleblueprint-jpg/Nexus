@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle } from 'lucide-react';
+import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -43,6 +43,7 @@ import { CommentReplyInput } from './CommentReplyInput';
 import { EmojiPicker } from '../ui/EmojiPicker';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { FullscreenCommentModal } from './FullscreenCommentModal';
+import { TaskInfoDrawer } from './TaskInfoDrawer';
 import { BlurUpImage } from '../ui/BlurUpImage';
 import { CommentAttachmentCard, isAttachmentUrl, getFileExtension } from '../ui/CommentAttachmentCard';
 import { extractImagesFromComments } from '@/lib/commentImages';
@@ -1065,6 +1066,7 @@ export function TaskDetailModalContent({
   const [isLoadingOlderActivities, setIsLoadingOlderActivities] = useState(false);
   const [prevTaskModalId, setPrevTaskModalId] = useState(task?.id);
   const [fullscreenCommentId, setFullscreenCommentId] = useState<string | null>(null);
+  const [showActivityInfo, setShowActivityInfo] = useState(false);
 
   const activeFullscreenComment = useMemo(() => {
     if (!fullscreenCommentId) return null;
@@ -1083,6 +1085,7 @@ export function TaskDetailModalContent({
     setIsLoadingOlderActivities(false);
     setCollapsedDays({});
     setFullscreenCommentId(null);
+    setShowActivityInfo(false);
   }
 
   const otherActivities = useMemo(() => {
@@ -4459,13 +4462,37 @@ export function TaskDetailModalContent({
           <div ref={activityPanelRef} style={isDesktop ? { width: activityWidth } : undefined} className={`nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 overflow-hidden ${mobilePanelTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}>
             <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
               <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
-              <div className="flex gap-3">
+              <div className="flex gap-2.5 items-center">
                 <span className="text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
+                <button
+                  type="button"
+                  onClick={() => setShowActivityInfo(prev => !prev)}
+                  title={showActivityInfo ? 'Back to Activity' : 'Task Info (Media, Links & Tasklists)'}
+                  className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                    showActivityInfo
+                      ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                      : 'border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                  }`}
+                >
+                  <Info className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
-            <div
-              ref={activityScrollRef}
+            {showActivityInfo ? (
+              <TaskInfoDrawer
+                task={task}
+                comments={richComments}
+                onClose={() => setShowActivityInfo(false)}
+                onPreviewImage={setLightboxImage}
+                workspaceUsers={workspaceUsers}
+                currentUser={currentUser}
+                isSubtask={false}
+              />
+            ) : (
+              <>
+                <div
+                  ref={activityScrollRef}
               onScroll={handleActivityScroll}
               onWheel={() => { isUserScrollingRef.current = true; }}
               onTouchStart={() => { isUserScrollingRef.current = true; }}
@@ -5461,7 +5488,9 @@ export function TaskDetailModalContent({
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
               </div>
             </div>
-          </div>
+          </>
+        )}
+      </div>
 
         </div>
       </div>
@@ -5761,6 +5790,7 @@ export function SubtaskDetailView({
   const [replyText, setReplyText] = useState('');
 
   const [fullscreenCommentId, setFullscreenCommentId] = useState<string | null>(null);
+  const [showActivityInfo, setShowActivityInfo] = useState(false);
 
   const activeFullscreenComment = useMemo(() => {
     if (!fullscreenCommentId) return null;
@@ -5778,6 +5808,7 @@ export function SubtaskDetailView({
     setReplyText('');
     setShowEmojiPickerFor(null);
     setFullscreenCommentId(null);
+    setShowActivityInfo(false);
   }, [subtask?.id]);
 
   const [showMentionMenu, setShowMentionMenu] = useState(false);
@@ -8707,13 +8738,37 @@ export function SubtaskDetailView({
         >
           <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
             <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
-            <div className="flex gap-3">
+            <div className="flex gap-2.5 items-center">
               <span className="text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
+              <button
+                type="button"
+                onClick={() => setShowActivityInfo(prev => !prev)}
+                title={showActivityInfo ? 'Back to Activity' : 'Subtask Info (Media, Links & Tasklists)'}
+                className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                  showActivityInfo
+                    ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                    : 'border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                }`}
+              >
+                <Info className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
-          <div
-            ref={activityScrollRef}
+          {showActivityInfo ? (
+            <TaskInfoDrawer
+              task={subtask}
+              comments={richComments}
+              onClose={() => setShowActivityInfo(false)}
+              onPreviewImage={setLightboxImage}
+              workspaceUsers={workspaceUsers}
+              currentUser={currentUser}
+              isSubtask={true}
+            />
+          ) : (
+            <>
+              <div
+                ref={activityScrollRef}
             onScroll={handleActivityScroll}
             onWheel={() => { isUserScrollingRef.current = true; }}
             onTouchStart={() => { isUserScrollingRef.current = true; }}
@@ -9662,7 +9717,9 @@ export function SubtaskDetailView({
               <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
             </div>
           </div>
-        </div >
+        </>
+      )}
+    </div >
       </div >
       {commentToDelete && (
         <ConfirmDeleteModal

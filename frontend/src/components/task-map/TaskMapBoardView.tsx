@@ -947,18 +947,27 @@ export const TaskMapBoardView: React.FC<Props> = ({
   // Filter tasks by Admin and Client visibility (default: both checked) and include Pending, Revision, Waiting, and On-hold statuses
   const displayPool = React.useMemo(() => {
     return availablePool.filter((t) => {
-      // Exclude if claimed by an active team member on this board
+      const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
+        x.trim().toUpperCase().replace(/[\s_-]+/g, '')
+      );
+      const isAvailableSubStatus = mapStatuses.some((st: string) =>
+        st.includes('AVAILABLE') || st.includes('HANDOVER') || st.includes('HAND-OVER')
+      );
+      const isUnassigned = !t.assigneeId || t.assigneeId === 'unassigned';
+
+      // Exclude from available pool ONLY if task is assigned and actively live working right now
       const hasActiveWorker = Boolean(
+        !isAvailableSubStatus &&
+        !isUnassigned &&
         t.progress?.maName &&
+        !t.progress?.timeOut &&
+        isTaskLiveWorking(t, t.progress.maName, currentTime) &&
         (shiftUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name)) ||
          (allUsers && allUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name))))
       );
       if (hasActiveWorker) return false;
 
-      const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
-      const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
-        x.trim().toUpperCase().replace(/[\s_-]+/g, '')
-      );
       const isExcluded =
         s === 'DAILY' ||
         s.includes('DAILY') ||
@@ -981,7 +990,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const isRevision = s === 'REVISION' || mapStatuses.includes('REVISION');
       const isWaiting = s === 'WAITING' || s.includes('WAITING') || mapStatuses.some((st: string) => st.includes('WAITING'));
       const isOnHold = s === 'ONHOLD' || s.includes('HOLD') || mapStatuses.some((st: string) => st.includes('HOLD'));
-      if (!isPending && !isRevision && !isWaiting && !isOnHold) return false;
+      if (!isPending && !isRevision && !isWaiting && !isOnHold && !isAvailableSubStatus && !isUnassigned) return false;
 
       // Admin task check
       const isAdmin = isTaskUnderAdmin(t);
@@ -1119,9 +1128,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
     });
   }
 
-  // Ensure any user who has active/logged worker progress on a task gets a column in userColumnsMap
+  // Ensure any user who is actively live working on a task gets a column in userColumnsMap
   tasks.forEach((t) => {
-    if (t.progress?.maName && allUsers) {
+    if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, currentTime) && allUsers) {
       const alreadyHasCol = Object.values(userColumnsMap).some((col) =>
         doesProgressMatchUser(t.progress?.maName, col.user.name)
       );
@@ -1180,16 +1189,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
     });
   }
 
-  // Tasks in availablePool that have active progress or are assigned to an active column must NOT be trapped in poolIds!
+  // Tasks in availablePool that an active assistant is currently live working on can claim their In Progress slot;
+  // all other availablePool tasks belong strictly in poolIds so user columns do not hijack them!
   const poolIds = new Set(
     availablePool
       .filter((p) => {
-        const hasWorkerProgress = Boolean(
+        const isLiveWorkingOnCol = Boolean(
           p.progress?.maName &&
-          Object.values(userColumnsMap).some((col) => doesProgressMatchUser(p.progress?.maName, col.user.name))
+          !p.progress?.timeOut &&
+          Object.values(userColumnsMap).some(
+            (col) => doesProgressMatchUser(p.progress?.maName, col.user.name) && isTaskLiveWorking(p, col.user.name, currentTime)
+          )
         );
-        const hasColumnAssignee = Boolean(p.assigneeId && userColumnsMap[p.assigneeId]);
-        return !hasWorkerProgress && !hasColumnAssignee;
+        return !isLiveWorkingOnCol;
       })
       .map((p) => p.id)
   );
@@ -1233,33 +1245,28 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
     }
 
-    // Also: if an MA logged progress on this task (e.g. Rowel worked on Aneeka's task, or Aaron on VIP Scale task),
-    // add it to that worker's column so they see their active task!
-    if (task.progress?.maName) {
+    // Only if an MA is actively live working on this task (and it's not assigned to someone else),
+    // display it in that worker's column so they see their live active task:
+    if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, currentTime)) {
       const workerCol = Object.entries(userColumnsMap).find(
         ([colUserId, col]) => doesProgressMatchUser(task.progress?.maName, col.user.name)
       );
-      if (workerCol && !workerCol[1].tasks.some((t) => t.id === task.id)) {
+      if (workerCol && (!task.assigneeId || task.assigneeId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
         workerCol[1].tasks.push(task);
       }
     }
   });
 
-  // Also check tasks in availablePool that have worker progress or column assignee:
+  // Only tasks in availablePool that are currently live working can be attached to the active worker's column;
+  // all other available pool tasks stay strictly in the Available Tasks column!
   availablePool.forEach((task) => {
     if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
-    const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
-    if (!hasProgress && (isClosedTask(task) || isExcludedForUser(task))) return;
-    if (task.progress?.maName) {
+    if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, currentTime)) {
       const workerCol = Object.entries(userColumnsMap).find(
         ([colUserId, col]) => doesProgressMatchUser(task.progress?.maName, col.user.name)
       );
-      if (workerCol && !workerCol[1].tasks.some((t) => t.id === task.id)) {
+      if (workerCol && (!task.assigneeId || task.assigneeId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
         workerCol[1].tasks.push(task);
-      }
-    } else if (task.assigneeId && userColumnsMap[task.assigneeId]) {
-      if (!userColumnsMap[task.assigneeId].tasks.some((t) => t.id === task.id)) {
-        userColumnsMap[task.assigneeId].tasks.push(task);
       }
     }
   });
@@ -1510,6 +1517,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
+    const dragTask = activeDragTask;
     setActiveDragTask(null);
     setActiveOverId(null);
 
@@ -1518,6 +1526,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const taskId = active.id as string;
     const targetColumnId = over.id as string;
     const isFromAvailable = poolIds.has(taskId);
+
+    const currentTask = dragTask || tasks.find((t) => t.id === taskId) || availablePool.find((t) => t.id === taskId);
+    const currentAssigneeId =
+      currentTask?.assigneeId ||
+      currentTask?.assignee?.id ||
+      (currentTask?.assignees && currentTask.assignees[0]?.id);
 
     if (isFromAvailable && !isPmUser) {
       toast.error('Only Project Managers and Admins can assign tasks from the Available column');
@@ -1529,6 +1543,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('in-progress-', '');
       const targetUser = getUserProfile(targetUserId);
 
+      // If already assigned to this user and already active in progress, no-op!
+      if (currentAssigneeId === targetUserId && isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
+        return;
+      }
+
       try {
         await taskMapApi.assignTask(taskId, targetUserId);
         if (onTaskUpdate) {
@@ -1536,7 +1555,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
         } else {
           await tasksApi.updateTask(taskId, { status: 'In progress', assigneeId: targetUserId } as any).catch(console.error);
         }
-        onStatusChange(taskId, ['In progress']);
         toast.success(`Task set In Progress for ${targetUser?.name || 'user'}`);
         onDataRefresh();
       } catch (err: any) {
@@ -1550,6 +1568,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('user-', '');
       const targetUser = getUserProfile(targetUserId);
 
+      // If dragged and dropped in the same user's column, it's the same location: DO NOTHING!
+      if (currentAssigneeId === targetUserId) {
+        return;
+      }
+
       try {
         await taskMapApi.assignTask(taskId, targetUserId);
         toast.success(`Task assigned to ${targetUser?.name || 'user'}`);
@@ -1558,6 +1581,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
         toast.error(err.message || 'Failed to assign task');
       }
     } else if (targetColumnId === 'available-pool') {
+      // If already in available pool, do nothing!
+      if (isFromAvailable) {
+        return;
+      }
       // Unassign task to available pool (PMs only)
       if (!isPmUser) {
         toast.error('Only Project Managers can move tasks to the Available column');
@@ -1582,7 +1609,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
       } else {
         await tasksApi.updateTask(taskId, { status: 'In progress', assigneeId: targetUserId } as any).catch(console.error);
       }
-      onStatusChange(taskId, ['In progress']);
       toast.success(`Task set In Progress for ${targetUser?.name || 'user'}`);
       onDataRefresh();
     } catch (err: any) {

@@ -1553,6 +1553,16 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
           {/* Nexus nav */}
           <div className="flex-1 overflow-y-auto px-2 py-2 space-y-px">
+            <a
+              href={`${VIPSCALE_BASE}/protected/galaxy-task`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 w-full py-2 px-3 mb-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-medium text-xs sm:text-sm shadow-sm hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer group select-none"
+              title="Add Task via Galaxy"
+            >
+              <Plus className="size-4 shrink-0 transition-transform group-hover:rotate-90 duration-200" />
+              <span>Add Task</span>
+            </a>
             <Link
               id="sidebar-activity-link"
               href="/activity"

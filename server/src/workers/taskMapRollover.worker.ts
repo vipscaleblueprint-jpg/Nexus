@@ -1,6 +1,7 @@
 import { prisma } from '../config/prisma';
 import { logger } from '../config/logger';
 import { io } from '../server';
+import { invalidateCache } from '../services/redisService';
 import {
   getShiftConfigs,
   getCurrentActiveShift,
@@ -90,6 +91,7 @@ export async function executeTaskMapShiftRollover(fromShift?: string): Promise<{
     }
 
     if (rolledCount > 0) {
+      await invalidateCache('task_map:all').catch(() => { });
       logger.info(`[TaskMap Rollover] Rolled over ${rolledCount} tasks from ${currentShift} to ${nextShift}`);
       io.emit('task_map:updated', { fromShift: currentShift, toShift: nextShift, rolledCount });
     }

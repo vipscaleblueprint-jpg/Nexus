@@ -300,19 +300,27 @@ export const TaskMapContainer: React.FC = () => {
 
   // Socket.io & Window events listeners for real-time synchronization
   useEffect(() => {
+    let reloadTimer: NodeJS.Timeout | null = null;
+    const scheduleReload = () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        loadData(true);
+      }, 400);
+    };
+
     const handleTaskUpdated = (e: any) => {
       const data = e?.detail || e;
       const taskId = data?.task?.id || data?.id;
       if (taskId && pendingUpdatesRef.current.has(taskId)) {
         return;
       }
-      loadData(true);
+      scheduleReload();
     };
 
     const handleTaskMapUpdated = (e: any) => {
       const data = e.detail || e;
       if (!data?.taskId) {
-        loadData(true);
+        scheduleReload();
         return;
       }
 
@@ -433,6 +441,7 @@ export const TaskMapContainer: React.FC = () => {
     window.addEventListener('ma:session_updated', handleMaSessionUpdated);
 
     return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
       window.removeEventListener('task:updated', handleTaskUpdated);
       window.removeEventListener('task_map:updated', handleTaskMapUpdated);
       window.removeEventListener('task:progress_updated', handleProgressUpdated);

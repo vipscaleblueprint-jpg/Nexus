@@ -281,3 +281,12 @@ server/scripts/backfill-emoji-comment-images.ts
 server/scripts/check-mason.ts
 server/scripts/restore-clickup-mirrored-comments.ts
 server/src/scripts/scratch-query-luse.ts
+server/src/scripts/check-bea.ts
+server/src/scripts/check-debug.ts
+server/src/scripts/perf-test.ts
+server/src/scripts/scratch-check-active.ts
+server/src/scripts/check-theresa.ts
+Nexus/database.env
+Nexus/database.yaml
+Nexus/nexus-database.env
+Nexus/nexus.env

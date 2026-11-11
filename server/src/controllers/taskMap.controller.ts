@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { logger } from '../config/logger';
-import { invalidateCache, redis, isRedisReady } from '../services/redisService';
+import { invalidateCache, getCache, setCache, redis, isRedisReady } from '../services/redisService';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { isAuditorRole } from './auditShift.controller';
 import {
@@ -63,6 +63,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const activeShift = await getCurrentActiveShift();
     const currentShift = isAllShifts ? 'ALL' : (shiftQuery || activeShift);
 
+    const cacheKey = `task_map:data:${requestedDate}:${currentShift}:${clientQuery || 'ALL'}:${searchQuery || 'ALL'}`;
+    const cachedData = await getCache<any>(cacheKey);
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+
     // If viewing a previous date, check if a preserved historical snapshot exists
     if (requestedDate !== todayManila) {
       const existingSnapshot = await getTaskMapDailySnapshot(requestedDate);
@@ -95,7 +101,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           availablePool = availablePool.filter(clientFilterFn);
         }
 
-        return res.json({
+        const historyPayload = {
           success: true,
           isHistory: true,
           snapshotDate: requestedDate,
@@ -117,7 +123,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           activeUpworkSessions: existingSnapshot.activeUpworkSessions || [],
           upworkClients: existingSnapshot.upworkClients || [],
           maActiveSessions: existingSnapshot.maActiveSessions || {},
-        });
+        };
+        await setCache(cacheKey, historyPayload, 3600);
+        return res.json(historyPayload);
       }
     }
 
@@ -740,7 +748,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       await captureTaskMapDailySnapshot(requestedDate, snapshotPayload, (req as any).user?.id || 'system');
     }
 
-    res.json({
+    const responsePayload = {
       success: true,
       isHistory: isPastDate,
       snapshotDate: isPastDate ? requestedDate : undefined,
@@ -762,7 +770,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       activeUpworkSessions,
       upworkClients,
       maActiveSessions,
-    });
+    };
+
+    // Cache in Redis: 15 seconds for today (protects against thundering herd socket storms), 3600 seconds for historical dates
+    await setCache(cacheKey, responsePayload, isPastDate ? 3600 : 15);
+
+    res.json(responsePayload);
   } catch (error: any) {
     logger.error({ error }, 'Error fetching task map data');
     res.status(500).json({ error: 'Failed to fetch task map data' });
@@ -1213,6 +1226,34 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Task not found' });
     }
 
+    // Guard: If task is already assigned to this user, return early without wiping statuses or modifying fields
+    const isAlreadyAssigned =
+      assigneeId &&
+      (currentTask.assigneeId === assigneeId ||
+        (currentTask.assignees || []).some((a) => a.id === assigneeId));
+    if (isAlreadyAssigned) {
+      const record = await getOrCreateTaskMapRecord(id);
+      return res.json({
+        success: true,
+        task: currentTask,
+        taskMap: record,
+      });
+    }
+
+    // Guard: If task is already unassigned and request is to unassign, return early only if already properly in available pool
+    const isAlreadyUnassigned = !assigneeId && !currentTask.assigneeId && (currentTask.assignees || []).length === 0;
+    if (isAlreadyUnassigned) {
+      const record = await getOrCreateTaskMapRecord(id);
+      const hasAvailableStatus = (record.statuses || []).some((s: string) => s.toUpperCase() === 'AVAILABLE TASK');
+      if (hasAvailableStatus && record.handedOver) {
+        return res.json({
+          success: true,
+          task: currentTask,
+          taskMap: record,
+        });
+      }
+    }
+
     // Prepare update data
     const updateData: any = {};
     if (assigneeId) {
@@ -1254,17 +1295,75 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
     // Remove Available / Pending / Revision statuses if assigned to a user column; add Available Task if unassigned back to pool
     const record = await getOrCreateTaskMapRecord(id);
     let newStatuses = record.statuses || [];
+    let reviewsList = record.pmReviews;
+    if (typeof reviewsList === 'string') {
+      try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
+    }
+    if (!Array.isArray(reviewsList)) reviewsList = [];
+
+    let reviewsModified = false;
+    let handedOver = record.handedOver;
+
     if (assigneeId) {
       newStatuses = newStatuses.filter((s) => {
         const up = s.toUpperCase().replace(/[\s_-]+/g, '');
-        return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'INREVIEW' && up !== 'TOREVIEW';
+        return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
       });
+      handedOver = false;
+
+      // If assigning to a different user, close any active Upwork session for the previous assignee
+      if (currentTask.assigneeId && currentTask.assigneeId !== assigneeId) {
+        for (const r of reviewsList) {
+          if (r.type === 'UPWORK_SESSION' && r.active) {
+            r.active = false;
+            r.stoppedAt = new Date().toISOString();
+            reviewsModified = true;
+          }
+        }
+        if (isRedisReady()) {
+          redis.hdel('task_map:upwork_active', id).catch(() => {});
+        }
+      }
     } else {
+      // Unassigned back to available pool
+      handedOver = true;
       if (!newStatuses.some((s) => s.toUpperCase() === 'AVAILABLE TASK')) {
         newStatuses.push('Available Task');
       }
+      newStatuses = newStatuses.filter((s) => {
+        const up = s.toUpperCase().replace(/[\s_-]+/g, '');
+        return !up.startsWith('UPWORK');
+      });
+
+      // Close any active Upwork session and complete any unclosed sheet session
+      for (const r of reviewsList) {
+        if (r.type === 'UPWORK_SESSION' && r.active) {
+          r.active = false;
+          r.stoppedAt = new Date().toISOString();
+          reviewsModified = true;
+        }
+        if (r.type === 'SHEET_PROGRESS' && r.timeIn && !r.timeOut) {
+          try {
+            r.timeOut = new Intl.DateTimeFormat('en-US', {
+              timeZone: 'Asia/Manila',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            }).format(new Date());
+            reviewsModified = true;
+          } catch {}
+        }
+      }
+      if (isRedisReady()) {
+        redis.hdel('task_map:upwork_active', id).catch(() => {});
+      }
     }
-    const updatedRecord = await updateTaskMapRecord(id, { statuses: newStatuses });
+
+    const updateMapRecordPayload: any = { statuses: newStatuses, handedOver };
+    if (reviewsModified) {
+      updateMapRecordPayload.pmReviews = reviewsList;
+    }
+    const updatedRecord = await updateTaskMapRecord(id, updateMapRecordPayload);
 
     // Invalidate Redis cache immediately
     await invalidateCache(
@@ -1445,6 +1544,7 @@ export const handlePmReviewAction = async (req: Request, res: Response) => {
         },
       });
 
+      await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
       io.emit('task_map:updated', { taskId: id, taskMap: updated });
       io.emit('task:updated', { id });
       return res.json({ success: true, taskMap: updated });
@@ -1501,6 +1601,7 @@ export const handlePmReviewAction = async (req: Request, res: Response) => {
         },
       });
 
+      await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
       io.emit('task_map:updated', { taskId: id, taskMap: updated });
       io.emit('task:updated', { id });
       return res.json({ success: true, taskMap: updated });
@@ -1607,6 +1708,7 @@ export const runRollover = async (req: Request, res: Response) => {
       rolledCount++;
     }
 
+    await invalidateCache('task_map:all').catch(() => { });
     io.emit('task_map:updated');
     res.json({ success: true, rolledCount, nextShift });
   } catch (error: any) {
@@ -1683,6 +1785,7 @@ export const updateTaskMeta = async (req: Request, res: Response) => {
     if (shift !== undefined) data.shift = String(shift).toUpperCase();
 
     const updated = await updateTaskMapRecord(id, data);
+    await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
     io.emit('task_map:updated', { taskId: id, taskMap: updated });
     res.json({ success: true, taskMap: updated });
   } catch (error: any) {
@@ -1991,7 +2094,8 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
         await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
       }
 
-      io.emit('task_map:updated');
+      await invalidateCache('task_map:all').catch(() => { });
+    io.emit('task_map:updated');
       return res.json({
         success: true,
         count: reviewTasks.length,
@@ -2029,6 +2133,7 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
       resetTaskIds.push(t.id);
     }
 
+    await invalidateCache('task_map:all').catch(() => { });
     io.emit('task_map:updated');
     return res.json({
       success: true,

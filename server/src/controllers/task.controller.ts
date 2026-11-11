@@ -34,7 +34,7 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { convertCommentHtmlToClickUp, fetchImageBuffer } from '../utils/clickupCommentConverter';
-import { isNexusAuditChecklist, isAiAuditChecklist, getAiPickedAudits, requiresClosedSubtasks, requiresCompletedAudits, normalizeAuditName, isReviewStatus } from '../utils/auditChecklist';
+import { isNexusAuditChecklist, isAiAuditChecklist, getAiPickedAudits, requiresClosedSubtasks, requiresLevel1Audits, requiresCompletedAudits, normalizeAuditName, isReviewStatus, isCheckingStatus } from '../utils/auditChecklist';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { canUserSetAssignees, getAssignDeniedMessage, canUserDeleteTask } from '../utils/assignPermission';
@@ -245,7 +245,7 @@ async function queryListTasks(
 }
 
 // GET /api/tasks/:id - Redis Cache-Aside
-export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
+export async function getTaskMoverAndUpdaters(taskId: string, subtaskId?: string): Promise<{
   inProgressMovedBy: { id: string; name: string; avatarUrl?: string | null } | null;
   maUpdaterIds: string[];
   maUpdaterNames: string[];
@@ -258,6 +258,7 @@ export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
         OR: [
           { action: 'STATUS_CHANGE' },
           { action: 'MA_UPDATE' },
+          { action: 'PM_REVIEW_REVISION' },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -277,26 +278,29 @@ export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
       const details = (log.details as any) || {};
       const newStatus = String(details.newStatus || '').toUpperCase().replace(/[^A-Z]/g, '');
 
+      // Scope check if a specific subtaskId is requested
+      if (subtaskId && details.subtaskId && details.subtaskId !== subtaskId) {
+        continue;
+      }
+
       // REVISION RESET BOUNDARY:
       // Status change to REVISION stops the scan for the current round.
       // All logs before this revision belong to the previous round.
-      if (log.action === 'STATUS_CHANGE' && newStatus === 'REVISION') {
+      if (
+        (log.action === 'STATUS_CHANGE' && newStatus.includes('REVISION')) ||
+        log.action === 'PM_REVIEW_REVISION'
+      ) {
         break;
       }
 
-      if (log.action === 'STATUS_CHANGE' && newStatus === 'INPROGRESS' && !inProgressMovedBy) {
-        if (details.movedById && details.movedByName) {
-          inProgressMovedBy = { id: details.movedById, name: details.movedByName, avatarUrl: null };
-          maUpdaterIds.add(details.movedById);
-          maUpdaterNames.add(details.movedByName);
-        } else if (log.user && log.user.name && !log.user.name.toUpperCase().includes('VIPSCALE')) {
-          inProgressMovedBy = { id: log.user.id, name: log.user.name, avatarUrl: log.user.avatarUrl };
-          maUpdaterIds.add(log.user.id);
-          maUpdaterNames.add(log.user.name);
-        }
-      }
+      // ONLY logs originating from the MA daily tracker count towards audit restrictions!
+      const isDailyTracker = Boolean(
+        details.isMaUpdate ||
+        details.source === 'sheets' ||
+        (details.source === 'external' && (details.movedByName || details.maUpdaterNames || details.maUpdaterIds))
+      );
 
-      if (details.isMaUpdate || details.source === 'sheets') {
+      if (isDailyTracker) {
         if (details.movedById) maUpdaterIds.add(details.movedById);
         if (details.movedByName) maUpdaterNames.add(details.movedByName);
         if (Array.isArray(details.maUpdaterIds)) {
@@ -305,9 +309,16 @@ export async function getTaskMoverAndUpdaters(taskId: string): Promise<{
         if (Array.isArray(details.maUpdaterNames)) {
           details.maUpdaterNames.forEach((name: string) => name && maUpdaterNames.add(name));
         }
-        if (log.userId) maUpdaterIds.add(log.userId);
-        if (log.user?.name && !log.user.name.toUpperCase().includes('VIPSCALE')) {
+        if (log.userId && details.movedByName && log.user?.name && !log.user.name.toUpperCase().includes('VIPSCALE')) {
+          maUpdaterIds.add(log.userId);
           maUpdaterNames.add(log.user.name);
+        }
+        if (newStatus === 'INPROGRESS' && !inProgressMovedBy) {
+          inProgressMovedBy = {
+            id: details.movedById || log.userId,
+            name: details.movedByName || log.user?.name,
+            avatarUrl: null,
+          };
         }
       }
     }
@@ -569,8 +580,8 @@ export async function createTask(req: Request, res: Response) {
       });
     })().catch((err) => console.error('createTask: assignment notifications failed:', err));
 
-    // Audits assigned per shift when moved to IN REVIEW
-    if (isReviewStatus(task.status)) autoAssignAudits(task.id, (req as any).user?.id || creatorId).catch((err) =>
+    // Audits assigned per shift when moved to IN REVIEW or CHECKING
+    if (isReviewStatus(task.status) || isCheckingStatus(task.status)) autoAssignAudits(task.id, (req as any).user?.id || creatorId).catch((err) =>
       console.error('createTask: audit auto-assign failed:', err)
     );
 
@@ -847,6 +858,44 @@ export async function updateTask(req: Request, res: Response) {
         }
       }
 
+      // Checking status: Level 1 audits (UI UX Audit and Design Audit) must be checked if required
+      if (requiresLevel1Audits(status)) {
+        const auditorRoles = [
+          ...((currentTask as any).assigneeRoleRestrictions || []),
+          ...(currentTask.subtasks || [])
+            .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
+            .flatMap((s: any) => (s as any).assigneeRoleRestrictions || []),
+        ];
+        const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+        const allItems = auditChecklists.flatMap((c: any) => c.items || []);
+        const excludedAudits = new Set(
+          allItems
+            .filter((i: any) => (i.text || '').startsWith('!'))
+            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
+        );
+        const activeItems = allItems
+          .filter((i: any) => !(i.text || '').startsWith('!'))
+          .map((i: any) => i.text);
+        const requiredTaskAudits = Array.from(new Set([
+          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
+          ...activeItems,
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
+
+        const completedTexts = new Set(
+          allItems
+            .filter((i: any) => i.completed && !i.text.startsWith('!'))
+            .map((i: any) => normalizeAuditName(i.text))
+        );
+        const uncheckedLevel1 = requiredTaskAudits.filter(r => {
+          const norm = normalizeAuditName(r);
+          const isL1 = norm.includes('ui') || norm.includes('ux') || norm.includes('design');
+          return isL1 && !completedTexts.has(norm);
+        });
+        if (uncheckedLevel1.length > 0) {
+          return res.status(400).json({ error: `Cannot move to ${status}: UI/UX and Design audits must be completed first (${uncheckedLevel1.join(', ')}).` });
+        }
+      }
+
       // Completion statuses: required audits must also be checked
       if (requiresCompletedAudits(status)) {
         const auditorRoles = [
@@ -1086,7 +1135,7 @@ export async function updateTask(req: Request, res: Response) {
               });
             }
 
-            if (isReviewStatus(status)) {
+            if (isReviewStatus(status) || isCheckingStatus(status)) {
               autoAssignAudits(taskId, actingUserId).catch((err) =>
                 console.error('updateTask: audit shift assign failed:', err)
               );
@@ -1368,6 +1417,44 @@ export async function moveTask(req: Request, res: Response) {
         }
       }
 
+      // Checking status: Level 1 audits (UI UX Audit and Design Audit) must be checked if required
+      if (requiresLevel1Audits(status)) {
+        const auditorRoles = [
+          ...((currentTask as any).assigneeRoleRestrictions || []),
+          ...(currentTask.subtasks || [])
+            .filter((s: any) => s.title?.toLowerCase().startsWith('--audit'))
+            .flatMap((s: any) => (s as any).assigneeRoleRestrictions || []),
+        ];
+        const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
+        const allItems = auditChecklists.flatMap((c: any) => c.items || []);
+        const excludedAudits = new Set(
+          allItems
+            .filter((i: any) => (i.text || '').startsWith('!'))
+            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
+        );
+        const activeItems = allItems
+          .filter((i: any) => !(i.text || '').startsWith('!'))
+          .map((i: any) => i.text);
+        const requiredTaskAudits = Array.from(new Set([
+          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
+          ...activeItems,
+        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
+
+        const completedTexts = new Set(
+          allItems
+            .filter((i: any) => i.completed && !i.text.startsWith('!'))
+            .map((i: any) => normalizeAuditName(i.text))
+        );
+        const uncheckedLevel1 = requiredTaskAudits.filter(r => {
+          const norm = normalizeAuditName(r);
+          const isL1 = norm.includes('ui') || norm.includes('ux') || norm.includes('design');
+          return isL1 && !completedTexts.has(norm);
+        });
+        if (uncheckedLevel1.length > 0) {
+          return res.status(400).json({ error: `Cannot move to ${status}: UI/UX and Design audits must be completed first (${uncheckedLevel1.join(', ')}).` });
+        }
+      }
+
       // Completion statuses: required audits must also be checked
       if (requiresCompletedAudits(status)) {
         const auditorRoles = [
@@ -1437,7 +1524,9 @@ export async function moveTask(req: Request, res: Response) {
 
     // Broadcast IMMEDIATELY after update
     const roomListId = currentListId || currentTask.listId;
-    io.emit('task:updated', updated);
+    const freshMoverInfo = await getTaskMoverAndUpdaters(id);
+    const enrichedUpdated = { ...updated, ...freshMoverInfo };
+    io.emit('task:updated', enrichedUpdated);
 
     // Invalidate activity cache in background (status change writes an AuditLog)
     invalidateCache(`task:activities:${id}`, `task:${id}`).catch(() => {});
@@ -1491,7 +1580,7 @@ export async function moveTask(req: Request, res: Response) {
             // Global broadcast so the Activity page and dashboards refresh too (list-room members receive it as well)
             io.emit('task_activity', { listId: roomListId, taskId: id, activity });
 
-            if (isReviewStatus(status)) {
+            if (isReviewStatus(status) || isCheckingStatus(status)) {
               autoAssignAudits(id, actingUserId).catch((err) =>
                 console.error('moveTask: audit shift assign failed:', err)
               );
@@ -3410,36 +3499,27 @@ export async function createChecklistItem(req: Request, res: Response) {
       data.completed = Boolean(completed);
       if (completed && userId) {
         if (isAuditChecklistName(checklist?.name)) {
-          const targetTask = await prisma.task.findUnique({
-            where: { id: taskId },
-            select: {
-              status: true,
-              assigneeId: true,
-              assignees: { select: { id: true } },
-              subtasks: {
-                select: {
-                  id: true,
-                  status: true,
-                  assigneeId: true,
-                  assignees: { select: { id: true } },
-                },
-              },
-            },
-          });
-          const isRevision = targetTask?.status?.toUpperCase() === 'REVISION';
-          if (!isRevision && targetTask) {
-            const taskAssigneeIds = new Set<string>([
-              targetTask.assigneeId,
-              ...targetTask.assignees.map((a) => a.id),
-              ...targetTask.subtasks.map((s) => s.assigneeId),
-              ...targetTask.subtasks.flatMap((s) => s.assignees.map((a) => a.id)),
-            ].filter(Boolean) as string[]);
+          const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId, subtaskId);
+          const reqUser = (req as any).user;
+          const reqUserName = reqUser?.name?.trim().toLowerCase();
+          const reqUserEmail = reqUser?.email?.trim().toLowerCase();
+          const matchesName = (target?: string | null) => {
+            if (!target || (!reqUserName && !reqUserEmail)) return false;
+            const t = target.trim().toLowerCase();
+            if (!t) return false;
+            if (reqUserName && (t === reqUserName || reqUserName.includes(t) || t.includes(reqUserName))) return true;
+            if (reqUserEmail && (t === reqUserEmail || reqUserEmail.includes(t) || t.includes(reqUserEmail))) return true;
+            const tTokens = t.split(/[\s\-_\/]+/).filter((w: string) => w.length > 2);
+            const uTokens = reqUserName ? reqUserName.split(/[\s\-_\/]+/).filter((w: string) => w.length > 2) : [];
+            return tTokens.some(tok => uTokens.includes(tok));
+          };
 
-            if (userId && taskAssigneeIds.has(userId)) {
-              return res.status(403).json({
-                error: 'You cannot audit this task because you are an assignee of this task. Please have another team member with the required audit role perform this audit.',
-              });
-            }
+          const isBlocked = (userId && maUpdaterIds.includes(userId)) ||
+            maUpdaterNames.some(matchesName);
+          if (isBlocked) {
+            return res.status(403).json({
+              error: 'You cannot audit this task because you inputted into the daily tracker for this task iteration. Please have another team member with the required audit role perform this audit.',
+            });
           }
         }
         data.checkedById = userId;
@@ -3782,47 +3862,29 @@ export async function updateChecklistItem(req: Request, res: Response) {
           select: { checklist: { select: { name: true, taskId: true, subtaskId: true } } },
         });
         const targetTaskId = checkItem?.checklist?.taskId || req.params.id;
+        const currentSubtaskId = checkItem?.checklist?.subtaskId || undefined;
         if (isAuditChecklistName(checkItem?.checklist?.name) && targetTaskId) {
-          const targetTask = await prisma.task.findUnique({
-            where: { id: targetTaskId },
-            select: {
-              status: true,
-              assigneeId: true,
-              assignees: { select: { id: true } },
-              subtasks: {
-                select: {
-                  id: true,
-                  status: true,
-                  assigneeId: true,
-                  assignees: { select: { id: true } },
-                },
-              },
-            },
-          });
+          const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(targetTaskId, currentSubtaskId);
+          const reqUser = (req as any).user;
+          const reqUserName = reqUser?.name?.trim().toLowerCase();
+          const reqUserEmail = reqUser?.email?.trim().toLowerCase();
+          const matchesName = (target?: string | null) => {
+            if (!target || (!reqUserName && !reqUserEmail)) return false;
+            const t = target.trim().toLowerCase();
+            if (!t) return false;
+            if (reqUserName && (t === reqUserName || reqUserName.includes(t) || t.includes(reqUserName))) return true;
+            if (reqUserEmail && (t === reqUserEmail || reqUserEmail.includes(t) || t.includes(reqUserEmail))) return true;
+            const tTokens = t.split(/[\s\-_\/]+/).filter((w: string) => w.length > 2);
+            const uTokens = reqUserName ? reqUserName.split(/[\s\-_\/]+/).filter((w: string) => w.length > 2) : [];
+            return tTokens.some(tok => uTokens.includes(tok));
+          };
 
-          const currentSubtask = checkItem?.checklist?.subtaskId
-            ? targetTask?.subtasks.find((s) => s.id === checkItem.checklist.subtaskId)
-            : null;
-          const currentStatus = (currentSubtask?.status || targetTask?.status || '').toUpperCase();
-          const isRevision = currentStatus === 'REVISION';
-
-          if (!isRevision && targetTask) {
-            const taskAssigneeIds = new Set<string>([
-              targetTask.assigneeId,
-              ...targetTask.assignees.map((a) => a.id),
-              ...(currentSubtask
-                ? [currentSubtask.assigneeId, ...currentSubtask.assignees.map((a) => a.id)]
-                : [
-                    ...targetTask.subtasks.map((s) => s.assigneeId),
-                    ...targetTask.subtasks.flatMap((s) => s.assignees.map((a) => a.id)),
-                  ]),
-            ].filter(Boolean) as string[]);
-
-            if (userId && taskAssigneeIds.has(userId)) {
-              return res.status(403).json({
-                error: 'You cannot audit this task because you are an assignee of this task. Please have another team member with the required audit role perform this audit.',
-              });
-            }
+          const isBlocked = (userId && maUpdaterIds.includes(userId)) ||
+            maUpdaterNames.some(matchesName);
+          if (isBlocked) {
+            return res.status(403).json({
+              error: 'You cannot audit this task because you inputted into the daily tracker for this task iteration. Please have another team member with the required audit role perform this audit.',
+            });
           }
         }
         data.checkedById = userId;

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { TaskMapItem, TaskMapOption, taskMapApi } from '@/api/taskMap';
+import { TaskMapItem, TaskMapOption, taskMapApi, hasUiUxOrDesignAudit, canPerformAudit } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -467,7 +467,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // All combined review candidates (admin & client filtering applied per column)
   const filteredReviewTasks = combinedTasks;
 
-  // Check if a task has review status
+  // Check if a task has review or checking status
   const isReviewStatus = (t: TaskMapItem) => {
     const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
     const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
@@ -477,9 +477,13 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       s === 'TOREVIEW' ||
       s === 'INREVIEW' ||
       s === 'REVIEW' ||
+      s === 'CHECKING' ||
+      s === 'INCHECKING' ||
       mapStatuses.includes('TOREVIEW') ||
       mapStatuses.includes('INREVIEW') ||
-      mapStatuses.includes('REVIEW')
+      mapStatuses.includes('REVIEW') ||
+      mapStatuses.includes('CHECKING') ||
+      mapStatuses.includes('INCHECKING')
     );
   };
 
@@ -523,9 +527,13 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       s === 'TOREVIEW' ||
       s === 'INREVIEW' ||
       s === 'REVIEW' ||
+      s === 'CHECKING' ||
+      s === 'INCHECKING' ||
       mapStatuses.includes('TOREVIEW') ||
       mapStatuses.includes('INREVIEW') ||
-      mapStatuses.includes('REVIEW')
+      mapStatuses.includes('REVIEW') ||
+      mapStatuses.includes('CHECKING') ||
+      mapStatuses.includes('INCHECKING')
     );
   };
 
@@ -578,11 +586,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       toast.info('Task moved to General Review queue');
       onStatusChange(taskId, updatedStatuses);
 
+      const targetStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
       if (onTaskUpdate) {
-        await onTaskUpdate(taskId, { assigneeId: null, status: 'To review' });
+        await onTaskUpdate(taskId, { assigneeId: null, status: targetStatus });
       } else {
         await tasksApi
-          .updateTask(taskId, { assigneeId: null, status: 'To review' } as any)
+          .updateTask(taskId, { assigneeId: null, status: targetStatus } as any)
           .catch(console.error);
         onDataRefresh();
       }
@@ -591,15 +600,25 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       const auditor = auditorUsers.find((a) => a.id === auditorId);
       if (auditor) {
         const auditType = getDesignatedAuditType(auditor);
+
+        // Enforce hierarchy before assigning to auditor!
+        const permCheck = canPerformAudit(auditType, task);
+        if (!permCheck.allowed) {
+          toast.error(permCheck.reason || 'Cannot assign: prerequisites not completed.');
+          return;
+        }
+
         updatedStatuses = [auditType];
         toast.success(`Task assigned to ${auditor.name} (${auditType})`);
         onStatusChange(taskId, updatedStatuses);
 
+        const targetStatus = (auditType === 'UI UX Audit' || auditType === 'Design Audit') ? 'In Review' : 'Checking';
+
         if (onTaskUpdate) {
-          await onTaskUpdate(taskId, { assigneeId: auditor.id, status: 'In Review' });
+          await onTaskUpdate(taskId, { assigneeId: auditor.id, status: targetStatus });
         } else {
           await tasksApi
-            .updateTask(taskId, { assigneeId: auditor.id, status: 'In Review' } as any)
+            .updateTask(taskId, { assigneeId: auditor.id, status: targetStatus } as any)
             .catch(console.error);
           onDataRefresh();
         }
@@ -1100,7 +1119,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                         toast.success('Task marked To Send — transferred to CRM Map pool');
                                       } else {
                                         // User pressed 'To Send' AGAIN in Auditing -> revert back to last status
-                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        const defaultRev = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                        const revertStatus = (task as any)._previousStatus || defaultRev;
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: revertStatus });
@@ -1121,7 +1141,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                         }
                                         toast.success('Task moved to Waiting — transferred to CRM Map');
                                       } else {
-                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        const defaultRev = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                        const revertStatus = (task as any)._previousStatus || defaultRev;
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: revertStatus });
@@ -1134,14 +1155,15 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                     } else if (norm === 'ask client' || norm === 'askclient') {
                                       if (isSelecting) {
                                         onStatusChange(task.id, cleanNext);
-                                        if (task.status !== 'In Review') {
+                                        const targetRev = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                        if (task.status !== targetRev) {
                                           if (onTaskUpdate) {
-                                            await onTaskUpdate(task.id, { status: 'In Review' });
+                                            await onTaskUpdate(task.id, { status: targetRev });
                                           } else {
-                                            await tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
+                                            await tasksApi.updateTask(task.id, { status: targetRev } as any).catch(console.error);
                                           }
                                         }
-                                        toast.info("Task marked 'Ask Client' — transferred to CRM Map pool (stays In Review)");
+                                        toast.info(`Task marked 'Ask Client' — transferred to CRM Map pool (stays ${targetRev})`);
                                       } else {
                                         onStatusChange(task.id, []);
                                         toast.info("Removed 'Ask Client'");
@@ -1157,7 +1179,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                         }
                                         toast.warning('Task marked for Revision — returned to Task Map available tasks');
                                       } else {
-                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        const defaultRev = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                        const revertStatus = (task as any)._previousStatus || defaultRev;
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: revertStatus });

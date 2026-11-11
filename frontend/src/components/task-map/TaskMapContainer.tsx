@@ -648,7 +648,7 @@ export const TaskMapContainer: React.FC = () => {
     // 1. Optimistically update local tasks & availablePool while tracking previous status for undo/misclick support
     const nextStatusUp = (fields.status || '').toUpperCase().trim();
     const isMovingToAvailable = fields.assigneeId === null || nextStatusUp === 'ON-HOLD' || nextStatusUp === 'ONHOLD';
-    const isMovingOutOfAvailable = nextStatusUp === 'IN REVIEW' || nextStatusUp === 'WAITING' || (fields.assigneeId && fields.assigneeId !== null);
+    const isMovingOutOfAvailable = nextStatusUp === 'IN REVIEW' || nextStatusUp === 'CHECKING' || nextStatusUp === 'WAITING' || (fields.assigneeId && fields.assigneeId !== null);
 
     setTasks((prev) =>
       prev.map((t) =>

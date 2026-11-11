@@ -5,7 +5,18 @@ import { ShieldCheck, Check, Lock } from 'lucide-react';
 import { TaskMapItem } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { toast } from '@/lib/toast';
-import { normalizeAuditName, getRequiredAudits, isNexusAuditChecklist, HIDE_DESIGN_AUDIT } from '@/lib/auditChecklist';
+import {
+  normalizeAuditName,
+  getRequiredAudits,
+  isNexusAuditChecklist,
+  HIDE_DESIGN_AUDIT,
+  canPerformAudit,
+  isUiUxAudit,
+  isDesignAudit,
+  areLevel1AuditsComplete,
+  hasUiUxOrDesignAudit,
+  AuditPermissionCheck,
+} from '@/lib/auditChecklist';
 
 interface Props {
   task: TaskMapItem;
@@ -109,9 +120,18 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     }
 
     if (isUpdating) return;
-    setIsUpdating(true);
 
     const nextCompleted = !itemDef.completed;
+
+    if (nextCompleted) {
+      const permCheck = canPerformAudit(itemDef.name, task);
+      if (!permCheck.allowed) {
+        toast.error(permCheck.reason || 'Prerequisites not completed.');
+        return;
+      }
+    }
+
+    setIsUpdating(true);
 
     // 1. Optimistic local update
     let updatedCls = [...localChecklists];
@@ -157,6 +177,27 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     task.checklists = finalCls;
     if (onChecklistsUpdated) {
       onChecklistsUpdated(finalCls);
+    }
+
+    // Auto-transition: In Review -> Checking when Level 1 audits complete; or Checking -> In Review if unchecked
+    const taskStatusUpper = (task.status || '').toUpperCase().trim();
+    if (nextCompleted && (taskStatusUpper === 'IN REVIEW' || taskStatusUpper === 'INREVIEW')) {
+      const isLevel1 = isUiUxAudit(itemDef.name) || isDesignAudit(itemDef.name);
+      if (isLevel1) {
+        const dummyTask = { ...task, checklists: finalCls };
+        if (areLevel1AuditsComplete(dummyTask)) {
+          task.status = 'Checking';
+          tasksApi.updateTask(task.id, { status: 'Checking' } as any).catch(console.error);
+          toast.success('✓ UI/UX and Design audits completed — task moved to Checking');
+        }
+      }
+    } else if (!nextCompleted && (taskStatusUpper === 'CHECKING' || taskStatusUpper === 'IN CHECKING')) {
+      const isLevel1 = isUiUxAudit(itemDef.name) || isDesignAudit(itemDef.name);
+      if (isLevel1 && hasUiUxOrDesignAudit(task)) {
+        task.status = 'In Review';
+        tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
+        toast.info('UI/UX or Design audit unchecked — task returned to In Review');
+      }
     }
 
     // 2. Persist to server
@@ -238,18 +279,25 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       {/* Items List */}
       <div className="space-y-1">
         {auditItems.map((itemDef) => {
+          const permCheck: AuditPermissionCheck = !itemDef.completed
+            ? canPerformAudit(itemDef.name, task)
+            : { allowed: true, missingPrerequisites: [] };
+          const isLockedByHierarchy = !itemDef.completed && !permCheck.allowed;
+
           return (
             <div
               key={itemDef.norm}
               onClick={(e) => handleToggleItem(e, itemDef)}
               className={`flex items-center gap-2 px-1.5 py-1 rounded-md transition-colors text-xs ${
-                isQueueColumn
+                isQueueColumn || isLockedByHierarchy
                   ? 'cursor-not-allowed opacity-75 hover:bg-zinc-800/30'
                   : 'cursor-pointer hover:bg-zinc-800/60'
               }`}
               title={
                 isQueueColumn
                   ? 'Must be assigned to an auditor first before checking'
+                  : isLockedByHierarchy
+                  ? permCheck.reason
                   : itemDef.completed
                   ? 'Click to uncheck'
                   : 'Click to check off'
@@ -260,12 +308,18 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
                 className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-all ${
                   itemDef.completed
                     ? 'bg-emerald-500 border-emerald-500 text-white'
+                    : isLockedByHierarchy
+                    ? 'border-zinc-700/80 bg-zinc-900/60 text-zinc-500'
                     : isQueueColumn
                     ? 'border-zinc-700 bg-zinc-800/50'
                     : 'border-zinc-600 hover:border-zinc-400 bg-zinc-800/30'
                 }`}
               >
-                {itemDef.completed && <Check className="size-2.5 stroke-[3]" />}
+                {itemDef.completed ? (
+                  <Check className="size-2.5 stroke-[3]" />
+                ) : isLockedByHierarchy ? (
+                  <Lock className="size-2 text-zinc-500" />
+                ) : null}
               </div>
 
               {/* Text */}
@@ -273,6 +327,8 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
                 className={`text-[11px] leading-tight truncate flex-1 ${
                   itemDef.completed
                     ? 'text-zinc-400 line-through'
+                    : isLockedByHierarchy
+                    ? 'text-zinc-500'
                     : 'text-zinc-200 font-medium'
                 }`}
               >

@@ -944,7 +944,12 @@ export const cleanUpMaActiveUpworkSessions = async (maName: string, excludedTask
             mod = true;
             return {
               ...r,
-              timeOut: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+              timeOut: new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Manila',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              }).format(new Date()),
             };
           }
         }

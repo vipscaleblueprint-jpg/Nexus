@@ -855,46 +855,81 @@ export async function updateTask(req: Request, res: Response) {
         }
       });
 
-      // Audit log & activity feed when subtask status changed
-      if (normalizedStatus !== undefined && normalizedStatus !== existingSubtask.status) {
+      // Audit log & activity feed when subtask status changed OR MA daily tracker update received
+      const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
+      const isMaUpdate = Boolean(req.body.is_ma_update || rawMoverName || req.body.ma_updaters);
+      const statusChanged = normalizedStatus !== undefined && normalizedStatus !== existingSubtask.status;
+
+      if (statusChanged || isMaUpdate) {
         try {
           const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
           const resolvedMover = rawMoverName ? await findUserByName(rawMoverName) : null;
           const fallbackActor = apiKey.user || await getOrCreateVipScaleUser();
           const actor = resolvedMover || fallbackActor;
           const authorName = resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale');
+          let rawUpdaters: string[] = [];
+          if (Array.isArray(req.body.ma_updaters)) {
+            rawUpdaters = req.body.ma_updaters;
+          } else if (typeof req.body.ma_updaters === 'string' && req.body.ma_updaters.trim()) {
+            rawUpdaters = req.body.ma_updaters.split(',').map((s: string) => s.trim()).filter(Boolean);
+          } else if (rawMoverName) {
+            rawUpdaters = [rawMoverName];
+          }
+
+          const resolvedUpdaterIds: string[] = [];
+          const resolvedUpdaterNames: string[] = [];
+          for (const uName of rawUpdaters) {
+            if (!uName) continue;
+            const cleanName = String(uName).trim();
+            if (!resolvedUpdaterNames.includes(cleanName)) resolvedUpdaterNames.push(cleanName);
+            const uUser = await findUserByName(cleanName);
+            if (uUser && !resolvedUpdaterIds.includes(uUser.id)) {
+              resolvedUpdaterIds.push(uUser.id);
+            }
+          }
+          if (resolvedMover?.id && !resolvedUpdaterIds.includes(resolvedMover.id)) {
+            resolvedUpdaterIds.push(resolvedMover.id);
+          }
+          if (authorName && !resolvedUpdaterNames.includes(authorName)) {
+            resolvedUpdaterNames.push(authorName);
+          }
+
           const log = await prisma.auditLog.create({
             data: {
-              action: 'STATUS_CHANGE',
+              action: statusChanged ? 'STATUS_CHANGE' : 'MA_UPDATE',
               entity: 'TASK',
               entityId: target.taskId,
               userId: actor.id,
               details: {
                 oldStatus: existingSubtask.status,
-                newStatus: normalizedStatus,
+                newStatus: normalizedStatus || existingSubtask.status,
                 subtaskTitle: updatedSub.title,
                 subtaskId: updatedSub.id,
                 source: 'external',
                 movedByName: authorName,
                 movedById: resolvedMover?.id || null,
-                isMaUpdate: Boolean(rawMoverName),
+                isMaUpdate: true,
+                maUpdaterIds: resolvedUpdaterIds,
+                maUpdaterNames: resolvedUpdaterNames,
               },
             }
           });
-          const activity = {
-            id: log.id,
-            type: 'status_change',
-            author: authorName,
-            oldStatus: existingSubtask.status,
-            newStatus: normalizedStatus,
-            subtaskTitle: updatedSub.title,
-            subtaskId: updatedSub.id,
-            date: log.createdAt,
-            user: { ...actor, name: authorName },
-          };
-          io.emit('task_activity', { listId: target.task?.listId, taskId: target.taskId, activity });
-          if (target.task?.listId) {
-            io.to(`list:${target.task.listId}`).emit('task_activity', { listId: target.task.listId, taskId: target.taskId, activity });
+          if (statusChanged) {
+            const activity = {
+              id: log.id,
+              type: 'status_change',
+              author: authorName,
+              oldStatus: existingSubtask.status,
+              newStatus: normalizedStatus,
+              subtaskTitle: updatedSub.title,
+              subtaskId: updatedSub.id,
+              date: log.createdAt,
+              user: { ...actor, name: authorName },
+            };
+            io.emit('task_activity', { listId: target.task?.listId, taskId: target.taskId, activity });
+            if (target.task?.listId) {
+              io.to(`list:${target.task.listId}`).emit('task_activity', { listId: target.task.listId, taskId: target.taskId, activity });
+            }
           }
         } catch (actErr) {
           console.error('[external.updateTask] subtask activity log error:', actErr);
@@ -916,9 +951,11 @@ export async function updateTask(req: Request, res: Response) {
         }
       });
       if (fullParent) {
-        io.emit('task:updated', fullParent);
+        const freshMoverInfo = await getTaskMoverAndUpdaters(target.taskId, updatedSub.id);
+        const broadcastPayload = { ...fullParent, ...freshMoverInfo };
+        io.emit('task:updated', broadcastPayload);
         if (fullParent.listId) {
-          io.to(`list:${fullParent.listId}`).emit('task:updated', fullParent);
+          io.to(`list:${fullParent.listId}`).emit('task:updated', broadcastPayload);
         }
       }
 

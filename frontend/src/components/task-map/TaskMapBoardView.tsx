@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { TaskMapItem, TaskMapOption, taskMapApi, createEmptyUserBlock } from '@/api/taskMap';
+import { TaskMapItem, TaskMapOption, taskMapApi, createEmptyUserBlock, hasUiUxOrDesignAudit } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -1698,16 +1698,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return;
     }
 
-    // 4. To Review: changes main status to In Review and transfers to Auditor Map
+    // 4. To Review: changes main status to In Review (if UI UX/Design audit present) or Checking (if no UI UX/Design audit)
     if (norm === 'to review' || norm === 'to_review') {
       if (isSelecting) {
+        const hasL1 = hasUiUxOrDesignAudit(task);
+        const targetStatus = hasL1 ? 'In Review' : 'Checking';
         if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: 'In Review' });
+          await onTaskUpdate(task.id, { status: targetStatus });
         } else {
-          await tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
+          await tasksApi.updateTask(task.id, { status: targetStatus } as any).catch(console.error);
           onDataRefresh();
         }
-        toast.info('Task status changed to In Review — transferred to Auditor Map');
+        toast.info(`Task status changed to ${targetStatus} — transferred to Auditor Map`);
       } else {
         const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In progress' : 'Pending');
         if (onTaskUpdate) {
@@ -2057,11 +2059,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 currentStatus={task.status || 'In progress'}
                                 excludeStatuses={['Revision', 'Done', 'To Send', 'Sent', 'Follow up', 'Done Review']}
                                 onSelect={(newStatus: string) => {
+                                  let effectiveStatus = newStatus;
+                                  if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
+                                    effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                  }
                                   if (onTaskUpdate) {
-                                    onTaskUpdate(task.id, { status: newStatus });
+                                    onTaskUpdate(task.id, { status: effectiveStatus });
                                   } else {
                                     tasksApi
-                                      .updateTask(task.id, { status: newStatus })
+                                      .updateTask(task.id, { status: effectiveStatus })
                                       .then(() => onDataRefresh())
                                       .catch((e: any) => toast.error(e.message));
                                   }
@@ -2483,20 +2489,24 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               currentStatus={task.status || 'In progress'}
                               excludeStatuses={['Revision', 'Done', 'To Send', 'Sent', 'Follow up', 'Done Review']}
                               onSelect={(newStatus: string) => {
+                                let effectiveStatus = newStatus;
+                                if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
+                                  effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                }
                                 if (task.isAssumptionBlock) {
-                                  task.status = newStatus;
+                                  task.status = effectiveStatus;
                                   useAppStore.getState().updateMaActiveSession(user.name, {
                                     ...(task.progress || {}),
-                                    status: newStatus,
+                                    status: effectiveStatus,
                                   });
-                                  toast.success(`General slot status updated to ${newStatus}`);
+                                  toast.success(`General slot status updated to ${effectiveStatus}`);
                                   return;
                                 }
                                 if (onTaskUpdate) {
-                                  onTaskUpdate(task.id, { status: newStatus });
+                                  onTaskUpdate(task.id, { status: effectiveStatus });
                                 } else {
                                   tasksApi
-                                    .updateTask(task.id, { status: newStatus })
+                                    .updateTask(task.id, { status: effectiveStatus })
                                     .then(() => onDataRefresh())
                                     .catch((e: any) => toast.error(e.message));
                                 }

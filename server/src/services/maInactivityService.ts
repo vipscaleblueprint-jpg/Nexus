@@ -50,6 +50,22 @@ export function formatMinutesToTime(mins: number): string {
 }
 
 /**
+ * Checks if current minute of day is inside a shift window (handles overnight shifts).
+ */
+export function isWithinShift(
+  s: { startHour: number; startMinute?: number; endHour: number; endMinute?: number },
+  currentTotalMinutes: number
+): boolean {
+  const startMins = s.startHour * 60 + (s.startMinute || 0);
+  const endMins = s.endHour * 60 + (s.endMinute || 0);
+  if (startMins <= endMins) {
+    return currentTotalMinutes >= startMins && currentTotalMinutes < endMins;
+  }
+  // Overnight shift (e.g. 17:00 to 02:00)
+  return currentTotalMinutes >= startMins || currentTotalMinutes < endMins;
+}
+
+/**
  * Retrieves current hour and minute in Asia/Manila (UTC+8).
  */
 export function getCurrentManilaTime(date = new Date()): {
@@ -148,27 +164,44 @@ export async function checkAndHandoverInactiveMaTasks(): Promise<{
 
     const maNameClean = (ma.name || ma.email || '').toLowerCase().trim();
 
-    // Determine MA's duty schedule
+    // Determine MA's duty schedule (defaults to Day Shift 8:00 AM - 6:30 PM Manila)
     let duty: ShiftDutyHours = {
       startHour: 8,
       startMinute: 0,
-      endHour: 17,
-      endMinute: 0,
+      endHour: 18,
+      endMinute: 30,
     };
 
-    // Match by memberIds or memberNames in AuditShiftConfig
-    const matchedShift = shiftConfigs.find((s: any) => {
+    // Match all shifts where MA is configured in memberIds or memberNames
+    const userShifts = shiftConfigs.filter((s: any) => {
       const ids: string[] = s.memberIds || [];
       const names: string[] = (s.memberNames || []).map((n: string) => (n || '').toLowerCase().trim());
       return ids.includes(ma.id) || names.includes(maNameClean) || names.some((n: string) => maNameClean.includes(n));
     });
 
-    if (matchedShift) {
+    const isCurrentlyOnShift = userShifts.some((s: any) => isWithinShift(s, manila.totalMinutes));
+
+    if (userShifts.length > 0) {
+      // Find the latest duty end time across all assigned shifts
+      let maxEnd = -1;
+      let chosenShift = userShifts[0];
+
+      for (const s of userShifts) {
+        let eMins = s.endHour * 60 + (s.endMinute || 0);
+        if (s.endHour < s.startHour) {
+          eMins += 24 * 60; // Handle overnight wrap
+        }
+        if (eMins > maxEnd) {
+          maxEnd = eMins;
+          chosenShift = s;
+        }
+      }
+
       duty = {
-        startHour: matchedShift.startHour,
-        startMinute: matchedShift.startMinute || 0,
-        endHour: matchedShift.endHour,
-        endMinute: matchedShift.endMinute || 0,
+        startHour: chosenShift.startHour,
+        startMinute: chosenShift.startMinute || 0,
+        endHour: chosenShift.endHour,
+        endMinute: chosenShift.endMinute || 0,
       };
     }
 
@@ -233,9 +266,9 @@ export async function checkAndHandoverInactiveMaTasks(): Promise<{
     // Trigger time is exactly 1 hour after effective baseline
     const triggerMinutes = effectiveBaselineMinutes + 60;
 
-    // Check if current time has reached or passed the trigger threshold
-    // (Ensure we are after duty end, so we never trigger early during the shift)
-    const isPastDutyEnd = manila.totalMinutes >= dutyEndMinutes;
+    // Check if current time has reached or passed the trigger threshold.
+    // Active shift check guarantees an MA on duty is never prematurely marked as past duty end.
+    const isPastDutyEnd = !isCurrentlyOnShift && manila.totalMinutes >= dutyEndMinutes;
     const isPastTrigger = manila.totalMinutes >= triggerMinutes;
 
     if (isPastDutyEnd && isPastTrigger) {

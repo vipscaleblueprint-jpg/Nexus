@@ -5,11 +5,14 @@
  */
 export const normalizeAuditName = (name: string) => {
   const clean = (name || '').trim().toLowerCase();
-  return clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+  const replaced = clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+  if (replaced === 'instruction audit') return 'instructions audit';
+  return replaced;
 };
 
 const NEXUS_AUDIT_ITEMS = new Set([
   'instructions audit',
+  'instruction audit',
   'design audit',
   'ui ux audit',
   'funnel audit',
@@ -51,12 +54,13 @@ export function getAiPickedAudits(
 
 /**
  * Status gates. Mirrors frontend/src/lib/permissions.ts.
- * - In Review: auditing happens *during* review, so entering it only needs every subtask Closed
- *   (a task with no subtasks moves straight in).
- * - Completion statuses: need every subtask Closed AND every required audit checked.
+ * - In Review: involves UI/UX and Design audits. Only needs subtasks Closed.
+ * - Checking: involves Instruction and Funnel audits. Needs subtasks Closed AND Level 1 audits (UI UX & Design) completed.
+ * - Completion statuses: need every subtask Closed AND all required audits checked.
  */
 export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review', 'review', 'under review', 'for review'];
-export const COMPLETION_GATE_STATUSES = ['checking', 'in checking', 'inchecking', 'closed', 'crm', 'done', 'completed'];
+export const CHECKING_STATUSES = ['checking', 'in checking', 'inchecking'];
+export const COMPLETION_GATE_STATUSES = ['closed', 'crm', 'done', 'completed'];
 
 const norm = (status: string | null | undefined) =>
   (status || '').trim().toLowerCase().replace(/[\-_]/g, ' ').replace(/\s+/g, ' ');
@@ -66,6 +70,11 @@ export function isReviewStatus(status: string | null | undefined): boolean {
   return IN_REVIEW_STATUSES.includes(s) || s.includes('review');
 }
 
+export function isCheckingStatus(status: string | null | undefined): boolean {
+  const s = norm(status);
+  return CHECKING_STATUSES.includes(s);
+}
+
 export function isCompletionStatus(status: string | null | undefined): boolean {
   const s = norm(status);
   return COMPLETION_GATE_STATUSES.includes(s);
@@ -73,12 +82,17 @@ export function isCompletionStatus(status: string | null | undefined): boolean {
 
 /** Moving to this status requires every non-audit subtask to be Closed. */
 export function requiresClosedSubtasks(status: string | null | undefined): boolean {
-  return isReviewStatus(status) || isCompletionStatus(status);
+  return isReviewStatus(status) || isCheckingStatus(status) || isCompletionStatus(status);
+}
+
+/** Moving to this status requires Level 1 audits (UI UX Audit and Design Audit) to be checked if present. */
+export function requiresLevel1Audits(status: string | null | undefined): boolean {
+  return isCheckingStatus(status);
 }
 
 /** Moving to this status requires every required audit to be checked. */
 export function requiresCompletedAudits(status: string | null | undefined): boolean {
-  // Review statuses never require completed audits — auditing happens during review
-  if (isReviewStatus(status)) return false;
+  // Review & Checking statuses do not require all audits — audits happen during review and checking
+  if (isReviewStatus(status) || isCheckingStatus(status)) return false;
   return isCompletionStatus(status);
 }

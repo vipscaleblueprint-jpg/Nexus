@@ -211,6 +211,26 @@ export async function updateShiftConfig(shiftKey: string, data: Partial<TaskMapS
     `UPDATE "TaskMapShiftConfig" SET ${fields.join(', ')} WHERE "shiftKey" = $${idx}`,
     ...values
   );
+
+  // Keep AuditShiftConfig in sync if present
+  try {
+    const auditKey = fromTaskMapShiftKey(shiftKey);
+    await (prisma as any).auditShiftConfig.updateMany({
+      where: { shiftKey: auditKey },
+      data: {
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.startHour !== undefined && { startHour: data.startHour }),
+        ...(data.startMinute !== undefined && { startMinute: data.startMinute }),
+        ...(data.endHour !== undefined && { endHour: data.endHour }),
+        ...(data.endMinute !== undefined && { endMinute: data.endMinute }),
+        ...(data.order !== undefined && { order: data.order }),
+        ...(data.isActive !== undefined && { isActive: data.isActive }),
+      },
+    });
+    await invalidateCache('cache:audit_shifts');
+  } catch {
+    // best-effort synchronization
+  }
 }
 
 export async function getCurrentActiveShift(): Promise<string> {

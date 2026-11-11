@@ -387,7 +387,7 @@ export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] 
   }
 
   // Fallbacks if DB queries haven't loaded yet
-  const standardAuditorRoles = ['UI UX Auditor', 'Design Auditor', 'Funnel Auditor', 'Instruction Auditor'];
+  const standardAuditorRoles = ['UI UX Auditor', 'Design Auditor', 'Instruction Auditor', 'Funnel Auditor'];
   for (const r of standardAuditorRoles) {
     if (!roleNameMap.has(r.toLowerCase())) {
       roleNameMap.set(r.toLowerCase(), r);
@@ -397,9 +397,9 @@ export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] 
   const formatLabel = (roleName: string) => {
     const clean = roleName.trim();
     if (/^ui\s*\/?\s*ux\s*(auditor|audit)?$/i.test(clean)) return 'UI/UX';
-    if (/^funnel\s*(auditor|audit)$/i.test(clean)) return 'Funnel Audit';
     if (/^design\s*(auditor|audit)$/i.test(clean)) return 'Design';
     if (/^instruction\s*(auditor|audit)$/i.test(clean)) return 'Instruction';
+    if (/^funnel\s*(auditor|audit)$/i.test(clean)) return 'Funnel Audit';
     return clean.replace(/\s+(auditor|audit)$/i, '').trim() || clean;
   };
 
@@ -410,9 +410,9 @@ export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] 
   const orderWeight = (k: string) => {
     const l = k.toLowerCase();
     if (l.includes('ui') || l.includes('ux')) return 1;
-    if (l.includes('design')) return 2;
+    if (l.includes('design')) return 1;
+    if (l.includes('instruction')) return 2;
     if (l.includes('funnel')) return 3;
-    if (l.includes('instruction')) return 4;
     return 10;
   };
 
@@ -590,3 +590,17 @@ export function createEmptyUserBlock(params?: {
     updatedAt: new Date().toISOString(),
   };
 }
+
+// Re-export audit hierarchy helpers
+export {
+  hasUiUxOrDesignAudit,
+  areLevel1AuditsComplete,
+  isInstructionAuditComplete,
+  canPerformAudit,
+  isUiUxAudit,
+  isDesignAudit,
+  isInstructionAudit,
+  isFunnelAudit,
+} from '@/lib/auditChecklist';
+export type { AuditPermissionCheck } from '@/lib/auditChecklist';
+

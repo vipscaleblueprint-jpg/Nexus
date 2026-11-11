@@ -28,8 +28,6 @@ import {
   getAvailableHistoryDates,
   executeTaskMapDailyRollover,
   getManilaDateStr,
-  getTaskMapOperationalDateStr,
-  parseManilaTimeToIso,
 } from '../services/taskMapService';
 
 // Closed status check matching Nexus conventions
@@ -48,7 +46,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const searchQuery = (req.query.search as string || '').toLowerCase().trim();
     const clientQuery = (req.query.client as string || '').trim();
 
-    const todayManila = getTaskMapOperationalDateStr();
+    const todayManila = getManilaDateStr();
     const requestedDate = (dateQuery || todayManila).trim().split('T')[0];
     const isPastDate = requestedDate < todayManila;
 
@@ -288,7 +286,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const upworkStatus = (mapRecord.statuses || []).find(s => s.toUpperCase().startsWith('UPWORK'));
       if (upworkStatus) {
         upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active);
-        upworkStartedAt = upworkSession?.startedAt || null;
+        upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
       }
 
       // Check sheet progress
@@ -309,15 +307,13 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (!upworkSession && (!isLauren || upworkStatus)) {
         upworkSession = reviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active) || null;
         if (upworkSession) {
-          upworkStartedAt = upworkSession.startedAt || null;
+          upworkStartedAt = upworkSession.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
         }
       }
 
       // If sheet progress indicates Upwork and task is currently in progress (no timeOut)
       if (progress?.isUpwork && !progress?.timeOut && !upworkSession && (!isLauren || upworkStatus)) {
-        upworkStartedAt = progress.timeIn
-          ? parseManilaTimeToIso(progress.date, progress.timeIn)
-          : (progress.startedAt || progress.updatedAt || new Date().toISOString());
+        upworkStartedAt = progress.updatedAt || new Date().toISOString();
         upworkSession = {
           taskId: task.id,
           taskTitle: task.title,
@@ -325,13 +321,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           userName: progress.maName || 'Team Member',
           pmName: 'UPWORK',
           clientName: progress.client,
-          timeIn: progress.timeIn,
           startedAt: upworkStartedAt,
         };
-      } else if (upworkSession && !upworkStartedAt) {
-        upworkStartedAt = progress?.timeIn
-          ? parseManilaTimeToIso(progress.date, progress.timeIn)
-          : (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
       }
 
       const folderName = (task.list?.folder?.name || '').toLowerCase();
@@ -508,8 +499,78 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Canonical active Upwork sessions across both ad-hoc sheet progress and board tasks
-    const activeUpworkSessions = await getCanonicalActiveUpworkSessions();
+    // Collect all active Upwork sessions across non-closed tasks
+    // Max continuous duration for an active Upwork session before auto-expiring stale/abandoned timers
+    const MAX_UPWORK_SESSION_MS = 14 * 60 * 60 * 1000; // 14 hours
+    const nowMs = Date.now();
+
+    const activeUpworkSessions: Array<{
+      taskId: string;
+      taskTitle: string;
+      userId: string;
+      userName: string;
+      pmName: string;
+      startedAt: string;
+    }> = [];
+
+    for (const t of openTasks as any[]) {
+      const upworkTag = (t.taskMap?.statuses || []).find((s: string) => s.toUpperCase().startsWith('UPWORK'));
+      const hasTimeOut = Boolean(t.progress?.timeOut);
+      const isSheetUpworkActive = Boolean(t.progress?.isUpwork && t.progress?.timeIn && !hasTimeOut);
+      const isSessionActive = Boolean(
+        !hasTimeOut && (t.upworkSession?.active === true || isSheetUpworkActive)
+      );
+
+      // ONLY count as live when NOT timed out and there is an actively running session or sheet clock-in
+      if (!hasTimeOut && (isSheetUpworkActive || (isSessionActive && (upworkTag || t.upworkSession?.active)))) {
+        const startedAt = t.upworkStartedAt || (t.taskMap?.updatedAt ? new Date(t.taskMap.updatedAt).toISOString() : new Date().toISOString());
+        const startedMs = new Date(startedAt).getTime();
+
+        // Stale check: If timer has run past max shift window (14h), auto-expire from Redis and skip
+        if (!isNaN(startedMs) && (nowMs - startedMs > MAX_UPWORK_SESSION_MS)) {
+          if (isRedisReady()) {
+            redis.hdel('task_map:upwork_active', t.id).catch(() => { });
+          }
+          continue;
+        }
+
+        let pmName = 'UPWORK';
+        if (upworkTag) {
+          const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+          if (m && m[1]) {
+            pmName = m[1].trim().toUpperCase();
+          } else if (upworkTag.toUpperCase().includes('ACTIVE')) {
+            pmName = 'Active';
+          }
+        } else if (t.progress?.client) {
+          pmName = String(t.progress.client).toUpperCase();
+        }
+
+        const rawName = t.progress?.maName || t.upworkSession?.userName || t.assignee?.name || (t.assignees && t.assignees[0]?.name) || t.creator?.name || '';
+        const cleanName = rawName.includes('@') ? rawName.split('@')[0] : rawName;
+        const userName = (pmName && pmName !== 'General' && pmName !== 'Active' && pmName !== 'UPWORK') ? pmName : (cleanName || 'Team Member');
+        const userId = t.upworkSession?.userId || t.assigneeId || (t.assignees && t.assignees[0]?.id) || '';
+
+        const sessionItem = {
+          taskId: t.id,
+          taskTitle: t.title,
+          userId,
+          userName: t.progress?.maName || userName,
+          pmName,
+          startedAt,
+        };
+        activeUpworkSessions.push(sessionItem);
+
+        if (isRedisReady()) {
+          redis.hset('task_map:upwork_active', t.id, JSON.stringify(sessionItem)).catch(() => { });
+        }
+      } else if (hasTimeOut) {
+        // If task has a recorded Time Out, ensure it is completely purged from Redis
+        if (isRedisReady()) {
+          redis.hdel('task_map:upwork_active', t.id).catch(() => { });
+        }
+      }
+    }
 
     // Fetch all client lists under "Client Dashboard" in PostgreSQL
     let allClients: Array<{ id: string; name: string }> = [];
@@ -1073,9 +1134,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
 
             const redisCommentKey = `comments:list:${id}`;
             if (isRedisReady()) {
-              redis.del(redisCommentKey).catch(() => {});
+              redis.del(redisCommentKey).catch(() => { });
             }
-            invalidateCache(`task:activities:${id}`).catch(() => {});
+            invalidateCache(`task:activities:${id}`).catch(() => { });
 
             const activity = {
               id: `act-${Date.now()}`,
@@ -1249,133 +1310,6 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error({ error }, 'Error assigning task in Task Map');
     return res.status(500).json({ error: 'Failed to assign task' });
-  }
-};
-
-/**
- * Resets a column so all pending tasks return to Available Tasks (or Queue for auditors)
- */
-export const resetColumnTasksHandler = async (req: Request, res: Response) => {
-  try {
-    const { columnId } = req.params;
-    const { type = 'BOARD' } = req.body || {};
-    const user = (req as any).user;
-
-    if (!user) return res.status(401).json({ error: 'Authentication required' });
-
-    // Clean column ID (strip 'user-' prefix if present)
-    const targetUserId = (columnId || '').replace(/^user-/, '').trim();
-    if (!targetUserId) {
-      return res.status(400).json({ error: 'Invalid column ID' });
-    }
-
-    const columnUser = await prisma.user.findUnique({
-      where: { id: targetUserId },
-      select: { id: true, name: true, email: true },
-    });
-
-    if (type === 'AUDIT') {
-      // Find tasks assigned to this auditor in review status
-      const reviewTasks = await prisma.task.findMany({
-        where: {
-          assigneeId: targetUserId,
-          status: { in: ['In Review', 'IN REVIEW', 'To review', 'TO REVIEW', 'Review'] },
-        },
-        select: { id: true, title: true, listId: true },
-      });
-
-      for (const t of reviewTasks) {
-        await prisma.task.update({
-          where: { id: t.id },
-          data: {
-            assigneeId: null,
-            status: 'To review',
-            assignees: { set: [] },
-          },
-        });
-        await updateTaskMapRecord(t.id, { statuses: [] });
-        await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
-      }
-
-      io.emit('task_map:updated');
-      return res.json({
-        success: true,
-        count: reviewTasks.length,
-        resetTaskIds: reviewTasks.map((t) => t.id),
-      });
-    }
-
-    // Default: BOARD (MA shift column)
-    // Find all tasks assigned to this user that are pending or not actively being worked on
-    const assignedTasks = await prisma.task.findMany({
-      where: {
-        assigneeId: targetUserId,
-        status: { notIn: ['CLOSED', 'Closed', 'DONE', 'Done', 'COMPLETE', 'Completed'] },
-      },
-      select: { id: true, title: true, status: true, listId: true },
-    });
-
-    // Check if task is actively working live (has an open SHEET_PROGRESS timeIn without timeOut)
-    const recordList = await prisma.taskMapRecord.findMany({
-      where: { taskId: { in: assignedTasks.map((t) => t.id) } },
-      select: { taskId: true, pmReviews: true },
-    });
-    const activeTaskIdSet = new Set<string>();
-    for (const r of recordList) {
-      let revs: any = r.pmReviews;
-      if (typeof revs === 'string') {
-        try { revs = JSON.parse(revs); } catch { revs = []; }
-      }
-      if (Array.isArray(revs)) {
-        const prog = revs.find((x: any) => x.type === 'SHEET_PROGRESS');
-        if (prog && prog.timeIn && !prog.timeOut) {
-          activeTaskIdSet.add(r.taskId);
-        }
-      }
-    }
-
-    // Reset pending or non-live tasks
-    const tasksToReset = assignedTasks.filter((t) => !activeTaskIdSet.has(t.id));
-
-    const actorName = user.name || user.email || 'User';
-    const colName = columnUser?.name || 'team member';
-
-    for (const t of tasksToReset) {
-      await prisma.task.update({
-        where: { id: t.id },
-        data: {
-          assigneeId: null,
-          status: 'Pending',
-          assignees: { set: [] },
-        },
-      });
-
-      await updateTaskMapRecord(t.id, {
-        statuses: ['Available Task'],
-      });
-
-      // Add task comment documenting the column reset
-      await prisma.taskComment.create({
-        data: {
-          taskId: t.id,
-          userId: user.id,
-          content: `**Column reset**: Task returned to Available tasks from ${colName} by ${actorName}`,
-        },
-      }).catch(() => {});
-
-      await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
-    }
-
-    io.emit('task_map:updated');
-    return res.json({
-      success: true,
-      count: tasksToReset.length,
-      resetTaskIds: tasksToReset.map((t) => t.id),
-      message: `Reset ${colName}'s column: ${tasksToReset.length} task(s) returned to Available tasks`,
-    });
-  } catch (error: any) {
-    logger.error({ error }, 'Error resetting column tasks');
-    return res.status(500).json({ error: error.message || 'Failed to reset column tasks' });
   }
 };
 
@@ -1833,24 +1767,13 @@ export const updateUpworkClientsHandler = async (req: Request, res: Response) =>
 /**
  * Get active Upwork sessions across the workspace
  */
-export const getCanonicalActiveUpworkSessions = async (): Promise<any[]> => {
-  const MAX_UPWORK_SESSION_MS = 14 * 60 * 60 * 1000; // 14 hours
-  const nowMs = Date.now();
-  let activeUpworkSessions: any[] = [];
+export const getActiveUpworkSessionsHandler = async (req: Request, res: Response) => {
+  try {
+    const MAX_UPWORK_SESSION_MS = 14 * 60 * 60 * 1000; // 14 hours
+    const nowMs = Date.now();
+    let activeUpworkSessions: any[] = [];
 
-  // Fetch active MA sessions to cross-verify if an MA clocked out or is non-Upwork
-  let maSessionsByName: Record<string, any> = {};
-  if (isRedisReady()) {
-    try {
-      const rawMaMap = await redis.hgetall('task_map:ma_active_sessions').catch(() => ({}));
-      for (const [k, v] of Object.entries(rawMaMap || {})) {
-        try { maSessionsByName[k.toLowerCase().trim()] = JSON.parse(v as string); } catch {}
-      }
-    } catch {}
-  }
-
-  if (isRedisReady()) {
-    try {
+    if (isRedisReady()) {
       const rawMap = await redis.hgetall('task_map:upwork_active');
       if (rawMap && Object.keys(rawMap).length > 0) {
         const parsed = Object.values(rawMap).map((val) => JSON.parse(val));
@@ -1869,235 +1792,252 @@ export const getCanonicalActiveUpworkSessions = async (): Promise<any[]> => {
           if (name.includes('lauren') && !s.isManuallyMarkedUpwork) {
             continue;
           }
-
-          // Cross-verify with MA's current active session in sheet:
-          // If MA's latest schedule says they are clocked out, active === false, or isUpwork === false,
-          // then this Redis session is stale and MUST be pruned!
-          const maClean = (s.userName || '').toLowerCase().trim();
-          if (maClean && maSessionsByName[maClean]) {
-            const currentMa = maSessionsByName[maClean];
-            if (currentMa.timeOut || currentMa.active === false || currentMa.isUpwork === false) {
-              if (isRedisReady()) {
-                await redis.hdel('task_map:upwork_active', s.taskId).catch(() => {});
-              }
-              continue;
-            }
-            if (currentMa.timeIn) {
-              s.startedAt = parseManilaTimeToIso(currentMa.date, currentMa.timeIn);
-              s.timeIn = currentMa.timeIn;
-            }
-          }
-
           activeUpworkSessions.push(s);
         }
       }
-    } catch (err) {
-      logger.warn({ err }, '[Upwork] Failed reading Redis active sessions');
     }
-  }
 
-  // Also verify open tasks in PostgreSQL with active sessions
-  try {
-    const todayManila = getTaskMapOperationalDateStr();
-    const upworkClientsList = await getUpworkClients();
-    const openUpworkRecords = await prisma.taskMapRecord.findMany({
-      where: {
-        task: {
-          status: { notIn: ['CLOSED', 'DONE', 'Complete', 'Completed', 'Closed', 'Done', 'KYC', 'PIN BOARD', 'PINBOARD'] },
-        },
-      },
-      select: {
-        taskId: true,
-        statuses: true,
-        pmReviews: true,
-        updatedAt: true,
-        task: {
-          select: {
-            title: true,
-            assignee: { select: { name: true } },
-            list: { select: { name: true } },
+    // Also verify open tasks in PostgreSQL with active sessions
+    try {
+      const openUpworkRecords = await prisma.taskMapRecord.findMany({
+        where: {
+          task: {
+            status: { notIn: ['CLOSED', 'DONE', 'Complete', 'Completed', 'Closed', 'Done'] },
           },
         },
-      },
-    });
+        select: {
+          taskId: true,
+          statuses: true,
+          pmReviews: true,
+          updatedAt: true,
+          task: {
+            select: {
+              title: true,
+              assignee: { select: { name: true } },
+              list: { select: { name: true } },
+            },
+          },
+        },
+      });
 
-    for (const rec of openUpworkRecords) {
-      const upworkTag = (rec.statuses || []).find((s) => s.toUpperCase().startsWith('UPWORK'));
-      let pmReviewsList = rec.pmReviews || [];
-      if (typeof pmReviewsList === 'string') {
-        try { pmReviewsList = JSON.parse(pmReviewsList); } catch { pmReviewsList = []; }
-      }
-      const activeReview: any = Array.isArray(pmReviewsList)
-        ? pmReviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active)
-        : null;
-      const sheetProgress: any = Array.isArray(pmReviewsList)
-        ? pmReviewsList.find((r: any) => r.type === 'SHEET_PROGRESS')
-        : null;
-
-      // Restriction for Lauren: Lauren is project-based; only mark as Upwork if explicitly tagged on TaskMap!
-      const clientOrListName = `${rec.task?.list?.name || ''} ${activeReview?.clientName || ''} ${activeReview?.pmName || ''}`.toLowerCase();
-      const isLauren = clientOrListName.includes('lauren');
-      if (isLauren && !upworkTag) {
-        if (isRedisReady()) {
-          redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
+      for (const rec of openUpworkRecords) {
+        const upworkTag = (rec.statuses || []).find((s) => s.toUpperCase().startsWith('UPWORK'));
+        let pmReviewsList = rec.pmReviews || [];
+        if (typeof pmReviewsList === 'string') {
+          try { pmReviewsList = JSON.parse(pmReviewsList); } catch { pmReviewsList = []; }
         }
-        continue;
-      }
+        const activeReview: any = Array.isArray(pmReviewsList)
+          ? pmReviewsList.find((r: any) => r.type === 'UPWORK_SESSION' && r.active)
+          : null;
+        const sheetProgress: any = Array.isArray(pmReviewsList)
+          ? pmReviewsList.find((r: any) => r.type === 'SHEET_PROGRESS')
+          : null;
 
-      // 1. If sheet progress has a recorded Time Out, this session is NOT active!
-      if (sheetProgress?.timeOut) {
-        if (activeReview) {
-          activeReview.active = false;
-          activeReview.stoppedAt = activeReview.stoppedAt || new Date().toISOString();
-          await updateTaskMapRecord(rec.taskId, { pmReviews: pmReviewsList }).catch(() => { });
-        }
-        if (isRedisReady()) {
-          await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
-        }
-        activeUpworkSessions = activeUpworkSessions.filter((s) => s.taskId !== rec.taskId);
-        continue;
-      }
-
-      let shouldCloseSheetProgress = false;
-
-      // 2. Date check: if sheet progress has a date and it's not today's operational date, it's historical
-      if (sheetProgress?.date && sheetProgress.date !== todayManila) {
-        shouldCloseSheetProgress = true;
-      }
-
-      // 3. Check stale session in DB review or sheetProgress (> 14h)
-      if (activeReview?.startedAt) {
-        const startedMs = new Date(activeReview.startedAt).getTime();
-        if (!isNaN(startedMs) && (nowMs - startedMs > MAX_UPWORK_SESSION_MS)) {
-          logger.warn({ taskId: rec.taskId, startedAt: activeReview.startedAt }, '[Upwork] Pruning stale DB review session (> 14h)');
-          activeReview.active = false;
-          activeReview.stoppedAt = activeReview.stoppedAt || new Date().toISOString();
-          await updateTaskMapRecord(rec.taskId, { pmReviews: pmReviewsList }).catch(() => { });
-          if (isRedisReady()) {
-            await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
-          }
-          activeUpworkSessions = activeUpworkSessions.filter((s) => s.taskId !== rec.taskId);
+        // Only evaluate tasks that are actually related to Upwork (has UPWORK tag, active UPWORK_SESSION, or sheetProgress isUpwork)
+        // Normal sheet progress tasks (Clockify, etc.) must NEVER be closed or have a timeout forced by the Upwork cleaner!
+        if (!upworkTag && !activeReview && !sheetProgress?.isUpwork) {
           continue;
         }
-      }
 
-      if (sheetProgress?.updatedAt) {
-        const startedMs = new Date(sheetProgress.updatedAt).getTime();
-        if (!isNaN(startedMs) && (nowMs - startedMs > MAX_UPWORK_SESSION_MS)) {
-          shouldCloseSheetProgress = true;
-        }
-      }
-
-      // 4. Cross-verify sheetProgress with MA's current active session in Redis:
-      const maClean = (sheetProgress?.maName || activeReview?.userName || '').toLowerCase().trim();
-      if (maClean && maSessionsByName[maClean]) {
-        const curMa = maSessionsByName[maClean];
-        if (curMa.timeOut || curMa.active === false || curMa.isUpwork === false) {
-          shouldCloseSheetProgress = true;
-        } else if (curMa.rowNumber && sheetProgress?.sheetRow && Number(curMa.rowNumber) > Number(sheetProgress.sheetRow)) {
-          shouldCloseSheetProgress = true;
-        }
-      }
-
-      // 5. Verify if sheet progress client or tracker is actually Upwork
-      if (sheetProgress?.isUpwork) {
-        const clientName = sheetProgress.client || rec.task?.list?.name || '';
-        const isClientInUpworkList = upworkClientsList.some((c) => c.toLowerCase() === clientName.toLowerCase());
-        const isTrackerUpwork = sheetProgress.timeTracker ? sheetProgress.timeTracker.toLowerCase().includes('upwork') : false;
-        if (!isClientInUpworkList && !isTrackerUpwork) {
-          shouldCloseSheetProgress = true;
-        }
-      }
-
-      if (shouldCloseSheetProgress && sheetProgress && !sheetProgress.timeOut) {
-        sheetProgress.timeOut = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-        sheetProgress.isUpwork = false;
-        if (activeReview) {
-          activeReview.active = false;
-          activeReview.stoppedAt = activeReview.stoppedAt || new Date().toISOString();
-        }
-        await updateTaskMapRecord(rec.taskId, { pmReviews: pmReviewsList }).catch(() => {});
-        if (isRedisReady()) {
-          await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => {});
-        }
-        activeUpworkSessions = activeUpworkSessions.filter((s) => s.taskId !== rec.taskId);
-        continue;
-      }
-
-      // 6. Only count as active if task has a manual UPWORK tag OR sheet progress is actively clocked in on Upwork!
-      const isSheetClockedIn = Boolean(
-        sheetProgress?.isUpwork &&
-        sheetProgress?.timeIn &&
-        !sheetProgress?.timeOut &&
-        (!sheetProgress?.date || sheetProgress.date === todayManila)
-      );
-      const isManualUpwork = Boolean(upworkTag && activeReview?.active);
-      const isLiveActive = Boolean(isManualUpwork || isSheetClockedIn);
-
-      if (!isLiveActive && activeReview?.active) {
-        activeReview.active = false;
-        activeReview.stoppedAt = activeReview.stoppedAt || new Date().toISOString();
-        await updateTaskMapRecord(rec.taskId, { pmReviews: pmReviewsList }).catch(() => { });
-        if (isRedisReady()) {
-          await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
-        }
-        activeUpworkSessions = activeUpworkSessions.filter((s) => s.taskId !== rec.taskId);
-        continue;
-      }
-
-      if (isLiveActive) {
-        const alreadyInList = activeUpworkSessions.some((s) => s.taskId === rec.taskId);
-        if (!alreadyInList) {
-          let pmName = activeReview?.pmName || activeReview?.clientName || sheetProgress?.client || rec.task?.list?.name || 'UPWORK';
-          if (upworkTag) {
-            const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
-            if (m && m[1]) pmName = m[1].trim().toUpperCase();
-          }
-          const userName = activeReview?.userName || sheetProgress?.maName || rec.task?.assignee?.name || pmName || 'Team Member';
-          let startedAt: string;
-          if (sheetProgress?.timeIn) {
-            startedAt = parseManilaTimeToIso(sheetProgress.date, sheetProgress.timeIn);
-          } else if (activeReview?.startedAt) {
-            startedAt = activeReview.startedAt;
-          } else {
-            startedAt = sheetProgress?.startedAt || sheetProgress?.updatedAt || rec.updatedAt.toISOString();
-          }
-
-          const sessionItem = {
-            taskId: rec.taskId,
-            taskTitle: rec.task?.title || 'Task',
-            userId: '',
-            userName,
-            pmName,
-            clientName: pmName,
-            timeIn: sheetProgress?.timeIn,
-            startedAt,
-          };
-          activeUpworkSessions.push(sessionItem);
-
+        // Restriction for Lauren: Lauren is project-based; only mark as Upwork if explicitly tagged on TaskMap!
+        const clientOrListName = `${rec.task?.list?.name || ''} ${activeReview?.clientName || ''} ${activeReview?.pmName || ''}`.toLowerCase();
+        const isLauren = clientOrListName.includes('lauren');
+        if (isLauren && !upworkTag) {
           if (isRedisReady()) {
-            redis.hset('task_map:upwork_active', rec.taskId, JSON.stringify(sessionItem)).catch(() => { });
+            redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
+          }
+          continue;
+        }
+
+        let shouldCloseSheetProgress = false;
+        const todayManila = getManilaDateStr();
+
+        // 2. Date check: if sheet progress is Upwork, has a date, and it's not today's operational date, it's historical
+        if (sheetProgress?.isUpwork && sheetProgress?.date && sheetProgress.date !== todayManila) {
+          shouldCloseSheetProgress = true;
+        }
+
+        // 3. Check stale session in DB review or sheetProgress (> 14h)
+        if (activeReview?.startedAt) {
+          const startedMs = new Date(activeReview.startedAt).getTime();
+          if (!isNaN(startedMs) && (nowMs - startedMs > MAX_UPWORK_SESSION_MS)) {
+            logger.warn({ taskId: rec.taskId, startedAt: activeReview.startedAt }, '[Upwork] Pruning stale DB review session (> 14h)');
+            activeReview.active = false;
+            activeReview.stoppedAt = activeReview.stoppedAt || new Date().toISOString();
+            await updateTaskMapRecord(rec.taskId, { pmReviews: pmReviewsList }).catch(() => { });
+            if (isRedisReady()) {
+              await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
+            }
+            activeUpworkSessions = activeUpworkSessions.filter((s) => s.taskId !== rec.taskId);
+            continue;
           }
         }
-      } else {
-        if (isRedisReady()) {
-          redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
+
+        if (sheetProgress?.isUpwork && sheetProgress?.updatedAt) {
+          const startedMs = new Date(sheetProgress.updatedAt).getTime();
+          if (!isNaN(startedMs) && (nowMs - startedMs > MAX_UPWORK_SESSION_MS)) {
+            shouldCloseSheetProgress = true;
+          }
+        }
+
+        const isLiveActive = activeReview?.active || (sheetProgress?.isUpwork && !sheetProgress?.timeOut);
+        if (isLiveActive) {
+          const alreadyInList = activeUpworkSessions.some((s) => s.taskId === rec.taskId);
+          if (!alreadyInList) {
+            let pmName = activeReview?.pmName || activeReview?.clientName || sheetProgress?.client || rec.task?.list?.name || 'UPWORK';
+            if (upworkTag) {
+              const m = upworkTag.match(/^UPWORK\s*\|\s*(.+)$/i);
+              if (m && m[1]) pmName = m[1].trim().toUpperCase();
+            }
+            const userName = activeReview?.userName || sheetProgress?.maName || rec.task?.assignee?.name || pmName || 'Team Member';
+            const startedAt = activeReview?.startedAt || sheetProgress?.updatedAt || rec.updatedAt.toISOString();
+
+            // Strictly only close and set timeOut if sheetProgress is actually Upwork
+            if (shouldCloseSheetProgress && sheetProgress?.isUpwork && !sheetProgress.timeOut) {
+              sheetProgress.timeOut = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Manila',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              }).format(new Date());
+              sheetProgress.isUpwork = false;
+              if (activeReview) {
+                activeReview.active = false;
+                activeReview.stoppedAt = activeReview.stoppedAt || new Date().toISOString();
+              }
+              await updateTaskMapRecord(rec.taskId, { pmReviews: pmReviewsList }).catch(() => { });
+              if (isRedisReady()) {
+                await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
+              }
+              activeUpworkSessions = activeUpworkSessions.filter((s) => s.taskId !== rec.taskId);
+              continue;
+            }
+
+            const sessionItem = {
+              taskId: rec.taskId,
+              taskTitle: rec.task?.title || 'Upwork Task',
+              userId: rec.task?.assignee ? (rec.task as any).assigneeId : 'unassigned',
+              userName,
+              pmName,
+              clientName: rec.task?.list?.name || pmName,
+              timeIn: sheetProgress?.timeIn || null,
+              date: sheetProgress?.date || null,
+              startedAt,
+              active: true,
+              isManuallyMarkedUpwork: Boolean(upworkTag),
+            };
+            activeUpworkSessions.push(sessionItem);
+
+            if (isRedisReady()) {
+              redis.hset('task_map:upwork_active', rec.taskId, JSON.stringify(sessionItem)).catch(() => { });
+            }
+          }
+        } else {
+          // Inactive session with no clock-in: ensure not in Redis
+          if (isRedisReady()) {
+            redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
+          }
         }
       }
+    } catch (dbErr) {
+      logger.warn({ dbErr }, 'Non-blocking error checking database open Upwork tasks');
     }
-  } catch (dbErr) {
-    logger.warn({ dbErr }, 'Non-blocking error checking database open Upwork tasks');
-  }
 
-  return activeUpworkSessions;
-};
-
-export const getActiveUpworkSessionsHandler = async (req: Request, res: Response) => {
-  try {
-    const activeUpworkSessions = await getCanonicalActiveUpworkSessions();
     res.json({ success: true, activeUpworkSessions });
-  } catch (err) {
-    logger.error({ err }, 'Error in getActiveUpworkSessionsHandler');
+  } catch (error: any) {
+    logger.error({ error }, 'Error fetching active upwork sessions');
     res.status(500).json({ error: 'Failed to fetch active upwork sessions' });
   }
 };
+
+/**
+ * Reset tasks in a column back to Available Tasks (or review queue for auditors)
+ * POST /api/task-map/columns/:columnId/reset
+ */
+export const resetColumnTasksHandler = async (req: Request, res: Response) => {
+  try {
+    const { columnId } = req.params;
+    const { type = 'BOARD' } = req.body || {};
+    const user = (req as any).user;
+
+    if (!user) return res.status(401).json({ error: 'Authentication required' });
+
+    // Clean column ID (strip 'user-' prefix if present)
+    const targetUserId = (columnId || '').replace(/^user-/, '').trim();
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'Invalid column ID' });
+    }
+
+    if (type === 'AUDIT') {
+      // Find tasks assigned to this auditor in review status
+      const reviewTasks = await prisma.task.findMany({
+        where: {
+          assigneeId: targetUserId,
+          status: { in: ['In Review', 'IN REVIEW', 'To review', 'TO REVIEW', 'Review', 'Checking', 'CHECKING', 'In Checking', 'IN CHECKING'] },
+        },
+        select: { id: true, title: true, listId: true, checklists: { include: { items: true } } },
+      });
+
+      for (const t of reviewTasks) {
+        await prisma.task.update({
+          where: { id: t.id },
+          data: {
+            assigneeId: null,
+            status: 'To review',
+            assignees: { set: [] },
+          },
+        });
+        await updateTaskMapRecord(t.id, { statuses: [] });
+        await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
+      }
+
+      io.emit('task_map:updated');
+      return res.json({
+        success: true,
+        count: reviewTasks.length,
+        resetTaskIds: reviewTasks.map((t) => t.id),
+      });
+    }
+
+    // Default: BOARD (MA shift column)
+    const assignedTasks = await prisma.task.findMany({
+      where: {
+        assigneeId: targetUserId,
+        status: { notIn: ['CLOSED', 'Closed', 'DONE', 'Done', 'COMPLETE', 'Completed'] },
+      },
+      select: { id: true, title: true, status: true, listId: true },
+    });
+
+    const resetTaskIds: string[] = [];
+    for (const t of assignedTasks) {
+      await prisma.task.update({
+        where: { id: t.id },
+        data: {
+          assigneeId: null,
+          assignees: { set: [] },
+        },
+      });
+      const rec = await getOrCreateTaskMapRecord(t.id);
+      const cleanedStatuses = (rec.statuses || []).filter(
+        (s) => !['IN PROGRESS', 'In progress', 'In Progress'].includes(s)
+      );
+      if (!cleanedStatuses.includes('Available Task')) {
+        cleanedStatuses.push('Available Task');
+      }
+      await updateTaskMapRecord(t.id, { statuses: cleanedStatuses });
+      await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
+      resetTaskIds.push(t.id);
+    }
+
+    io.emit('task_map:updated');
+    return res.json({
+      success: true,
+      count: resetTaskIds.length,
+      resetTaskIds,
+    });
+  } catch (error: any) {
+    logger.error({ error }, 'Error resetting column tasks');
+    return res.status(500).json({ error: 'Failed to reset column tasks' });
+  }
+};
+

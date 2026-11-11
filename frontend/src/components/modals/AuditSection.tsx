@@ -2,9 +2,21 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
-import { ChevronDown, ChevronRight, User, Check, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, User, Check, Plus, Trash2, Lock } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
-import { isNexusAuditChecklist, getRequiredAudits, getAiPickedAudits, ALL_AUDIT_OPTIONS, isAuditorFor } from '@/lib/auditChecklist';
+import {
+  isNexusAuditChecklist,
+  getRequiredAudits,
+  getAiPickedAudits,
+  ALL_AUDIT_OPTIONS,
+  isAuditorFor,
+  canPerformAudit,
+  areLevel1AuditsComplete,
+  hasUiUxOrDesignAudit,
+  isUiUxAudit,
+  isDesignAudit,
+  AuditPermissionCheck,
+} from '@/lib/auditChecklist';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor, isSystemUser } from '@/lib/taskTokens';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
@@ -65,34 +77,29 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
   const isSelfAuditBlocked = useMemo(() => {
     if (!currentUser?.id) return false;
 
-    // In REVISION, editors are reset back to zero
-    const currentSubtask = subtaskId ? task.subtasks?.find((s: any) => s.id === subtaskId) : null;
-    const currentStatus = (currentSubtask?.status || task.status || '').toUpperCase();
-    if (currentStatus === 'REVISION') return false;
+    // Only those who have inputted from their MA Daily Tracker for the current task iteration are restricted.
+    // Static task/subtask assignees, UI movers, or commenters are NOT restricted.
+    // In REVISION, tracker participants are reset until an MA inputs again into their daily tracker.
+    if (task.maUpdaterIds?.includes(currentUser.id)) return true;
 
-    // Contributor is the assignees only: auditors commenting on the task can check audit tasks
     const cName = (currentUser.name || '').trim().toLowerCase();
     const cEmail = (currentUser.email || '').trim().toLowerCase();
-    const matchesUser = (u?: { id?: string | null; name?: string | null; email?: string | null } | null) => {
-      if (!u) return false;
-      if (u.id && u.id === currentUser.id) return true;
-      const uName = (u.name || '').trim().toLowerCase();
-      const uEmail = (u.email || '').trim().toLowerCase();
-      if (cName && uName && (cName === uName || cName.includes(uName) || uName.includes(cName))) return true;
-      if (cEmail && uEmail && (cEmail === uEmail || cEmail.includes(uEmail) || uEmail.includes(cEmail))) return true;
-      return false;
+    if (!cName && !cEmail) return false;
+
+    const matchesName = (target?: string | null) => {
+      if (!target) return false;
+      const t = target.trim().toLowerCase();
+      if (!t) return false;
+      if (cName && (t === cName || cName.includes(t) || t.includes(cName))) return true;
+      if (cEmail && (cEmail.includes(t) || t.includes(cEmail))) return true;
+      const tTokens = t.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+      const cTokens = cName.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+      return tTokens.some(tok => cTokens.includes(tok));
     };
 
-    const isDirectAssignee = task.assigneeId === currentUser.id ||
-      matchesUser(task.assignee) ||
-      (task.assignees || []).some((a: any) => matchesUser(a));
-
-    const isSubtaskAssignee = currentSubtask
-      ? ((currentSubtask.assigneeIds && currentSubtask.assigneeIds.includes(currentUser.id)) || (currentSubtask.assignees || []).some((a: any) => matchesUser(a)))
-      : (task.subtasks || []).some((s: any) => (s.assigneeIds && s.assigneeIds.includes(currentUser.id)) || (s.assignees || []).some((a: any) => matchesUser(a)));
-
-    return isDirectAssignee || isSubtaskAssignee;
-  }, [currentUser?.id, currentUser?.name, currentUser?.email, task.assigneeId, task.assignee, task.assignees, task.subtasks, task.status, subtaskId]);
+    if (task.maUpdaterNames && task.maUpdaterNames.some(matchesName)) return true;
+    return false;
+  }, [currentUser?.id, currentUser?.name, currentUser?.email, task.maUpdaterIds, task.maUpdaterNames]);
 
   // Synchronize incoming checklists prop changes smoothly, preserving pending local updates
   useEffect(() => {
@@ -564,6 +571,33 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
 
     try {
       await currentOp;
+
+      // Auto-transition: In Review -> Checking when Level 1 audits complete; or Checking -> In Review if unchecked
+      if (!subtaskId) {
+        const taskStatusUpper = (task.status || '').toUpperCase().trim();
+        if (newCompleted && (taskStatusUpper === 'IN REVIEW' || taskStatusUpper === 'INREVIEW')) {
+          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text);
+          if (isLevel1) {
+            const dummyTask = { ...task, checklists: localChecklistsRef.current };
+            if (areLevel1AuditsComplete(dummyTask)) {
+              await tasksApi.updateTask(task.id, { status: 'Checking' } as any).catch(console.error);
+              const updatedTask = { ...task, status: 'Checking', checklists: localChecklistsRef.current };
+              useAppStore.getState().updateTask(updatedTask);
+              window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+              toast.success('✓ UI/UX and Design audits completed — task moved to Checking');
+            }
+          }
+        } else if (!newCompleted && (taskStatusUpper === 'CHECKING' || taskStatusUpper === 'IN CHECKING')) {
+          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text);
+          if (isLevel1 && hasUiUxOrDesignAudit(task)) {
+            await tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
+            const updatedTask = { ...task, status: 'In Review', checklists: localChecklistsRef.current };
+            useAppStore.getState().updateTask(updatedTask);
+            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+            toast.info('UI/UX or Design audit unchecked — task returned to In Review');
+          }
+        }
+      }
     } catch (e: any) {
       console.error('[AuditSection] Failed to persist audit toggle:', e);
       toast.error(e?.response?.data?.error || e?.message || 'Failed to save audit change');
@@ -1126,6 +1160,8 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                   }
 
                   const displayLabel = text === 'UI UX Audit' ? 'UI/UX Audit' : text;
+                  const hierarchyCheck: AuditPermissionCheck = !isCompleted ? canPerformAudit(text, task) : { allowed: true, missingPrerequisites: [] };
+                  const isLockedByHierarchy = !isCompleted && !hierarchyCheck.allowed;
 
                   return (
                     <div 
@@ -1142,10 +1178,12 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                         <button 
                           type="button"
                           className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                            !canCheck && !isSelfAuditBlocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                            (!canCheck || isLockedByHierarchy) && !isSelfAuditBlocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
                           } ${
                             isCompleted
                               ? 'bg-emerald-500 border-emerald-500 text-white'
+                              : isLockedByHierarchy
+                              ? 'border-zinc-700/80 bg-zinc-900/60 text-zinc-500'
                               : isItemNeeded
                               ? 'border-emerald-500 bg-emerald-500/20'
                               : 'border-zinc-600 bg-zinc-800/40 hover:border-zinc-400 hover:bg-zinc-800'
@@ -1164,6 +1202,22 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                               toast.error("You're not allowed to check an audit that you or your group edited! 🙄");
                               return;
                             }
+                            if (!isCompleted) {
+                              const permCheck = canPerformAudit(text, task);
+                              if (!permCheck.allowed) {
+                                setShakingAuditItem(text);
+                                setIsShaking(true);
+                                if (selfAuditShakeTimerRef.current) {
+                                  clearTimeout(selfAuditShakeTimerRef.current);
+                                }
+                                selfAuditShakeTimerRef.current = setTimeout(() => {
+                                  setShakingAuditItem(null);
+                                  setIsShaking(false);
+                                }, 700);
+                                toast.error(permCheck.reason || 'Prerequisites not completed.');
+                                return;
+                              }
+                            }
                             if (canCheck) {
                               handleToggleItem(text, item);
                             }
@@ -1171,23 +1225,36 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                           title={
                             isSelfAuditBlocked
                               ? "You're not allowed to check an audit that you or your group edited! 🙄"
+                              : isLockedByHierarchy
+                              ? hierarchyCheck.reason
                               : !canCheck
                               ? `Only ${requiredRole || 'Admins'} can check this item`
                               : "Click to check audit"
                           }
-                          disabled={!canCheck && !isSelfAuditBlocked}
+                          disabled={(!canCheck || isLockedByHierarchy) && !isSelfAuditBlocked}
                         >
-                          {isCompleted && <Check className="w-2.5 h-2.5" />}
+                          {isCompleted ? (
+                            <Check className="w-2.5 h-2.5" />
+                          ) : isLockedByHierarchy ? (
+                            <Lock className="w-2.5 h-2.5 text-zinc-500" />
+                          ) : null}
                         </button>
                         <span className={`text-sm truncate ${
                           isCompleted
                             ? 'text-muted-foreground line-through'
+                            : isLockedByHierarchy
+                            ? 'text-zinc-500'
                             : isItemNeeded
                             ? 'font-medium text-zinc-100'
                             : 'text-foreground'
                         }`}>
                           {displayLabel}
                         </span>
+                        {isLockedByHierarchy && (
+                          <span className="text-[10px] text-zinc-500/80 font-medium shrink-0 ml-1.5" title={hierarchyCheck.reason}>
+                            Locked
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -1247,29 +1314,23 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                 {/* Strictly holders of this audit's auditor role */}
                                 {users.filter(u => !isSystemUser(u) && isAuditorFor(text, u.roles)).map(u => {
                                   const isUserContributor = (() => {
-                                    // Contributor is the assignees only
-                                    const currentSubtask = subtaskId ? task.subtasks?.find((s: any) => s.id === subtaskId) : null;
+                                    // Participant is strictly someone who logged into the MA Daily Tracker for this task iteration
+                                    if (task.maUpdaterIds?.includes(u.id)) return true;
                                     const uName = (u.name || '').trim().toLowerCase();
                                     const uEmail = (u.email || '').trim().toLowerCase();
-                                    const matchesUser = (a?: { id?: string | null; name?: string | null; email?: string | null } | null) => {
-                                      if (!a) return false;
-                                      if (a.id && a.id === u.id) return true;
-                                      const aName = (a.name || '').trim().toLowerCase();
-                                      const aEmail = (a.email || '').trim().toLowerCase();
-                                      if (uName && aName && (uName === aName || uName.includes(aName) || aName.includes(uName))) return true;
-                                      if (uEmail && aEmail && (uEmail === aEmail || uEmail.includes(aEmail) || aEmail.includes(uEmail))) return true;
-                                      return false;
+                                    if (!uName && !uEmail) return false;
+                                    const matchesName = (target?: string | null) => {
+                                      if (!target) return false;
+                                      const t = target.trim().toLowerCase();
+                                      if (!t) return false;
+                                      if (uName && (t === uName || uName.includes(t) || t.includes(uName))) return true;
+                                      if (uEmail && (t === uEmail || uEmail.includes(t) || t.includes(uEmail))) return true;
+                                      const tTokens = t.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+                                      const uTokens = uName.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+                                      return tTokens.some(tok => uTokens.includes(tok));
                                     };
-
-                                    const isDirectAssignee = task.assigneeId === u.id ||
-                                      matchesUser(task.assignee) ||
-                                      (task.assignees || []).some((a: any) => matchesUser(a));
-
-                                    const isSubtaskAssignee = currentSubtask
-                                      ? ((currentSubtask.assigneeIds && currentSubtask.assigneeIds.includes(u.id)) || (currentSubtask.assignees || []).some((a: any) => matchesUser(a)))
-                                      : (task.subtasks || []).some((s: any) => (s.assigneeIds && s.assigneeIds.includes(u.id)) || (s.assignees || []).some((a: any) => matchesUser(a)));
-
-                                    return isDirectAssignee || isSubtaskAssignee;
+                                    if (task.maUpdaterNames && task.maUpdaterNames.some(matchesName)) return true;
+                                    return false;
                                   })();
 
                                   return (
@@ -1292,8 +1353,8 @@ function AuditSectionComponent({ task, title, subtaskId, users, checklists, onUp
                                     )}
                                     <span className="flex-1 truncate">{u.name}</span>
                                     {isUserContributor && (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0" title="Task assignee">
-                                        Contributor
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0" title="Logged in MA Daily Tracker (Participant)">
+                                        Participant
                                       </span>
                                     )}
                                     {assigneeIds.includes(u.id) && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}

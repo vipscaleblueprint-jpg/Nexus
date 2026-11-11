@@ -14,6 +14,7 @@ import {
   isNexusAuditChecklist,
   normalizeAuditName,
   isReviewStatus,
+  isCheckingStatus,
 } from '../utils/auditChecklist';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 
@@ -61,8 +62,8 @@ export const DEFAULT_SHIFTS: DbShiftConfig[] = [
     name: 'Afternoon Shift',
     startHour: 12,
     startMinute: 0,
-    endHour: 17,
-    endMinute: 0,
+    endHour: 18,
+    endMinute: 30,
     auditorNames: ['Aaron', 'Darlene', 'Mimi', 'Bea', 'Blessie', 'Cherilyn', 'Gie'],
     auditorIds: [],
     isActive: true,
@@ -271,8 +272,8 @@ export async function autoAssignAudits(
   });
   if (!task) return { success: false, assignedCount: 0 };
 
-  // Status Gate: Only assign audits when task is IN REVIEW
-  if (!options?.force && !isReviewStatus(task.status)) {
+  // Status Gate: Only assign audits when task is IN REVIEW or CHECKING
+  if (!options?.force && !isReviewStatus(task.status) && !isCheckingStatus(task.status)) {
     return { success: false, assignedCount: 0 };
   }
 
@@ -312,18 +313,10 @@ export async function autoAssignAudits(
   });
   const shiftAuditors = allUsers.filter((u) => isUserInShift(u, currentShift, shiftConfigs));
 
-  // Align with audit restrictions: exclude task assignees (contributors are assignees only)
-  const taskAssigneeIds = new Set(
-    [
-      task.assigneeId,
-      ...task.assignees.map((a) => a.id),
-      ...task.subtasks.map((s) => s.assigneeId),
-      ...task.subtasks.flatMap((s) => s.assignees?.map((a) => a.id) || []),
-    ].filter(Boolean) as string[]
-  );
-
-  const blockedUserIds = new Set<string>([...taskAssigneeIds]);
-  const blockedNames = new Set<string>();
+  // Align with audit restrictions: exclude MA daily tracker participants for this iteration
+  const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
+  const blockedUserIds = new Set<string>([...maUpdaterIds]);
+  const blockedNames = new Set<string>([...maUpdaterNames.map((n) => n.trim().toLowerCase())]);
 
   const isUserBlocked = (u: { id: string; name?: string | null; email?: string | null }) => {
     if (blockedUserIds.has(u.id)) return true;
@@ -458,12 +451,15 @@ export async function sweepInReviewTasksForShiftAudits(
         { status: { equals: 'In Review', mode: 'insensitive' } },
         { status: { equals: 'review', mode: 'insensitive' } },
         { status: { contains: 'review', mode: 'insensitive' } },
+        { status: { equals: 'CHECKING', mode: 'insensitive' } },
+        { status: { equals: 'Checking', mode: 'insensitive' } },
+        { status: { contains: 'checking', mode: 'insensitive' } },
       ],
     },
     select: { id: true, status: true },
   });
 
-  const matchingTasks = inReviewTasks.filter((t) => isReviewStatus(t.status));
+  const matchingTasks = inReviewTasks.filter((t) => isReviewStatus(t.status) || isCheckingStatus(t.status));
   let updatedTasks = 0;
 
   for (const t of matchingTasks) {

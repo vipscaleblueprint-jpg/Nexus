@@ -19,11 +19,14 @@ export const ALL_AUDIT_OPTIONS: AuditOption[] = [
 
 export const normalizeAuditName = (name: string) => {
   const clean = (name || '').trim().toLowerCase();
-  return clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+  const replaced = clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+  if (replaced === 'instruction audit') return 'instructions audit';
+  return replaced;
 };
 
 const NEXUS_AUDIT_ITEMS = new Set([
   'instructions audit',
+  'instruction audit',
   'design audit',
   'ui ux audit',
   'funnel audit',
@@ -266,4 +269,130 @@ export function getTaskSubtaskStatus(task: any): TaskSubtaskStatus {
     openSubtasks: unclosed.map((s: any) => s.title || 'Untitled Subtask'),
   };
 }
+
+// ============================================================================
+// Audit Hierarchy Helpers & Validation
+// Level 1: UI UX Audit & Design Audit (same hierarchy)
+// Level 2: Instruction Audit (cannot be done until Level 1 audits are done)
+// Level 3: Funnel Audit (cannot be done until Level 1 and Instruction Audit are done)
+// ============================================================================
+
+export const isUiUxAudit = (name: string): boolean => {
+  const norm = normalizeAuditName(name);
+  return norm === 'ui ux audit' || norm === 'ui/ux audit';
+};
+
+export const isDesignAudit = (name: string): boolean => {
+  const norm = normalizeAuditName(name);
+  return norm === 'design audit';
+};
+
+export const isInstructionAudit = (name: string): boolean => {
+  const norm = normalizeAuditName(name);
+  return norm === 'instructions audit' || norm === 'instruction audit';
+};
+
+export const isFunnelAudit = (name: string): boolean => {
+  const norm = normalizeAuditName(name);
+  return norm === 'funnel audit';
+};
+
+/**
+ * Checks if a task requires Level 1 audits (UI UX Audit or Design Audit).
+ * If a task has no UI UX or Design audit, MA selecting "To Review" routes directly to Checking status.
+ */
+export function hasUiUxOrDesignAudit(task: any): boolean {
+  if (!task) return false;
+  const status = getTaskAuditStatus(task);
+  return status.requiredAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a));
+}
+
+/**
+ * Checks whether all required Level 1 audits (UI UX Audit and Design Audit) are complete.
+ */
+export function areLevel1AuditsComplete(task: any): boolean {
+  if (!task) return true;
+  const status = getTaskAuditStatus(task);
+  const requiredLevel1 = status.requiredAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a));
+  if (requiredLevel1.length === 0) return true;
+  return !status.uncheckedAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a));
+}
+
+/**
+ * Checks whether Instruction Audit is complete.
+ */
+export function isInstructionAuditComplete(task: any): boolean {
+  if (!task) return true;
+  const status = getTaskAuditStatus(task);
+  const requiredInstructions = status.requiredAudits.filter(isInstructionAudit);
+  if (requiredInstructions.length === 0) return true;
+  return !status.uncheckedAudits.some(isInstructionAudit);
+}
+
+export interface AuditPermissionCheck {
+  allowed: boolean;
+  reason?: string;
+  missingPrerequisites: string[];
+}
+
+/**
+ * Validates whether an audit can be completed based on the hierarchy:
+ * - Level 1 (UI UX & Design): Always allowed (same hierarchy).
+ * - Level 2 (Instruction): Blocked if task requires Level 1 audits and any are not yet done.
+ * - Level 3 (Funnel): Blocked if Level 1 audits or Instruction Audit are not yet done.
+ */
+export function canPerformAudit(auditName: string, task: any): AuditPermissionCheck {
+  if (!task) return { allowed: true, missingPrerequisites: [] };
+
+  const norm = normalizeAuditName(auditName);
+
+  // Level 1 audits have no prerequisites
+  if (isUiUxAudit(norm) || isDesignAudit(norm)) {
+    return { allowed: true, missingPrerequisites: [] };
+  }
+
+  const status = getTaskAuditStatus(task);
+
+  // Uncompleted Level 1 audits
+  const missingLevel1 = status.uncheckedAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a));
+
+  // Level 2: Instruction Audit
+  if (isInstructionAudit(norm)) {
+    if (missingLevel1.length > 0) {
+      const labels = missingLevel1.map((a) => (isUiUxAudit(a) ? 'UI/UX Audit' : 'Design Audit')).join(' and ');
+      return {
+        allowed: false,
+        reason: `Cannot do Instruction Audit: ${labels} must be completed first.`,
+        missingPrerequisites: missingLevel1,
+      };
+    }
+    return { allowed: true, missingPrerequisites: [] };
+  }
+
+  // Level 3: Funnel Audit
+  if (isFunnelAudit(norm)) {
+    if (missingLevel1.length > 0) {
+      const labels = missingLevel1.map((a) => (isUiUxAudit(a) ? 'UI/UX Audit' : 'Design Audit')).join(' and ');
+      return {
+        allowed: false,
+        reason: `Cannot do Funnel Audit: ${labels} must be completed first.`,
+        missingPrerequisites: missingLevel1,
+      };
+    }
+
+    const missingInstruction = status.uncheckedAudits.filter(isInstructionAudit);
+    if (missingInstruction.length > 0) {
+      return {
+        allowed: false,
+        reason: 'Cannot do Funnel Audit: Instruction Audit must be completed first.',
+        missingPrerequisites: missingInstruction,
+      };
+    }
+
+    return { allowed: true, missingPrerequisites: [] };
+  }
+
+  return { allowed: true, missingPrerequisites: [] };
+}
+
 

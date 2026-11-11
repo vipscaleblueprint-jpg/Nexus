@@ -125,12 +125,14 @@ export function getAssignDeniedMessage(workspaceRoles: { name: string }[] = []):
   return `You can't change this. Only ${label} and Admins can set Team Role and Assignees.`;
 }
 
-/** Entering In Review only needs every subtask Closed — auditing happens during review. */
+/** Entering In Review only needs every subtask Closed — UI/UX and Design auditing happens during review. */
 export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review', 'review', 'under review', 'for review'];
-/** Post-review statuses need every subtask Closed AND every required audit checked. */
-export const COMPLETION_GATE_STATUSES = ['checking', 'in checking', 'inchecking', 'closed', 'crm', 'done', 'completed'];
+/** Checking involves Instruction Audit and Funnel Audit — requires subtasks Closed and Level 1 audits (UI UX & Design) completed. */
+export const CHECKING_STATUSES = ['checking', 'in checking', 'inchecking'];
+/** Post-review completion statuses need every subtask Closed AND all required audits checked. */
+export const COMPLETION_GATE_STATUSES = ['closed', 'crm', 'done', 'completed'];
 /** Every status that has any gate (kept for existing imports). */
-export const RESTRICTED_GATE_STATUSES = [...IN_REVIEW_STATUSES, ...COMPLETION_GATE_STATUSES];
+export const RESTRICTED_GATE_STATUSES = [...IN_REVIEW_STATUSES, ...CHECKING_STATUSES, ...COMPLETION_GATE_STATUSES];
 
 export function normalizeStatus(status?: string | null): string {
   return (status || '').trim().toLowerCase();
@@ -139,6 +141,11 @@ export function normalizeStatus(status?: string | null): string {
 export function isReviewStatus(status?: string | null): boolean {
   const norm = normalizeStatus(status);
   return IN_REVIEW_STATUSES.includes(norm);
+}
+
+export function isCheckingStatus(status?: string | null): boolean {
+  const norm = normalizeStatus(status);
+  return CHECKING_STATUSES.includes(norm);
 }
 
 export function isCompletionStatus(status?: string | null): boolean {
@@ -156,8 +163,9 @@ export interface TransitionCheckResult {
 
 /**
  * Validates whether a task can transition to a restricted status.
- * - In Review: all subtasks must be Closed (no subtasks = allowed). Audits are NOT required yet.
- * - Checking / CRM / Closed / Done / Completed: all subtasks Closed AND all required audits checked.
+ * - In Review: all subtasks must be Closed (no subtasks = allowed). UI/UX and Design auditing happens during review.
+ * - Checking: all subtasks Closed AND required Level 1 audits (UI UX & Design) completed. Instruction & Funnel audits happen during checking.
+ * - CRM / Closed / Done / Completed: all subtasks Closed AND ALL required audits checked.
  */
 export function canTransitionTaskStatus(
   task: any,
@@ -176,34 +184,60 @@ export function canTransitionTaskStatus(
   }
 
   const isReview = isReviewStatus(targetStatusNorm);
+  const isChecking = isCheckingStatus(targetStatusNorm);
   const isCompletion = isCompletionStatus(targetStatusNorm);
 
-  if (isReview || isCompletion) {
-    // In Review explicitly does NOT need audits. Audits are only required for completion gate statuses.
-    const needsAudits = isCompletion && !isReview;
+  if (isReview || isChecking || isCompletion) {
     const subtaskStatus = getTaskSubtaskStatus(task);
-    const auditStatus = needsAudits ? getTaskAuditStatus(task) : null;
-
-    const subtasksIncomplete = !subtaskStatus.isComplete;
-    const auditsIncomplete = !!auditStatus && !auditStatus.isComplete;
-
-    if (subtasksIncomplete || auditsIncomplete) {
-      let reason = '';
-      if (subtasksIncomplete && auditsIncomplete) {
-        reason = `Cannot move to ${newStatus}: ${subtaskStatus.openCount} subtask(s) still open and Audits need checking (${auditStatus!.completedCount}/${auditStatus!.totalCount} completed).`;
-      } else if (subtasksIncomplete) {
-        reason = `Cannot move to ${newStatus}: All subtasks must be Closed first (${subtaskStatus.openCount} open).`;
-      } else {
-        reason = `Cannot move to ${newStatus}: All Audits must be checked first (${auditStatus!.completedCount}/${auditStatus!.totalCount} completed). Needs check: ${auditStatus!.uncheckedAudits.join(', ')}.`;
-      }
-
+    if (!subtaskStatus.isComplete) {
       return {
         allowed: false,
-        reason,
-        uncheckedAudits: auditsIncomplete ? auditStatus!.uncheckedAudits : [],
+        reason: `Cannot move to ${newStatus}: All subtasks must be Closed first (${subtaskStatus.openCount} open).`,
+        uncheckedAudits: [],
         openSubtasks: subtaskStatus.openSubtasks,
         targetStatus: newStatus,
       };
+    }
+
+    // In Review explicitly does NOT need audits. Audits happen during review.
+    if (isReview) {
+      return { allowed: true, uncheckedAudits: [], openSubtasks: [], targetStatus: newStatus };
+    }
+
+    // Checking involves Funnel Audit & Instruction Audit.
+    // It requires Level 1 audits (UI UX Audit and Design Audit) to be completed first.
+    if (isChecking) {
+      const auditStatus = getTaskAuditStatus(task);
+      const incompleteLevel1 = auditStatus.uncheckedAudits.filter((a) => {
+        const norm = (a || '').toLowerCase();
+        return norm.includes('ui') || norm.includes('ux') || norm.includes('design');
+      });
+
+      if (incompleteLevel1.length > 0) {
+        return {
+          allowed: false,
+          reason: `Cannot move to Checking: UI/UX and Design audits must be completed first (${incompleteLevel1.join(', ')}).`,
+          uncheckedAudits: incompleteLevel1,
+          openSubtasks: [],
+          targetStatus: newStatus,
+        };
+      }
+
+      return { allowed: true, uncheckedAudits: [], openSubtasks: [], targetStatus: newStatus };
+    }
+
+    // Completion gate statuses: ALL required audits must be completed
+    if (isCompletion) {
+      const auditStatus = getTaskAuditStatus(task);
+      if (!auditStatus.isComplete) {
+        return {
+          allowed: false,
+          reason: `Cannot move to ${newStatus}: All Audits must be checked first (${auditStatus.completedCount}/${auditStatus.totalCount} completed). Needs check: ${auditStatus.uncheckedAudits.join(', ')}.`,
+          uncheckedAudits: auditStatus.uncheckedAudits,
+          openSubtasks: [],
+          targetStatus: newStatus,
+        };
+      }
     }
   }
 

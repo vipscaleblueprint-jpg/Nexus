@@ -841,15 +841,16 @@ export interface TaskTimeProgressSlotProps {
 export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now, isLive = true }) => {
   const prog = task.progress;
   const upworkClients = useAppStore((s) => s.upworkClients);
+  const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
 
   const clientName = prog?.client || task.list?.name || '';
   const isClientConfiguredUpwork = upworkClients.some((c) => c.toLowerCase() === clientName.toLowerCase());
   const hasManualUpworkTag = (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'));
   const isLauren = clientName.toLowerCase().includes('lauren');
 
-  // Upwork determination: Lauren is project-based (only Upwork if manually marked); otherwise check configured list/tracker/tag
-  const isUpwork = isLauren
-    ? hasManualUpworkTag
+  // Upwork determination: Lauren is project-based (only Upwork if manually marked or in upworkClients); otherwise check configured list/tracker/tag
+  const isUpwork = isLauren && !hasManualUpworkTag && !isClientConfiguredUpwork
+    ? false
     : Boolean(
       isClientConfiguredUpwork ||
       prog?.isUpwork ||

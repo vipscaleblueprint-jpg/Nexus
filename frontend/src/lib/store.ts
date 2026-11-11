@@ -240,6 +240,8 @@ interface AppState {
   setActiveUpworkSessions: (sessions: UpworkSession[] | ((prev: UpworkSession[]) => UpworkSession[])) => void;
   upworkClients: string[];
   setUpworkClients: (clients: string[]) => void;
+  upworkProjectClients: string[];
+  setUpworkProjectClients: (clients: string[]) => void;
 
   // MA Active Live Sessions (including blank block when no task/client is inputted yet)
   maActiveSessions: Record<string, any>;
@@ -285,6 +287,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       isGalaxyFilterActive: false,
       activeUpworkSessions: [],
       upworkClients: [],
+      upworkProjectClients: [],
       maActiveSessions: {},
     });
   },
@@ -598,6 +601,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   upworkClients: [],
   setUpworkClients: (upworkClients) => set({ upworkClients }),
+  upworkProjectClients: [],
+  setUpworkProjectClients: (upworkProjectClients) => set({ upworkProjectClients }),
   maActiveSessions: {},
   setMaActiveSessions: (sessions) =>
     set((state) => ({

@@ -20,9 +20,14 @@ import {
   fromTaskMapShiftKey,
   TaskMapRecordData,
   getUpworkClients,
+  getUpworkProjectClients,
   addUpworkClient,
+  addUpworkProjectClient,
   removeUpworkClient,
+  removeUpworkProjectClient,
   setUpworkClients,
+  setUpworkProjectClients,
+  isProjectBasedUpwork,
   captureTaskMapDailySnapshot,
   getTaskMapDailySnapshot,
   getAvailableHistoryDates,
@@ -174,11 +179,17 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       recordsMap.set(r.taskId, r);
     }
 
-    // Options and Shift configs: filter out obsolete static Upwork options
+    // Options and Shift configs: filter out obsolete static Upwork options & internal client tags
     const rawOptions = await getStatusOptions();
     const options = rawOptions.filter((opt) => {
       const up = opt.label.toUpperCase().trim();
-      return up !== 'UPWORK ACTIVE' && !up.startsWith('UPWORK |') && !up.startsWith('UPWORK|');
+      return (
+        up !== 'UPWORK ACTIVE' &&
+        !up.startsWith('UPWORK |') &&
+        !up.startsWith('UPWORK|') &&
+        !up.startsWith('UPWORK_CLIENT:') &&
+        !up.startsWith('UPWORK_PROJECT_CLIENT:')
+      );
     });
     const shifts = await getShiftConfigs();
 
@@ -688,6 +699,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     }
 
     const upworkClients = await getUpworkClients();
+    const upworkProjectClients = await getUpworkProjectClients();
 
     let maActiveSessions: Record<string, any> = {};
     if (isRedisReady()) {
@@ -749,6 +761,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       shiftUsers,
       activeUpworkSessions,
       upworkClients,
+      upworkProjectClients,
       maActiveSessions,
     };
 
@@ -777,6 +790,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       shiftUsers,
       activeUpworkSessions,
       upworkClients,
+      upworkProjectClients,
       maActiveSessions,
     };
 
@@ -798,7 +812,13 @@ export const getOptions = async (req: Request, res: Response) => {
     const rawOptions = await getStatusOptions();
     const options = rawOptions.filter((opt) => {
       const up = opt.label.toUpperCase().trim();
-      return up !== 'UPWORK ACTIVE' && !up.startsWith('UPWORK |') && !up.startsWith('UPWORK|');
+      return (
+        up !== 'UPWORK ACTIVE' &&
+        !up.startsWith('UPWORK |') &&
+        !up.startsWith('UPWORK|') &&
+        !up.startsWith('UPWORK_CLIENT:') &&
+        !up.startsWith('UPWORK_PROJECT_CLIENT:')
+      );
     });
     res.json({ success: true, options });
   } catch (error: any) {
@@ -1845,7 +1865,8 @@ export const getTaskTimeline = async (req: Request, res: Response) => {
 export const getUpworkClientsHandler = async (req: Request, res: Response) => {
   try {
     const clients = await getUpworkClients();
-    res.json({ success: true, clients });
+    const projectClients = await getUpworkProjectClients();
+    res.json({ success: true, clients, projectClients });
   } catch (error: any) {
     logger.error({ error }, 'Error getting upwork clients');
     res.status(500).json({ error: 'Failed to get upwork clients' });
@@ -1857,27 +1878,99 @@ export const getUpworkClientsHandler = async (req: Request, res: Response) => {
  */
 export const updateUpworkClientsHandler = async (req: Request, res: Response) => {
   try {
-    const { clientName, isUpwork, action, clients } = req.body || {};
+    const user = (req as any).user;
+    const isPmOrAdmin = await canUserSetAssignees(user?.id);
+    if (!isPmOrAdmin) {
+      return res.status(403).json({
+        error: 'Only Project Managers and Admins can configure Upwork clients',
+      });
+    }
+
+    const { clientName, isUpwork, isProjectBased, action, clients, projectClients } = req.body || {};
     let updatedClients: string[] = [];
+    let updatedProjectClients: string[] = [];
+
+    // Helper to check if user is Aaron or system Admin
+    const email = (user?.email || '').toLowerCase().trim();
+    const isAaron = email.includes('aaron') || user?.id === 'bc74d7a0-e1e0-4a18-bf59-4e733fa25c92' || user?.systemRole === 'ADMIN';
+
+    // Marking / adding / removing Upwork clients is strictly limited to Aaron!
+    const isModifyingUpworkList = Array.isArray(clients) || action === 'add' || action === 'remove' || (isUpwork !== undefined && isProjectBased === undefined);
+    if (isModifyingUpworkList && !isAaron) {
+      return res.status(403).json({
+        error: 'Only Aaron can add or remove Upwork clients',
+      });
+    }
 
     if (Array.isArray(clients)) {
       updatedClients = await setUpworkClients(clients);
-    } else if (clientName) {
-      const current = await getUpworkClients();
-      const exists = current.some((c) => c.toLowerCase() === String(clientName).trim().toLowerCase());
-      const shouldBeUpwork = isUpwork !== undefined ? Boolean(isUpwork) : (action === 'add' ? true : action === 'remove' ? false : !exists);
-
-      if (shouldBeUpwork) {
-        updatedClients = await addUpworkClient(clientName);
-      } else {
-        updatedClients = await removeUpworkClient(clientName);
-      }
-    } else {
-      return res.status(400).json({ error: 'clientName or clients array required' });
+    }
+    if (Array.isArray(projectClients)) {
+      updatedProjectClients = await setUpworkProjectClients(projectClients);
     }
 
-    io.emit('upwork:clients_updated', { clients: updatedClients });
-    res.json({ success: true, clients: updatedClients });
+    if (clientName) {
+      const cleanName = String(clientName).trim();
+      const current = await getUpworkClients();
+      const exists = current.some((c) => c.toLowerCase() === cleanName.toLowerCase());
+
+      if (isProjectBased !== undefined) {
+        // Enforce: Project-Based or Hourly Rate mode can ONLY be toggled if the client is an Upwork client!
+        const willBeUpwork = isUpwork !== undefined ? Boolean(isUpwork) : exists;
+        if (!willBeUpwork) {
+          return res.status(400).json({
+            error: 'Project-Based or Hourly Rate mode can only be configured for Upwork clients. Only Aaron can designate new Upwork clients.',
+          });
+        }
+
+        if (!exists) {
+          if (!isAaron) {
+            return res.status(403).json({
+              error: 'Only Aaron can designate new Upwork clients',
+            });
+          }
+          updatedClients = await addUpworkClient(cleanName);
+        } else {
+          updatedClients = current;
+        }
+
+        if (isProjectBased) {
+          updatedProjectClients = await addUpworkProjectClient(cleanName);
+        } else {
+          updatedProjectClients = await removeUpworkProjectClient(cleanName);
+        }
+      } else {
+        // Modifying Upwork membership (add/remove) - strictly Aaron
+        if (!isAaron) {
+          return res.status(403).json({
+            error: 'Only Aaron can add or remove Upwork clients',
+          });
+        }
+
+        const shouldBeUpwork = isUpwork !== undefined ? Boolean(isUpwork) : (action === 'add' ? true : action === 'remove' ? false : !exists);
+
+        if (shouldBeUpwork) {
+          updatedClients = await addUpworkClient(cleanName);
+          if (isProjectBasedUpwork(cleanName)) {
+            updatedProjectClients = await addUpworkProjectClient(cleanName);
+          } else {
+            updatedProjectClients = await getUpworkProjectClients();
+          }
+        } else {
+          updatedClients = await removeUpworkClient(cleanName);
+          updatedProjectClients = await removeUpworkProjectClient(cleanName);
+        }
+      }
+    } else {
+      if (!Array.isArray(clients) && !Array.isArray(projectClients)) {
+        return res.status(400).json({ error: 'clientName, clients, or projectClients required' });
+      }
+      if (!Array.isArray(clients)) updatedClients = await getUpworkClients();
+      if (!Array.isArray(projectClients)) updatedProjectClients = await getUpworkProjectClients();
+    }
+
+    io.emit('upwork:clients_updated', { clients: updatedClients, projectClients: updatedProjectClients });
+    res.json({ success: true, clients: updatedClients, projectClients: updatedProjectClients });
   } catch (error: any) {
     logger.error({ error }, 'Error updating upwork clients');
     res.status(500).json({ error: 'Failed to update upwork clients' });
@@ -1893,27 +1986,68 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
     const nowMs = Date.now();
     let activeUpworkSessions: any[] = [];
 
+    // Fetch active MA sessions to cross-verify if an MA clocked out or is non-Upwork
+    let maSessionsByName: Record<string, any> = {};
     if (isRedisReady()) {
-      const rawMap = await redis.hgetall('task_map:upwork_active');
-      if (rawMap && Object.keys(rawMap).length > 0) {
-        const parsed = Object.values(rawMap).map((val) => JSON.parse(val));
-        for (const s of parsed) {
-          const startedMs = s.startedAt ? new Date(s.startedAt).getTime() : NaN;
-          // Stale check: prune sessions running for > 14 hours
-          if (!isNaN(startedMs) && (nowMs - startedMs > MAX_UPWORK_SESSION_MS)) {
-            logger.warn({ taskId: s.taskId, userName: s.userName, startedAt: s.startedAt }, '[Upwork] Pruning stale Redis session (> 14h)');
-            if (isRedisReady()) {
-              await redis.hdel('task_map:upwork_active', s.taskId).catch(() => { });
-            }
-            continue;
-          }
-          const name = `${s.clientName || ''} ${s.pmName || ''} ${s.taskTitle || ''}`.toLowerCase();
-          // Lauren is project-based: only allowed if explicitly confirmed with manual UPWORK tag
-          if (name.includes('lauren') && !s.isManuallyMarkedUpwork) {
-            continue;
-          }
-          activeUpworkSessions.push(s);
+      try {
+        const rawMaMap = await redis.hgetall('task_map:ma_active_sessions').catch(() => ({}));
+        for (const [k, v] of Object.entries(rawMaMap || {})) {
+          try { maSessionsByName[k.toLowerCase().trim()] = JSON.parse(v as string); } catch {}
         }
+      } catch {}
+    }
+
+    const upworkClientsList = await getUpworkClients();
+    const upworkProjectClientsList = await getUpworkProjectClients();
+
+    if (isRedisReady()) {
+      try {
+        const rawMap = await redis.hgetall('task_map:upwork_active');
+        if (rawMap && Object.keys(rawMap).length > 0) {
+          const parsed = Object.values(rawMap).map((val) => JSON.parse(val));
+          for (const s of parsed) {
+            const startedMs = s.startedAt ? new Date(s.startedAt).getTime() : NaN;
+            // Stale check: prune sessions running for > 14 hours
+            if (!isNaN(startedMs) && (nowMs - startedMs > MAX_UPWORK_SESSION_MS)) {
+              logger.warn({ taskId: s.taskId, userName: s.userName, startedAt: s.startedAt }, '[Upwork] Pruning stale Redis session (> 14h)');
+              if (isRedisReady()) {
+                await redis.hdel('task_map:upwork_active', s.taskId).catch(() => { });
+              }
+              continue;
+            }
+            const name = `${s.clientName || ''} ${s.pmName || ''} ${s.taskTitle || ''}`.toLowerCase();
+            // Lauren is project-based: only allowed if explicitly confirmed with manual UPWORK tag or in configured upwork clients
+            const isConfiguredUpwork = upworkClientsList.some((c) => c.toLowerCase() === (s.clientName || '').toLowerCase() || c.toLowerCase() === (s.pmName || '').toLowerCase());
+            if (name.includes('lauren') && !s.isManuallyMarkedUpwork && !isConfiguredUpwork) {
+              continue;
+            }
+
+            const isProject = Boolean(
+              s.isProjectBased ||
+              isProjectBasedUpwork(name) ||
+              upworkProjectClientsList.some((c) => c.toLowerCase() === (s.clientName || '').toLowerCase() || c.toLowerCase() === (s.pmName || '').toLowerCase())
+            );
+            s.isProjectBased = isProject;
+
+            // Cross-verify with MA's current active session in sheet:
+            // If MA's latest schedule says they are clocked out, active === false, or isUpwork === false,
+            // then this Redis session is stale and MUST be pruned!
+            const maClean = (s.userName || '').toLowerCase().trim();
+            if (maClean && maSessionsByName[maClean]) {
+              const currentMa = maSessionsByName[maClean];
+              if (currentMa.timeOut || currentMa.active === false || currentMa.isUpwork === false) {
+                if (isRedisReady()) {
+                  await redis.hdel('task_map:upwork_active', s.taskId).catch(() => {});
+                }
+                continue;
+              }
+            }
+
+            activeUpworkSessions.push(s);
+          }
+        }
+      } catch (err) {
+        logger.warn({ err }, '[Upwork] Failed reading Redis active sessions');
       }
     }
 
@@ -1922,7 +2056,7 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
       const openUpworkRecords = await prisma.taskMapRecord.findMany({
         where: {
           task: {
-            status: { notIn: ['CLOSED', 'DONE', 'Complete', 'Completed', 'Closed', 'Done'] },
+            status: { notIn: ['CLOSED', 'DONE', 'Complete', 'Completed', 'Closed', 'Done', 'KYC', 'PIN BOARD', 'PINBOARD'] },
           },
         },
         select: {
@@ -1959,10 +2093,11 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
           continue;
         }
 
-        // Restriction for Lauren: Lauren is project-based; only mark as Upwork if explicitly tagged on TaskMap!
+        // Restriction for Lauren: Lauren is project-based; only mark as Upwork if explicitly tagged on TaskMap or in configured upwork clients!
         const clientOrListName = `${rec.task?.list?.name || ''} ${activeReview?.clientName || ''} ${activeReview?.pmName || ''}`.toLowerCase();
         const isLauren = clientOrListName.includes('lauren');
-        if (isLauren && !upworkTag) {
+        const isConfiguredUpwork = upworkClientsList.some((c) => c.toLowerCase() === (rec.task?.list?.name || '').toLowerCase() || c.toLowerCase() === (activeReview?.clientName || '').toLowerCase());
+        if (isLauren && !upworkTag && !isConfiguredUpwork) {
           if (isRedisReady()) {
             redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
           }
@@ -2033,6 +2168,11 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
               continue;
             }
 
+            const isProject = Boolean(
+              isProjectBasedUpwork(`${rec.task?.list?.name || pmName} ${rec.task?.title || ''}`) ||
+              upworkProjectClientsList.some((c) => c.toLowerCase() === (rec.task?.list?.name || pmName).toLowerCase())
+            );
+
             const sessionItem = {
               taskId: rec.taskId,
               taskTitle: rec.task?.title || 'Upwork Task',
@@ -2045,6 +2185,7 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
               startedAt,
               active: true,
               isManuallyMarkedUpwork: Boolean(upworkTag),
+              isProjectBased: isProject,
             };
             activeUpworkSessions.push(sessionItem);
 

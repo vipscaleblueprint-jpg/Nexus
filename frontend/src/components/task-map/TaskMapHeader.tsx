@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
-import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition, AuditorRoleOption } from '@/api/taskMap';
+import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition, AuditorRoleOption, isProjectBasedUpwork } from '@/api/taskMap';
 import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { isAaronUser } from '@/lib/permissions';
+import { isAaronUser, isProjectManagerOrAdmin } from '@/lib/permissions';
 
 export interface ClientOption {
   id: string;
@@ -131,16 +131,20 @@ export const TaskMapHeader: React.FC<Props> = ({
   const [auditorSearch, setAuditorSearch] = useState('');
   const auditorDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Upwork Clients state (Restricted to Aaron)
+  // Upwork Clients state (Restricted to Project Managers & Admins)
   const currentUser = useAppStore((s) => s.currentUser);
   const isAaron = isAaronUser(currentUser);
+  const isPmOrAdmin = isProjectManagerOrAdmin(currentUser) || isAaron;
   const [upworkModalOpen, setUpworkModalOpen] = useState(false);
   const [upworkSearch, setUpworkSearch] = useState('');
   const [newUpworkClient, setNewUpworkClient] = useState('');
   const upworkClients = useAppStore((s) => s.upworkClients);
   const setUpworkClients = useAppStore((s) => s.setUpworkClients);
+  const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
+  const setUpworkProjectClients = useAppStore((s) => s.setUpworkProjectClients);
 
   const handleToggleUpworkClient = async (clientName: string) => {
+    if (!isAaron) return; // Marking or removing Upwork clients is strictly limited to Aaron!
     const trimmed = clientName.trim();
     if (!trimmed) return;
     const exists = upworkClients.some((c) => c.toLowerCase() === trimmed.toLowerCase());
@@ -156,7 +160,30 @@ export const TaskMapHeader: React.FC<Props> = ({
     }
   };
 
+  const handleToggleProjectBased = async (clientName: string) => {
+    if (!isPmOrAdmin) return;
+    const trimmed = clientName.trim();
+    if (!trimmed) return;
+    // Project-Based or Hourly Rate mode can ONLY be toggled if the client is marked as Upwork!
+    const isUpwork = upworkClients.some((c) => c.toLowerCase() === trimmed.toLowerCase());
+    if (!isUpwork) return;
+
+    const isCurrentlyProject = isProjectBasedUpwork(trimmed) ||
+      upworkProjectClients.some((u) => u.toLowerCase() === trimmed.toLowerCase());
+    const nextList = isCurrentlyProject
+      ? upworkProjectClients.filter((u) => u.toLowerCase() !== trimmed.toLowerCase())
+      : [...upworkProjectClients, trimmed];
+    setUpworkProjectClients(nextList);
+    try {
+      await taskMapApi.toggleUpworkClient({ clientName: trimmed, isUpwork: true, isProjectBased: !isCurrentlyProject });
+    } catch (err) {
+      console.error('Failed to toggle project-based client:', err);
+      setUpworkProjectClients(upworkProjectClients);
+    }
+  };
+
   const handleAddNewUpworkClient = async () => {
+    if (!isAaron) return; // Adding new Upwork clients is strictly limited to Aaron!
     const trimmed = newUpworkClient.trim();
     if (!trimmed) return;
     if (!upworkClients.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
@@ -482,6 +509,17 @@ export const TaskMapHeader: React.FC<Props> = ({
       .filter((c) => c.name.toLowerCase().includes(upworkSearch.toLowerCase()))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [clients, upworkClients, upworkSearch]);
+
+  // For Aaron: show all clients (to mark/unmark Upwork)
+  // For Project Managers: ONLY show clients that are already marked as Upwork (so PMs can toggle Project-Based vs Hourly Rate)
+  const displayedClients = React.useMemo(() => {
+    if (isAaron) {
+      return allCombinedClients;
+    }
+    return allCombinedClients.filter((client) =>
+      upworkClients.some((u) => u.toLowerCase() === client.name.toLowerCase())
+    );
+  }, [isAaron, allCombinedClients, upworkClients]);
 
   const filteredMAs = (availableMAs || []).filter((m) =>
     (m.name || '').toLowerCase().includes(maSearch.toLowerCase())
@@ -940,7 +978,7 @@ export const TaskMapHeader: React.FC<Props> = ({
 
               {clientDropdownOpen && (
                 <div
-                  className="absolute right-0 top-full mt-1.5 w-64 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-1 text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
+                  className="absolute right-0 top-full mt-1.5 w-80 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-1 text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
                   onClick={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -1031,6 +1069,10 @@ export const TaskMapHeader: React.FC<Props> = ({
                     ) : (
                       filteredClients.map((client) => {
                         const checked = isClientChecked(client.id, client.name);
+                        const isUpwork = upworkClients.some((u) => u.toLowerCase() === client.name.toLowerCase());
+                        const isProject = isProjectBasedUpwork(client.name) ||
+                          upworkProjectClients.some((u) => u.toLowerCase() === client.name.toLowerCase());
+
                         return (
                           <div
                             key={client.id}
@@ -1040,7 +1082,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                               : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/40 hover:text-zinc-900 dark:hover:text-zinc-200'
                               }`}
                           >
-                            <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
                               <div
                                 className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${checked
                                   ? 'bg-blue-600 border-blue-500 text-white'
@@ -1052,10 +1094,42 @@ export const TaskMapHeader: React.FC<Props> = ({
                               <span className="truncate" title={client.name}>
                                 {client.name}
                               </span>
-                              {upworkClients.some((u) => u.toLowerCase() === client.name.toLowerCase()) && (
-                                <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 font-semibold shrink-0">
-                                  UW
-                                </span>
+                              {isUpwork && (
+                                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <span className={`text-[9px] px-1 py-0.2 rounded font-semibold shrink-0 border ${isProject
+                                    ? 'bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-300 border-purple-300 dark:border-purple-500/30'
+                                    : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30'
+                                    }`}>
+                                    UW
+                                  </span>
+                                  {isPmOrAdmin ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleToggleProjectBased(client.name);
+                                      }}
+                                      className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold border transition-all cursor-pointer select-none flex items-center gap-1 ${isProject
+                                        ? 'bg-purple-950/70 text-purple-200 border-purple-500/40 hover:bg-purple-900/80 shadow-xs'
+                                        : 'bg-emerald-950/70 text-emerald-200 border-emerald-500/40 hover:bg-emerald-900/80 shadow-xs'
+                                        }`}
+                                      title={isProject
+                                        ? 'Project-Based (No Upwork conflict). Click to switch to Hourly Rate'
+                                        : 'Hourly Rate (Live tracking). Click to switch to Project-Based'
+                                      }
+                                    >
+                                      <span className={`size-1.5 rounded-full ${isProject ? 'bg-purple-400' : 'bg-emerald-400'}`} />
+                                      <span>{isProject ? 'PROJECT' : 'HOURLY'}</span>
+                                    </button>
+                                  ) : (
+                                    <span className={`text-[8.5px] px-1 py-0.2 rounded font-medium border ${isProject
+                                      ? 'text-purple-300 bg-purple-950/40 border-purple-800/40'
+                                      : 'text-emerald-300 bg-emerald-950/40 border-emerald-800/40'
+                                      }`}>
+                                      {isProject ? 'PROJECT' : 'HOURLY'}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
@@ -1088,6 +1162,10 @@ export const TaskMapHeader: React.FC<Props> = ({
                           .filter((ac) => ac.name.toLowerCase().includes(clientSearch.toLowerCase()))
                           .map((ac) => {
                             const checked = isClientChecked(ac.id, ac.name);
+                            const isAcUpwork = upworkClients.some((u) => u.toLowerCase() === ac.name.toLowerCase());
+                            const isAcProject = isProjectBasedUpwork(ac.name) ||
+                              upworkProjectClients.some((u) => u.toLowerCase() === ac.name.toLowerCase());
+
                             return (
                               <div
                                 key={ac.id}
@@ -1097,7 +1175,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                                   : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/40 hover:text-zinc-900 dark:hover:text-zinc-200'
                                   }`}
                               >
-                                <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
+                                <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
                                   <div
                                     className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${checked
                                       ? 'bg-purple-600 border-purple-500 text-white'
@@ -1109,6 +1187,43 @@ export const TaskMapHeader: React.FC<Props> = ({
                                   <span className="truncate" title={ac.name}>
                                     {ac.name}
                                   </span>
+                                  {isAcUpwork && (
+                                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                      <span className={`text-[9px] px-1 py-0.2 rounded font-semibold shrink-0 border ${isAcProject
+                                        ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                        }`}>
+                                        UW
+                                      </span>
+                                      {isPmOrAdmin ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleToggleProjectBased(ac.name);
+                                          }}
+                                          className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold border transition-all cursor-pointer select-none flex items-center gap-1 ${isAcProject
+                                            ? 'bg-purple-950/70 text-purple-200 border-purple-500/40 hover:bg-purple-900/80 shadow-xs'
+                                            : 'bg-emerald-950/70 text-emerald-200 border-emerald-500/40 hover:bg-emerald-900/80 shadow-xs'
+                                            }`}
+                                          title={isAcProject
+                                            ? 'Project-Based (No Upwork conflict). Click to switch to Hourly Rate'
+                                            : 'Hourly Rate (Live tracking). Click to switch to Project-Based'
+                                          }
+                                        >
+                                          <span className={`size-1.5 rounded-full ${isAcProject ? 'bg-purple-400' : 'bg-emerald-400'}`} />
+                                          <span>{isAcProject ? 'PROJECT' : 'HOURLY'}</span>
+                                        </button>
+                                      ) : (
+                                        <span className={`text-[8.5px] px-1 py-0.2 rounded font-medium border ${isAcProject
+                                          ? 'text-purple-300 bg-purple-950/40 border-purple-800/40'
+                                          : 'text-emerald-300 bg-emerald-950/40 border-emerald-800/40'
+                                          }`}>
+                                          {isAcProject ? 'PROJECT' : 'HOURLY'}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <button
@@ -1167,8 +1282,8 @@ export const TaskMapHeader: React.FC<Props> = ({
         </div>
       </header>
 
-      {/* Upwork Clients Management Modal */}
-      {upworkModalOpen && (
+      {/* Upwork Clients Management Modal (Restricted to Aaron) */}
+      {upworkModalOpen && isAaron && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setUpworkModalOpen(false)}
@@ -1184,8 +1299,14 @@ export const TaskMapHeader: React.FC<Props> = ({
                   <Briefcase className="size-4 text-emerald-400" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-zinc-100">Upwork Clients</h3>
-                  <p className="text-[11px] text-zinc-400">Designate clients tracked under Upwork timers</p>
+                  <h3 className="text-sm font-bold text-zinc-100">
+                    {isAaron ? 'Upwork Clients' : 'Upwork Clients Mode'}
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">
+                    {isAaron
+                      ? 'Designate Upwork clients and tracking modes'
+                      : 'Toggle Project-Based vs Hourly Rate mode for Upwork clients'}
+                  </p>
                 </div>
               </div>
               <button
@@ -1197,33 +1318,35 @@ export const TaskMapHeader: React.FC<Props> = ({
               </button>
             </div>
 
-            {/* Quick Add Custom Client */}
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  value={newUpworkClient}
-                  onChange={(e) => setNewUpworkClient(e.target.value)}
-                  placeholder="Add client name (e.g. Melinda, ScaleUp)..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddNewUpworkClient();
-                    }
-                  }}
-                />
+            {/* Quick Add Custom Client (Restricted to Aaron) */}
+            {isAaron && (
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={newUpworkClient}
+                    onChange={(e) => setNewUpworkClient(e.target.value)}
+                    placeholder="Add client name (e.g. Melinda, ScaleUp)..."
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddNewUpworkClient();
+                      }
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddNewUpworkClient}
+                  disabled={!newUpworkClient.trim()}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors flex items-center gap-1 shrink-0"
+                >
+                  <Plus className="size-3.5" />
+                  <span>Add</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleAddNewUpworkClient}
-                disabled={!newUpworkClient.trim()}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors flex items-center gap-1 shrink-0"
-              >
-                <Plus className="size-3.5" />
-                <span>Add</span>
-              </button>
-            </div>
+            )}
 
             {/* Search filter within known clients */}
             <div className="relative">
@@ -1239,36 +1362,71 @@ export const TaskMapHeader: React.FC<Props> = ({
 
             {/* Client List with 1-Click Toggles */}
             <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col gap-1 pr-1">
-              {allCombinedClients.length === 0 ? (
-                <p className="text-xs text-zinc-500 italic text-center py-4">No clients match search</p>
+              {displayedClients.length === 0 ? (
+                <p className="text-xs text-zinc-500 italic text-center py-4">
+                  {isAaron ? 'No clients match search' : 'No Upwork clients found'}
+                </p>
               ) : (
-                allCombinedClients.map((client) => {
+                displayedClients.map((client) => {
                   const isUpwork = upworkClients.some((u) => u.toLowerCase() === client.name.toLowerCase());
+                  const isProject = isProjectBasedUpwork(client.name) ||
+                    upworkProjectClients.some((u) => u.toLowerCase() === client.name.toLowerCase());
                   return (
                     <div
                       key={client.id || client.name}
                       className={`flex items-center justify-between px-3 py-2 rounded-xl border transition-all ${isUpwork
-                        ? 'bg-emerald-950/20 border-emerald-500/30'
+                        ? isProject
+                          ? 'bg-purple-950/20 border-purple-500/30'
+                          : 'bg-emerald-950/20 border-emerald-500/30'
                         : 'bg-zinc-900/50 border-zinc-800/80 hover:border-zinc-700'
                         }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <Building2 className={`size-3.5 shrink-0 ${isUpwork ? 'text-emerald-400' : 'text-zinc-500'}`} />
+                      <div className="flex items-center gap-2 truncate pr-2">
+                        <Building2 className={`size-3.5 shrink-0 ${isUpwork ? (isProject ? 'text-purple-400' : 'text-emerald-400') : 'text-zinc-500'}`} />
                         <span className={`text-xs font-medium truncate ${isUpwork ? 'text-zinc-100 font-semibold' : 'text-zinc-300'}`}>
                           {client.name}
                         </span>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleToggleUpworkClient(client.name)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${isUpwork
-                          ? 'bg-emerald-500 text-zinc-950 shadow-xs hover:bg-emerald-400'
-                          : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
-                          }`}
-                      >
-                        {isUpwork ? 'UPWORK CLIENT' : 'MARK UPWORK'}
-                      </button>
+                      {isUpwork ? (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Toggle Mode: Hourly Rate vs Project-Based (No Conflict) - Visible to PMs */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleProjectBased(client.name)}
+                            className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer border ${isProject
+                              ? 'bg-purple-900/50 text-purple-200 border-purple-500/40 hover:bg-purple-800/60'
+                              : 'bg-emerald-900/50 text-emerald-200 border-emerald-500/40 hover:bg-emerald-800/60'
+                              }`}
+                            title={isProject
+                              ? 'Project-Based (Output-based): Does NOT cause Upwork conflicts. Click to switch to Hourly Rate'
+                              : 'Hourly Rate (Live-tracked): Requires Upwork tracker screenshots. Click to switch to Project-Based'
+                            }
+                          >
+                            {isProject ? 'PROJECT-BASED' : 'HOURLY RATE'}
+                          </button>
+
+                          {/* Remove button - Restricted to Aaron */}
+                          {isAaron && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleUpworkClient(client.name)}
+                              className="px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 hover:text-red-300 hover:bg-red-950/40 border border-zinc-700 hover:border-red-500/30"
+                              title="Remove from Upwork clients"
+                            >
+                              REMOVE
+                            </button>
+                          )}
+                        </div>
+                      ) : isAaron ? (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleUpworkClient(client.name)}
+                          className="px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 shrink-0"
+                        >
+                          MARK UPWORK
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })
@@ -1277,7 +1435,9 @@ export const TaskMapHeader: React.FC<Props> = ({
 
             {/* Footer */}
             <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-[11px] text-zinc-400">
-              <span>{upworkClients.length} clients marked as Upwork</span>
+              <span>
+                {upworkClients.length} clients marked as Upwork ({upworkClients.filter((u) => !isProjectBasedUpwork(u) && !upworkProjectClients.some((p) => p.toLowerCase() === u.toLowerCase())).length} hourly, {upworkClients.filter((u) => isProjectBasedUpwork(u) || upworkProjectClients.some((p) => p.toLowerCase() === u.toLowerCase())).length} project-based)
+              </span>
               <button
                 type="button"
                 onClick={() => setUpworkModalOpen(false)}

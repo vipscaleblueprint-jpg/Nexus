@@ -9,6 +9,7 @@ import {
   UpworkSession,
   extractAuditorRoles,
   AuditorRoleOption,
+  isSessionProjectBased,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapSidebar } from './TaskMapSidebar';
@@ -48,6 +49,7 @@ export const TaskMapContainer: React.FC = () => {
   const [allDbClients, setAllDbClients] = useState<Array<{ id: string; name: string }>>([]);
   const currentUser = useAppStore((s) => s.currentUser);
   const upworkClients = useAppStore((s) => s.upworkClients);
+  const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
   const spaces = useAppStore((s) => s.spaces);
   const allLists = useAppStore((s) => s.allLists);
   const loadSpaces = useAppStore((s) => s.loadSpaces);
@@ -195,6 +197,9 @@ export const TaskMapContainer: React.FC = () => {
         setActiveUpworkSessions(res.activeUpworkSessions || []);
         if (res.upworkClients) {
           useAppStore.getState().setUpworkClients(res.upworkClients);
+        }
+        if (res.upworkProjectClients) {
+          useAppStore.getState().setUpworkProjectClients(res.upworkProjectClients);
         }
         const enrichedSessions = { ...(res.maActiveSessions || {}) };
         (res.tasks || []).forEach((t: any) => {
@@ -1013,18 +1018,29 @@ export const TaskMapContainer: React.FC = () => {
       if (isUpwork && isActivelyWorking && !seenTaskIds.has(t.id)) {
         seenTaskIds.add(t.id);
         const userName = t.progress?.maName || t.assignee?.name || 'Team Member';
+        const clientDisplayName = t.progress?.client || t.list?.name || '';
+        const pmDisplayName = t.progress?.client ? t.progress.client.toUpperCase() : 'UPWORK';
+        const isProj = isSessionProjectBased({
+          taskId: t.id,
+          taskTitle: t.title,
+          clientName: clientDisplayName,
+          pmName: pmDisplayName,
+        } as any, upworkProjectClients);
+
         list.push({
           taskId: t.id,
           taskTitle: t.title,
           userId: t.assigneeId || '',
           userName,
-          pmName: t.progress?.client ? t.progress.client.toUpperCase() : 'UPWORK',
+          pmName: pmDisplayName,
+          clientName: clientDisplayName,
           startedAt: t.progress?.updatedAt || t.upworkStartedAt || new Date().toISOString(),
+          isProjectBased: isProj,
         });
       }
     }
     return list;
-  }, [activeUpworkSessions, tasks, upworkClients]);
+  }, [activeUpworkSessions, tasks, upworkClients, upworkProjectClients]);
 
   useEffect(() => {
     useAppStore.getState().setActiveUpworkSessions(effectiveUpworkSessions);

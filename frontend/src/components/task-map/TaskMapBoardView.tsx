@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { TaskMapItem, TaskMapOption, taskMapApi, createEmptyUserBlock, hasUiUxOrDesignAudit } from '@/api/taskMap';
+import { TaskMapItem, TaskMapOption, taskMapApi, createEmptyUserBlock, hasUiUxOrDesignAudit, isProjectBasedUpwork } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -775,6 +775,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
   const workspaceTeams = useAppStore((s) => s.workspaceTeams) || [];
   const upworkClients = useAppStore((s) => s.upworkClients);
+  const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
   const maActiveSessions = useAppStore((s) => s.maActiveSessions);
   const isPmUser = isProjectManagerOrAdmin(currentUser);
 
@@ -2001,11 +2002,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       (c) => c.toLowerCase() === clientName.toLowerCase()
                     );
                     const hasManualUpworkTag = (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'));
+                    const isProjectBased = isProjectBasedUpwork(clientName) ||
+                      upworkProjectClients.some((c) => c.toLowerCase() === clientName.toLowerCase());
                     const isLauren = clientName.toLowerCase().includes('lauren');
 
-                    // Upwork determination: Lauren is project-based (only Upwork if manually marked); otherwise check configured list/tracker/tag
-                    const isUpwork = isLauren
-                      ? hasManualUpworkTag
+                    // Upwork determination: Lauren is project-based (only Upwork if manually marked or in upworkClients); otherwise check configured list/tracker/tag
+                    const isUpwork = isLauren && !hasManualUpworkTag && !isClientConfiguredUpwork
+                      ? false
                       : Boolean(
                         isClientConfiguredUpwork ||
                         task.progress?.isUpwork ||
@@ -2044,7 +2047,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               {isUpwork && isLive ? (
                                 <span className="text-white font-bold uppercase tracking-wider flex items-center gap-1">
                                   <span className="size-1.5 rounded-full bg-white animate-pulse shrink-0" />
-                                  {task.progress?.client || task.list?.name || 'Upwork'}
+                                  {isProjectBased ? `[PROJ] ${task.progress?.client || task.list?.name || 'Upwork'}` : (task.progress?.client || task.list?.name || 'Upwork')}
                                 </span>
                               ) : isLive ? (
                                 <span className="text-[#D04A7C] font-semibold truncate flex items-center gap-1">
@@ -2418,11 +2421,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     (c) => c.toLowerCase() === clientName.toLowerCase()
                   );
                   const hasManualUpworkTag = (task.taskMap?.statuses || []).some((s) => s.toLowerCase().startsWith('upwork'));
+                  const isProjectBased = isProjectBasedUpwork(clientName) ||
+                    upworkProjectClients.some((c) => c.toLowerCase() === clientName.toLowerCase());
                   const isLauren = clientName.toLowerCase().includes('lauren');
 
-                  // Upwork determination: Lauren is project-based (only Upwork if manually marked); otherwise check configured list/tracker/tag
-                  const isUpwork = isLauren
-                    ? hasManualUpworkTag
+                  // Upwork determination: Lauren is project-based (only Upwork if manually marked or in upworkClients); otherwise check configured list/tracker/tag
+                  const isUpwork = isLauren && !hasManualUpworkTag && !isClientConfiguredUpwork
+                    ? false
                     : Boolean(
                       isClientConfiguredUpwork ||
                       effectiveProgress?.isUpwork ||
@@ -2465,7 +2470,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 {isUpwork && isLiveWorking ? (
                                   <span className="text-white font-bold uppercase tracking-wider flex items-center gap-1.5">
                                     <span className="size-2 rounded-full bg-white animate-pulse shrink-0" />
-                                    {displayClientName}
+                                    {isProjectBased ? `[PROJ] ${displayClientName}` : displayClientName}
                                   </span>
                                 ) : isLiveWorking ? (
                                   <span className="text-[#D04A7C] font-bold uppercase tracking-wider flex items-center gap-1.5">

@@ -377,8 +377,32 @@ export function getNextShift(currentShift: string): { nextShift: string; nextDay
 }
 
 // ---------------------------------------------------------------------------
-// Upwork Client Management
+// Upwork Client Management & Project-Based Support
 // ---------------------------------------------------------------------------
+
+/**
+ * Check if a client name, tracker string, or session indicates project-based (output-based) work
+ * which does not require live desktop Upwork tracking screenshots and should not cause conflicts.
+ */
+export function isProjectBasedUpwork(input?: string | null): boolean {
+  if (!input) return false;
+  const str = input.toLowerCase();
+  return (
+    str.includes('project based') ||
+    str.includes('project-based') ||
+    str.includes('output based') ||
+    str.includes('output-based') ||
+    str.includes('clockify') ||
+    str.includes('no live tracking') ||
+    str.includes('no need to track') ||
+    str.includes('no tracking') ||
+    str.includes('fixed price') ||
+    str.includes('fixed-price') ||
+    str.includes('fixed contract') ||
+    str.includes('lauren')
+  );
+}
+
 export async function getUpworkClients(): Promise<string[]> {
   if (isRedisReady()) {
     try {
@@ -403,6 +427,39 @@ export async function getUpworkClients(): Promise<string[]> {
   }
 }
 
+export async function getUpworkProjectClients(): Promise<string[]> {
+  if (isRedisReady()) {
+    try {
+      const members = await redis.smembers('task_map:upwork_project_clients');
+      if (members && members.length > 0) {
+        return members.sort((a, b) => a.localeCompare(b));
+      }
+    } catch {}
+  }
+
+  try {
+    const rows = await prisma.$queryRawUnsafe<Array<{ label: string }>>(
+      `SELECT "label" FROM "TaskMapStatusOption" WHERE "label" LIKE 'UPWORK_PROJECT_CLIENT:%' ORDER BY "label" ASC`
+    );
+    const clients = rows.map((r) => r.label.replace('UPWORK_PROJECT_CLIENT:', '').trim()).filter(Boolean);
+
+    // Also auto-include any configured Upwork client whose name indicates project-based
+    const baseClients = await getUpworkClients();
+    for (const bc of baseClients) {
+      if (isProjectBasedUpwork(bc) && !clients.some((c) => c.toLowerCase() === bc.toLowerCase())) {
+        clients.push(bc);
+      }
+    }
+
+    if (isRedisReady() && clients.length > 0) {
+      await redis.sadd('task_map:upwork_project_clients', ...clients).catch(() => {});
+    }
+    return clients.sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
 export async function addUpworkClient(clientName: string): Promise<string[]> {
   const clean = (clientName || '').trim();
   if (!clean) return getUpworkClients();
@@ -422,6 +479,25 @@ export async function addUpworkClient(clientName: string): Promise<string[]> {
   return getUpworkClients();
 }
 
+export async function addUpworkProjectClient(clientName: string): Promise<string[]> {
+  const clean = (clientName || '').trim();
+  if (!clean) return getUpworkProjectClients();
+  const label = `UPWORK_PROJECT_CLIENT:${clean}`;
+  try {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "TaskMapStatusOption" ("id", "label", "color", "order", "createdAt", "updatedAt")
+       VALUES ($1, $2, '#ffffff', 0, NOW(), NOW())
+       ON CONFLICT ("label") DO NOTHING`,
+      randomUUID(),
+      label
+    );
+  } catch {}
+  if (isRedisReady()) {
+    await redis.sadd('task_map:upwork_project_clients', clean).catch(() => {});
+  }
+  return getUpworkProjectClients();
+}
+
 export async function removeUpworkClient(clientName: string): Promise<string[]> {
   const clean = (clientName || '').trim();
   if (!clean) return getUpworkClients();
@@ -435,7 +511,25 @@ export async function removeUpworkClient(clientName: string): Promise<string[]> 
   if (isRedisReady()) {
     await redis.srem('task_map:upwork_clients', clean).catch(() => {});
   }
+  // Also clean up from project clients if present
+  await removeUpworkProjectClient(clean);
   return getUpworkClients();
+}
+
+export async function removeUpworkProjectClient(clientName: string): Promise<string[]> {
+  const clean = (clientName || '').trim();
+  if (!clean) return getUpworkProjectClients();
+  const label = `UPWORK_PROJECT_CLIENT:${clean}`;
+  try {
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "TaskMapStatusOption" WHERE "label" = $1`,
+      label
+    );
+  } catch {}
+  if (isRedisReady()) {
+    await redis.srem('task_map:upwork_project_clients', clean).catch(() => {});
+  }
+  return getUpworkProjectClients();
 }
 
 export async function setUpworkClients(clients: string[]): Promise<string[]> {
@@ -460,6 +554,34 @@ export async function setUpworkClients(clients: string[]): Promise<string[]> {
       await redis.del('task_map:upwork_clients');
       if (cleanList.length > 0) {
         await redis.sadd('task_map:upwork_clients', ...cleanList);
+      }
+    } catch {}
+  }
+  return cleanList;
+}
+
+export async function setUpworkProjectClients(clients: string[]): Promise<string[]> {
+  const cleanList = Array.from(new Set(clients.map((c) => c.trim()).filter(Boolean)));
+  try {
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "TaskMapStatusOption" WHERE "label" LIKE 'UPWORK_PROJECT_CLIENT:%'`
+    );
+    for (const c of cleanList) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "TaskMapStatusOption" ("id", "label", "color", "order", "createdAt", "updatedAt")
+         VALUES ($1, $2, '#ffffff', 0, NOW(), NOW())
+         ON CONFLICT ("label") DO NOTHING`,
+        randomUUID(),
+        `UPWORK_PROJECT_CLIENT:${c}`
+      );
+    }
+  } catch {}
+
+  if (isRedisReady()) {
+    try {
+      await redis.del('task_map:upwork_project_clients');
+      if (cleanList.length > 0) {
+        await redis.sadd('task_map:upwork_project_clients', ...cleanList);
       }
     } catch {}
   }

@@ -32,7 +32,7 @@ import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, parseManilaTimeToIso } from '../services/taskMapService';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -1026,6 +1026,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     // Determine Upwork: Based on configured Upwork clients list, OR if Column H (Time Tracker) explicitly specifies Upwork.
     const upworkClientsList = await getUpworkClients();
+    const upworkProjectClientsList = await getUpworkProjectClients();
     const isConfiguredUpworkClient = clientStr
       ? upworkClientsList.some((c) => c.toLowerCase() === clientStr.toLowerCase())
       : false;
@@ -1033,16 +1034,26 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     let isUpwork = isConfiguredUpworkClient || isTrackerUpwork;
 
+    // Output-based / Project-based determination (never triggers conflict alert)
+    const isProjectBased = Boolean(
+      isProjectBasedUpwork(clientStr) ||
+      isProjectBasedUpwork(trackerStr) ||
+      isProjectBasedUpwork(task ? String(task) : '') ||
+      (clientStr && upworkProjectClientsList.some((c) => c.toLowerCase() === clientStr.toLowerCase()))
+    );
+
     // Respect explicit tracker: if Column H (Time Tracker) is explicitly filled and does NOT specify Upwork
-    // (e.g. "No Need to Track", "Clockify", "Personal"), do NOT mark as Upwork even if client is in upworkClientsList
+    // (e.g. "No Need to Track", "Clockify", "Personal"), do NOT mark as Upwork UNLESS configured as an Upwork client
     if (trackerStr && !isTrackerUpwork) {
-      isUpwork = false;
+      if (!isConfiguredUpworkClient) {
+        isUpwork = false;
+      }
     }
 
     // Restriction for Lauren: Lauren is a project-based client.
-    // She should NEVER be marked as Upwork based on sheet tracker; only if explicitly marked as UPWORK on TaskMap.
+    // Only mark as Upwork if explicitly configured in Upwork clients or marked as UPWORK on TaskMap
     const isLaurenClient = clientStr ? clientStr.toLowerCase().includes('lauren') : false;
-    if (isLaurenClient) {
+    if (isLaurenClient && !isConfiguredUpworkClient) {
       isUpwork = false;
     }
 
@@ -1173,6 +1184,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 timeIn: cleanTimeIn,
                 date: sessionDate,
                 startedAt: startedAtIso,
+                isProjectBased,
               })
             );
           }
@@ -1186,6 +1198,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             timeIn: cleanTimeIn,
             date: sessionDate,
             startedAt: startedAtIso,
+            isProjectBased,
           });
         } else if (cleanTimeOut) {
           if (isRedisReady()) {
@@ -1458,8 +1471,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     }
 
     if (isTaskLauren) {
-      // Lauren is project-based; ONLY mark as Upwork if explicitly marked as Upwork (UPWORK status tag on TaskMap)
-      isUpwork = hasManualUpworkTag;
+      // Lauren is project-based; ONLY mark as Upwork if explicitly marked as Upwork (UPWORK status tag on TaskMap) or configured Upwork client
+      isUpwork = hasManualUpworkTag || isConfiguredUpworkClient;
     } else if (hasManualUpworkTag) {
       isUpwork = true;
     }
@@ -1678,6 +1691,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               timeIn: cleanTimeIn,
               date: date ? String(date).trim() : null,
               startedAt: sessionStartedAt,
+              isProjectBased,
             })
           ).catch(() => { });
         }
@@ -1692,6 +1706,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           timeIn: cleanTimeIn,
           date: date ? String(date).trim() : null,
           startedAt: sessionStartedAt,
+          isProjectBased,
         });
       } else if (cleanTimeOut) {
         // Deactivate all active Upwork session entries on this task

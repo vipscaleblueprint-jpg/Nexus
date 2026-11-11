@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store";
 import { User } from "@/lib/types";
 import { authApi } from "@/api";
+import { isSessionProjectBased } from "@/api/taskMap";
 import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
 import { ClickUpStatusPanel } from "./ClickUpStatusPanel";
 import { motion, AnimatePresence } from "framer-motion";
@@ -96,6 +97,7 @@ export function Header() {
   const toggleSidebar = useAppStore(state => state.toggleSidebar);
   const toggleMobileSidebar = useAppStore(state => state.toggleMobileSidebar);
   const activeUpworkSessions = useAppStore(state => state.activeUpworkSessions);
+  const upworkProjectClients = useAppStore(state => state.upworkProjectClients);
 
   const resetStore = useAppStore(state => state.resetStore);
 
@@ -109,7 +111,7 @@ export function Header() {
     return () => clearInterval(interval);
   }, [activeUpworkSessions?.length]);
 
-  // Filter out Lauren (unless explicitly marked UPWORK), sessions with a recorded timeOut or stoppedAt,
+  // Filter out Lauren (unless explicitly marked UPWORK or in project clients), sessions with a recorded timeOut or stoppedAt,
   // and runaway stale sessions exceeding maximum shift duration (> 14h)
   const validUpworkSessions = (activeUpworkSessions || []).filter((s) => {
     if (s.timeOut || s.stoppedAt || (s as any).active === false) {
@@ -121,16 +123,27 @@ export function Header() {
     }
     const name = `${s.clientName || ''} ${s.pmName || ''} ${s.taskTitle || ''}`.toLowerCase();
     if (name.includes('lauren')) {
-      return Boolean((s as any).isManuallyMarkedUpwork);
+      const isConfigured = upworkProjectClients.some((c) => c.toLowerCase().includes('lauren'));
+      return Boolean((s as any).isManuallyMarkedUpwork || isConfigured);
     }
     return true;
   });
+
+  // Separate Hourly sessions (which require desktop Upwork live tracking screenshots)
+  // from Project-based sessions (output-based / no live tracking needed).
+  const hourlySessions = validUpworkSessions.filter((s) => !isSessionProjectBased(s, upworkProjectClients));
+  const projectSessions = validUpworkSessions.filter((s) => isSessionProjectBased(s, upworkProjectClients));
+
+  // Upwork conflict ONLY occurs when 2 or more HOURLY sessions are active simultaneously!
+  // Project-based sessions do not need live Upwork tracking and NEVER conflict.
+  const isConflict = hourlySessions.length >= 2;
 
   const upworkTickerText = validUpworkSessions
     .map((s) => {
       const name = getSessionDisplayName(s);
       const elapsed = formatUpworkElapsed(s, now);
-      return `${name} ${elapsed}`;
+      const isProject = isSessionProjectBased(s, upworkProjectClients);
+      return `${name}${isProject ? ' (Project)' : ''} ${elapsed}`;
     })
     .join(' | ');
 
@@ -187,7 +200,9 @@ export function Header() {
           {/* Active Upwork Live Ticker next to Profile (Available to everyone, Non-clickable) */}
           {(() => {
             const count = validUpworkSessions.length;
-            // 0 active = green (available), 1 active = orange, 2+ = red double-blink conflict alert
+            const hourlyCount = hourlySessions.length;
+            const projectCount = projectSessions.length;
+
             const tone =
               count === 0
                 ? {
@@ -196,32 +211,41 @@ export function Header() {
                   isConflict: false,
                   text: 'text-emerald-700 dark:text-emerald-300 font-medium',
                   label: 'Upwork: not active',
+                  tooltip: 'No one is on Upwork (available)',
                 }
-                : count === 1
+                : isConflict
                   ? {
-                    pill: 'border-orange-500/30 bg-orange-500/10 dark:border-orange-500/50',
-                    dot: 'bg-orange-500',
-                    isConflict: false,
-                    text: 'text-orange-700 dark:text-orange-300 font-semibold',
-                    label: upworkTickerText,
-                  }
-                  : {
-                    pill: 'border-red-500/60 bg-red-500/15 dark:border-red-500/80 dark:bg-red-500/20 ring-1 ring-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.3)] animate-pulse',
+                    pill: 'border-red-500/80 bg-red-500/20 ring-1 ring-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.4)] animate-pulse',
                     dot: 'bg-red-500 ring-2 ring-red-400',
                     isConflict: true,
-                    text: 'text-red-700 dark:text-red-200 font-bold',
-                    label: `⚠️ CONFLICT (${count} ACTIVE): ${upworkTickerText}`,
-                  };
+                    text: 'text-red-200 font-bold',
+                    label: `⚠️ CONFLICT (${hourlyCount} HOURLY ACTIVE): ${upworkTickerText}`,
+                    tooltip: `Upwork Conflict: ${hourlyCount} hourly sessions active simultaneously! Hourly Upwork recorded sessions cannot overlap.`,
+                  }
+                  : count === 1
+                    ? {
+                      pill: 'border-orange-500/50 bg-orange-500/10',
+                      dot: 'bg-orange-500',
+                      isConflict: false,
+                      text: 'text-orange-300 font-medium',
+                      label: upworkTickerText,
+                      tooltip: projectCount === 1
+                        ? 'Upwork project-based in use by 1 person (output-based, no live tracking)'
+                        : 'Upwork hourly in use by 1 person',
+                    }
+                    : {
+                      // 2+ sessions active, but hourly <= 1, so NO CONFLICT!
+                      pill: 'border-amber-500/50 bg-amber-500/10',
+                      dot: 'bg-amber-400',
+                      isConflict: false,
+                      text: 'text-amber-200 font-medium',
+                      label: `UPWORK (${count} ACTIVE): ${upworkTickerText}`,
+                      tooltip: `${count} active Upwork sessions (${hourlyCount} hourly, ${projectCount} project-based - no conflict)`,
+                    };
             return (
               <div
                 className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border text-xs shadow-xs max-w-[220px] sm:max-w-xs md:max-w-md lg:max-w-xl truncate cursor-default select-none transition-all ${tone.pill}`}
-                title={
-                  count === 0
-                    ? 'No one is on Upwork (available)'
-                    : count === 1
-                      ? 'Upwork in use by 1 person'
-                      : `Upwork Conflict: ${count} recorded sessions active simultaneously! Upwork recorded sessions cannot overlap.`
-                }
+                title={tone.tooltip}
               >
                 <span className="relative flex h-2.5 w-2.5 shrink-0">
                   {tone.isConflict ? (
@@ -230,7 +254,7 @@ export function Header() {
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-60 [animation-delay:400ms]" />
                       <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${tone.dot}`} />
                     </>
-                  ) : count === 1 ? (
+                  ) : count > 0 ? (
                     <>
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
                       <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${tone.dot}`} />

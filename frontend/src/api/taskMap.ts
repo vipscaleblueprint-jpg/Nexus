@@ -114,6 +114,49 @@ export interface UpworkSession {
   timeOut?: string | null;
   active?: boolean;
   isManuallyMarkedUpwork?: boolean;
+  isProjectBased?: boolean;
+}
+
+/**
+ * Check if a client name, tracker string, or session indicates project-based (output-based) work
+ * which does not require live desktop Upwork tracking screenshots and should not cause conflicts.
+ */
+export function isProjectBasedUpwork(input?: string | null): boolean {
+  if (!input) return false;
+  const str = input.toLowerCase();
+  return (
+    str.includes('project based') ||
+    str.includes('project-based') ||
+    str.includes('output based') ||
+    str.includes('output-based') ||
+    str.includes('clockify') ||
+    str.includes('no live tracking') ||
+    str.includes('no need to track') ||
+    str.includes('no tracking') ||
+    str.includes('fixed price') ||
+    str.includes('fixed-price') ||
+    str.includes('fixed contract') ||
+    str.includes('lauren')
+  );
+}
+
+/**
+ * Check whether a session is project-based (output-based / no live Upwork tracking)
+ */
+export function isSessionProjectBased(
+  session: UpworkSession | null | undefined,
+  projectClients: string[] = []
+): boolean {
+  if (!session) return false;
+  if (session.isProjectBased) return true;
+  const combined = `${session.clientName || ''} ${session.pmName || ''} ${session.taskTitle || ''}`;
+  if (isProjectBasedUpwork(combined)) return true;
+  const clientLower = (session.clientName || '').toLowerCase().trim();
+  const pmLower = (session.pmName || '').toLowerCase().trim();
+  return projectClients.some((c) => {
+    const cl = c.toLowerCase().trim();
+    return cl && (cl === clientLower || cl === pmLower || combined.toLowerCase().includes(cl));
+  });
 }
 
 export interface DailyRolloverResult {
@@ -145,6 +188,7 @@ export interface TaskMapDataResponse {
   shiftUsers?: ShiftUser[];
   activeUpworkSessions?: UpworkSession[];
   upworkClients?: string[];
+  upworkProjectClients?: string[];
   maActiveSessions?: Record<string, any>;
 }
 
@@ -282,17 +326,19 @@ export const taskMapApi = {
     return apiClient<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/timeline`);
   },
 
-  getUpworkClients: async (): Promise<{ success: boolean; clients: string[] }> => {
-    return apiClient<{ success: boolean; clients: string[] }>(`/api/task-map/upwork-clients?_t=${Date.now()}`);
+  getUpworkClients: async (): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
+    return apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>(`/api/task-map/upwork-clients?_t=${Date.now()}`);
   },
 
   toggleUpworkClient: async (data: {
     clientName: string;
     isUpwork?: boolean;
+    isProjectBased?: boolean;
     action?: 'add' | 'remove' | 'toggle';
     clients?: string[];
-  }): Promise<{ success: boolean; clients: string[] }> => {
-    return apiClient<{ success: boolean; clients: string[] }>('/api/task-map/upwork-clients', {
+    projectClients?: string[];
+  }): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
+    return apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>('/api/task-map/upwork-clients', {
       method: 'POST',
       body: JSON.stringify(data),
     });

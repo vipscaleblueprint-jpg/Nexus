@@ -324,6 +324,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         if (res?.clients) {
           useAppStore.getState().setUpworkClients(res.clients);
         }
+        if (res?.projectClients) {
+          useAppStore.getState().setUpworkProjectClients(res.projectClients);
+        }
       }).catch(() => { });
     });
     if (isPerfEnabled()) s.onAny((event) => recordSocketEvent(event));
@@ -507,9 +510,11 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
               userId: data.userId || '',
               userName: data.userName || 'MA Member',
               pmName: data.clientName || data.pmName || 'UPWORK',
+              clientName: data.clientName || data.pmName || 'UPWORK',
               timeIn: data.timeIn,
               date: data.date,
               startedAt: data.startedAt || new Date().toISOString(),
+              isProjectBased: Boolean(data.isProjectBased),
             };
             if (idx >= 0) {
               const copy = [...prev];
@@ -528,6 +533,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('upwork:clients_updated', { detail: data }));
       if (Array.isArray(data?.clients)) {
         useAppStore.getState().setUpworkClients(data.clients);
+      }
+      if (Array.isArray(data?.projectClients)) {
+        useAppStore.getState().setUpworkProjectClients(data.projectClients);
       }
     });
 

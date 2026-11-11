@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck } from 'lucide-react';
+import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck, Link2 } from 'lucide-react';
+import { getNexusTaskUrl } from '@/lib/links';
 import { getTaskAuditStatus } from '@/lib/auditChecklist';
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
 import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
@@ -1250,6 +1251,33 @@ export const KanbanCard = memo(function KanbanCard({
 
   const closeMenu = useCallback(() => setIsMenuOpen(false), []);
 
+  const handleCopyLink = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setIsMenuOpen(false);
+    const link = getNexusTaskUrl(task);
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(link).then(() => {
+        toast.success('Task link copied to clipboard');
+      }).catch(() => {
+        toast.error('Failed to copy link');
+      });
+    } else {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = link;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        toast.success('Task link copied to clipboard');
+      } catch {
+        toast.error('Failed to copy link');
+      }
+    }
+  }, [task]);
+
   const handleDuplicate = async () => {
     if (!currentUser || isDuplicating) return;
     setIsMenuOpen(false);
@@ -1465,6 +1493,13 @@ export const KanbanCard = memo(function KanbanCard({
         {isMenuOpen && (
           <PortalDropdown triggerRef={menuTriggerRef} onClose={closeMenu}>
             <div className="w-40 flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="px-2.5 py-2 flex items-center gap-2.5 text-xs text-zinc-300 hover:bg-zinc-700/50 rounded-md transition-colors cursor-pointer"
+              >
+                <Link2 className="w-3.5 h-3.5" /> Copy link
+              </button>
               <button
                 type="button"
                 disabled={isDuplicating}

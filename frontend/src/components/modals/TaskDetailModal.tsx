@@ -50,6 +50,7 @@ import { extractImagesFromComments } from '@/lib/commentImages';
 import { RecurrencePicker, formatTimeDisplay } from './RecurrencePicker';
 import { RecurringConfig } from '@/lib/types';
 import { ActivityDayDivider, getDayKey, isTodayDate } from '../ui/ActivityDayDivider';
+import { openTaskInNewTab } from '@/lib/taskNavigation';
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
@@ -476,10 +477,7 @@ export function TaskDetailModalContent({
   const router = useRouter();
 
   const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      e.stopPropagation();
-
+    if (e.ctrlKey || e.metaKey || e.button === 1) {
       const targetElement = e.target as HTMLElement | null;
       const subtaskEl = targetElement?.closest?.('[data-subtask-id]');
       const clickedSubtaskId = subtaskEl?.getAttribute('data-subtask-id');
@@ -493,21 +491,11 @@ export function TaskDetailModalContent({
       const targetId = clickedSubtaskId || clickedTaskId || task?.id;
       if (!targetId) return;
 
-      const fromPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
-      const targetUrl = `/tasks/${targetId}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`;
-
-      try {
-        const newTab = window.open(targetUrl, '_blank');
-        if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
-          onClose();
-          router.push(targetUrl);
-        }
-      } catch {
-        onClose();
-        router.push(targetUrl);
-      }
+      e.preventDefault();
+      e.stopPropagation();
+      openTaskInNewTab(targetId, { event: e });
     }
-  }, [task?.id, onClose, router]);
+  }, [task?.id]);
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(true);
   const [subtasksExpandAllSignal, setSubtasksExpandAllSignal] = useState(0);
   const subtasksHeaderClickTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -4494,7 +4482,7 @@ export function TaskDetailModalContent({
           />
 
           {/* Right Panel: Activity */}
-          <div ref={activityPanelRef} style={isDesktop ? { width: activityWidth } : undefined} className={`nexus-task-activity-panel flex-shrink-0 bg-card [.theme-light_&]:bg-white flex flex-col border-l border-zinc-800/60 [.theme-light_&]:border-zinc-200 overflow-hidden ${mobilePanelTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}>
+          <div ref={activityPanelRef} style={isDesktop ? { width: activityWidth } : undefined} className={`nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 overflow-hidden ${mobilePanelTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}>
             <AnimatePresence mode="wait" initial={false}>
               {showActivityInfo ? (
                 <motion.div
@@ -4503,22 +4491,22 @@ export function TaskDetailModalContent({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="px-4 sm:px-6 py-3.5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between gap-3 bg-card [.theme-light_&]:bg-white"
+                  className="px-4 sm:px-6 py-3.5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between gap-3 bg-card"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <button
                       type="button"
                       onClick={() => setShowActivityInfo(false)}
                       title="Back to Activity"
-                      className="p-1.5 -ml-1 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer shrink-0"
+                      className="p-1.5 -ml-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors cursor-pointer shrink-0"
                     >
                       <ArrowLeft className="w-4 h-4" />
                     </button>
                     <div className="min-w-0 flex flex-col">
-                      <span className="font-bold text-sm text-zinc-100 [.theme-light_&]:text-zinc-900 leading-tight">
+                      <span className="font-bold text-sm text-zinc-100 leading-tight">
                         Task Info
                       </span>
-                      <span className="text-xs text-zinc-400 [.theme-light_&]:text-zinc-500 truncate mt-0.5 font-normal">
+                      <span className="text-xs text-zinc-400 truncate mt-0.5 font-normal">
                         {task.title || 'Untitled task'}
                       </span>
                     </div>
@@ -4531,7 +4519,7 @@ export function TaskDetailModalContent({
                         (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === activeStatusName.trim().toUpperCase()
                       );
                       const hasCustomColor = !!statusObj?.color;
-                      const defaultClasses = STATUS_COLORS[(activeStatusName || '').toUpperCase()] || STATUS_COLORS[activeStatusName] || 'bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 [.theme-light_&]:bg-zinc-100 [.theme-light_&]:text-zinc-700 [.theme-light_&]:border-zinc-300';
+                      const defaultClasses = STATUS_COLORS[(activeStatusName || '').toUpperCase()] || STATUS_COLORS[activeStatusName] || 'bg-zinc-800/80 text-zinc-300 border border-zinc-700/50';
 
                       return (
                         <span
@@ -4553,16 +4541,16 @@ export function TaskDetailModalContent({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between bg-card [.theme-light_&]:bg-white"
+                  className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between bg-card"
                 >
-                  <h3 className="font-semibold text-sm text-zinc-200 [.theme-light_&]:text-zinc-900">Activity</h3>
+                  <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
                   <div className="flex gap-2.5 items-center">
-                    <span className="text-zinc-500 [.theme-light_&]:text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
+                    <span className="text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
                     <button
                       type="button"
                       onClick={() => setShowActivityInfo(true)}
                       title="Task Info (Media, Links & Tracker)"
-                      className="p-1.5 rounded-lg border transition-all cursor-pointer border-zinc-800 [.theme-light_&]:border-zinc-300 bg-zinc-800/40 [.theme-light_&]:bg-zinc-100 text-zinc-400 [.theme-light_&]:text-zinc-500 hover:text-zinc-200 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200"
+                      className="p-1.5 rounded-lg border transition-all cursor-pointer border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
                     >
                       <Info className="w-4 h-4" />
                     </button>
@@ -5707,10 +5695,7 @@ export function SubtaskDetailView({
   const router = useRouter();
 
   const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      e.stopPropagation();
-
+    if (e.ctrlKey || e.metaKey || e.button === 1) {
       const targetElement = e.target as HTMLElement | null;
       const parentLinkEl = targetElement?.closest?.('[data-parent-task-link]');
       const taskLinkEl = targetElement?.closest?.('a[href*="/tasks/"]') as HTMLAnchorElement | null;
@@ -5723,21 +5708,11 @@ export function SubtaskDetailView({
       const targetId = parentLinkEl ? parentTask?.id : (clickedTaskId || subtask?.id || parentTask?.id);
       if (!targetId) return;
 
-      const fromPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
-      const targetUrl = `/tasks/${targetId}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`;
-
-      try {
-        const newTab = window.open(targetUrl, '_blank');
-        if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
-          onClose();
-          router.push(targetUrl);
-        }
-      } catch {
-        onClose();
-        router.push(targetUrl);
-      }
+      e.preventDefault();
+      e.stopPropagation();
+      openTaskInNewTab(targetId, { event: e });
     }
-  }, [subtask?.id, parentTask?.id, onClose, router]);
+  }, [subtask?.id, parentTask?.id]);
 
   const subtaskRef = useRef(subtask);
   useEffect(() => {
@@ -8878,7 +8853,7 @@ export function SubtaskDetailView({
         <div
           ref={subtaskActivityPanelRef}
           style={isDesktop ? { width: activityWidth } : undefined}
-          className={`nexus-task-activity-panel flex-shrink-0 bg-card [.theme-light_&]:bg-white flex flex-col border-l border-zinc-800/60 [.theme-light_&]:border-zinc-200 z-10 overflow-hidden ${subtaskMobileTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}
+          className={`nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 z-10 overflow-hidden ${subtaskMobileTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}
         >
           <AnimatePresence mode="wait" initial={false}>
             {showActivityInfo ? (
@@ -8888,22 +8863,22 @@ export function SubtaskDetailView({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="px-4 sm:px-6 py-3.5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between gap-3 bg-card [.theme-light_&]:bg-white"
+                className="px-4 sm:px-6 py-3.5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between gap-3 bg-card"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <button
                     type="button"
                     onClick={() => setShowActivityInfo(false)}
                     title="Back to Activity"
-                    className="p-1.5 -ml-1 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer shrink-0"
+                    className="p-1.5 -ml-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors cursor-pointer shrink-0"
                   >
                     <ArrowLeft className="w-4 h-4" />
                   </button>
                   <div className="min-w-0 flex flex-col">
-                    <span className="font-bold text-sm text-zinc-100 [.theme-light_&]:text-zinc-900 leading-tight">
+                    <span className="font-bold text-sm text-zinc-100 leading-tight">
                       Subtask Info
                     </span>
-                    <span className="text-xs text-zinc-400 [.theme-light_&]:text-zinc-500 truncate mt-0.5 font-normal">
+                    <span className="text-xs text-zinc-400 truncate mt-0.5 font-normal">
                       {subtask.title || 'Untitled subtask'}
                     </span>
                   </div>
@@ -8916,7 +8891,7 @@ export function SubtaskDetailView({
                       (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === activeStatusName.trim().toUpperCase()
                     );
                     const hasCustomColor = !!statusObj?.color;
-                    const defaultClasses = STATUS_COLORS[(activeStatusName || '').toUpperCase()] || STATUS_COLORS[activeStatusName] || 'bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 [.theme-light_&]:bg-zinc-100 [.theme-light_&]:text-zinc-700 [.theme-light_&]:border-zinc-300';
+                    const defaultClasses = STATUS_COLORS[(activeStatusName || '').toUpperCase()] || STATUS_COLORS[activeStatusName] || 'bg-zinc-800/80 text-zinc-300 border border-zinc-700/50';
 
                     return (
                       <span
@@ -8938,16 +8913,16 @@ export function SubtaskDetailView({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between bg-card [.theme-light_&]:bg-white"
+                className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between bg-card"
               >
-                <h3 className="font-semibold text-sm text-zinc-200 [.theme-light_&]:text-zinc-900">Activity</h3>
+                <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
                 <div className="flex gap-2.5 items-center">
-                  <span className="text-zinc-500 [.theme-light_&]:text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
+                  <span className="text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
                   <button
                     type="button"
                     onClick={() => setShowActivityInfo(true)}
                     title="Subtask Info (Media, Links & Tracker)"
-                    className="p-1.5 rounded-lg border transition-all cursor-pointer border-zinc-800 [.theme-light_&]:border-zinc-300 bg-zinc-800/40 [.theme-light_&]:bg-zinc-100 text-zinc-400 [.theme-light_&]:text-zinc-500 hover:text-zinc-200 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200"
+                    className="p-1.5 rounded-lg border transition-all cursor-pointer border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
                   >
                     <Info className="w-4 h-4" />
                   </button>

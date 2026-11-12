@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns';
 import { draftsApi, TaskDraft } from '@/api/drafts';
+import { openTaskInNewTab } from '@/lib/taskNavigation';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
 import { tasksApi } from '@/api/tasks';
@@ -401,6 +402,16 @@ function ActivityFeedContent() {
       setLoading(false);
     }
   };
+
+  const handleCtrlRightClick = useCallback((e: React.MouseEvent, taskId?: string | null, subtaskId?: string | null) => {
+    if (e.ctrlKey || e.metaKey || e.button === 1) {
+      const targetId = subtaskId || taskId;
+      if (!targetId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openTaskInNewTab(targetId, { event: e });
+    }
+  }, []);
 
   const handleOpenTask = async (n: any, item?: FeedItem) => {
     const rawTaskId = typeof n === 'string' ? n : n.task?.id || n.taskId || n.entityId;
@@ -1635,12 +1646,20 @@ function ActivityFeedContent() {
                   return (
                     <div
                       key={d.id}
-                      onClick={() => {
+                      onClick={(e) => {
+                        if (e.ctrlKey || e.metaKey) {
+                          handleCtrlRightClick(e, d.taskId, d.subtaskId);
+                          return;
+                        }
                         if (d.subtaskId) {
                           setTargetCommentInfo({ id: null, text: null, subtaskId: d.subtaskId });
                         }
                         handleOpenTask(d.taskId);
                       }}
+                      onAuxClick={(e) => {
+                        if (e.button === 1) handleCtrlRightClick(e, d.taskId, d.subtaskId);
+                      }}
+                      onContextMenu={(e) => handleCtrlRightClick(e, d.taskId, d.subtaskId)}
                       className="group relative p-4 rounded-xl border border-border/80 hover:border-amber-500/50 bg-card hover:bg-zinc-800/30 transition-all cursor-pointer flex flex-col justify-between gap-3 shadow-xs w-full"
                     >
                       <div className="space-y-2">
@@ -1753,6 +1772,9 @@ function ActivityFeedContent() {
                           handleOpenTask(item.rawItem, item);
                         }
                       }}
+                      onContextMenu={(e) =>
+                        handleCtrlRightClick(e, item.taskId, item.rawItem?.details?.subtaskId || item.rawItem?.subtaskId)
+                      }
                       onClear={(e) => {
                         e.stopPropagation();
                         handleClear(item.id, item.childIds);
@@ -1800,6 +1822,9 @@ function ActivityFeedContent() {
                           handleOpenTask(item.rawItem, item);
                         }
                       }}
+                      onContextMenu={(e) =>
+                        handleCtrlRightClick(e, item.taskId, item.rawItem?.details?.subtaskId || item.rawItem?.subtaskId)
+                      }
                       onClear={(e) => {
                         e.stopPropagation();
                         handleClear(item.id, item.childIds);
@@ -1848,6 +1873,9 @@ function ActivityFeedContent() {
                           handleOpenTask(item.rawItem, item);
                         }
                       }}
+                      onContextMenu={(e) =>
+                        handleCtrlRightClick(e, item.taskId, item.rawItem?.details?.subtaskId || item.rawItem?.subtaskId)
+                      }
                       onClear={(e) => {
                         e.stopPropagation();
                         handleClear(item.id, item.childIds);

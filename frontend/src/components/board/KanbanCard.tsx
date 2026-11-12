@@ -1,5 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { memo, useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -23,6 +24,7 @@ const ROLE_BADGE_COLORS = ['bg-purple-500', 'bg-red-500', 'bg-emerald-500', 'bg-
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
+import { openTaskInNewTab } from '@/lib/taskNavigation';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 
@@ -178,7 +180,7 @@ const CardContent = memo(({
     return sortStatusesWithClosedAndKycAtEnd(finalStatuses);
   }, [listStatuses, allLists, (task as any)?.listId]);
 
-  
+
 
   useEffect(() => {
     let cancelled = false;
@@ -286,7 +288,7 @@ const CardContent = memo(({
 
   const handleDueDateChange = async (date: Date | undefined) => {
     if (!currentUser) return;
-    
+
     setTask(prev => ({ ...prev, dueDate: date?.toISOString() || null } as any));
     closeDropdown();
 
@@ -633,7 +635,7 @@ const CardContent = memo(({
                     };
                     return colors[color] || color;
                   };
-                  
+
                   const STATUS_COLORS: Record<string, string> = {
                     PENDING: 'text-[#D29A2A]',
                     'IN PROGRESS': 'text-[#D04A7C]',
@@ -672,7 +674,7 @@ const CardContent = memo(({
                             }
                             return <CustomCircleDot className="w-3 h-3 shrink-0" style={{ color: getHexColor(customObj.color) }} />;
                           }
-                          
+
                           if ((statusName || '').toUpperCase() === 'KYC') {
                             return <CustomCircleDotted className={`w-3 h-3 shrink-0 ${STATUS_COLORS[statusName] ? STATUS_COLORS[statusName] : 'text-zinc-500 dark:text-zinc-500'}`} />;
                           }
@@ -707,11 +709,10 @@ const CardContent = memo(({
         {/* Things to Audit */}
         {auditStatus.hasRequiredAudits && (
           <div
-            className={`${fieldHoverClass} w-full ${
-              auditStatus.isComplete
+            className={`${fieldHoverClass} w-full ${auditStatus.isComplete
                 ? 'text-emerald-500 dark:text-emerald-400'
                 : 'text-zinc-500 dark:text-zinc-400'
-            }`}
+              }`}
             title={
               auditStatus.isComplete
                 ? 'All audits completed'
@@ -735,11 +736,10 @@ const CardContent = memo(({
             }}
           >
             <ShieldCheck
-              className={`w-3.5 h-3.5 shrink-0 ${
-                auditStatus.isComplete
+              className={`w-3.5 h-3.5 shrink-0 ${auditStatus.isComplete
                   ? 'text-emerald-500 dark:text-emerald-400'
                   : 'text-zinc-500 dark:text-zinc-400'
-              }`}
+                }`}
             />
             <span>{auditStatus.completedCount}/{auditStatus.totalCount}</span>
           </div>
@@ -943,9 +943,8 @@ const CardContent = memo(({
                       return (
                         <div
                           key={user.id}
-                          className={`px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors ${
-                            isAssigned ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
-                          }`}
+                          className={`px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors ${isAssigned ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
+                            }`}
                           onClick={() => handleAssigneeToggle(user)}
                         >
                           <SafeAvatar
@@ -1028,7 +1027,7 @@ const CardContent = memo(({
                   <div className="flex justify-between items-center mb-2 px-2">
                     <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
                     {('dueDate' in task && task.dueDate) && (
-                      <button 
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleDueDateChange(undefined); }}
                         className="text-[10px] text-red-400/80 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition-colors"
                       >
@@ -1060,8 +1059,8 @@ const CardContent = memo(({
                   {(task as any).recurringConfig?.time
                     ? formatTimeDisplay((task as any).recurringConfig.time)
                     : (task as any).status && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())
-                    ? `Set ${(task as any).status} Time`
-                    : 'Set Time'}
+                      ? `Set ${(task as any).status} Time`
+                      : 'Set Time'}
                 </span>
               </div>
               {openDropdown === 'recurrence' && (
@@ -1113,9 +1112,8 @@ const CardContent = memo(({
                   return (
                     <div
                       key={p}
-                      className={`px-2.5 py-2 flex items-center gap-2.5 rounded-md cursor-pointer transition-colors ${
-                        isSelected ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
-                      }`}
+                      className={`px-2.5 py-2 flex items-center gap-2.5 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
+                        }`}
                       onClick={() => handlePriorityChange(p)}
                     >
                       <Flag className={`w-3.5 h-3.5 shrink-0 ${config.iconColor}`} />
@@ -1189,6 +1187,17 @@ export const KanbanCard = memo(function KanbanCard({
   onTaskMove,
   onSubtaskStatusChange,
 }: Props) {
+  const router = useRouter();
+
+  const handleCtrlRightClick = useCallback((e: React.MouseEvent, overrideTargetId?: string) => {
+    if (e.ctrlKey || e.metaKey || e.button === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetId = overrideTargetId || task.id;
+      if (!targetId) return;
+      openTaskInNewTab(targetId, { event: e });
+    }
+  }, [task.id]);
 
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(false);
   const [hasOpenDropdown, setHasOpenDropdown] = useState(false);
@@ -1454,6 +1463,11 @@ export const KanbanCard = memo(function KanbanCard({
             clearTimeout(dragTimeoutRef.current);
             dragTimeoutRef.current = null;
           }
+          if (e.ctrlKey || e.metaKey) {
+            handleCtrlRightClick(e);
+            pointerPosRef.current = null;
+            return;
+          }
           if (!pointerPosRef.current) return;
           const dx = Math.abs(e.clientX - pointerPosRef.current.x);
           const dy = Math.abs(e.clientY - pointerPosRef.current.y);
@@ -1462,6 +1476,10 @@ export const KanbanCard = memo(function KanbanCard({
           }
           pointerPosRef.current = null;
         }}
+        onAuxClick={(e) => {
+          if (e.button === 1) handleCtrlRightClick(e);
+        }}
+        onContextMenu={(e) => handleCtrlRightClick(e)}
         className={isDragging
           ? "bg-zinc-800/60 rounded-xl p-3.5 border border-transparent shadow-none flex flex-col gap-3"
           : `bg-card hover:bg-card/90 border rounded-xl p-3.5 group relative shadow-sm flex flex-col transition-all duration-300 ease-out hover:scale-[1.01] hover:shadow-lg hover:shadow-black/20 ${effectivelyDisabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
@@ -1537,51 +1555,59 @@ export const KanbanCard = memo(function KanbanCard({
 
         <div className="mt-1 ml-3">
           <AnimatePresence initial={false}>
-          {visibleSubtasks.map((sub) => {
-            const isLast = false; // Add Subtask button is always the last item visually
-            return (
-              <motion.div
-                key={sub.id}
-                className="relative flex items-start"
-                onClick={(e) => e.stopPropagation()}
-                initial={false}
-                animate={{ opacity: 1, height: 'auto', transitionEnd: { overflow: 'visible' } }}
-                // Short delay lets the closed check icon register before the row collapses
-                exit={{ opacity: 0, height: 0, x: 12, overflow: 'hidden', transition: { ...SUBTASK_ROW_TRANSITION, delay: 0.25 } }}
-                transition={{ duration: 0 }}
-              >
-                {/* Vertical line — stops at elbow midpoint on last item */}
-                <div
-                  className="absolute left-0 w-px bg-zinc-700/50"
-                  style={{ top: 0, bottom: isLast ? '50%' : 0 }}
-                />
-                {/* Horizontal elbow */}
-                <div
-                  className="absolute left-0 h-px bg-zinc-700/50"
-                  style={{ top: '1.25rem', width: 10 }}
-                />
-                {/* Subtask card */}
-                <div
-                  className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-lg px-2.5 py-2 transition-all cursor-pointer"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('task', task.id);
-                    url.searchParams.set('subtask', sub.id);
-                    window.history.replaceState(null, '', url.pathname + url.search);
-                    if (onClick) onClick(task);
-                  }}
+            {visibleSubtasks.map((sub) => {
+              const isLast = false; // Add Subtask button is always the last item visually
+              return (
+                <motion.div
+                  key={sub.id}
+                  className="relative flex items-start"
+                  onClick={(e) => e.stopPropagation()}
+                  initial={false}
+                  animate={{ opacity: 1, height: 'auto', transitionEnd: { overflow: 'visible' } }}
+                  // Short delay lets the closed check icon register before the row collapses
+                  exit={{ opacity: 0, height: 0, x: 12, overflow: 'hidden', transition: { ...SUBTASK_ROW_TRANSITION, delay: 0.25 } }}
+                  transition={{ duration: 0 }}
                 >
-                  <CardContent
-                    task={{ ...sub, list: task.list } as any}
-                    isSubtask={true}
-                    listStatuses={listStatuses}
-                    onSubtaskStatusChange={handleSubtaskStatusChangeOptimistic}
+                  {/* Vertical line — stops at elbow midpoint on last item */}
+                  <div
+                    className="absolute left-0 w-px bg-zinc-700/50"
+                    style={{ top: 0, bottom: isLast ? '50%' : 0 }}
                   />
-                </div>
-              </motion.div>
-            );
-          })}
+                  {/* Horizontal elbow */}
+                  <div
+                    className="absolute left-0 h-px bg-zinc-700/50"
+                    style={{ top: '1.25rem', width: 10 }}
+                  />
+                  {/* Subtask card */}
+                  <div
+                    className="flex-1 min-w-0 ml-3 mb-1.5 bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 rounded-lg px-2.5 py-2 transition-all cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (e.ctrlKey || e.metaKey) {
+                        handleCtrlRightClick(e, sub.id);
+                        return;
+                      }
+                      const url = new URL(window.location.href);
+                      url.searchParams.set('task', task.id);
+                      url.searchParams.set('subtask', sub.id);
+                      window.history.replaceState(null, '', url.pathname + url.search);
+                      if (onClick) onClick(task);
+                    }}
+                    onAuxClick={(e) => {
+                      if (e.button === 1) handleCtrlRightClick(e, sub.id);
+                    }}
+                    onContextMenu={(e) => handleCtrlRightClick(e, sub.id)}
+                  >
+                    <CardContent
+                      task={{ ...sub, list: task.list } as any}
+                      isSubtask={true}
+                      listStatuses={listStatuses}
+                      onSubtaskStatusChange={handleSubtaskStatusChangeOptimistic}
+                    />
+                  </div>
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
 
           {isAddingSubtask ? (

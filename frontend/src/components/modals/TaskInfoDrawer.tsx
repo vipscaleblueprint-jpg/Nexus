@@ -674,11 +674,11 @@ export function TaskInfoDrawer({
   ] as const;
 
   return (
-    <div className="flex flex-col h-full bg-card [.theme-light_&]:bg-white overflow-hidden text-zinc-200 [.theme-light_&]:text-zinc-800 transition-colors duration-150">
+    <div className="flex flex-col h-full bg-card overflow-hidden text-zinc-200 transition-colors duration-150">
       {/* Tabs & Search Bar */}
-      <div className="px-4 py-2.5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 space-y-2.5 bg-card [.theme-light_&]:bg-white transition-colors">
+      <div className="px-4 py-2.5 border-b border-zinc-800/60 shrink-0 space-y-2.5 bg-card transition-colors">
         {/* Navigation Tabs with Spring Animated Indicator */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900/60 [.theme-light_&]:bg-zinc-100 rounded-lg border border-zinc-800/60 [.theme-light_&]:border-zinc-200 relative">
+        <div className="flex items-center gap-1 p-1 bg-zinc-900/60 rounded-lg border border-zinc-800/60 relative">
           {tabList.map((t) => {
             const isActive = activeTab === t.key;
             return (
@@ -688,14 +688,14 @@ export function TaskInfoDrawer({
                 onClick={() => setActiveTab(t.key)}
                 className={`relative flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors cursor-pointer text-center flex items-center justify-center gap-1 z-10 ${
                   isActive
-                    ? 'text-zinc-100 [.theme-light_&]:text-zinc-900 font-semibold'
-                    : 'text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-800'
+                    ? 'text-zinc-100 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 {isActive && (
                   <motion.div
                     layoutId="activeTaskInfoTabPill"
-                    className="absolute inset-0 bg-zinc-800 [.theme-light_&]:bg-white rounded-md shadow-sm [.theme-light_&]:shadow-xs -z-10"
+                    className="absolute inset-0 bg-zinc-800 rounded-md shadow-sm -z-10"
                     transition={{ type: 'spring', bounce: 0.15, duration: 0.28 }}
                   />
                 )}
@@ -707,19 +707,19 @@ export function TaskInfoDrawer({
 
         {/* Search Input */}
         <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 [.theme-light_&]:text-zinc-400" />
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search images, links, or tracker reports..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-zinc-900 [.theme-light_&]:bg-zinc-50 border border-zinc-800 [.theme-light_&]:border-zinc-200 rounded-lg text-zinc-200 [.theme-light_&]:text-zinc-900 placeholder-zinc-500 [.theme-light_&]:placeholder-zinc-400 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 transition-colors"
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 transition-colors"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 [.theme-light_&]:text-zinc-400 [.theme-light_&]:hover:text-zinc-700 text-xs cursor-pointer"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs cursor-pointer"
             >
               Clear
             </button>
@@ -746,9 +746,9 @@ export function TaskInfoDrawer({
             >
               {/* 1. Images Section */}
               <div>
-                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50 [.theme-light_&]:border-zinc-200">
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 [.theme-light_&]:text-zinc-800">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
                       Images & Media
                     </h4>
                   </div>
@@ -756,7 +756,7 @@ export function TaskInfoDrawer({
                     <button
                       type="button"
                       onClick={() => setActiveTab('images')}
-                      className="text-xs text-blue-400 hover:text-blue-300 [.theme-light_&]:text-blue-600 [.theme-light_&]:hover:text-blue-700 transition-colors cursor-pointer"
+                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
                     >
                       See all
                     </button>
@@ -764,7 +764,7 @@ export function TaskInfoDrawer({
                 </div>
 
                 {filteredImages.length === 0 ? (
-                  <div className="text-xs text-zinc-500 [.theme-light_&]:text-zinc-500 py-3 text-center bg-zinc-900/30 [.theme-light_&]:bg-zinc-50 rounded-lg border border-zinc-800/40 [.theme-light_&]:border-zinc-200">
+                  <div className="text-xs text-zinc-500 py-3 text-center bg-zinc-900/30 rounded-lg border border-zinc-800/40">
                     No images found
                   </div>
                 ) : (
@@ -773,7 +773,7 @@ export function TaskInfoDrawer({
                       <div
                         key={img.id}
                         onClick={() => onPreviewImage(img.url)}
-                        className="group relative rounded-lg overflow-hidden border border-zinc-800 [.theme-light_&]:border-zinc-200 bg-zinc-900 [.theme-light_&]:bg-zinc-100 aspect-square cursor-pointer shadow-xs hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all"
+                        className="group relative rounded-lg overflow-hidden border border-zinc-800 bg-zinc-900 aspect-square cursor-pointer shadow-xs hover:border-zinc-700 transition-all"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
@@ -802,9 +802,9 @@ export function TaskInfoDrawer({
 
               {/* 2. Links Section */}
               <div>
-                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50 [.theme-light_&]:border-zinc-200">
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 [.theme-light_&]:text-zinc-800">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
                       Shared Links
                     </h4>
                   </div>
@@ -812,7 +812,7 @@ export function TaskInfoDrawer({
                     <button
                       type="button"
                       onClick={() => setActiveTab('links')}
-                      className="text-xs text-blue-400 hover:text-blue-300 [.theme-light_&]:text-blue-600 [.theme-light_&]:hover:text-blue-700 transition-colors cursor-pointer"
+                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
                     >
                       See all
                     </button>
@@ -820,7 +820,7 @@ export function TaskInfoDrawer({
                 </div>
 
                 {filteredLinks.length === 0 ? (
-                  <div className="text-xs text-zinc-500 [.theme-light_&]:text-zinc-500 py-3 text-center bg-zinc-900/30 [.theme-light_&]:bg-zinc-50 rounded-lg border border-zinc-800/40 [.theme-light_&]:border-zinc-200">
+                  <div className="text-xs text-zinc-500 py-3 text-center bg-zinc-900/30 rounded-lg border border-zinc-800/40">
                     No shared links found
                   </div>
                 ) : (
@@ -829,21 +829,21 @@ export function TaskInfoDrawer({
                       <div
                         key={link.id}
                         onClick={() => openExternalLink(link.url)}
-                        className="p-2.5 rounded-lg border border-zinc-800/70 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100/90 hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all flex items-start justify-between gap-3 cursor-pointer group shadow-xs"
+                        className="p-2.5 rounded-lg border border-zinc-800/70 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700 transition-all flex items-start justify-between gap-3 cursor-pointer group shadow-xs"
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 mb-1">
-                            <span className="text-[10px] font-semibold text-blue-400 [.theme-light_&]:text-blue-700 bg-blue-500/10 [.theme-light_&]:bg-blue-50 px-1.5 py-0.5 rounded border border-blue-500/20 [.theme-light_&]:border-blue-200">
+                            <span className="text-[10px] font-semibold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
                               {link.domain}
                             </span>
-                            <span className="text-[11px] text-zinc-400 [.theme-light_&]:text-zinc-500">
+                            <span className="text-[11px] text-zinc-400">
                               · {formatRelativeTime(link.createdAt)}
                             </span>
                           </div>
-                          <div className="text-xs font-medium text-zinc-200 [.theme-light_&]:text-zinc-900 group-hover:text-blue-300 [.theme-light_&]:group-hover:text-blue-600 transition-colors truncate">
+                          <div className="text-xs font-medium text-zinc-200 group-hover:text-blue-300 transition-colors truncate">
                             {link.title}
                           </div>
-                          <div className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 truncate mt-0.5">
+                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">
                             {link.url}
                           </div>
                         </div>
@@ -853,7 +853,7 @@ export function TaskInfoDrawer({
                             type="button"
                             onClick={(e) => handleCopyLink(link.id, link.url, e)}
                             title="Copy Link"
-                            className="p-1.5 text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-700/60 [.theme-light_&]:hover:bg-zinc-200 rounded-md transition-colors cursor-pointer"
+                            className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 rounded-md transition-colors cursor-pointer"
                           >
                             <AnimatePresence mode="wait">
                               {copiedLinkId === link.id ? (
@@ -864,7 +864,7 @@ export function TaskInfoDrawer({
                                   exit={{ scale: 0.6, opacity: 0 }}
                                   transition={{ duration: 0.15 }}
                                 >
-                                  <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                  <Check className="w-3.5 h-3.5 text-emerald-400" />
                                 </motion.span>
                               ) : (
                                 <motion.span
@@ -879,7 +879,7 @@ export function TaskInfoDrawer({
                               )}
                             </AnimatePresence>
                           </button>
-                          <span className="p-1.5 text-zinc-400 [.theme-light_&]:text-zinc-500 group-hover:text-zinc-200 [.theme-light_&]:group-hover:text-zinc-800">
+                          <span className="p-1.5 text-zinc-400 group-hover:text-zinc-200">
                             <ExternalLink className="w-3.5 h-3.5" />
                           </span>
                         </div>
@@ -891,9 +891,9 @@ export function TaskInfoDrawer({
 
               {/* 3. Tracker Reports Section (Strictly from Spreadsheet / Work Logs) */}
               <div>
-                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50 [.theme-light_&]:border-zinc-200">
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 [.theme-light_&]:text-zinc-800">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
                       Tracker Reports
                     </h4>
                   </div>
@@ -901,7 +901,7 @@ export function TaskInfoDrawer({
                     <button
                       type="button"
                       onClick={() => setActiveTab('tracker')}
-                      className="text-xs text-blue-400 hover:text-blue-300 [.theme-light_&]:text-blue-600 [.theme-light_&]:hover:text-blue-700 transition-colors cursor-pointer"
+                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
                     >
                       See all
                     </button>
@@ -909,7 +909,7 @@ export function TaskInfoDrawer({
                 </div>
 
                 {filteredTrackerReports.length === 0 ? (
-                  <div className="text-xs text-zinc-500 [.theme-light_&]:text-zinc-500 py-3 text-center bg-zinc-900/30 [.theme-light_&]:bg-zinc-50 rounded-lg border border-zinc-800/40 [.theme-light_&]:border-zinc-200">
+                  <div className="text-xs text-zinc-500 py-3 text-center bg-zinc-900/30 rounded-lg border border-zinc-800/40">
                     No tracker reports found for this task
                   </div>
                 ) : (
@@ -919,15 +919,15 @@ export function TaskInfoDrawer({
                       return (
                         <div
                           key={report.id}
-                          className="p-3.5 rounded-xl border border-zinc-800/70 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 space-y-2.5 shadow-xs hover:border-zinc-700/80 [.theme-light_&]:hover:border-zinc-300 transition-all"
+                          className="p-3.5 rounded-xl border border-zinc-800/70 bg-zinc-900/40 space-y-2.5 shadow-xs hover:border-zinc-700/80 transition-all"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-[11px] text-zinc-300 [.theme-light_&]:text-zinc-700 font-medium">
+                              <span className="text-[11px] text-zinc-300 font-medium">
                                 {dateHeader}
                               </span>
                               {timeRange && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-700 border border-emerald-500/20 shrink-0 font-mono">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0 font-mono">
                                   {timeRange}
                                 </span>
                               )}
@@ -937,7 +937,7 @@ export function TaskInfoDrawer({
                               type="button"
                               onClick={(e) => handleCopyReport(report.id, report.content, e)}
                               title="Copy report"
-                              className="p-1 text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200 rounded transition-colors cursor-pointer"
+                              className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
                             >
                               <AnimatePresence mode="wait">
                                 {copiedCommentId === report.id ? (
@@ -948,7 +948,7 @@ export function TaskInfoDrawer({
                                     exit={{ scale: 0.6, opacity: 0 }}
                                     transition={{ duration: 0.15 }}
                                   >
-                                    <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
                                   </motion.span>
                                 ) : (
                                   <motion.span
@@ -965,7 +965,7 @@ export function TaskInfoDrawer({
                             </button>
                           </div>
 
-                          <div className="text-xs text-zinc-300 [.theme-light_&]:text-zinc-800 leading-relaxed overflow-hidden break-words line-clamp-6">
+                          <div className="text-xs text-zinc-300 leading-relaxed overflow-hidden break-words line-clamp-6">
                             <CommentContent
                               content={report.content}
                               onPreviewImage={onPreviewImage}
@@ -991,18 +991,18 @@ export function TaskInfoDrawer({
               className="space-y-6"
             >
               {imageTimeGroups.length === 0 ? (
-                <div className="text-center py-12 text-zinc-500 [.theme-light_&]:text-zinc-500">
-                  <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400 [.theme-light_&]:text-zinc-500" />
+                <div className="text-center py-12 text-zinc-500">
+                  <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400" />
                   <p className="text-xs font-medium">No images shared on this task yet</p>
-                  <p className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 mt-1">
+                  <p className="text-[11px] text-zinc-500 mt-1">
                     Images attached to comments or the task description will appear here.
                   </p>
                 </div>
               ) : (
                 imageTimeGroups.map(({ group, items }) => (
                   <div key={group} className="space-y-3">
-                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 [.theme-light_&]:bg-white/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 [.theme-light_&]:border-zinc-200 transition-colors">
-                      <span className="text-xs font-bold text-zinc-300 [.theme-light_&]:text-zinc-800 uppercase tracking-wider">
+                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 transition-colors">
+                      <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
                         {group}
                       </span>
                     </div>
@@ -1012,7 +1012,7 @@ export function TaskInfoDrawer({
                         <div
                           key={img.id}
                           onClick={() => onPreviewImage(img.url)}
-                          className="group relative rounded-xl overflow-hidden border border-zinc-800 [.theme-light_&]:border-zinc-200 bg-zinc-900 [.theme-light_&]:bg-zinc-100 aspect-square cursor-pointer shadow-xs hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all"
+                          className="group relative rounded-xl overflow-hidden border border-zinc-800 bg-zinc-900 aspect-square cursor-pointer shadow-xs hover:border-zinc-700 transition-all"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
@@ -1092,18 +1092,18 @@ export function TaskInfoDrawer({
               className="space-y-6"
             >
               {linkTimeGroups.length === 0 ? (
-                <div className="text-center py-12 text-zinc-500 [.theme-light_&]:text-zinc-500">
-                  <Link2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400 [.theme-light_&]:text-zinc-500" />
+                <div className="text-center py-12 text-zinc-500">
+                  <Link2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400" />
                   <p className="text-xs font-medium">No links found on this task</p>
-                  <p className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 mt-1">
+                  <p className="text-[11px] text-zinc-500 mt-1">
                     URLs pasted in comments, attachments, or description will appear here.
                   </p>
                 </div>
               ) : (
                 linkTimeGroups.map(({ group, items }) => (
                   <div key={group} className="space-y-3">
-                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 [.theme-light_&]:bg-white/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 [.theme-light_&]:border-zinc-200 transition-colors">
-                      <span className="text-xs font-bold text-zinc-300 [.theme-light_&]:text-zinc-800 uppercase tracking-wider">
+                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 transition-colors">
+                      <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
                         {group}
                       </span>
                     </div>
@@ -1113,26 +1113,26 @@ export function TaskInfoDrawer({
                         <div
                           key={link.id}
                           onClick={() => openExternalLink(link.url)}
-                          className="p-3 rounded-xl border border-zinc-800/80 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100/90 hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all flex items-start justify-between gap-3 cursor-pointer group shadow-xs"
+                          className="p-3 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700 transition-all flex items-start justify-between gap-3 cursor-pointer group shadow-xs"
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="text-[10px] font-semibold text-blue-400 [.theme-light_&]:text-blue-700 bg-blue-500/10 [.theme-light_&]:bg-blue-50 px-1.5 py-0.5 rounded border border-blue-500/20 [.theme-light_&]:border-blue-200">
+                              <span className="text-[10px] font-semibold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
                                 {link.domain}
                               </span>
-                              <span className="text-[11px] text-zinc-400 [.theme-light_&]:text-zinc-600 flex items-center gap-1">
-                                <User className="w-3 h-3 text-zinc-500 [.theme-light_&]:text-zinc-400" />
+                              <span className="text-[11px] text-zinc-400 flex items-center gap-1">
+                                <User className="w-3 h-3 text-zinc-500" />
                                 <span>{link.authorName || 'Teammate'}</span>
                               </span>
-                              <span className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400">
+                              <span className="text-[11px] text-zinc-500">
                                 · {formatRelativeTime(link.createdAt)}
                               </span>
                             </div>
 
-                            <div className="text-xs font-medium text-zinc-100 [.theme-light_&]:text-zinc-900 group-hover:text-blue-300 [.theme-light_&]:group-hover:text-blue-600 transition-colors truncate">
+                            <div className="text-xs font-medium text-zinc-100 group-hover:text-blue-300 transition-colors truncate">
                               {link.title}
                             </div>
-                            <div className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 truncate mt-0.5 font-mono">
+                            <div className="text-[11px] text-zinc-500 truncate mt-0.5 font-mono">
                               {link.url}
                             </div>
                           </div>
@@ -1142,7 +1142,7 @@ export function TaskInfoDrawer({
                               type="button"
                               onClick={(e) => handleCopyLink(link.id, link.url, e)}
                               title="Copy link"
-                              className="p-1.5 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-700/60 [.theme-light_&]:hover:bg-zinc-200 rounded-md transition-colors cursor-pointer"
+                              className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/60 rounded-md transition-colors cursor-pointer"
                             >
                               <AnimatePresence mode="wait">
                                 {copiedLinkId === link.id ? (
@@ -1153,7 +1153,7 @@ export function TaskInfoDrawer({
                                     exit={{ scale: 0.6, opacity: 0 }}
                                     transition={{ duration: 0.15 }}
                                   >
-                                    <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
                                   </motion.span>
                                 ) : (
                                   <motion.span
@@ -1170,7 +1170,7 @@ export function TaskInfoDrawer({
                             </button>
                             <span
                               title="Open link"
-                              className="p-1.5 text-zinc-400 [.theme-light_&]:text-zinc-500 group-hover:text-zinc-100 [.theme-light_&]:group-hover:text-zinc-800"
+                              className="p-1.5 text-zinc-400 group-hover:text-zinc-100"
                             >
                               <ExternalLink className="w-3.5 h-3.5" />
                             </span>
@@ -1206,9 +1206,9 @@ export function TaskInfoDrawer({
                     <button
                       type="button"
                       onClick={loadOlderTrackerReports}
-                      className="text-[11px] font-medium text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-600 [.theme-light_&]:hover:text-zinc-900 bg-zinc-800/40 hover:bg-zinc-800/80 [.theme-light_&]:bg-zinc-100 [.theme-light_&]:hover:bg-zinc-200 border border-zinc-800 [.theme-light_&]:border-zinc-300 transition-all flex items-center gap-1.5 py-1 px-3 rounded-full cursor-pointer shadow-xs"
+                      className="text-[11px] font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800 transition-all flex items-center gap-1.5 py-1 px-3 rounded-full cursor-pointer shadow-xs"
                     >
-                      <Clock className="w-3 h-3 text-zinc-500 [.theme-light_&]:text-zinc-400" />
+                      <Clock className="w-3 h-3 text-zinc-500" />
                       <span>Load earlier tracker reports ({olderReportsCount} remaining)</span>
                     </button>
                   )}
@@ -1216,10 +1216,10 @@ export function TaskInfoDrawer({
               )}
 
               {trackerDayGroups.length === 0 ? (
-                <div className="text-center py-12 text-zinc-500 [.theme-light_&]:text-zinc-500">
-                  <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400 [.theme-light_&]:text-zinc-500" />
+                <div className="text-center py-12 text-zinc-500">
+                  <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400" />
                   <p className="text-xs font-semibold">No tracker reports found</p>
-                  <p className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 mt-1 max-w-sm mx-auto">
+                  <p className="text-[11px] text-zinc-500 mt-1 max-w-sm mx-auto">
                     Tracker schedule reports synced from the MA Daily Schedule spreadsheet will appear here organized by work date.
                   </p>
                 </div>
@@ -1227,8 +1227,8 @@ export function TaskInfoDrawer({
                 trackerDayGroups.map(({ group, items }) => (
                   <div key={group} className="space-y-3">
                     {/* Exact Day Separator: e.g. "Wed, Nov 4, 2026" */}
-                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 [.theme-light_&]:bg-white/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 [.theme-light_&]:border-zinc-200 transition-colors">
-                      <span className="text-xs font-bold text-zinc-200 [.theme-light_&]:text-zinc-900 uppercase tracking-wider">
+                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 transition-colors">
+                      <span className="text-xs font-bold text-zinc-200 uppercase tracking-wider">
                         {group}
                       </span>
                     </div>
@@ -1239,23 +1239,23 @@ export function TaskInfoDrawer({
                         return (
                           <div
                             key={report.id}
-                            className="p-3.5 rounded-xl border border-zinc-800/80 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 hover:border-zinc-700/80 [.theme-light_&]:hover:border-zinc-300 transition-all space-y-2.5 shadow-xs"
+                            className="p-3.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700/80 transition-all space-y-2.5 shadow-xs"
                           >
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2 min-w-0">
                                 {timeRange ? (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-700 border border-emerald-500/20 font-mono font-medium shrink-0">
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-medium shrink-0">
                                     {timeRange}
                                   </span>
                                 ) : (
-                                  <span className="text-[11px] text-zinc-400 [.theme-light_&]:text-zinc-600 font-medium">
+                                  <span className="text-[11px] text-zinc-400 font-medium">
                                     Work Log
                                   </span>
                                 )}
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-[10px] text-zinc-500 [.theme-light_&]:text-zinc-400 hidden sm:inline">
+                                <span className="text-[10px] text-zinc-500 hidden sm:inline">
                                   {new Date(report.createdAt).toLocaleTimeString([], {
                                     hour: '2-digit',
                                     minute: '2-digit',
@@ -1265,7 +1265,7 @@ export function TaskInfoDrawer({
                                   type="button"
                                   onClick={(e) => handleCopyReport(report.id, report.content, e)}
                                   title="Copy report"
-                                  className="p-1 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200 rounded transition-colors cursor-pointer"
+                                  className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
                                 >
                                   <AnimatePresence mode="wait">
                                     {copiedCommentId === report.id ? (
@@ -1276,7 +1276,7 @@ export function TaskInfoDrawer({
                                         exit={{ scale: 0.6, opacity: 0 }}
                                         transition={{ duration: 0.15 }}
                                       >
-                                        <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                        <Check className="w-3.5 h-3.5 text-emerald-400" />
                                       </motion.span>
                                     ) : (
                                       <motion.span
@@ -1294,7 +1294,7 @@ export function TaskInfoDrawer({
                               </div>
                             </div>
 
-                            <div className="text-xs text-zinc-200 [.theme-light_&]:text-zinc-800 leading-relaxed overflow-hidden break-words">
+                            <div className="text-xs text-zinc-200 leading-relaxed overflow-hidden break-words">
                               <CommentContent
                                 content={report.content}
                                 onPreviewImage={onPreviewImage}

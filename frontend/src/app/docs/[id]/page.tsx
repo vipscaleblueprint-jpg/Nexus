@@ -12,6 +12,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { Task } from '@/lib/types';
 import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
 import { parseNexusTaskLink } from '@/lib/links';
+import { openTaskInNewTab } from '@/lib/taskNavigation';
 import { getTaskSnapshot } from '@/lib/nexusLinkPaste';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { RenameModal } from '@/components/modals/RenameModal';
@@ -554,11 +555,10 @@ const DocBlockRow = memo(({
       onMouseDownCapture={onMouseDownCaptureWrapper}
       onMouseMove={onMouseMoveWrapper}
       onClick={onClickWrapper}
-      className={`flex items-center justify-between py-1 group transition-all relative ${
-        block.type === 'callout'
+      className={`flex items-center justify-between py-1 group transition-all relative ${block.type === 'callout'
           ? 'bg-red-500/20 border border-red-500/30 py-3 px-4 rounded-md'
           : 'hover:bg-zinc-800/40 pr-2 rounded-md'
-      } ${isLockedBySomeoneElse ? 'ring-1 ring-red-500/30 ring-inset' : ''}
+        } ${isLockedBySomeoneElse ? 'ring-1 ring-red-500/30 ring-inset' : ''}
       ${dragOverBlockIndex === index && dragOverPosition === 'above' ? 'border-t-2 border-t-[#6b4cff]' : ''}
       ${dragOverBlockIndex === index && dragOverPosition === 'below' ? 'border-b-2 border-b-[#6b4cff]' : ''}
       ${draggedBlockIndex === index ? 'bg-blue-500/10 opacity-50' : ''}`}
@@ -610,7 +610,7 @@ const DocBlockRow = memo(({
                     <div className="flex flex-col">
                       <div className="flex flex-col gap-1">
                         <Popover.Close asChild>
-                          <button 
+                          <button
                             onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'collapsible'); }}
                             className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
                             <ChevronDown className="w-3.5 h-3.5" />
@@ -618,7 +618,7 @@ const DocBlockRow = memo(({
                           </button>
                         </Popover.Close>
                         <Popover.Close asChild>
-                          <button 
+                          <button
                             onClick={(e) => { handleTurnInto && handleTurnInto(block.id, 'subtask'); }}
                             className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2 cursor-pointer">
                             <CheckSquare className="w-3.5 h-3.5" />
@@ -627,7 +627,7 @@ const DocBlockRow = memo(({
                         </Popover.Close>
                         <div className="my-1 border-t border-zinc-700/60" />
                         <Popover.Close asChild>
-                          <button 
+                          <button
                             onClick={(e) => { handleDeleteBlock && handleDeleteBlock(block.id); }}
                             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer text-left">
                             <Trash2 className="w-3.5 h-3.5" />
@@ -939,7 +939,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   const [socket, setSocket] = useState<Socket | null>(null);
 
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
-  
+
   // Custom multi-block selection state
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
   const isMouseDownRef = useRef(false);
@@ -1192,6 +1192,38 @@ export default function DocPage({ docId }: { docId?: string }) {
   }, [openTaskDetail]);
 
   useEffect(() => {
+    const handleDocContextMenu = (e: MouseEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
+
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      const taskTarget = target.closest(
+        'span[data-type="mention"], span[data-type="taskMention"], .task-mention, [data-task-id], a[href*="/tasks/"]'
+      ) as HTMLElement | null;
+
+      if (!taskTarget) return;
+
+      let targetTaskId: string | null = null;
+      if (taskTarget.hasAttribute('data-id')) {
+        targetTaskId = taskTarget.getAttribute('data-id');
+      } else if (taskTarget.hasAttribute('data-task-id')) {
+        targetTaskId = taskTarget.getAttribute('data-task-id');
+      } else if (taskTarget instanceof HTMLAnchorElement || taskTarget.tagName === 'A') {
+        const href = (taskTarget as HTMLAnchorElement).href;
+        const match = href.match(/\/tasks\/([a-zA-Z0-9_-]+)/);
+        if (match) targetTaskId = match[1];
+      }
+
+      if (targetTaskId) {
+        e.preventDefault();
+        e.stopPropagation();
+        openTaskInNewTab(targetTaskId, { event: e });
+      }
+    };
+    document.addEventListener('contextmenu', handleDocContextMenu, true);
+
     const handleOpenTaskDetail = (e: Event) => {
       const detail = (e as CustomEvent<{ taskId?: string; task?: Task & { taskId?: string } }>).detail;
       if (!detail?.taskId) return;
@@ -1200,6 +1232,7 @@ export default function DocPage({ docId }: { docId?: string }) {
     window.addEventListener('open-task-detail', handleOpenTaskDetail);
 
     return () => {
+      document.removeEventListener('contextmenu', handleDocContextMenu, true);
       window.removeEventListener('open-task-detail', handleOpenTaskDetail);
     };
   }, [openTaskDetail]);
@@ -1638,36 +1671,36 @@ export default function DocPage({ docId }: { docId?: string }) {
 
   const handleSplitBlock = (blockId: string, index: number, contents: string[]) => {
     if (contents.length < 2) return;
-    
+
     const currentBlock = blocksRef.current[index];
     if (!currentBlock) return;
-    
+
     const currentBlockDepth = currentBlock.depth || 0;
-    
+
     // If splitting a collapsible (pressing Enter), automatically indent the new block
     // so the user doesn't have to manually press Tab.
     const newBlockDepth = currentBlock.type === 'collapsible' ? currentBlockDepth + 1 : currentBlockDepth;
-    
+
     const newBlocks: DocBlock[] = contents.slice(1).map(part => ({
       id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       type: 'text',
       content: part,
       depth: newBlockDepth,
     }));
-    
+
     // If we are creating children, ensure the parent is expanded
     let finalBlocksToSave: DocBlock[] = [];
     setBlocks(prevBlocks => {
       const idx = prevBlocks.findIndex(b => b.id === blockId);
       if (idx === -1) return prevBlocks;
-      
+
       const updatedBlocks = [...prevBlocks];
-      updatedBlocks[idx] = { 
-        ...updatedBlocks[idx], 
+      updatedBlocks[idx] = {
+        ...updatedBlocks[idx],
         content: contents[0],
-        isCollapsed: currentBlock.type === 'collapsible' ? false : updatedBlocks[idx].isCollapsed 
+        isCollapsed: currentBlock.type === 'collapsible' ? false : updatedBlocks[idx].isCollapsed
       };
-      
+
       const finalBlocks = [
         ...updatedBlocks.slice(0, idx + 1),
         ...newBlocks,
@@ -1676,15 +1709,15 @@ export default function DocPage({ docId }: { docId?: string }) {
       finalBlocksToSave = finalBlocks;
       return finalBlocks;
     });
-    
+
     // Defer saving until state settles
     setTimeout(() => {
       if (finalBlocksToSave.length > 0) handleSavePage(finalBlocksToSave);
     }, 0);
-    
+
     const focusId = newBlocks[0].id;
     setFocusedBlockId(focusId);
-    
+
     // Focus the first newly created block
     setTimeout(() => {
       const newEditor = editorRegistryRef.current[focusId];
@@ -1816,7 +1849,8 @@ export default function DocPage({ docId }: { docId?: string }) {
       const currentBlocks = blocksRef.current;
       const block = currentBlocks.find(b => b.id === blockId);
       const isEmpty = !block?.content || block.content === '' || block.content === '<p></p>' || block.content === '<p><br></p>';
-      if (isEmpty) {        e.preventDefault();
+      if (isEmpty) {
+        e.preventDefault();
         handleDeleteBlock(blockId);
         if (index > 0) {
           const prevBlock = currentBlocks[index - 1];
@@ -1836,24 +1870,24 @@ export default function DocPage({ docId }: { docId?: string }) {
         e.preventDefault();
         const prevBlock = currentBlocks[index - 1];
         const prevId = prevBlock.id;
-        
+
         const currentEditor = editorRegistryRef.current[blockId];
         const prevEditor = editorRegistryRef.current[prevId];
-        
+
         if (currentEditor && prevEditor) {
           const currentContent = currentEditor.getHTML();
           let cHtml = currentContent;
           if (cHtml.startsWith('<p>')) cHtml = cHtml.substring(3);
           if (cHtml.endsWith('</p>')) cHtml = cHtml.substring(0, cHtml.length - 4);
-          
+
           let pHtml = prevEditor.getHTML();
           let newPHtml = pHtml.replace(/<\/p>$/, cHtml + '</p>');
-          
+
           const oldSize = prevEditor.state.doc.content.size;
           prevEditor.commands.setContent(newPHtml, false);
-          
+
           handleDeleteBlock(blockId);
-          
+
           setTimeout(() => {
             // focus at the merge point
             prevEditor.commands.focus(Math.max(1, oldSize - 1));
@@ -1866,25 +1900,25 @@ export default function DocPage({ docId }: { docId?: string }) {
         e.preventDefault();
         const nextBlock = currentBlocks[index + 1];
         const nextId = nextBlock.id;
-        
+
         const currentEditor = editorRegistryRef.current[blockId];
         const nextEditor = editorRegistryRef.current[nextId];
-        
+
         if (currentEditor && nextEditor) {
           const currentContent = currentEditor.getHTML();
           const nextContent = nextEditor.getHTML();
-          
+
           let nHtml = nextContent;
           if (nHtml.startsWith('<p>')) nHtml = nHtml.substring(3);
           if (nHtml.endsWith('</p>')) nHtml = nHtml.substring(0, nHtml.length - 4);
-          
+
           let newCHtml = currentContent.replace(/<\/p>$/, nHtml + '</p>');
-          
+
           const oldSize = currentEditor.state.doc.content.size;
           currentEditor.commands.setContent(newCHtml, false);
-          
+
           handleDeleteBlock(nextId);
-          
+
           setTimeout(() => {
             currentEditor.commands.focus(Math.max(1, oldSize - 1));
           }, 10);
@@ -1910,7 +1944,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       const shouldCrossBlock = (e.key === 'ArrowUp' && atStart) || (e.key === 'ArrowDown' && atEnd);
 
       if (shouldCrossBlock) {
-        e.preventDefault();        const newSelection = new Set<string>();
+        e.preventDefault(); const newSelection = new Set<string>();
         newSelection.add(blockId);
         const currentBlocks = blocksRef.current;
         if (e.key === 'ArrowUp' && index > 0) newSelection.add(currentBlocks[index - 1].id);
@@ -1924,7 +1958,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       const docSize = editor?.state?.doc?.content?.size || 0;
       const atStart = editor?.state?.selection?.$from?.pos === 1;
       const atEnd = editor?.state?.selection?.$to?.pos === Math.max(1, docSize - 1);
-      
+
       if (e.key === 'ArrowUp' && atStart && index > 0) {
         e.preventDefault();
         const prevId = blocksRef.current[index - 1].id;
@@ -1968,7 +2002,8 @@ export default function DocPage({ docId }: { docId?: string }) {
         if (e.shiftKey) return prev;
         const isGrip = !!target.closest('.cursor-grab');
         const isOnSelectedBlock = !!target.closest('.is-selected-block');
-        if (!isGrip && !isOnSelectedBlock) {          return new Set();
+        if (!isGrip && !isOnSelectedBlock) {
+          return new Set();
         }
         return prev;
       });
@@ -1991,7 +2026,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         )?.closest('[data-block-id]');
         if (anchorEl && focusEl) {
           const isCrossBlock = anchorEl !== focusEl;
-          
+
         }
       }
     };
@@ -2048,7 +2083,7 @@ export default function DocPage({ docId }: { docId?: string }) {
 
       const min = Math.min(startIndex, endIndex);
       const max = Math.max(startIndex, endIndex);
-      
+
 
       try {
         const range = selection.getRangeAt(0);
@@ -2061,15 +2096,15 @@ export default function DocPage({ docId }: { docId?: string }) {
         let endContent = endEditorDOM?.innerHTML || '';
         startContent = startContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
         endContent = endContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
-        
+
         if (startContent.endsWith('</p>') && endContent.startsWith('<p>')) {
           startContent = startContent.substring(0, startContent.length - 4);
           endContent = endContent.substring(3);
         }
-        
+
         const mergedContent = startContent + endContent || '';
 
-        
+
 
         const newBlocks = [
           ...currentBlocks.slice(0, min),
@@ -2130,7 +2165,7 @@ export default function DocPage({ docId }: { docId?: string }) {
       // window.getSelection().toString() natively returns newlines for paragraph breaks in contenteditable.
       // We will ensure blocks are separated by double newlines so our paste handler recognizes them.
       let textToCopy = selection.toString();
-      
+
       // If the native toString() didn't give us multi-line text, we can build it manually.
       // But typically browser does it right for cross-div selection.
       // To be completely safe and ensure \n\n structure:
@@ -2156,12 +2191,12 @@ export default function DocPage({ docId }: { docId?: string }) {
           let endContent = endEditorDOM?.innerHTML || '';
           startContent = startContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
           endContent = endContent.replace(/<p><\/p>/g, '').replace(/<p><br\s*\/?><\/p>/g, '');
-          
+
           if (startContent.endsWith('</p>') && endContent.startsWith('<p>')) {
             startContent = startContent.substring(0, startContent.length - 4);
             endContent = endContent.substring(3);
           }
-          
+
           const mergedContent = startContent + endContent || '';
 
           const newBlocks = [
@@ -2187,11 +2222,11 @@ export default function DocPage({ docId }: { docId?: string }) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
 
-      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
-      const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
-      if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
-        return;
-      }
+        const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+        const isInsideDocBlock = !!activeEl?.closest('[data-block-id]');
+        if (!isInsideDocBlock && activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+          return;
+        }
         // If they are focusing something that is NOT our editor (like a title input), don't intercept
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
@@ -2212,7 +2247,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         e.preventDefault();
         const allIds = new Set(blocksRef.current.map(b => b.id));
         setSelectedBlockIds(allIds);
-        
+
         // Blur active element to exit Tiptap edit mode natively
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
@@ -2247,7 +2282,8 @@ export default function DocPage({ docId }: { docId?: string }) {
         return;
       }
       // Don't intercept if focus is inside an active editor
-      if (e.target instanceof HTMLElement && e.target.closest('.ProseMirror') && document.activeElement === e.target) {        return;
+      if (e.target instanceof HTMLElement && e.target.closest('.ProseMirror') && document.activeElement === e.target) {
+        return;
       }
       if (e.key === 'Escape') {
         setSelectedBlockIds(new Set());
@@ -2267,7 +2303,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         e.preventDefault();
         const blockArray = Array.from(selectedBlockIds);
         if (blockArray.length === 0) return;
-        
+
         let targetIndex = -1;
         if (e.key === 'ArrowUp') {
           const firstSelectedId = blockArray[0];
@@ -2313,7 +2349,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           html = html.replace(/<p[^>]*>/g, '').replace(/<\/p>/g, '\n');
           html = html.replace(/<br\s*[/]?>/gi, '\n');
           return new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim() || '';
-        }).filter(t => t.length > 0).join('\n\n');        navigator.clipboard.writeText(textToCopy);
+        }).filter(t => t.length > 0).join('\n\n'); navigator.clipboard.writeText(textToCopy);
         // Remove cut blocks
         const remainingBlocks = blocks.filter(b => !selectedBlockIds.has(b.id));
         setBlocks(remainingBlocks);
@@ -2330,7 +2366,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           // Split on real newlines (double newline = block boundary, single = within block)
           const parts = text.split(/\n\n|\n/).map(t => t.trim()).filter(t => t.length > 0);
           if (parts.length === 0) return;
-          
+
           const newBlocks: DocBlock[] = parts.map(part => {
             const nexus = parseNexusTaskLink(part);
             if (nexus) {
@@ -2376,7 +2412,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         });
         return;
       }
-      
+
       if (e.key === 'Enter') {
         e.preventDefault();
         const selectedArr = Array.from(selectedBlockIds);
@@ -2389,11 +2425,11 @@ export default function DocPage({ docId }: { docId?: string }) {
       // If user types a printable character, overwrite the selected blocks with a new block containing that text
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        
+
         // Find the index of the first selected block to insert the new one there
         const firstSelectedId = Array.from(selectedBlockIds)[0];
         const insertIndex = blocks.findIndex(b => b.id === firstSelectedId);
-        
+
         const newBlock: DocBlock = {
           id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           type: 'text',
@@ -2411,7 +2447,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         handleSavePage(updated);
         setSelectedBlockIds(new Set());
         setFocusedBlockId(newBlock.id);
-        
+
         requestAnimationFrame(() => {
           const newEditor = editorRegistryRef.current[newBlock.id];
           if (newEditor) {
@@ -2454,17 +2490,17 @@ export default function DocPage({ docId }: { docId?: string }) {
     }
     setUndoStack(prevUndo => {
       if (prevUndo.length <= 1) return prevUndo; // Need at least current + previous
-      
+
       const currentState = prevUndo[prevUndo.length - 1];
       const previousState = prevUndo[prevUndo.length - 2];
-      
+
       setRedoStack(prevRedo => [...prevRedo, currentState]);
       const newUndo = prevUndo.slice(0, -1);
-      
+
       const restoredBlocks = markdownToBlocks(previousState);
       setBlocks(restoredBlocks);
       handleSavePage(restoredBlocks, true);
-      
+
       return newUndo;
     });
   }, []);
@@ -2472,16 +2508,16 @@ export default function DocPage({ docId }: { docId?: string }) {
   const handleRedo = useCallback(() => {
     setRedoStack(prevRedo => {
       if (prevRedo.length === 0) return prevRedo;
-      
+
       const nextState = prevRedo[prevRedo.length - 1];
       const newRedo = prevRedo.slice(0, -1);
-      
+
       setUndoStack(prevUndo => [...prevUndo, nextState]);
-      
+
       const restoredBlocks = markdownToBlocks(nextState);
       setBlocks(restoredBlocks);
       handleSavePage(restoredBlocks, true);
-      
+
       return newRedo;
     });
   }, []);
@@ -2540,10 +2576,11 @@ export default function DocPage({ docId }: { docId?: string }) {
       const currentBlocks = blocksRef.current;
       const focusedId = focusedBlockIdRef.current;
 
-      
+
 
       // If no text at all, do nothing
-      if (!text.trim()) {        return;
+      if (!text.trim()) {
+        return;
       }
 
       // Split candidate: \n\n = block boundary, \n = line within block
@@ -2551,18 +2588,20 @@ export default function DocPage({ docId }: { docId?: string }) {
       const isMultiBlock = parts.length > 1;
       // If block-selection mode is active, the keydown Ctrl+V handler replaces selected blocks.
       // Don't double-handle it here.
-      if (currentlySelectedIds.size > 0) {        return;
+      if (currentlySelectedIds.size > 0) {
+        return;
       }
 
       // If single-line paste inside an active editor → let Tiptap handle it naturally
-      if (!isMultiBlock && isInsideProseMirror) {        return;
+      if (!isMultiBlock && isInsideProseMirror) {
+        return;
       }
 
       // From here we own the paste event.
       // We must stop propagation so Tiptap's internal paste handler doesn't also fire.
       e.preventDefault();
       e.stopPropagation();
-      
+
 
       if (parts.length === 0) return;
 
@@ -2571,22 +2610,24 @@ export default function DocPage({ docId }: { docId?: string }) {
       if (!anchorBlockId && isInsideProseMirror) {
         // Find which block the active editor belongs to
         const proseMirrorEl = document.activeElement?.closest('[data-block-id]');
-        anchorBlockId = proseMirrorEl?.getAttribute('data-block-id') ?? null;      }
+        anchorBlockId = proseMirrorEl?.getAttribute('data-block-id') ?? null;
+      }
 
       const insertAfterIndex = anchorBlockId
         ? currentBlocks.findIndex(b => b.id === anchorBlockId)
         : currentBlocks.length - 1;
 
-      
+
 
       // Helper: focus a block's editor with retry (React commit may be async)
       const focusBlockWithRetry = (blockId: string, attempts = 0) => {
         const editor = editorRegistryRef.current[blockId];
         if (editor) {
-          editor.commands.focus('end');        } else if (attempts < 10) {
-          
+          editor.commands.focus('end');
+        } else if (attempts < 10) {
+
           setTimeout(() => focusBlockWithRetry(blockId, attempts + 1), 16);
-        } else {        }
+        } else { }
       };
 
       if (isInsideProseMirror && anchorBlockId) {
@@ -2596,12 +2637,12 @@ export default function DocPage({ docId }: { docId?: string }) {
         // This avoids touching blocks state for the anchor block → no re-mount → no cursor loss.
         const anchorEditor = editorRegistryRef.current[anchorBlockId];
         if (anchorEditor && firstPart) {
-          
+
           anchorEditor.commands.insertContent(firstPart);
         }
 
         if (restParts.length === 0) {
-          
+
           return;
         }
 
@@ -2612,7 +2653,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           content: `<p>${part}</p>`,
         }));
 
-        
+
 
         const insertAt = insertAfterIndex >= 0 ? insertAfterIndex + 1 : currentBlocks.length;
         let updatedBlocks = [
@@ -2635,7 +2676,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         setBlocks(updatedBlocks);
         handleSavePage(updatedBlocks);
         setSelectedBlockIds(new Set());
-        setFocusedBlockId(lastNew.id);        setTimeout(() => focusBlockWithRetry(lastNew.id), 0);
+        setFocusedBlockId(lastNew.id); setTimeout(() => focusBlockWithRetry(lastNew.id), 0);
 
       } else {
         // Outside ProseMirror: all parts become new blocks inserted after anchor
@@ -2652,7 +2693,7 @@ export default function DocPage({ docId }: { docId?: string }) {
           ...currentBlocks.slice(insertAt),
         ];
 
-        
+
 
         const lastBlock = updatedBlocks[updatedBlocks.length - 1];
         const isLastBlockEmpty = !lastBlock || !lastBlock.content || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
@@ -2668,13 +2709,13 @@ export default function DocPage({ docId }: { docId?: string }) {
         setBlocks(updatedBlocks);
         handleSavePage(updatedBlocks);
         setSelectedBlockIds(new Set());
-        setFocusedBlockId(lastNew.id);        setTimeout(() => focusBlockWithRetry(lastNew.id), 0);
+        setFocusedBlockId(lastNew.id); setTimeout(() => focusBlockWithRetry(lastNew.id), 0);
       }
     };
 
     // Use capture phase (true) so we intercept the paste/drop before Tiptap's internal handler does.
     document.addEventListener('paste', handleGlobalPaste as EventListener, true);
-    
+
     // For drop events, we also need to allow the drop action by preventing default on dragover
     const handleDragOver = (e: DragEvent) => {
       if (isTaskModalOpenRef.current || isFromTaskModal(e.target)) return;
@@ -2683,10 +2724,10 @@ export default function DocPage({ docId }: { docId?: string }) {
         e.preventDefault();
       }
     };
-    
+
     document.addEventListener('drop', handleGlobalPaste as EventListener, true);
     document.addEventListener('dragover', handleDragOver, true);
-    
+
     return () => {
       document.removeEventListener('paste', handleGlobalPaste as EventListener, true);
       document.removeEventListener('drop', handleGlobalPaste as EventListener, true);
@@ -2717,7 +2758,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   };
 
   const handleUpdateBlockContent = (blockId: string, content: string) => {
-    
+
     // Markdown shortcuts for rapid editing
     if (content === '<p>&gt; </p>') {
       handleTurnInto(blockId, 'collapsible');
@@ -2729,7 +2770,7 @@ export default function DocPage({ docId }: { docId?: string }) {
         }
       }, 0);
     }
-    
+
     if (socket) {
       socket.emit('block_content_update', { docId: id, blockId, content });
     }
@@ -2750,7 +2791,7 @@ export default function DocPage({ docId }: { docId?: string }) {
   const handleDragStart = (e: React.DragEvent, index: number) => {
     e.dataTransfer.effectAllowed = 'move';
     setDraggedBlockIndex(index);
-    
+
     // Set the drag image to the whole block row for better visual feedback
     const rowEl = document.querySelector(`[data-block-id="${blocksRef.current[index]?.id}"]`);
     if (rowEl) {
@@ -2765,19 +2806,19 @@ export default function DocPage({ docId }: { docId?: string }) {
       // Don't spam the console too much for self-hover
       return;
     }
-    
+
     // Hide drop indicator if dragging a selection over itself
     const targetId = blocksRef.current[index]?.id;
     const draggedId = blocksRef.current[draggedBlockIndex]?.id;
     if (targetId && draggedId && selectedBlockIdsRef.current.has(targetId) && selectedBlockIdsRef.current.has(draggedId)) {
       return;
     }
-    
+
     // Determine whether we're in the top or bottom half of the target block
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
     const pos = e.clientY < midY ? 'above' : 'below';
-    
+
     if (dragOverBlockIndex !== index || dragOverPosition !== pos) {
       setDragOverBlockIndex(index);
       setDragOverPosition(pos);
@@ -2816,13 +2857,13 @@ export default function DocPage({ docId }: { docId?: string }) {
         }
       }
       blocksToMove = currentBlocks.slice(draggedBlockIndex, draggedBlockIndex + 1 + numChildren);
-      
+
       const toMoveIds = new Set(blocksToMove.map(b => b.id));
       remainingBlocks = currentBlocks.filter(b => !toMoveIds.has(b.id));
     }
 
     const targetBlock = currentBlocks[index];
-    
+
     if (targetBlock && blocksToMove.find(b => b.id === targetBlock.id)) {
       handleDragEnd();
       return;
@@ -2830,13 +2871,13 @@ export default function DocPage({ docId }: { docId?: string }) {
 
     let insertAt: number;
     let targetDepth = 0;
-    
+
     if (!targetBlock) {
       insertAt = remainingBlocks.length;
     } else {
       const targetIndexInRemaining = remainingBlocks.findIndex(b => b.id === targetBlock.id);
       targetDepth = targetBlock.depth || 0;
-      
+
       if (targetIndexInRemaining === -1) {
         insertAt = remainingBlocks.length;
       } else if (dragOverPosition === 'above') {
@@ -2849,27 +2890,27 @@ export default function DocPage({ docId }: { docId?: string }) {
           // Also expand the target collapsible since we are dropping something into it
           const originalTargetIndex = currentBlocks.findIndex(b => b.id === targetBlock.id);
           if (originalTargetIndex !== -1 && currentBlocks[originalTargetIndex].isCollapsed) {
-             const b = currentBlocks[originalTargetIndex];
-             // we'll update it below when constructing newBlocks
-             // but we don't have to strictly do it here if it's too complicated, let's just focus on depth
+            const b = currentBlocks[originalTargetIndex];
+            // we'll update it below when constructing newBlocks
+            // but we don't have to strictly do it here if it's too complicated, let's just focus on depth
           }
         }
       }
     }
-    
+
     // Calculate the difference in depth for the base dragged block vs the target depth
     const baseDraggedDepth = blocksToMove[0]?.depth || 0;
     const depthDiff = targetDepth - baseDraggedDepth;
 
     // Apply depthDiff to all blocksToMove
     const updatedBlocksToMove = blocksToMove.map(b => ({
-       ...b,
-       depth: Math.max(0, (b.depth || 0) + depthDiff)
+      ...b,
+      depth: Math.max(0, (b.depth || 0) + depthDiff)
     }));
-    
+
     // If we dropped below a collapsed collapsible, we should expand it
     if (targetBlock && targetBlock.type === 'collapsible' && dragOverPosition === 'below') {
-       remainingBlocks = remainingBlocks.map(b => b.id === targetBlock.id ? { ...b, isCollapsed: false } : b);
+      remainingBlocks = remainingBlocks.map(b => b.id === targetBlock.id ? { ...b, isCollapsed: false } : b);
     }
 
     let newBlocks = [
@@ -3189,247 +3230,247 @@ export default function DocPage({ docId }: { docId?: string }) {
         `}</style>
         {activePage ? (
           <div className="flex items-start">
-          {/* Read-only version preview (Google Docs-style). The live editor below stays mounted but hidden. */}
-          {selectedVersionEntry && (
-            <div className={`flex-1 min-w-0 ${pageStyles.fullWidth ? 'max-w-none' : 'max-w-4xl'} mx-auto px-10 py-6`}>
-              <VersionPreview
-                entry={selectedVersionEntry}
-                diffs={selectedVersionDiffs}
-                isCurrent={selectedVersionEntry.version.id === versionEntries[0]?.version.id}
-                typographyClass={`${FONT_STYLE_CLASS[pageStyles.fontStyle]} ${FONT_SIZE_CLASS[pageStyles.fontSize]}`}
-                onRestore={() => setRestoreTarget(selectedVersionEntry.version)}
-                onExit={() => setRightPanel(null)}
-              />
-            </div>
-          )}
-          <div className={`flex-1 min-w-0 ${pageStyles.fullWidth ? 'max-w-none' : 'max-w-4xl'} mx-auto px-10 py-6 space-y-6 ${selectedVersionEntry ? 'hidden' : ''}`}>
-
-            <div className="space-y-2">
-              {pageStyles.showTitle && (
-                <input
-                  type="text"
-                  value={pageTitle}
-                  onChange={(e) => setPageTitle(e.target.value)}
-                  onBlur={() => handleSavePage()}
-                  placeholder="Page Title..."
-                  className="w-full bg-transparent border-none text-4xl font-extrabold text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-700 focus:outline-none tracking-tight"
+            {/* Read-only version preview (Google Docs-style). The live editor below stays mounted but hidden. */}
+            {selectedVersionEntry && (
+              <div className={`flex-1 min-w-0 ${pageStyles.fullWidth ? 'max-w-none' : 'max-w-4xl'} mx-auto px-10 py-6`}>
+                <VersionPreview
+                  entry={selectedVersionEntry}
+                  diffs={selectedVersionDiffs}
+                  isCurrent={selectedVersionEntry.version.id === versionEntries[0]?.version.id}
+                  typographyClass={`${FONT_STYLE_CLASS[pageStyles.fontStyle]} ${FONT_SIZE_CLASS[pageStyles.fontSize]}`}
+                  onRestore={() => setRestoreTarget(selectedVersionEntry.version)}
+                  onExit={() => setRightPanel(null)}
                 />
-              )}
-
-              <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400 flex-wrap">
-                {(() => {
-                  const metaItems: React.ReactNode[] = [];
-                  if (pageStyles.showOwners) {
-                    metaItems.push(
-                      <span key="owner" className="flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center font-bold text-[10px] shadow-sm">
-                          {pageOwner?.name ? pageOwner.name[0] : 'H'}
-                        </span>
-                        <span className="font-semibold text-zinc-700 dark:text-zinc-300">{pageOwner?.name || 'Hannah'}</span>
-                      </span>
-                    );
-                  }
-                  if (pageStyles.showContributors && pageContributors.length > 0) {
-                    metaItems.push(
-                      <span key="contributors" className="flex items-center gap-1.5" title={pageContributors.map((u) => u.name).join(', ')}>
-                        <span className="flex -space-x-1.5">
-                          {pageContributors.slice(0, 4).map((u) => (
-                            <span key={u.id} className="w-5 h-5 rounded-full overflow-hidden ring-2 ring-background bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-[9px]">
-                              {u.avatarUrl
-                                ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full rounded-full object-cover" />
-                                : (u.name?.charAt(0).toUpperCase() || '?')}
-                            </span>
-                          ))}
-                        </span>
-                        <span>
-                          {pageContributors.length} contributor{pageContributors.length === 1 ? '' : 's'}
-                        </span>
-                      </span>
-                    );
-                  }
-                  if (pageStyles.showLastModified) {
-                    metaItems.push(
-                      <span key="modified" className="text-zinc-500 dark:text-zinc-400">Last updated {formatLastModified(lastModifiedAt)}</span>
-                    );
-                  }
-                  if (pageStyles.showStats && pageStats) {
-                    metaItems.push(
-                      <span key="stats" className="text-zinc-500 dark:text-zinc-400 tabular-nums">
-                        {pageStats.words.toLocaleString()} words · {pageStats.readingTime} read
-                      </span>
-                    );
-                  }
-                  return metaItems.flatMap((item, i) => i === 0 ? [item] : [
-                    <span key={`sep-${i}`} className="text-zinc-400 dark:text-zinc-600">•</span>,
-                    item,
-                  ]);
-                })()}
-                <button
-                  onClick={() => { if (rightPanel !== 'history') toggleRightPanel('history'); }}
-                  className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 underline underline-offset-2 transition-colors ml-1"
-                >
-                  Version History
-                </button>
-
-                {savingPage && <span className="text-purple-500 dark:text-purple-400 text-[10px] italic ml-2">Saving...</span>}
               </div>
-            </div>
+            )}
+            <div className={`flex-1 min-w-0 ${pageStyles.fullWidth ? 'max-w-none' : 'max-w-4xl'} mx-auto px-10 py-6 space-y-6 ${selectedVersionEntry ? 'hidden' : ''}`}>
 
-            {/* ── Subpages List ── */}
-            {activePage.subpages && activePage.subpages.length > 0 && pageStyles.subpagesView !== 'hidden' && (() => {
-              const sortedContentSubpages = [...activePage.subpages].sort((a: any, b: any) => {
-                if (doc?.isDailyRollover) {
-                  const timeA = new Date(a.title || '').getTime();
-                  const timeB = new Date(b.title || '').getTime();
-                  if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
-                }
-                return (a.order || 0) - (b.order || 0);
-              });
+              <div className="space-y-2">
+                {pageStyles.showTitle && (
+                  <input
+                    type="text"
+                    value={pageTitle}
+                    onChange={(e) => setPageTitle(e.target.value)}
+                    onBlur={() => handleSavePage()}
+                    placeholder="Page Title..."
+                    className="w-full bg-transparent border-none text-4xl font-extrabold text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-700 focus:outline-none tracking-tight"
+                  />
+                )}
 
-              return (
-                <div className="pt-4 pb-2">
-                  <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold border-b border-zinc-800 pb-2 mb-2 px-2">
-                    <span>Subpages</span>
-                  </div>
-                  {pageStyles.subpagesView === 'table' ? (
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-left text-zinc-500">
-                          <th className="font-medium py-1.5 px-2">Name</th>
-                          <th className="font-medium py-1.5 px-2 w-24">Subpages</th>
-                          <th className="font-medium py-1.5 px-2 w-36">Last updated</th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400 flex-wrap">
+                  {(() => {
+                    const metaItems: React.ReactNode[] = [];
+                    if (pageStyles.showOwners) {
+                      metaItems.push(
+                        <span key="owner" className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center font-bold text-[10px] shadow-sm">
+                            {pageOwner?.name ? pageOwner.name[0] : 'H'}
+                          </span>
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">{pageOwner?.name || 'Hannah'}</span>
+                        </span>
+                      );
+                    }
+                    if (pageStyles.showContributors && pageContributors.length > 0) {
+                      metaItems.push(
+                        <span key="contributors" className="flex items-center gap-1.5" title={pageContributors.map((u) => u.name).join(', ')}>
+                          <span className="flex -space-x-1.5">
+                            {pageContributors.slice(0, 4).map((u) => (
+                              <span key={u.id} className="w-5 h-5 rounded-full overflow-hidden ring-2 ring-background bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-[9px]">
+                                {u.avatarUrl
+                                  ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full rounded-full object-cover" />
+                                  : (u.name?.charAt(0).toUpperCase() || '?')}
+                              </span>
+                            ))}
+                          </span>
+                          <span>
+                            {pageContributors.length} contributor{pageContributors.length === 1 ? '' : 's'}
+                          </span>
+                        </span>
+                      );
+                    }
+                    if (pageStyles.showLastModified) {
+                      metaItems.push(
+                        <span key="modified" className="text-zinc-500 dark:text-zinc-400">Last updated {formatLastModified(lastModifiedAt)}</span>
+                      );
+                    }
+                    if (pageStyles.showStats && pageStats) {
+                      metaItems.push(
+                        <span key="stats" className="text-zinc-500 dark:text-zinc-400 tabular-nums">
+                          {pageStats.words.toLocaleString()} words · {pageStats.readingTime} read
+                        </span>
+                      );
+                    }
+                    return metaItems.flatMap((item, i) => i === 0 ? [item] : [
+                      <span key={`sep-${i}`} className="text-zinc-400 dark:text-zinc-600">•</span>,
+                      item,
+                    ]);
+                  })()}
+                  <button
+                    onClick={() => { if (rightPanel !== 'history') toggleRightPanel('history'); }}
+                    className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 underline underline-offset-2 transition-colors ml-1"
+                  >
+                    Version History
+                  </button>
+
+                  {savingPage && <span className="text-purple-500 dark:text-purple-400 text-[10px] italic ml-2">Saving...</span>}
+                </div>
+              </div>
+
+              {/* ── Subpages List ── */}
+              {activePage.subpages && activePage.subpages.length > 0 && pageStyles.subpagesView !== 'hidden' && (() => {
+                const sortedContentSubpages = [...activePage.subpages].sort((a: any, b: any) => {
+                  if (doc?.isDailyRollover) {
+                    const timeA = new Date(a.title || '').getTime();
+                    const timeB = new Date(b.title || '').getTime();
+                    if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+                  }
+                  return (a.order || 0) - (b.order || 0);
+                });
+
+                return (
+                  <div className="pt-4 pb-2">
+                    <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold border-b border-zinc-800 pb-2 mb-2 px-2">
+                      <span>Subpages</span>
+                    </div>
+                    {pageStyles.subpagesView === 'table' ? (
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-zinc-500">
+                            <th className="font-medium py-1.5 px-2">Name</th>
+                            <th className="font-medium py-1.5 px-2 w-24">Subpages</th>
+                            <th className="font-medium py-1.5 px-2 w-36">Last updated</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedContentSubpages.slice(0, subpageLimit).map((sub: any) => (
+                            <tr
+                              key={sub.id}
+                              onClick={() => handleSelectPage(sub)}
+                              className="border-t border-zinc-800/60 hover:bg-zinc-800/40 cursor-pointer transition-colors group"
+                            >
+                              <td className="py-2 px-2">
+                                <span className="flex items-center gap-2 text-sm text-zinc-200 font-medium group-hover:text-white">
+                                  <FileText className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                                  <span className="truncate">{sub.title || 'Untitled Page'}</span>
+                                </span>
+                              </td>
+                              <td className="py-2 px-2 text-zinc-400 tabular-nums">{sub.subpages?.length ?? 0}</td>
+                              <td className="py-2 px-2 text-zinc-400">{sub.updatedAt ? formatLastModified(sub.updatedAt) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="space-y-1">
                         {sortedContentSubpages.slice(0, subpageLimit).map((sub: any) => (
-                          <tr
+                          <div
                             key={sub.id}
                             onClick={() => handleSelectPage(sub)}
-                            className="border-t border-zinc-800/60 hover:bg-zinc-800/40 cursor-pointer transition-colors group"
+                            className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-zinc-800/40 cursor-pointer group transition-colors"
                           >
-                            <td className="py-2 px-2">
-                              <span className="flex items-center gap-2 text-sm text-zinc-200 font-medium group-hover:text-white">
-                                <FileText className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                                <span className="truncate">{sub.title || 'Untitled Page'}</span>
-                              </span>
-                            </td>
-                            <td className="py-2 px-2 text-zinc-400 tabular-nums">{sub.subpages?.length ?? 0}</td>
-                            <td className="py-2 px-2 text-zinc-400">{sub.updatedAt ? formatLastModified(sub.updatedAt) : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                  <div className="space-y-1">
-                    {sortedContentSubpages.slice(0, subpageLimit).map((sub: any) => (
-                      <div
-                        key={sub.id}
-                        onClick={() => handleSelectPage(sub)}
-                        className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-zinc-800/40 cursor-pointer group transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="p-1 rounded bg-zinc-800/80 group-hover:bg-zinc-700 transition-colors">
-                            <FileText className="w-3.5 h-3.5 text-zinc-400" />
+                            <div className="flex items-center gap-3">
+                              <div className="p-1 rounded bg-zinc-800/80 group-hover:bg-zinc-700 transition-colors">
+                                <FileText className="w-3.5 h-3.5 text-zinc-400" />
+                              </div>
+                              <span className="text-sm text-zinc-200 font-medium group-hover:text-white transition-colors">{sub.title || 'Untitled Page'}</span>
+                            </div>
                           </div>
-                          <span className="text-sm text-zinc-200 font-medium group-hover:text-white transition-colors">{sub.title || 'Untitled Page'}</span>
-                        </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
+                    {activePage.subpages.length > subpageLimit && (
+                      <div className="flex justify-center mt-3">
+                        <button
+                          onClick={() => setSubpageLimit(prev => prev + 10)}
+                          className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold text-zinc-400 hover:text-zinc-100 bg-secondary/50 hover:bg-zinc-800 border border-zinc-800/60 hover:border-zinc-700 rounded-full transition-all cursor-pointer shadow-sm"
+                        >
+                          <span>See More</span>
+                          <span className="text-[10px] font-mono bg-zinc-800/80 px-1.5 py-0.5 rounded-md">
+                            {activePage.subpages.length - subpageLimit} left
+                          </span>
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  )}
-                  {activePage.subpages.length > subpageLimit && (
-                    <div className="flex justify-center mt-3">
-                      <button
-                        onClick={() => setSubpageLimit(prev => prev + 10)}
-                        className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold text-zinc-400 hover:text-zinc-100 bg-secondary/50 hover:bg-zinc-800 border border-zinc-800/60 hover:border-zinc-700 rounded-full transition-all cursor-pointer shadow-sm"
-                      >
-                        <span>See More</span>
-                        <span className="text-[10px] font-mono bg-zinc-800/80 px-1.5 py-0.5 rounded-md">
-                          {activePage.subpages.length - subpageLimit} left
-                        </span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+                );
+              })()}
 
-            <div className={`space-y-1.5 pt-2 ${FONT_STYLE_CLASS[pageStyles.fontStyle]} ${FONT_SIZE_CLASS[pageStyles.fontSize]} ${
-              // Block focus mode: dim every row except the one holding the caret
-              pageStyles.focusBlock && focusedBlockId
-                ? '[&>[data-block-id]]:transition-opacity [&>[data-block-id]:not(:focus-within)]:opacity-30'
-                : ''
-            }`}>
-              {(() => {
-                if (pageContentState === 'loading') {
-                  return (
-                    <div className="space-y-3 px-2 py-1 animate-pulse" aria-busy="true" aria-label="Loading page">
-                      {[40, 72, 64, 80, 56, 68, 48, 76].map((width, i) => (
-                        <div key={i} className="h-4 rounded bg-zinc-800/60" style={{ width: `${width}%` }} />
-                      ))}
-                    </div>
-                  );
-                }
-                if (pageContentState === 'error') {
-                  return (
-                    <div className="px-2 py-6 text-sm text-zinc-400 flex items-center gap-3">
-                      <span>This page couldn&apos;t be loaded.</span>
-                      <button
-                        type="button"
-                        onClick={() => activePageRef.current && openPage({ ...activePageRef.current, content: undefined })}
-                        className="px-3 py-1 rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
+              <div className={`space-y-1.5 pt-2 ${FONT_STYLE_CLASS[pageStyles.fontStyle]} ${FONT_SIZE_CLASS[pageStyles.fontSize]} ${
+                // Block focus mode: dim every row except the one holding the caret
+                pageStyles.focusBlock && focusedBlockId
+                  ? '[&>[data-block-id]]:transition-opacity [&>[data-block-id]:not(:focus-within)]:opacity-30'
+                  : ''
+                }`}>
+                {(() => {
+                  if (pageContentState === 'loading') {
+                    return (
+                      <div className="space-y-3 px-2 py-1 animate-pulse" aria-busy="true" aria-label="Loading page">
+                        {[40, 72, 64, 80, 56, 68, 48, 76].map((width, i) => (
+                          <div key={i} className="h-4 rounded bg-zinc-800/60" style={{ width: `${width}%` }} />
+                        ))}
+                      </div>
+                    );
+                  }
+                  if (pageContentState === 'error') {
+                    return (
+                      <div className="px-2 py-6 text-sm text-zinc-400 flex items-center gap-3">
+                        <span>This page couldn&apos;t be loaded.</span>
+                        <button
+                          type="button"
+                          onClick={() => activePageRef.current && openPage({ ...activePageRef.current, content: undefined })}
+                          className="px-3 py-1 rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    );
+                  }
+                  if (blocks.length === 0) {
+                    return (
+                      <div
+                        onClick={() => handleAddBlock('text')}
+                        className="py-1 px-2 cursor-text"
                       >
-                        Retry
-                      </button>
-                    </div>
-                  );
-                }
-                if (blocks.length === 0) {
-                  return (
-                    <div
-                      onClick={() => handleAddBlock('text')}
-                      className="py-1 px-2 cursor-text"
-                    >
-                      <input
-                        type="text"
-                        autoFocus
-                        placeholder="Start typing..."
-                        onFocus={() => handleAddBlock('text')}
-                        className="w-full bg-transparent border-none text-white text-sm font-semibold focus:outline-none placeholder-zinc-700"
-                      />
-                    </div>
-                  );
-                }
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder="Start typing..."
+                          onFocus={() => handleAddBlock('text')}
+                          className="w-full bg-transparent border-none text-white text-sm font-semibold focus:outline-none placeholder-zinc-700"
+                        />
+                      </div>
+                    );
+                  }
 
-                // Compute hidden blocks based on depth and isCollapsed
-                const hiddenBlockIds = new Set<string>();
-                let currentCollapsedDepth: number | null = null;
-                for (let i = 0; i < blocks.length; i++) {
-                  const block = blocks[i];
-                  const depth = block.depth || 0;
-                  
-                  if (currentCollapsedDepth !== null) {
-                    if (depth > currentCollapsedDepth) {
-                      hiddenBlockIds.add(block.id);
-                      continue;
-                    } else {
-                      currentCollapsedDepth = null;
+                  // Compute hidden blocks based on depth and isCollapsed
+                  const hiddenBlockIds = new Set<string>();
+                  let currentCollapsedDepth: number | null = null;
+                  for (let i = 0; i < blocks.length; i++) {
+                    const block = blocks[i];
+                    const depth = block.depth || 0;
+
+                    if (currentCollapsedDepth !== null) {
+                      if (depth > currentCollapsedDepth) {
+                        hiddenBlockIds.add(block.id);
+                        continue;
+                      } else {
+                        currentCollapsedDepth = null;
+                      }
+                    }
+
+                    if (block.type === 'collapsible' && block.isCollapsed) {
+                      currentCollapsedDepth = depth;
                     }
                   }
-                  
-                  if (block.type === 'collapsible' && block.isCollapsed) {
-                    currentCollapsedDepth = depth;
-                  }
-                }
 
-                return blocks.map((block, index) => {
-                  if (hiddenBlockIds.has(block.id)) return null;
-                  
-                  const isLockedBySomeoneElse = block.lockedBy && block.lockedBy !== currentUser?.id;
-                  const isSelected = selectedBlockIds.has(block.id);
-                  const isFirstSelected = isSelected && Array.from(selectedBlockIds)[0] === block.id;
+                  return blocks.map((block, index) => {
+                    if (hiddenBlockIds.has(block.id)) return null;
 
-                  return (
+                    const isLockedBySomeoneElse = block.lockedBy && block.lockedBy !== currentUser?.id;
+                    const isSelected = selectedBlockIds.has(block.id);
+                    const isFirstSelected = isSelected && Array.from(selectedBlockIds)[0] === block.id;
+
+                    return (
                       <DocBlockRow
                         key={block.id}
                         block={block}
@@ -3533,93 +3574,92 @@ export default function DocPage({ docId }: { docId?: string }) {
                           }
                         }}
                       />
-                  );
-                });
-              })()}
-            </div>
+                    );
+                  });
+                })()}
+              </div>
 
-            {/* Clickable area at the bottom to append a new block (Innate Line) */}
-            <div
-              className={`min-h-[50vh] w-full cursor-text ${dragOverBlockIndex === blocks.length ? 'border-t-2 border-[#6b4cff] bg-blue-500/5' : ''}`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (draggedBlockIndex !== null) setDragOverBlockIndex(blocks.length);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (draggedBlockIndex !== null) handleDrop(e, blocks.length);
-              }}
-              onClick={() => {
-                if (blocks.length === 0) {
-                  handleAddBlock('text');
-                } else {
-                  const lastBlock = blocks[blocks.length - 1];
-                  const isEmpty = !lastBlock.content || lastBlock.content === '' || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
-                  if (!isEmpty) {
+              {/* Clickable area at the bottom to append a new block (Innate Line) */}
+              <div
+                className={`min-h-[50vh] w-full cursor-text ${dragOverBlockIndex === blocks.length ? 'border-t-2 border-[#6b4cff] bg-blue-500/5' : ''}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (draggedBlockIndex !== null) setDragOverBlockIndex(blocks.length);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggedBlockIndex !== null) handleDrop(e, blocks.length);
+                }}
+                onClick={() => {
+                  if (blocks.length === 0) {
                     handleAddBlock('text');
                   } else {
-                    handleFocusBlock(lastBlock.id);
-                    setTimeout(() => {
-                      const editor = editorRegistryRef.current[lastBlock.id];
-                      if (editor) editor.commands.focus('end');
-                    }, 10);
+                    const lastBlock = blocks[blocks.length - 1];
+                    const isEmpty = !lastBlock.content || lastBlock.content === '' || lastBlock.content === '<p></p>' || lastBlock.content === '<p><br></p>';
+                    if (!isEmpty) {
+                      handleAddBlock('text');
+                    } else {
+                      handleFocusBlock(lastBlock.id);
+                      setTimeout(() => {
+                        const editor = editorRegistryRef.current[lastBlock.id];
+                        if (editor) editor.commands.focus('end');
+                      }, 10);
+                    }
                   }
-                }
-              }}
-            />
-          </div>
+                }}
+              />
+            </div>
 
-          {/* ── Page outline (headings in this page) ── */}
-          {pageStyles.showOutline && !selectedVersionEntry && (
-            <nav className="hidden lg:block w-52 shrink-0 sticky top-0 self-start max-h-screen overflow-y-auto custom-scrollbar py-6 pr-4 select-none">
-              <div className="text-[11px] font-medium text-zinc-500 mb-2 px-2">On this page</div>
-              {pageOutline.length === 0 ? (
-                <p className="text-[11px] text-zinc-600 italic px-2">Add headings to build an outline.</p>
-              ) : (
-                <div className="flex flex-col gap-0.5">
-                  {pageOutline.map((item, i) => (
-                    <button
-                      key={`${item.blockId}-${i}`}
-                      onClick={() => {
-                        document.querySelector(`[data-block-id="${item.blockId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      }}
-                      className={`text-left text-xs truncate rounded-md py-1 pr-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40 transition-colors cursor-pointer ${
-                        item.level === 1 ? 'pl-2' : item.level === 2 ? 'pl-5' : 'pl-8'
-                      }`}
-                      title={item.text}
-                    >
-                      {item.text}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </nav>
-          )}
+            {/* ── Page outline (headings in this page) ── */}
+            {pageStyles.showOutline && !selectedVersionEntry && (
+              <nav className="hidden lg:block w-52 shrink-0 sticky top-0 self-start max-h-screen overflow-y-auto custom-scrollbar py-6 pr-4 select-none">
+                <div className="text-[11px] font-medium text-zinc-500 mb-2 px-2">On this page</div>
+                {pageOutline.length === 0 ? (
+                  <p className="text-[11px] text-zinc-600 italic px-2">Add headings to build an outline.</p>
+                ) : (
+                  <div className="flex flex-col gap-0.5">
+                    {pageOutline.map((item, i) => (
+                      <button
+                        key={`${item.blockId}-${i}`}
+                        onClick={() => {
+                          document.querySelector(`[data-block-id="${item.blockId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        className={`text-left text-xs truncate rounded-md py-1 pr-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40 transition-colors cursor-pointer ${item.level === 1 ? 'pl-2' : item.level === 2 ? 'pl-5' : 'pl-8'
+                          }`}
+                        title={item.text}
+                      >
+                        {item.text}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </nav>
+            )}
 
-          {/* ── Floating tool rail (stays in view while the page scrolls) ── */}
-          <div className="sticky top-6 self-start shrink-0 flex flex-col items-center gap-1 mt-6 mr-3 select-none">
-            <button
-              onClick={() => toggleRightPanel('styles')}
-              className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'styles' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
-              title="Page styles"
-            >
-              <CaseSensitive className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => toggleRightPanel('transfer')}
-              className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'transfer' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
-              title="Export & import"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => toggleRightPanel('history')}
-              className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'history' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
-              title="Version history"
-            >
-              <History className="w-4 h-4" />
-            </button>
-          </div>
+            {/* ── Floating tool rail (stays in view while the page scrolls) ── */}
+            <div className="sticky top-6 self-start shrink-0 flex flex-col items-center gap-1 mt-6 mr-3 select-none">
+              <button
+                onClick={() => toggleRightPanel('styles')}
+                className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'styles' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                title="Page styles"
+              >
+                <CaseSensitive className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => toggleRightPanel('transfer')}
+                className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'transfer' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                title="Export & import"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => toggleRightPanel('history')}
+                className={`p-1.5 rounded-md transition-colors cursor-pointer ${rightPanel === 'history' ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                title="Version history"
+              >
+                <History className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         ) : (
           /* Document Overview State */

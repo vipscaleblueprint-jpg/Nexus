@@ -22,6 +22,8 @@ import { useAppStore } from '@/lib/store';
 
 export interface ActivityCardProps {
   id: string;
+  taskId?: string;
+  subtaskId?: string;
   type: string;
   actorId?: string;
   actorName: string;
@@ -37,6 +39,7 @@ export interface ActivityCardProps {
   details?: any;
   compact?: boolean;
   onClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   onMouseEnter?: () => void;
   onClear?: (e: React.MouseEvent) => void;
   onMarkAsRead?: (e: React.MouseEvent) => void;
@@ -147,6 +150,8 @@ export function StatusPill({
 
 export function ActivityCard({
   id,
+  taskId,
+  subtaskId,
   type,
   actorId,
   actorName,
@@ -162,6 +167,7 @@ export function ActivityCard({
   details,
   compact = false,
   onClick,
+  onContextMenu,
   onMouseEnter,
   onClear,
   onMarkAsRead,
@@ -623,6 +629,10 @@ export function ActivityCard({
   return (
     <div
       onClick={onClick}
+      onContextMenu={onContextMenu}
+      onAuxClick={onContextMenu}
+      data-task-id={taskId || details?.taskId}
+      data-subtask-id={subtaskId || details?.subtaskId || undefined}
       className={`group/card relative flex items-start cursor-pointer rounded-xl transition-all duration-150 border ${
         compact ? 'p-2.5 gap-2' : 'p-3 sm:p-3.5 gap-2.5 sm:gap-3'
       } ${

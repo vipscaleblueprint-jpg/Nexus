@@ -61,6 +61,7 @@ import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";
 import { getPriorityConfig } from "@/lib/priority";
 import { isGalaxyTask } from "@/lib/galaxyTask";
+import { openTaskInNewTab } from "@/lib/taskNavigation";
 
 const FOCUS_REFETCH_INTERVAL_MS = 60 * 1000;
 
@@ -1016,6 +1017,16 @@ function WorkspaceDashboardContent({
     setSelectedTask(taskToOpen);
   };
 
+  const handleTaskCtrlRightClick = useCallback((e: React.MouseEvent, taskId?: string | null, subtaskId?: string | null) => {
+    if (e.ctrlKey || e.metaKey || e.button === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetId = subtaskId || taskId;
+      if (!targetId) return;
+      openTaskInNewTab(targetId, { event: e });
+    }
+  }, []);
+
   // Deep-linking: open task automatically if ?task= or ?subtask= parameter is present on initial load
   useEffect(() => {
     if (loadingTasks && tasks.length === 0) return;
@@ -1892,7 +1903,17 @@ function WorkspaceDashboardContent({
                             <div
                               key={task.id}
                               id={`task-row-${task.id}`}
-                              onClick={() => openRow(task)}
+                              onClick={(e) => {
+                                if (e.ctrlKey || e.metaKey) {
+                                  handleTaskCtrlRightClick(e, task.id);
+                                  return;
+                                }
+                                openRow(task);
+                              }}
+                              onAuxClick={(e) => {
+                                if (e.button === 1) handleTaskCtrlRightClick(e, task.id);
+                              }}
+                              onContextMenu={(e) => handleTaskCtrlRightClick(e, task.id)}
                               className={`group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''} ${(task as any).isSubtask ? 'bg-violet-500/[0.05] border-l-2 border-l-violet-500/70' : ''}`}
                             >
                               {((task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE') && (
@@ -2158,7 +2179,17 @@ function WorkspaceDashboardContent({
                       return (
                         <div
                           key={audit.id}
-                          onClick={() => openRow(taskRow, audit.subtask?.id ?? null)}
+                          onClick={(e) => {
+                            if (e.ctrlKey || e.metaKey) {
+                              handleTaskCtrlRightClick(e, taskRow.id, audit.subtask?.id ?? null);
+                              return;
+                            }
+                            openRow(taskRow, audit.subtask?.id ?? null);
+                          }}
+                          onAuxClick={(e) => {
+                            if (e.button === 1) handleTaskCtrlRightClick(e, taskRow.id, audit.subtask?.id ?? null);
+                          }}
+                          onContextMenu={(e) => handleTaskCtrlRightClick(e, taskRow.id, audit.subtask?.id ?? null)}
                           className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
                         >
                           <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">
@@ -2310,7 +2341,17 @@ function WorkspaceDashboardContent({
                               <div
                                 key={task.id}
                                 id={`task-row-${task.id}`}
-                                onClick={() => openRow(task)}
+                                onClick={(e) => {
+                                  if (e.ctrlKey || e.metaKey) {
+                                    handleTaskCtrlRightClick(e, task.id);
+                                    return;
+                                  }
+                                  openRow(task);
+                                }}
+                                onAuxClick={(e) => {
+                                  if (e.button === 1) handleTaskCtrlRightClick(e, task.id);
+                                }}
+                                onContextMenu={(e) => handleTaskCtrlRightClick(e, task.id)}
                                 className={`group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${(task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE' ? 'opacity-75' : ''} ${(task as any).isSubtask ? 'bg-violet-500/[0.05] border-l-2 border-l-violet-500/70' : ''}`}
                               >
                                 {((task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE') && (

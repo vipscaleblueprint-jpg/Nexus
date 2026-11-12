@@ -1,0 +1,3091 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "ma",
+              "type": "array"
+            },
+            {
+              "name": "client",
+              "type": "array"
+            },
+            {
+              "name": "date"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        3248,
+        2224
+      ],
+      "id": "80230471-78dc-48a2-b240-02bdcd58dc62",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/time-entry-v3",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        3968,
+        1856
+      ],
+      "id": "825a6690-0944-4fc9-aae0-ca3d429ffc45",
+      "name": "Webhook",
+      "webhookId": "40ecd517-14b4-464a-981e-c199ea4343df"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "assistant",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "is_active",
+              "condition": "eq",
+              "keyValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3536,
+        2224
+      ],
+      "id": "65bc1f49-9946-4bca-a34d-02988e173847",
+      "name": "Get many rows",
+      "credentials": {
+        "supabaseApi": {
+          "id": "mh3ith1Nvr3Qus2M",
+          "name": "VIPSCALE"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3808,
+        2224
+      ],
+      "id": "789306b5-63b4-4258-a80d-c139c63846fc",
+      "name": "MA"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "clients",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "isActive",
+              "condition": "eq",
+              "keyValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        4048,
+        2224
+      ],
+      "id": "586a1dfe-5257-4327-8852-dbfa10efb5b6",
+      "name": "Get many rows1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "mh3ith1Nvr3Qus2M",
+          "name": "VIPSCALE"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        4320,
+        2224
+      ],
+      "id": "ce1959e5-3ead-47e6-803f-e1f27c220125",
+      "name": "Client"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3664,
+        2512
+      ],
+      "id": "61cc49ac-d2a3-4bfa-bea0-bacf60268399",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "resource": "timeEntry",
+        "workspaceId": "={{\n  $('Client').first().json.data.find(\n    c => c.name === $json.client\n  )?.clockify_id\n}}",
+        "start": "={{\nDateTime.fromFormat(\n  `${$json.date} ${$json.time_in}`,\n  \"cccc, MMMM d, yyyy h:mm:ss a\"\n).toFormat(\"yyyy-MM-dd HH:mm:ss\")\n}}",
+        "additionalFields": {
+          "description": "={{ `${$json.task} | ${$json.description}` }}",
+          "end": "={{\nDateTime.fromFormat(\n  `${$json.date} ${$json.time_out}`,\n  \"cccc, MMMM d, yyyy h:mm:ss a\"\n).toFormat(\"yyyy-MM-dd HH:mm:ss\")\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.clockify",
+      "typeVersion": 1,
+      "position": [
+        3984,
+        2720
+      ],
+      "id": "ef3f0517-0323-471e-b0c6-90d14ebae078",
+      "name": "Create a time entry",
+      "credentials": {
+        "clockifyApi": {
+          "id": "6ACgBBns9FTbKenF",
+          "name": "Clockify account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4368,
+        2496
+      ],
+      "id": "be747030-3034-42f3-998a-dafd8eb4f08f",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 3,
+              "triggerAtMinute": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        4016,
+        1552
+      ],
+      "id": "034a5c73-c868-45f2-9156-1b950b727bb5",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "XwWb7kDw2bYycOCy",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/XwWb7kDw2bYycOCy",
+          "cachedResultName": "ATR"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ma": "={{ [] }}",
+            "client": "={{ [] }}",
+            "date": "={{\nDateTime.fromISO($json.timestamp)\n  .minus({ days: 1 })\n  .toFormat('MM/dd/yyyy')\n}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ma",
+              "displayName": "ma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "client",
+              "displayName": "client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4320,
+        1552
+      ],
+      "id": "ca763ecd-9611-4c5c-809e-5af59e0f1e14",
+      "name": "Call 'ATR'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SnINkCgTiNdBOjHt",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SnINkCgTiNdBOjHt",
+          "cachedResultName": "ATR | Decision"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Client": "={{ $json.data }}",
+            "MA": "={{ $('MA').item.json.data }}",
+            "ma": "={{ $('When Executed by Another Workflow').item.json.ma || [] }}",
+            "client": "={{ $('When Executed by Another Workflow').item.json.client || [] }}",
+            "date": "={{ $('When Executed by Another Workflow').item.json.date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ma",
+              "displayName": "ma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "client",
+              "displayName": "client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "MA",
+              "displayName": "MA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "Client",
+              "displayName": "Client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3312,
+        2512
+      ],
+      "id": "94965c5a-5afb-4866-a15c-b2001b0fa2f0",
+      "name": "Call 'ATR | Decision'",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "XwWb7kDw2bYycOCy",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/XwWb7kDw2bYycOCy",
+          "cachedResultName": "ATR"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ma": "={{ $json.body.ma || [] }}",
+            "client": "={{ $json.body.client || [] }}",
+            "date": "={{ $json.body.date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ma",
+              "displayName": "ma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array"
+            },
+            {
+              "id": "client",
+              "displayName": "client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array"
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4208,
+        1856
+      ],
+      "id": "da83043b-11e2-4fc0-a67a-e9edc82a59a9",
+      "name": "Call 'ATR'1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1744,
+        3376
+      ],
+      "id": "722bdb5f-d381-4ebf-a84d-9e7b18adca16",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3952,
+        3488
+      ],
+      "id": "6dd732d6-2395-4bfb-94ac-ad302450339d",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "getAll",
+        "team": "9008153890",
+        "space": "90080285261",
+        "folder": "90080691949",
+        "list": "={{ $json.clickup_id }}",
+        "filters": {
+          "statuses": [
+            "daily",
+            "weekly",
+            "monthly",
+            "pending",
+            "in progress",
+            "revision",
+            "waiting",
+            "in review",
+            "checking",
+            "on-hold"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.clickUp",
+      "typeVersion": 1,
+      "position": [
+        4256,
+        3728
+      ],
+      "id": "cb0213fd-0c0e-4fb2-93ff-0d1999375f36",
+      "name": "Get many tasks",
+      "alwaysOutputData": true,
+      "credentials": {
+        "clickUpOAuth2Api": {
+          "id": "HcSNzz0UTUd12CXV",
+          "name": "VIP"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "15DCkm5fI4zx9mcpxnvh6zIt0I_wjn34YuMAT_G4GTR8",
+          "mode": "list",
+          "cachedResultName": "Notes for Today",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/15DCkm5fI4zx9mcpxnvh6zIt0I_wjn34YuMAT_G4GTR8/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "2025",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/15DCkm5fI4zx9mcpxnvh6zIt0I_wjn34YuMAT_G4GTR8/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Clickup Task Link": "={{ $json.url }}",
+            "Client Name": "={{ $('Loop Over Items1').item.json.name }}",
+            "Task Name": "={{ $json.name }}",
+            "Status": "={{ $json.status.status.toTitleCase() }}"
+          },
+          "matchingColumns": [
+            "Clickup Task Link"
+          ],
+          "schema": [
+            {
+              "id": "Start Date",
+              "displayName": "Start Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Client Name",
+              "displayName": "Client Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Task Name",
+              "displayName": "Task Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Clickup Task Link",
+              "displayName": "Clickup Task Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "💎",
+              "displayName": "💎",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Assigned",
+              "displayName": "Assigned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Complexity",
+              "displayName": "Complexity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "displayName": "Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Deliverables Links",
+              "displayName": "Deliverables Links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Comments - Paul",
+              "displayName": "Comments - Paul",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Comments - Jen",
+              "displayName": "Comments - Jen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Communication Channels",
+              "displayName": "Communication Channels",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Collaborators",
+              "displayName": "Collaborators",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4576,
+        3712
+      ],
+      "id": "e1c23a56-b952-48e0-8eb5-77a696d688fe",
+      "name": "Append or update row in sheet",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "W4zbL8SjgZl0ZMq6",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4848,
+        3712
+      ],
+      "id": "ba92e39f-07af-4b42-90c9-36b9c052e1b8",
+      "name": "Wait",
+      "webhookId": "8aa9a1f5-ba2b-460d-8328-ebc527325127"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4640,
+        3488
+      ],
+      "id": "c28adf8c-d056-459a-8b25-3e41c719365e",
+      "name": "No Operation, do nothing1"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "assistant",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "is_active",
+              "condition": "eq",
+              "keyValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2784,
+        3392
+      ],
+      "id": "f7398311-176d-41e9-a8ef-36188007750d",
+      "name": "Get many rows2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "mh3ith1Nvr3Qus2M",
+          "name": "VIPSCALE"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4592,
+        2704
+      ],
+      "id": "c62feb88-4f51-41c3-b77c-009b81c8f4b2",
+      "name": "Wait1",
+      "webhookId": "8e0bbb6f-cc5e-447e-8fa1-ba81c6f93729"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afa4b443-04c0-4a03-8a84-ab8423e102da",
+              "name": "description",
+              "value": "={{ $('Create a time entry').item.json.description }}",
+              "type": "string"
+            },
+            {
+              "id": "7fc4fd1a-a809-4b15-9810-60fb379ddcdc",
+              "name": "=start",
+              "value": "={{ $('Create a time entry').item.json.timeInterval.start }}",
+              "type": "string"
+            },
+            {
+              "id": "a7b38f3c-1ba4-4334-835b-0932ad8d9005",
+              "name": "end",
+              "value": "={{ $('Create a time entry').item.json.timeInterval.end }}",
+              "type": "string"
+            },
+            {
+              "id": "05951a19-14da-4ea2-a213-59a00144cd7f",
+              "name": "client",
+              "value": "={{ $('Loop Over Items').item.json.client }}",
+              "type": "string"
+            },
+            {
+              "id": "9a13866a-8d79-4cef-bfa2-cc1198fd4a7f",
+              "name": "is_recorded",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4800,
+        2704
+      ],
+      "id": "f1ccd250-e023-46c5-a753-67cb623a953d",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3024,
+        3392
+      ],
+      "id": "79fa2cf2-52ee-40b7-9d2e-65a047d82fdb",
+      "name": "Loop Over Items2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Loop Over Items2').item.json.daily_schedule_sheet }}",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "=2025",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "IsRecorded?:": "No"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Date:",
+              "displayName": "Date:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Time In:",
+              "displayName": "Time In:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Time Out:",
+              "displayName": "Time Out:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Duration (Num):",
+              "displayName": "Duration (Num):",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Duration (Hours):",
+              "displayName": "Duration (Hours):",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Client:",
+              "displayName": "Client:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Time Tracker:",
+              "displayName": "Time Tracker:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task:",
+              "displayName": "Task:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "DC",
+              "displayName": "DC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Deliverables Description:",
+              "displayName": "Task Deliverables Description:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Update and Deliverables:",
+              "displayName": "Task Update and Deliverables:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Link:",
+              "displayName": "Task Link:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Status:",
+              "displayName": "Task Status:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Was Delivarebles Submitted?:",
+              "displayName": "Was Delivarebles Submitted?:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "IsRecorded?:",
+              "displayName": "IsRecorded?:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Double Checked By:",
+              "displayName": "Double Checked By:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Automation:",
+              "displayName": "Automation:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Notes:",
+              "displayName": "Notes:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "comment",
+              "displayName": "comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "cache",
+              "displayName": "cache",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date done",
+              "displayName": "date done",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3552,
+        3600
+      ],
+      "id": "943ff71a-22b5-4f25-b3a6-edf39b81287e",
+      "name": "Update row in sheet1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "W4zbL8SjgZl0ZMq6",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $json.daily_schedule_sheet }}",
+          "__regex": "https:\\/\\/(?:drive|docs)\\.google\\.com(?:\\/.*|)\\/d\\/([0-9a-zA-Z\\-_]+)(?:\\/.*|)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "2025",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Date:",
+              "lookupValue": "Tuesday, July 14, 2026"
+            },
+            {
+              "lookupColumn": "Time Tracker:",
+              "lookupValue": "Clockify"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3296,
+        3600
+      ],
+      "id": "b70cc089-3905-4f10-94ea-12082a8d2b4c",
+      "name": "Get row(s) in sheet",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "W4zbL8SjgZl0ZMq6",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3472,
+        3376
+      ],
+      "id": "b9b81fe0-9d7a-46b3-b2e5-9f7cde10d712",
+      "name": "No Operation, do nothing2"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3728,
+        3600
+      ],
+      "id": "7a056eb4-e05e-4af1-a58f-8f952c394e2e",
+      "name": "Wait2",
+      "webhookId": "ea157e36-d0d5-4bf9-8984-e4472d7f733f"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        4048,
+        2496
+      ],
+      "id": "1ab4af4f-839c-4e01-9984-e5bb528374ac",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4288,
+        2960
+      ],
+      "id": "b5f61253-8010-4dff-961d-d4163bc3d337",
+      "name": "Wait3",
+      "webhookId": "95e6e202-cf91-42cb-ab39-f7f3038a9c7d"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "55a6bb4c-d089-4b6a-888a-2629446288bb",
+              "name": "data",
+              "value": "={{ $json.time_entry || $json.data }}",
+              "type": "array"
+            },
+            {
+              "id": "d2c38763-bf3b-4e9c-845a-fb2412383d89",
+              "name": "success",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4672,
+        1856
+      ],
+      "id": "646ef3d5-e737-413d-befa-0507e9dde3f9",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "afa4b443-04c0-4a03-8a84-ab8423e102da",
+              "name": "description",
+              "value": "={{ $('Loop Over Items').item.json.description }}",
+              "type": "string"
+            },
+            {
+              "id": "7fc4fd1a-a809-4b15-9810-60fb379ddcdc",
+              "name": "=start",
+              "value": "={{ $('Loop Over Items').item.json.time_in }}",
+              "type": "string"
+            },
+            {
+              "id": "a7b38f3c-1ba4-4334-835b-0932ad8d9005",
+              "name": "end",
+              "value": "={{ $('Loop Over Items').item.json.time_out }}",
+              "type": "string"
+            },
+            {
+              "id": "05951a19-14da-4ea2-a213-59a00144cd7f",
+              "name": "client",
+              "value": "={{ $('Loop Over Items').item.json.client }}",
+              "type": "string"
+            },
+            {
+              "id": "9a13866a-8d79-4cef-bfa2-cc1198fd4a7f",
+              "name": "is_recorded",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4496,
+        2960
+      ],
+      "id": "1f21d3a2-f6f5-402f-81a5-0f114dd22090",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "16jhIyA89RfkliY-88RRkc27VpcqzHfgYGHsNIYc1H-I",
+          "mode": "list",
+          "cachedResultName": "(Used in automation) - Clients List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16jhIyA89RfkliY-88RRkc27VpcqzHfgYGHsNIYc1H-I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 583061340,
+          "mode": "list",
+          "cachedResultName": "Clients",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16jhIyA89RfkliY-88RRkc27VpcqzHfgYGHsNIYc1H-I/edit#gid=583061340"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2016,
+        3664
+      ],
+      "id": "86a17f8b-6b97-48b8-931d-7195e8dd0515",
+      "name": "Get row(s) in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "W4zbL8SjgZl0ZMq6",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "clients",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $json[\"Client Name\"] }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "clockify_id",
+              "fieldValue": "={{ $json[\"Clockify ID\"] }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2272,
+        3664
+      ],
+      "id": "3922bfae-fc1c-4a4e-b589-66c3b9dde7dd",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "mh3ith1Nvr3Qus2M",
+          "name": "VIPSCALE"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nconst base = DateTime.fromISO($json.timestamp);\n\nfor (let i = 1; i <= 7; i++) {\n  results.push({\n    json: {\n      date: base.minus({ days: i }).toFormat('MM/dd/yyyy')\n    }\n  });\n}\n\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3504,
+        704
+      ],
+      "id": "85072493-ced0-4b37-8dff-0d62c7c3b622",
+      "name": "Generate Week Dates"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtMinute": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        3280,
+        704
+      ],
+      "id": "eb8a7923-cdc4-4de7-ba06-f5077858d1fe",
+      "name": "Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3744,
+        704
+      ],
+      "id": "dbe9babf-7701-41f0-83aa-bdfe63e681fa",
+      "name": "Loop Over Items3"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "XwWb7kDw2bYycOCy",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/XwWb7kDw2bYycOCy",
+          "cachedResultName": "ATR"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ma": "={{ [] }}",
+            "client": "={{ [] }}",
+            "date": "={{ $json.date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ma",
+              "displayName": "ma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "client",
+              "displayName": "client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4016,
+        800
+      ],
+      "id": "93418c8c-b2f7-4ab7-a8d1-495bb1ee01c4",
+      "name": "Call 'ATR'2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4272,
+        688
+      ],
+      "id": "7aeb32ff-fbbf-42cc-82ae-b743c6e8e164",
+      "name": "No Operation, do nothing3"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4272,
+        864
+      ],
+      "id": "6e7e5d23-8b67-4eca-88df-4174fe53aac1",
+      "name": "Wait4",
+      "webhookId": "dca4f752-0663-4bd1-8b66-8d2ee79eb44e"
+    },
+    {
+      "parameters": {
+        "resource": "workspace",
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.clockify",
+      "typeVersion": 1,
+      "position": [
+        2048,
+        3424
+      ],
+      "id": "c7e3c4b4-b36d-4d39-8713-6e3fd383acf5",
+      "name": "Get many workspaces",
+      "credentials": {
+        "clockifyApi": {
+          "id": "6ACgBBns9FTbKenF",
+          "name": "Clockify account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "00a64d51-06ff-40da-a61a-965d168ca6d8",
+              "name": "id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "14704b08-68de-43aa-8717-1b7d3211c9a3",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2464,
+        3456
+      ],
+      "id": "18b4a4d3-e302-4e31-8387-391584909b1e",
+      "name": "Edit Fields3"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao",
+          "mode": "list",
+          "cachedResultName": "Duncan Time Tracker",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Time Record",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "={{ $json.description }}",
+            "time out": "={{ $json.endTime }}",
+            "time in": "={{ $json.startTime }}",
+            "date": "={{ $json.date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Column 1",
+              "displayName": "Column 1",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time in",
+              "displayName": "time in",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time out",
+              "displayName": "time out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "duration(numeric)",
+              "displayName": "duration(numeric)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "duration",
+              "displayName": "duration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4752,
+        1216
+      ],
+      "id": "3a908c50-a0da-4377-880c-1780c6bddc9c",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ktyXBgmJx8SIV6RZ",
+          "name": "Jenesia 07"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const timeEntries = $input.first().json.data;\n\nconst filtered = timeEntries.filter(item => item.client === \"Duncan Campbell\");\n\nconst result = filtered.map(item => {\n  const start = DateTime.fromISO(item.start, { zone: 'utc' }).setZone('Asia/Manila');\n  const end = DateTime.fromISO(item.end, { zone: 'utc' }).setZone('Asia/Manila');\n\n  return {\n    json: {\n      date: start.toFormat('cccc, LLLL d, yyyy'),\n      startTime: start.toFormat('h:mm a'),\n      endTime: end.toFormat('h:mm a'),\n      description: item.description\n    }\n  };\n});\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        1216
+      ],
+      "id": "b5966fcf-86d1-4d28-9146-bc312bfabf0c",
+      "name": "Auto Duncan Tracker"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao",
+          "mode": "list",
+          "cachedResultName": "Duncan Time Tracker",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Time Record",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "={{ $json.description }}",
+            "time out": "={{ $json.endTime }}",
+            "time in": "={{ $json.startTime }}",
+            "date": "={{ $json.date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Column 1",
+              "displayName": "Column 1",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time in",
+              "displayName": "time in",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time out",
+              "displayName": "time out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "duration(numeric)",
+              "displayName": "duration(numeric)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "duration",
+              "displayName": "duration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4752,
+        864
+      ],
+      "id": "0b9cb709-edcf-42bb-ae9a-24133d377194",
+      "name": "Append row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ktyXBgmJx8SIV6RZ",
+          "name": "Jenesia 07"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const timeEntries = $input.first().json.data;\n\nconst filtered = timeEntries.filter(item => item.client === \"Duncan Campbell\");\n\nconst result = filtered.map(item => {\n  const start = DateTime.fromISO(item.start, { zone: 'utc' }).setZone('Asia/Manila');\n  const end = DateTime.fromISO(item.end, { zone: 'utc' }).setZone('Asia/Manila');\n\n  return {\n    json: {\n      date: start.toFormat('cccc, LLLL d, yyyy'),\n      startTime: start.toFormat('h:mm a'),\n      endTime: end.toFormat('h:mm a'),\n      description: item.description\n    }\n  };\n});\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4512,
+        864
+      ],
+      "id": "e808ebd7-9b5b-4ea6-845e-b5e2eac517f5",
+      "name": "Auto Duncan Tracker1"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao",
+          "mode": "list",
+          "cachedResultName": "Duncan Time Tracker",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1784822381,
+          "mode": "list",
+          "cachedResultName": "Copy of Time Record",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit#gid=1784822381"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "={{ $json.description }}",
+            "time out": "={{ $json.endTime }}",
+            "time in": "={{ $json.startTime }}",
+            "date": "={{ $json.date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Column 1",
+              "displayName": "Column 1",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time in",
+              "displayName": "time in",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time out",
+              "displayName": "time out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "duration(numeric)",
+              "displayName": "duration(numeric)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "duration",
+              "displayName": "duration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2256,
+        3136
+      ],
+      "id": "7c2a7d4f-7661-46f1-a459-4699f0389d4c",
+      "name": "Append row in sheet2",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ktyXBgmJx8SIV6RZ",
+          "name": "Jenesia 07"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const timeEntries = $input.first().json.data;\n\nconst filtered = timeEntries.filter(item => item.client === \"Duncan Campbell\");\n\nconst result = filtered.map(item => {\n  const start = DateTime.fromISO(item.start, { zone: 'utc' }).setZone('Asia/Manila');\n  const end = DateTime.fromISO(item.end, { zone: 'utc' }).setZone('Asia/Manila');\n\n  return {\n    json: {\n      date: start.toFormat('cccc, LLLL d, yyyy'),\n      startTime: start.toFormat('h:mm a'),\n      endTime: end.toFormat('h:mm a'),\n      description: item.description\n    }\n  };\n});\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        3136
+      ],
+      "id": "8ecae732-4748-41af-9bbb-7e5d5e25b529",
+      "name": "Auto Duncan Tracker2"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 352,
+        "width": 1584
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3888,
+        1776
+      ],
+      "typeVersion": 1,
+      "id": "4006350f-4293-48e0-9134-2fe9dbd530f6",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Loop Over Items').item.json.daily_schedule }}",
+          "__regex": "https:\\/\\/(?:drive|docs)\\.google\\.com(?:\\/.*|)\\/d\\/([0-9a-zA-Z\\-_]+)(?:\\/.*|)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "2025",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Loop Over Items').item.json.row_number }}",
+            "IsRecorded?:": "={{ $('Loop Over Items').item.json.is_recorded?.includes('Yes') ? $('Loop Over Items').item.json.is_recorded : 'Yes' }}",
+            "Automation:": "={{ 'A | ' + DateTime.fromISO($json.timeInterval.start).toFormat('yyyy-MM-dd hh:mm a') + ' - ' + DateTime.fromISO($json.timeInterval.end).toFormat('hh:mm a') }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Date:",
+              "displayName": "Date:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Time In:",
+              "displayName": "Time In:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Time Out:",
+              "displayName": "Time Out:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Duration (Num):",
+              "displayName": "Duration (Num):",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Duration (Hours):",
+              "displayName": "Duration (Hours):",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Client:",
+              "displayName": "Client:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Time Tracker:",
+              "displayName": "Time Tracker:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task:",
+              "displayName": "Task:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "DC",
+              "displayName": "DC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Deliverables Description:",
+              "displayName": "Task Deliverables Description:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Update and Deliverables:",
+              "displayName": "Task Update and Deliverables:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Link:",
+              "displayName": "Task Link:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Task Status:",
+              "displayName": "Task Status:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Was Delivarebles Submitted?:",
+              "displayName": "Was Delivarebles Submitted?:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "IsRecorded?:",
+              "displayName": "IsRecorded?:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Double Checked By:",
+              "displayName": "Double Checked By:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Automation:",
+              "displayName": "Automation:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Notes:",
+              "displayName": "Notes:",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "comment",
+              "displayName": "comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "cache",
+              "displayName": "cache",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date done",
+              "displayName": "date done",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4288,
+        2704
+      ],
+      "id": "3de22860-ed21-4e29-92ee-adc439e9eda1",
+      "name": "Update row in sheet2",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "W4zbL8SjgZl0ZMq6",
+          "name": "Google Sheets account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 1024,
+        "width": 1840
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3168,
+        2192
+      ],
+      "typeVersion": 1,
+      "id": "09e0b3ff-e8c5-420f-8e45-d594396e0cb0",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 544,
+        "width": 1056
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3936,
+        1184
+      ],
+      "typeVersion": 1,
+      "id": "3ae5cd37-d6f3-4a86-85bf-8d6602d1d67a",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 480,
+        "width": 1792
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3200,
+        608
+      ],
+      "typeVersion": 1,
+      "id": "8a77466b-440d-4522-86e5-8733ec143b36",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao",
+          "mode": "list",
+          "cachedResultName": "Duncan Time Tracker",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Time Record",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "={{ $json.description }}",
+            "time out": "={{ $json.endTime }}",
+            "time in": "={{ $json.startTime }}",
+            "date": "={{ $json.date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Column 1",
+              "displayName": "Column 1",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time in",
+              "displayName": "time in",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time out",
+              "displayName": "time out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "duration(numeric)",
+              "displayName": "duration(numeric)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "duration",
+              "displayName": "duration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1472,
+        2112
+      ],
+      "id": "48c29621-a8a4-4c65-82fc-88fd740d4bcc",
+      "name": "Append row in sheet3",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ktyXBgmJx8SIV6RZ",
+          "name": "Jenesia 07"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const timeEntries = $input.first().json.data;\n\nconst filtered = timeEntries.filter(item => item.client === \"Duncan Campbell\");\n\nconst result = filtered.map(item => {\n  const start = DateTime.fromISO(item.start, { zone: 'utc' }).setZone('Asia/Manila');\n  const end = DateTime.fromISO(item.end, { zone: 'utc' }).setZone('Asia/Manila');\n\n  return {\n    json: {\n      date: start.toFormat('cccc, LLLL d, yyyy'),\n      startTime: start.toFormat('h:mm a'),\n      endTime: end.toFormat('h:mm a'),\n      description: item.description\n    }\n  };\n});\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        2112
+      ],
+      "id": "6fcb457e-66b6-42b9-b5cb-43f7f2618c56",
+      "name": "Auto Duncan Tracker3"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        5040,
+        1856
+      ],
+      "id": "1ff192e0-323f-48df-9151-7625dcae1d82",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "daysInterval": 2
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        432,
+        1344
+      ],
+      "id": "ab92bc57-01f7-403d-a110-f2d439d19cb7",
+      "name": "Schedule Trigger2"
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "getAll",
+        "workspaceId": "=69dc6b42c0b059d73b4b352f",
+        "returnAll": true,
+        "filters": {
+          "name": ""
+        }
+      },
+      "type": "n8n-nodes-base.clockify",
+      "typeVersion": 1,
+      "position": [
+        752,
+        1712
+      ],
+      "id": "f7e98712-b23f-43de-bd2b-f04687d5a400",
+      "name": "Get many tasks1",
+      "credentials": {
+        "clockifyApi": {
+          "id": "6ACgBBns9FTbKenF",
+          "name": "Clockify account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.clockify.me/api/v1/workspaces/69dc6b42c0b059d73b4b352f/user/61069278677197621ff05633/time-entries",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "clockifyApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "start",
+              "value": "2026-01-01T00:00:00Z"
+            },
+            {
+              "name": "end",
+              "value": "2026-12-31T23:59:59Z"
+            },
+            {
+              "name": "page-size",
+              "value": "1000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bff6aaee-1858-451b-ac69-97b5d308e8e2",
+      "name": "Get Duncan Tasks This Year",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        768,
+        1344
+      ],
+      "credentials": {
+        "clockifyApi": {
+          "id": "FOuuMR7uMq9Jy6SA",
+          "name": "Jenesia"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao",
+          "mode": "list",
+          "cachedResultName": "Duncan Time Tracker",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1784822381,
+          "mode": "list",
+          "cachedResultName": "Time Record",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TghsTSO1YoQXG47e2Gyvu2A8DVxmbRy4hycba-Frjao/edit#gid=1784822381"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $json.id }}",
+            "date": "={{ DateTime.fromISO($json.timeInterval.start).setZone('Asia/Manila').toFormat('cccc, LLLL d, yyyy') }}",
+            "time out": "={{ DateTime.fromISO($json.timeInterval.end).setZone('Asia/Manila').toFormat('h:mm a') }}",
+            "time in": "={{ DateTime.fromISO($json.timeInterval.start).setZone('Asia/Manila').toFormat('h:mm a') }}",
+            "task": "={{ $json.description }}"
+          },
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time in",
+              "displayName": "time in",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "time out",
+              "displayName": "time out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "duration(numeric)",
+              "displayName": "duration(numeric)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "duration",
+              "displayName": "duration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1088,
+        1344
+      ],
+      "id": "b5454a16-1d5d-4867-ba56-1d2f572fdf50",
+      "name": "Append or update row in sheet2",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ktyXBgmJx8SIV6RZ",
+          "name": "Jenesia 07"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Call 'ATR'1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "MA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MA": {
+      "main": [
+        [
+          {
+            "node": "Get many rows1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows1": {
+      "main": [
+        [
+          {
+            "node": "Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client": {
+      "main": [
+        [
+          {
+            "node": "Call 'ATR | Decision'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create a time entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a time entry": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Call 'ATR'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'ATR'": {
+      "main": [
+        []
+      ]
+    },
+    "Call 'ATR | Decision'": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'ATR'1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get many workspaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get many tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many tasks": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append or update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait3": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Week Dates": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Generate Week Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items3": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call 'ATR'2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'ATR'2": {
+      "main": [
+        [
+          {
+            "node": "Wait4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait4": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many workspaces": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Duncan Tracker": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet1": {
+      "main": [
+        []
+      ]
+    },
+    "Auto Duncan Tracker1": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Duncan Tracker2": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet2": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Duncan Tracker3": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger2": {
+      "main": [
+        [
+          {
+            "node": "Get Duncan Tasks This Year",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Duncan Tasks This Year": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4cc403a4c2e950b3504b7bcf03ba4a07b56850f8e3d68f3eaf4db7820d08d8d9"
+  }
+}

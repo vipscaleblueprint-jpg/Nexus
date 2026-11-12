@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react';
+import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 
 import {
@@ -21,6 +22,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, WorkspaceRole } from '@/lib/types';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
+import { openTaskInNewTab } from '@/lib/taskNavigation';
 import { isGalaxyTask } from '@/lib/galaxyTask';
 import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil, ArrowDownUp } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
@@ -239,7 +241,23 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   onTaskReorder,
   onAddTaskClick, onTaskClick, customGroups, onAddGroup, onGroupReorder, listStatuses = [], onStatusChange, onStatusDelete, onDeleteGroup, onRenameGroup, onStatusReorder }: Props) {
 
+  const router = useRouter();
   const boardContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleBoardContextMenu = useCallback((e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey || e.button === 1) {
+      const target = e.target as HTMLElement | null;
+      const cardEl = target?.closest('[data-task-id]') as HTMLElement | null;
+      if (cardEl) {
+        const taskId = cardEl.getAttribute('data-task-id');
+        if (taskId) {
+          e.preventDefault();
+          e.stopPropagation();
+          openTaskInNewTab(taskId, { event: e });
+        }
+      }
+    }
+  }, []);
   // Select only what the board uses, so unrelated store changes (e.g. other tasks updating) don't re-render it
   const { currentUser, workspaceRoles, loadRoles, hydrateRolesFromCache, workspaceTeams, loadTeams, hydrateTeamsFromCache, isGalaxyFilterActive, setActiveMobileTask } = useAppStore(useShallow((s) => ({
     currentUser: s.currentUser,
@@ -1452,6 +1470,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
           ref={boardContainerRef}
           onWheel={handleWheelScroll}
           onMouseDown={handleBoardMouseDown}
+          onAuxClick={handleBoardContextMenu}
+          onContextMenu={handleBoardContextMenu}
           onScroll={(e) => {
             if (e.currentTarget.scrollTop !== 0) {
               e.currentTarget.scrollTop = 0;

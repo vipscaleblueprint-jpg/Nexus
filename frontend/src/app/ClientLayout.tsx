@@ -20,6 +20,7 @@ import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } fro
 import { formatTabTitle, resolveRouteTitle, updateFaviconBadge } from '@/lib/tabManager';
 import { applyTheme, getStoredTheme } from '@/lib/theme';
 import { playNotificationSound, preloadCustomSound } from '@/lib/soundNotification';
+import { initGlobalTaskNewTabListeners } from '@/lib/taskNavigation';
 
 // Global guard for browsers/Next.js devtools releasing inactive pointer capture
 if (typeof window !== 'undefined' && typeof Element !== 'undefined' && Element.prototype.releasePointerCapture) {
@@ -105,6 +106,11 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
   // Opt-in performance monitor (?perf=1): logs request timings, freezes and memory to the console
   useEffect(() => {
     initPerfMonitor();
+  }, []);
+
+  // Global capture listeners for Ctrl+RightClick, Ctrl+Click, and MiddleClick to open tasks in new tab
+  useEffect(() => {
+    return initGlobalTaskNewTabListeners();
   }, []);
 
   useEffect(() => {

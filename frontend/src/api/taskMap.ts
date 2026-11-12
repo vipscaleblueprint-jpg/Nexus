@@ -159,6 +159,24 @@ export function isSessionProjectBased(
   });
 }
 
+/**
+ * Check if a task has been explicitly assigned or queued to a specific user by a PM on Task Map
+ */
+export function hasPmAssignmentForUser(task?: TaskMapItem | null, userId?: string | null): boolean {
+  if (!task || !userId) return false;
+  let reviewsList = task.taskMap?.pmReviews;
+  if (typeof reviewsList === 'string') {
+    try {
+      reviewsList = JSON.parse(reviewsList);
+    } catch {
+      reviewsList = [];
+    }
+  }
+  if (!Array.isArray(reviewsList)) return false;
+  const pmAssign = reviewsList.find((r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo === userId);
+  return Boolean(pmAssign);
+}
+
 export interface DailyRolloverResult {
   success: boolean;
   rolledCount: number;
@@ -260,10 +278,14 @@ export const taskMapApi = {
     });
   },
 
-  assignTask: async (taskId: string, assigneeId: string | null): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
+  assignTask: async (
+    taskId: string,
+    assigneeId: string | null,
+    mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE'
+  ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     return apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/assign`, {
       method: 'PATCH',
-      body: JSON.stringify({ assigneeId }),
+      body: JSON.stringify({ assigneeId, mode }),
     });
   },
 

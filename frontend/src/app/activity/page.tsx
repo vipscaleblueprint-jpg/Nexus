@@ -579,17 +579,6 @@ function ActivityFeedContent() {
     }
   }, [searchParams]);
 
-  // Sync selectedTask to URL searchParams
-  useEffect(() => {
-    if (typeof window !== 'undefined' && selectedTask) {
-      const url = new URL(window.location.href);
-      if (url.searchParams.get('task') !== selectedTask.id) {
-        url.searchParams.set('task', selectedTask.id);
-        window.history.replaceState(null, '', url.pathname + url.search);
-      }
-    }
-  }, [selectedTask]);
-
   // Refetch when page, limit, filters, view mode or user changes
   useEffect(() => {
     fetchData();

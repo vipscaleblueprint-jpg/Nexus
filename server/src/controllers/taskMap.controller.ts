@@ -430,16 +430,29 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
       if (isExcluded) return false;
 
-      // Available tasks pool holds Available Task, unassigned tasks, Pending, Revision, Hand-over, and On-hold tasks.
-      // Waiting is routed to CRM Map; daily, weekly, monthly, recurring are excluded.
-      const isAvailable = mapStatuses.includes('AVAILABLETASK') || mapStatuses.some((st: string) => st.includes('AVAILABLE'));
-      const isUnassigned = !t.assigneeId && (!t.assignees || t.assignees.length === 0);
-      const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
-      const isRevision = s === 'REVISION' || mapStatuses.includes('REVISION');
-      const isHandOver = s === 'HANDOVER' || s.includes('HANDOVER') || mapStatuses.some((st: string) => st.includes('HANDOVER') || st.includes('HAND-OVER'));
-      const isOnHold = s === 'ONHOLD' || s.includes('HOLD') || mapStatuses.some((st: string) => st.includes('HOLD'));
+      // Available tasks pool holds all non-closed, non-cadence workflow tasks
+      // that are NOT currently claimed by an active live worker or queued to a user column by a PM.
+      // Direct Assignment is removed so user columns start clean and empty.
+      let reviewsList = t.taskMap?.pmReviews;
+      if (typeof reviewsList === 'string') {
+        try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
+      }
+      if (!Array.isArray(reviewsList)) reviewsList = [];
 
-      return isAvailable || isUnassigned || isPending || isRevision || isHandOver || isOnHold;
+      const isLiveWorking = Boolean(
+        t.progress?.maName &&
+        !t.progress?.timeOut &&
+        t.progress?.timeIn
+      );
+      const hasPmAssignment = reviewsList.some(
+        (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo
+      );
+
+      if (isLiveWorking || hasPmAssignment) {
+        return false;
+      }
+
+      return true;
     };
 
     const isTaskUrgent = (t: any) => {
@@ -1229,7 +1242,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
 export const assignTaskMapTask = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { assigneeId } = req.body;
+    const { assigneeId, mode = 'QUEUE' } = req.body;
     const user = (req as any).user;
 
     if (!user) return res.status(401).json({ error: 'Authentication required' });
@@ -1254,13 +1267,22 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    // Guard: If task is already assigned to this user, return early without wiping statuses or modifying fields
+    const record = await getOrCreateTaskMapRecord(id);
+    let reviewsList = record.pmReviews;
+    if (typeof reviewsList === 'string') {
+      try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
+    }
+    if (!Array.isArray(reviewsList)) reviewsList = [];
+    const existingPmAssignment = reviewsList.find((r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo === assigneeId);
+
+    // Guard: If task is already assigned to this user and has matching PM assignment mode, return early
     const isAlreadyAssigned =
       assigneeId &&
       (currentTask.assigneeId === assigneeId ||
-        (currentTask.assignees || []).some((a) => a.id === assigneeId));
+        (currentTask.assignees || []).some((a) => a.id === assigneeId)) &&
+      existingPmAssignment &&
+      existingPmAssignment.mode === mode;
     if (isAlreadyAssigned) {
-      const record = await getOrCreateTaskMapRecord(id);
       return res.json({
         success: true,
         task: currentTask,
@@ -1271,7 +1293,6 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
     // Guard: If task is already unassigned and request is to unassign, return early only if already properly in available pool
     const isAlreadyUnassigned = !assigneeId && !currentTask.assigneeId && (currentTask.assignees || []).length === 0;
     if (isAlreadyUnassigned) {
-      const record = await getOrCreateTaskMapRecord(id);
       const hasAvailableStatus = (record.statuses || []).some((s: string) => s.toUpperCase() === 'AVAILABLE TASK');
       if (hasAvailableStatus && record.handedOver) {
         return res.json({
@@ -1299,8 +1320,10 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
 
       updateData.assigneeId = assigneeId;
       updateData.assignees = { set: [{ id: assigneeId }] };
-      if (!isCadenceTask) {
+      if (mode === 'IN_PROGRESS' && !isCadenceTask) {
         updateData.status = 'IN PROGRESS';
+      } else if (!currentTask.status) {
+        updateData.status = 'Pending';
       }
     } else {
       updateData.assigneeId = null;
@@ -1330,14 +1353,7 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
     });
 
     // Remove Available / Pending / Revision statuses if assigned to a user column; add Available Task if unassigned back to pool
-    const record = await getOrCreateTaskMapRecord(id);
     let newStatuses = record.statuses || [];
-    let reviewsList = record.pmReviews;
-    if (typeof reviewsList === 'string') {
-      try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
-    }
-    if (!Array.isArray(reviewsList)) reviewsList = [];
-
     let reviewsModified = false;
     let handedOver = record.handedOver;
 
@@ -1347,6 +1363,18 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
       });
       handedOver = false;
+
+      // Record explicit PM assignment so task appears in that user's column
+      reviewsList = reviewsList.filter((r: any) => r?.type !== 'PM_ASSIGNMENT');
+      reviewsList.push({
+        type: 'PM_ASSIGNMENT',
+        assignedTo: assigneeId,
+        assignedBy: user.id,
+        assignedByName: user.name || user.email,
+        mode: mode || 'QUEUE',
+        assignedAt: new Date().toISOString(),
+      });
+      reviewsModified = true;
 
       // If assigning to a different user, close any active Upwork session for the previous assignee
       if (currentTask.assigneeId && currentTask.assigneeId !== assigneeId) {
@@ -1371,6 +1399,10 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         const up = s.toUpperCase().replace(/[\s_-]+/g, '');
         return !up.startsWith('UPWORK');
       });
+
+      // Clear PM assignment when returning to pool
+      reviewsList = reviewsList.filter((r: any) => r?.type !== 'PM_ASSIGNMENT');
+      reviewsModified = true;
 
       // Close any active Upwork session and complete any unclosed sheet session
       for (const r of reviewsList) {
@@ -2286,7 +2318,16 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
       if (!cleanedStatuses.includes('Available Task')) {
         cleanedStatuses.push('Available Task');
       }
-      await updateTaskMapRecord(t.id, { statuses: cleanedStatuses });
+      let revs = rec.pmReviews;
+      if (typeof revs === 'string') {
+        try { revs = JSON.parse(revs); } catch { revs = []; }
+      }
+      if (Array.isArray(revs)) {
+        revs = revs.filter((r: any) => r?.type !== 'PM_ASSIGNMENT');
+      } else {
+        revs = [];
+      }
+      await updateTaskMapRecord(t.id, { statuses: cleanedStatuses, pmReviews: revs, handedOver: true });
       await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
       resetTaskIds.push(t.id);
     }

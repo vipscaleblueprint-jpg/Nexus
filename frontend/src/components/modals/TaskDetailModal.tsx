@@ -740,11 +740,18 @@ export function TaskDetailModalContent({
     }
   }, [scrollToComments, targetCommentId]);
 
+  const hasPushedSubtaskHistoryRef = useRef(false);
+
   const setActiveSubtask = useCallback((st: any) => {
     if (!st) {
       userClosedSubtaskRef.current = true;
       initialSubtaskIdRef.current = null;
-      if (typeof window !== 'undefined') {
+      if (hasPushedSubtaskHistoryRef.current) {
+        hasPushedSubtaskHistoryRef.current = false;
+        if (typeof window !== 'undefined') {
+          window.history.back();
+        }
+      } else if (typeof window !== 'undefined') {
         const url = new URL(window.location.href);
         if (url.searchParams.has('subtask')) {
           url.searchParams.delete('subtask');
@@ -758,12 +765,30 @@ export function TaskDetailModalContent({
         const url = new URL(window.location.href);
         if (url.searchParams.get('subtask') !== st.id) {
           url.searchParams.set('subtask', st.id);
-          window.history.replaceState(null, '', url.pathname + url.search);
+          window.history.pushState({ nexusSubtaskModal: st.id }, '', url.pathname + url.search);
+          hasPushedSubtaskHistoryRef.current = true;
         }
       }
     }
     setActiveSubtaskState(st);
   }, []);
+
+  // Intercept browser back button when viewing a subtask to return to the parent task
+  useEffect(() => {
+    if (!activeSubtask || typeof window === 'undefined') return;
+
+    const handleSubtaskPopState = (e: PopStateEvent) => {
+      e.stopImmediatePropagation();
+      userClosedSubtaskRef.current = true;
+      hasPushedSubtaskHistoryRef.current = false;
+      setActiveSubtaskState(null);
+    };
+
+    window.addEventListener('popstate', handleSubtaskPopState);
+    return () => {
+      window.removeEventListener('popstate', handleSubtaskPopState);
+    };
+  }, [activeSubtask]);
 
   // Keep activeSubtask synced with task.subtasks, or resolve target subtask from URL on mount/refresh
   useEffect(() => {
@@ -9975,6 +10000,8 @@ export function TaskDetailModal(props: Props) {
   // Fields the user changed while the background fetch below was in flight; its (older) copy must not
   // overwrite them, or the edit appears to revert.
   const locallyEditedKeysRef = useRef<Set<string>>(new Set());
+  const hasPushedHistoryRef = useRef(false);
+  const isHandlingPopStateRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -10217,12 +10244,73 @@ export function TaskDetailModal(props: Props) {
         url.searchParams.set('task', taskId);
         if (subtaskId) url.searchParams.set('subtask', subtaskId);
         else url.searchParams.delete('subtask');
-        window.history.pushState(null, '', url.pathname + url.search);
+        window.history.pushState({ nexusTaskModal: taskId }, '', url.pathname + url.search);
+        hasPushedHistoryRef.current = true;
       }
     };
     window.addEventListener('open-task-detail', handleOpenTaskDetail);
     return () => window.removeEventListener('open-task-detail', handleOpenTaskDetail);
   }, [props.isOpen]);
+
+  // Synchronize modal with browser history so Back button goes back to where it was opened
+  useEffect(() => {
+    if (!props.isOpen || !fullTask?.id || typeof window === 'undefined') {
+      hasPushedHistoryRef.current = false;
+      return;
+    }
+
+    // Do not manage modal history stack on dedicated standalone task route
+    if (window.location.pathname.startsWith('/tasks/')) {
+      return;
+    }
+
+    if (!hasPushedHistoryRef.current) {
+      const url = new URL(window.location.href);
+      const existingTaskParam = url.searchParams.get('task');
+      if (existingTaskParam !== fullTask.id) {
+        url.searchParams.set('task', fullTask.id);
+        window.history.pushState(
+          { nexusTaskModal: fullTask.id },
+          '',
+          url.pathname + url.search
+        );
+        hasPushedHistoryRef.current = true;
+      } else {
+        window.history.replaceState(
+          { nexusTaskModal: fullTask.id },
+          '',
+          url.pathname + url.search
+        );
+        hasPushedHistoryRef.current = true;
+      }
+    }
+
+    const handlePopState = () => {
+      if (hasPushedHistoryRef.current) {
+        hasPushedHistoryRef.current = false;
+        isHandlingPopStateRef.current = true;
+        props.onClose();
+        setTimeout(() => {
+          isHandlingPopStateRef.current = false;
+        }, 120);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [props.isOpen, fullTask?.id, props.onClose]);
+
+  const handleSafeClose = useCallback(() => {
+    if (hasPushedHistoryRef.current && !isHandlingPopStateRef.current) {
+      hasPushedHistoryRef.current = false;
+      if (typeof window !== 'undefined') {
+        window.history.back();
+      }
+    }
+    props.onClose();
+  }, [props.onClose]);
 
   useEffect(() => {
     if (props.mode === 'modal' && props.isOpen) {
@@ -10268,6 +10356,7 @@ export function TaskDetailModal(props: Props) {
             <TaskDetailModalContent
               {...props}
               task={fullTask}
+              onClose={handleSafeClose}
               onUpdateTask={handleUpdateTask}
             />
           </motion.div>
@@ -10290,7 +10379,7 @@ export function TaskDetailModal(props: Props) {
           className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-0 md:p-4 cursor-pointer task-detail-modal overflow-hidden"
           onPointerDown={(e) => {
             if (e.target === e.currentTarget) {
-              props.onClose();
+              handleSafeClose();
             }
           }}
         >
@@ -10304,6 +10393,7 @@ export function TaskDetailModal(props: Props) {
             <TaskDetailModalContent
               {...props}
               task={fullTask}
+              onClose={handleSafeClose}
               onUpdateTask={handleUpdateTask}
             />
           </motion.div>

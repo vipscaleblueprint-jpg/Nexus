@@ -225,17 +225,21 @@ export const TaskMapCrmView: React.FC<Props> = ({
   // Discover all users who hold a CRM role
   const crmUsers = React.useMemo(() => {
     const map = new Map<string, any>();
-    const candidates = [...(allUsers || []), ...(shiftUsers || [])];
+    const candidates = [
+      ...(currentUser ? [currentUser] : []),
+      ...(allUsers || []),
+      ...(shiftUsers || []),
+    ];
     for (const u of candidates) {
       if (!u || !u.id) continue;
       if (map.has(u.id)) continue;
-      if (isCrmUser(u)) {
+      if (isCrmUser(u) || (currentUser?.id === u.id && hasCrmAccess(currentUser))) {
         map.set(u.id, u);
       }
     }
     const list = Array.from(map.values());
     return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [allUsers, shiftUsers]);
+  }, [allUsers, shiftUsers, currentUser]);
 
   // Combined tasks
   const combinedTasks = React.useMemo(() => {
@@ -599,25 +603,62 @@ export const TaskMapCrmView: React.FC<Props> = ({
     },
   ];
 
-  // Separate pinned and unpinned columns, moving search-matched CRM member columns to the most left side
-  const crmSearchMatches = allColumns.filter((c) => c.isMember && isCrmMemberSearchMatch(c.memberUser));
-  const searchMatchedIds = new Set(crmSearchMatches.map((c) => c.id));
-  const otherPinnedCols = allColumns.filter((c) => pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
-  const otherUnpinnedCols = allColumns.filter((c) => !pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
+  // Priority ranking & sorting for CRM member columns:
+  // 1. Search-matching CRM columns move to the front
+  // 2. Pinned columns come next
+  // 3. Current viewing user column next (showing on the right side of CRM Pool)
+  // 4. Alphabetical order (A-Z)
+  const curUserId = currentUser?.id;
+  const curUserName = (currentUser?.name || '').trim().toLowerCase();
 
+  const isCurrentViewer = (u: any) => {
+    if (!u) return false;
+    if (curUserId && u.id === curUserId) return true;
+    if (curUserName && (u.name || '').trim().toLowerCase() === curUserName) return true;
+    return false;
+  };
+
+  const poolCol = allColumns.find((c) => c.id === 'col-crm-pool') || allColumns[0];
   const sentCol = allColumns.find((c) => c.id === 'col-crm-sent');
   const closedCol = allColumns.find((c) => c.id === 'col-crm-closed');
+  const memberCols = allColumns.filter((c) => c.isMember);
 
-  const orderedColumns: CrmColumnDef[] = cleanSearch && crmSearchMatches.length > 0
-    ? [
-      allColumns[0], // col-crm-pool
-      ...crmSearchMatches,
-      ...otherPinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-sent' && c.id !== 'col-crm-closed'),
-      ...otherUnpinnedCols.filter((c) => c.id !== 'col-crm-pool' && c.id !== 'col-crm-sent' && c.id !== 'col-crm-closed'),
-      ...(sentCol ? [sentCol] : []),
-      ...(closedCol ? [closedCol] : []),
-    ]
-    : [...otherPinnedCols, ...otherUnpinnedCols];
+  const sortedMemberCols = [...memberCols].sort((colA, colB) => {
+    const matchA = isCrmMemberSearchMatch(colA.memberUser);
+    const matchB = isCrmMemberSearchMatch(colB.memberUser);
+
+    // 1. Search-matching CRM member columns move to the most left side
+    if (matchA && !matchB) return -1;
+    if (!matchA && matchB) return 1;
+
+    // 2. Pinned columns come next
+    const isPinnedA = !!pinnedColumns[colA.id];
+    const isPinnedB = !!pinnedColumns[colB.id];
+    if (isPinnedA && !isPinnedB) return -1;
+    if (!isPinnedA && isPinnedB) return 1;
+
+    // 3. Current viewer column next (showing on the right side of CRM Pool)
+    const isCurA = isCurrentViewer(colA.memberUser);
+    const isCurB = isCurrentViewer(colB.memberUser);
+    if (isCurA && !isCurB) return -1;
+    if (!isCurA && isCurB) return 1;
+
+    // 4. Alphabetical order (A-Z)
+    return (colA.title || '').localeCompare(colB.title || '', undefined, { sensitivity: 'base' });
+  });
+
+  const orderedColumns: CrmColumnDef[] = [
+    ...(poolCol ? [poolCol] : []),
+    ...sortedMemberCols,
+    ...(sentCol ? [sentCol] : []),
+    ...(closedCol ? [closedCol] : []),
+  ];
+
+  useEffect(() => {
+    if (cleanSearch && boardScrollRef.current) {
+      boardScrollRef.current.scrollTo({ left: 0, behavior: 'smooth' });
+    }
+  }, [cleanSearch]);
 
   // If user does not have permission, show access restricted screen
   if (!userHasAccess) {

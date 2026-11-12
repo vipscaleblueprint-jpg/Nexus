@@ -392,18 +392,22 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // 1. Discover all users with an Audit/Auditor role
   const auditorUsers = React.useMemo(() => {
     const map = new Map<string, any>();
-    const candidates = [...(shiftUsers || []), ...(allUsers || [])];
+    const candidates = [
+      ...(currentUser ? [currentUser] : []),
+      ...(shiftUsers || []),
+      ...(allUsers || []),
+    ];
     for (const u of candidates) {
       if (!u || !u.id) continue;
       if (map.has(u.id)) continue;
-      if (isAuditorUser(u)) {
+      if (isAuditorUser(u) || (currentUser?.id === u.id)) {
         map.set(u.id, u);
       }
     }
     const list = Array.from(map.values());
     // Sort auditors alphabetically by first name
     return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [allUsers, shiftUsers]);
+  }, [allUsers, shiftUsers, currentUser]);
 
   // Filter auditors by selected auditor type (based on real team roles from DB)
   const filteredAuditorUsers = React.useMemo(() => {
@@ -678,20 +682,58 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     }),
   ];
 
-  // Separate pinned and unpinned columns, moving search-matched auditor columns to the most left side
-  const auditorSearchMatches = allColumns.filter((c) => c.isAuditor && isAuditorSearchMatch(c.auditorUser));
-  const searchMatchedIds = new Set(auditorSearchMatches.map((c) => c.id));
-  const otherPinnedCols = allColumns.filter((c) => pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
-  const otherUnpinnedCols = allColumns.filter((c) => !pinnedColumns[c.id] && !searchMatchedIds.has(c.id));
+  // Priority ranking & sorting for auditor columns:
+  // 1. Search-matching auditor columns move to the front
+  // 2. Pinned columns come next
+  // 3. Current viewing user column next (showing on the right side of To Review)
+  // 4. Alphabetical order (A-Z)
+  const curUserId = currentUser?.id;
+  const curUserName = (currentUser?.name || '').trim().toLowerCase();
 
-  const orderedColumns: AuditingColumnDef[] = cleanSearch && auditorSearchMatches.length > 0
-    ? [
-        allColumns[0], // col-to-review
-        ...auditorSearchMatches,
-        ...otherPinnedCols.filter((c) => c.id !== 'col-to-review'),
-        ...otherUnpinnedCols.filter((c) => c.id !== 'col-to-review'),
-      ]
-    : [...otherPinnedCols, ...otherUnpinnedCols];
+  const isCurrentViewer = (u: any) => {
+    if (!u) return false;
+    if (curUserId && u.id === curUserId) return true;
+    if (curUserName && (u.name || '').trim().toLowerCase() === curUserName) return true;
+    return false;
+  };
+
+  const toReviewCol = allColumns.find((c) => c.id === 'col-to-review') || allColumns[0];
+  const auditorCols = allColumns.filter((c) => c.isAuditor);
+
+  const sortedAuditorCols = [...auditorCols].sort((colA, colB) => {
+    const matchA = isAuditorSearchMatch(colA.auditorUser);
+    const matchB = isAuditorSearchMatch(colB.auditorUser);
+
+    // 1. Search-matching auditor columns move to the most left side
+    if (matchA && !matchB) return -1;
+    if (!matchA && matchB) return 1;
+
+    // 2. Pinned columns come next
+    const isPinnedA = !!pinnedColumns[colA.id];
+    const isPinnedB = !!pinnedColumns[colB.id];
+    if (isPinnedA && !isPinnedB) return -1;
+    if (!isPinnedA && isPinnedB) return 1;
+
+    // 3. Current viewer column next (showing on the right side of To Review)
+    const isCurA = isCurrentViewer(colA.auditorUser);
+    const isCurB = isCurrentViewer(colB.auditorUser);
+    if (isCurA && !isCurB) return -1;
+    if (!isCurA && isCurB) return 1;
+
+    // 4. Alphabetical order (A-Z)
+    return (colA.title || '').localeCompare(colB.title || '', undefined, { sensitivity: 'base' });
+  });
+
+  const orderedColumns: AuditingColumnDef[] = [
+    toReviewCol,
+    ...sortedAuditorCols,
+  ].filter(Boolean) as AuditingColumnDef[];
+
+  useEffect(() => {
+    if (cleanSearch && boardScrollRef.current) {
+      boardScrollRef.current.scrollTo({ left: 0, behavior: 'smooth' });
+    }
+  }, [cleanSearch]);
 
   return (
     <DndContext

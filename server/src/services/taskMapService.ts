@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma';
+import { logger } from '../config/logger';
 import { randomUUID } from 'crypto';
 import { getActiveManilaShift } from './auditAutoAssign';
 import { redis, isRedisReady, invalidateCache } from './redisService';
@@ -410,7 +411,7 @@ export async function getUpworkClients(): Promise<string[]> {
       if (members && members.length > 0) {
         return members.sort((a, b) => a.localeCompare(b));
       }
-    } catch {}
+    } catch { }
   }
 
   try {
@@ -419,7 +420,7 @@ export async function getUpworkClients(): Promise<string[]> {
     );
     const clients = rows.map((r) => r.label.replace('UPWORK_CLIENT:', '').trim()).filter(Boolean);
     if (isRedisReady() && clients.length > 0) {
-      await redis.sadd('task_map:upwork_clients', ...clients).catch(() => {});
+      await redis.sadd('task_map:upwork_clients', ...clients).catch(() => { });
     }
     return clients;
   } catch {
@@ -434,7 +435,7 @@ export async function getUpworkProjectClients(): Promise<string[]> {
       if (members && members.length > 0) {
         return members.sort((a, b) => a.localeCompare(b));
       }
-    } catch {}
+    } catch { }
   }
 
   try {
@@ -452,7 +453,7 @@ export async function getUpworkProjectClients(): Promise<string[]> {
     }
 
     if (isRedisReady() && clients.length > 0) {
-      await redis.sadd('task_map:upwork_project_clients', ...clients).catch(() => {});
+      await redis.sadd('task_map:upwork_project_clients', ...clients).catch(() => { });
     }
     return clients.sort((a, b) => a.localeCompare(b));
   } catch {
@@ -472,9 +473,9 @@ export async function addUpworkClient(clientName: string): Promise<string[]> {
       randomUUID(),
       label
     );
-  } catch {}
+  } catch { }
   if (isRedisReady()) {
-    await redis.sadd('task_map:upwork_clients', clean).catch(() => {});
+    await redis.sadd('task_map:upwork_clients', clean).catch(() => { });
   }
   return getUpworkClients();
 }
@@ -491,9 +492,9 @@ export async function addUpworkProjectClient(clientName: string): Promise<string
       randomUUID(),
       label
     );
-  } catch {}
+  } catch { }
   if (isRedisReady()) {
-    await redis.sadd('task_map:upwork_project_clients', clean).catch(() => {});
+    await redis.sadd('task_map:upwork_project_clients', clean).catch(() => { });
   }
   return getUpworkProjectClients();
 }
@@ -507,9 +508,9 @@ export async function removeUpworkClient(clientName: string): Promise<string[]> 
       `DELETE FROM "TaskMapStatusOption" WHERE "label" = $1`,
       label
     );
-  } catch {}
+  } catch { }
   if (isRedisReady()) {
-    await redis.srem('task_map:upwork_clients', clean).catch(() => {});
+    await redis.srem('task_map:upwork_clients', clean).catch(() => { });
   }
   // Also clean up from project clients if present
   await removeUpworkProjectClient(clean);
@@ -525,9 +526,9 @@ export async function removeUpworkProjectClient(clientName: string): Promise<str
       `DELETE FROM "TaskMapStatusOption" WHERE "label" = $1`,
       label
     );
-  } catch {}
+  } catch { }
   if (isRedisReady()) {
-    await redis.srem('task_map:upwork_project_clients', clean).catch(() => {});
+    await redis.srem('task_map:upwork_project_clients', clean).catch(() => { });
   }
   return getUpworkProjectClients();
 }
@@ -547,7 +548,7 @@ export async function setUpworkClients(clients: string[]): Promise<string[]> {
         `UPWORK_CLIENT:${c}`
       );
     }
-  } catch {}
+  } catch { }
 
   if (isRedisReady()) {
     try {
@@ -555,7 +556,7 @@ export async function setUpworkClients(clients: string[]): Promise<string[]> {
       if (cleanList.length > 0) {
         await redis.sadd('task_map:upwork_clients', ...cleanList);
       }
-    } catch {}
+    } catch { }
   }
   return cleanList;
 }
@@ -575,7 +576,7 @@ export async function setUpworkProjectClients(clients: string[]): Promise<string
         `UPWORK_PROJECT_CLIENT:${c}`
       );
     }
-  } catch {}
+  } catch { }
 
   if (isRedisReady()) {
     try {
@@ -583,7 +584,7 @@ export async function setUpworkProjectClients(clients: string[]): Promise<string
       if (cleanList.length > 0) {
         await redis.sadd('task_map:upwork_project_clients', ...cleanList);
       }
-    } catch {}
+    } catch { }
   }
   return cleanList;
 }
@@ -837,7 +838,7 @@ export async function executeTaskMapDailyRollover(params?: {
 }> {
   // If fromDate is not passed, use yesterday relative to 6:00 AM new day
   const fromDate = (params?.fromDate || getManilaDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000))).trim().split('T')[0];
-  
+
   // Default toDate is today in Manila
   let toDate = (params?.toDate || getManilaDateStr()).trim().split('T')[0];
   if (!toDate || toDate === fromDate) {
@@ -908,6 +909,35 @@ export async function executeTaskMapDailyRollover(params?: {
   );
 
   const rolledCount = typeof updateResult === 'number' ? updateResult : 0;
+
+  // Strip PM_ASSIGNMENT from rolled taskMapRecords so columns start clean and empty for the new day
+  try {
+    const activeRecords = await prisma.taskMapRecord.findMany({
+      where: {
+        pmReviews: { not: null as any },
+        task: {
+          status: { notIn: ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING'] },
+        },
+      },
+      select: { taskId: true, pmReviews: true },
+    });
+    for (const r of activeRecords) {
+      let revs: any = r.pmReviews;
+      if (typeof revs === 'string') {
+        try { revs = JSON.parse(revs); } catch { revs = []; }
+      }
+      if (Array.isArray(revs) && revs.some((x: any) => x.type === 'PM_ASSIGNMENT')) {
+        const cleaned = revs.filter((x: any) => x.type !== 'PM_ASSIGNMENT');
+        await prisma.$executeRawUnsafe(
+          `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
+          JSON.stringify(cleaned),
+          r.taskId
+        );
+      }
+    }
+  } catch (err: any) {
+    logger.warn({ err }, 'Failed to strip PM_ASSIGNMENT during daily rollover');
+  }
 
   // Log daily rollover in AuditLog
   const validRolloverUserId = await getEffectiveUserId(params?.actorId);

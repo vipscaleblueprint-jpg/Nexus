@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { TaskMapItem, TaskMapOption, taskMapApi, createEmptyUserBlock, hasUiUxOrDesignAudit, isProjectBasedUpwork } from '@/api/taskMap';
+import { TaskMapItem, TaskMapOption, taskMapApi, createEmptyUserBlock, hasUiUxOrDesignAudit, isProjectBasedUpwork, hasPmAssignmentForUser } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -946,10 +946,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
       const isUnassigned = !t.assigneeId || t.assigneeId === 'unassigned';
 
-      // Exclude from available pool ONLY if task is assigned and actively live working right now
+      // Exclude from available pool if task is actively live working right now on a user column
       const hasActiveWorker = Boolean(
-        !isAvailableSubStatus &&
-        !isUnassigned &&
         t.progress?.maName &&
         !t.progress?.timeOut &&
         isTaskLiveWorking(t, t.progress.maName, currentTime) &&
@@ -957,6 +955,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
           (allUsers && allUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name))))
       );
       if (hasActiveWorker) return false;
+
+      // Exclude from available pool if task was explicitly queued/assigned to an active shift user by a PM
+      const isQueuedByPm = Boolean(
+        (shiftUsers && shiftUsers.some((u) => hasPmAssignmentForUser(t, u.id))) ||
+        (allUsers && allUsers.some((u) => hasPmAssignmentForUser(t, u.id)))
+      );
+      if (isQueuedByPm) return false;
 
       const isExcluded =
         s === 'WAITING' ||
@@ -982,10 +987,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
           st.includes('RECURRING')
         );
       if (isExcluded) return false;
-      const isPending = s === 'PENDING' || mapStatuses.includes('PENDING');
-      const isRevision = s === 'REVISION' || mapStatuses.includes('REVISION');
-      const isOnHold = s === 'ONHOLD' || s.includes('HOLD') || mapStatuses.some((st: string) => st.includes('HOLD'));
-      if (!isPending && !isRevision && !isOnHold && !isAvailableSubStatus && !isUnassigned) return false;
 
       // Admin task check
       const isAdmin = isTaskUnderAdmin(t);
@@ -1184,8 +1185,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
     });
   }
 
-  // Tasks in availablePool that an active assistant is currently live working on can claim their In Progress slot;
-  // all other availablePool tasks belong strictly in poolIds so user columns do not hijack them!
+  // Tasks in availablePool that an active assistant is currently live working on, or that a PM explicitly queued,
+  // are attached to their respective user column; all other availablePool tasks belong strictly in poolIds!
   const poolIds = new Set(
     availablePool
       .filter((p) => {
@@ -1196,30 +1197,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
             (col) => doesProgressMatchUser(p.progress?.maName, col.user.name) && isTaskLiveWorking(p, col.user.name, currentTime)
           )
         );
-        return !isLiveWorkingOnCol;
+        const isQueuedOnCol = Object.keys(userColumnsMap).some((uid) => hasPmAssignmentForUser(p, uid));
+        return !isLiveWorkingOnCol && !isQueuedOnCol;
       })
       .map((p) => p.id)
   );
 
-  // Fallback ONLY if userColumnsMap has not been populated
-  if (Object.keys(userColumnsMap).length === 0) {
-    tasks.forEach((task) => {
-      if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
-      if (poolIds.has(task.id) || isClosedTask(task) || isExcludedForUser(task)) return;
-      const u = task.assignee || (task.assignees && task.assignees[0]);
-      const userId = u?.id;
-      if (!userId || userId === 'unassigned') return;
-      if (!userColumnsMap[userId]) {
-        userColumnsMap[userId] = {
-          user: getUserProfile(userId, u),
-          tasks: [],
-        };
-      }
-    });
-  }
-
-  // 2. Add non-closed, non-excluded tasks strictly to the users on this shift
-  // Hide all admin tasks by default when effectiveShowAdmin is false
+  // 2. Add non-closed, non-excluded tasks strictly to user columns when:
+  //    a) The task was explicitly queued/assigned to this user by a PM on Task Map (hasPmAssignmentForUser), or
+  //    b) It is in historical view mode where assignments were already frozen into the snapshot, or
+  //    c) An assistant is actively live working on it (live clock-in / in-progress)
+  // Direct Assignment based purely on database assignee is REMOVED so user columns start clean & empty!
   tasks.forEach((task) => {
     if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
     if (poolIds.has(task.id)) return;
@@ -1228,13 +1216,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
     const u = task.assignee || (task.assignees && task.assignees[0]);
     const userId = u?.id;
-    if (userId && userId !== 'unassigned') {
-      if (!userColumnsMap[userId]) {
-        userColumnsMap[userId] = {
-          user: getUserProfile(userId, u),
-          tasks: [],
-        };
-      }
+
+    // Only queue task in user's column if a PM explicitly assigned/queued it on Task Map
+    // (or in historical view where daily snapshot froze the day's assignments)
+    const isPmQueuedForUser = Boolean(userId && userId !== 'unassigned' && (isHistory || hasPmAssignmentForUser(task, userId)));
+
+    if (isPmQueuedForUser && userColumnsMap[userId]) {
       if (!userColumnsMap[userId].tasks.some((t) => t.id === task.id)) {
         userColumnsMap[userId].tasks.push(task);
       }
@@ -1546,7 +1533,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((currentTask?.status || '').toUpperCase().trim());
       const nextStatus = isCadence ? currentTask!.status : 'In progress';
       try {
-        await taskMapApi.assignTask(taskId, targetUserId);
+        await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
         if (onTaskUpdate) {
           await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
         } else {
@@ -1560,22 +1547,22 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return;
     }
 
-    // Dropped on a user column: assign task to that user
+    // Dropped on a user column: queue task for that user
     if (targetColumnId.startsWith('user-')) {
       const targetUserId = targetColumnId.replace('user-', '');
       const targetUser = getUserProfile(targetUserId);
 
-      // If dragged and dropped in the same user's column, it's the same location: DO NOTHING!
-      if (currentAssigneeId === targetUserId) {
+      // If dragged and dropped in the same user's column and already queued for this user: DO NOTHING!
+      if (currentAssigneeId === targetUserId && hasPmAssignmentForUser(currentTask as any, targetUserId)) {
         return;
       }
 
       try {
-        await taskMapApi.assignTask(taskId, targetUserId);
-        toast.success(`Task assigned to ${targetUser?.name || 'user'}`);
+        await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE');
+        toast.success(`Task queued for ${targetUser?.name || 'user'}`);
         onDataRefresh();
       } catch (err: any) {
-        toast.error(err.message || 'Failed to assign task');
+        toast.error(err.message || 'Failed to queue task');
       }
     } else if (targetColumnId === 'available-pool') {
       // If already in available pool, do nothing!
@@ -1603,7 +1590,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
     const nextStatus = isCadence ? existingTask!.status : 'In progress';
     try {
-      await taskMapApi.assignTask(taskId, targetUserId);
+      await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
       if (onTaskUpdate) {
         await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
       } else {

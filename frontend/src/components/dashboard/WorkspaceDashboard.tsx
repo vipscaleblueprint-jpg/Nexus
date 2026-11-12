@@ -119,6 +119,27 @@ export const isTaskClosed = (t: { status?: string | null; completed?: boolean } 
   return s === "CLOSED" || s === "DONE" || s === "COMPLETED" || s === "RESOLVED" || s === "CANCELLED";
 };
 
+export function getShortAuditLabel(rawText: string): string {
+  const norm = normalizeAuditName(rawText);
+  if (norm === "design audit") return "Des Aud";
+  if (norm === "instructions audit" || norm === "instruction audit") return "Inst Aud";
+  if (norm === "ui ux audit") return "UI/UX Aud";
+  if (norm === "funnel audit") return "Funnel Aud";
+  if (/audit/i.test(rawText)) {
+    return rawText.replace(/audit/i, "Aud").trim();
+  }
+  return `${rawText} Aud`;
+}
+
+export function getFullAuditLabel(rawText: string): string {
+  const norm = normalizeAuditName(rawText);
+  if (norm === "design audit") return "Design Audit";
+  if (norm === "instructions audit" || norm === "instruction audit") return "Instructions Audit";
+  if (norm === "ui ux audit") return "UI/UX Audit";
+  if (norm === "funnel audit") return "Funnel Audit";
+  return rawText;
+}
+
 // ClickUp-style Status Badges & Colors
 const STATUS_STYLES: Record<
   string,
@@ -773,7 +794,7 @@ function WorkspaceDashboardContent({
       }
 
       await tasksApi.updateChecklistItem(audit.task.id, checklistId, audit.id, { completed: true });
-      const auditLabel = normalizeAuditName(audit.text) === "ui ux audit" ? "UI/UX Audit" : audit.text;
+      const auditLabel = getFullAuditLabel(audit.text);
       toast.success(`Completed ${auditLabel} for ${audit.task.title}`);
 
       if (typeof window !== "undefined") {
@@ -842,6 +863,58 @@ function WorkspaceDashboardContent({
       .sort((a, b) => b.score - a.score)
       .map((item) => item.audit);
   }, [myAudits, searchQuery, tasksWithSubtasks]);
+
+  // Group pending audits by task (or subtask) into a single row per task
+  const groupedMyAudits = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        key: string;
+        taskId: string;
+        subtaskId: string | null;
+        isSubtask: boolean;
+        taskTitle: string;
+        parentTaskTitle?: string;
+        taskRow: Task;
+        audits: MyAuditItem[];
+      }
+    >();
+
+    filteredMyAudits.forEach((audit) => {
+      const isSub = Boolean(audit.subtask?.id);
+      const key = isSub ? `${audit.task.id}_sub_${audit.subtask!.id}` : audit.task.id;
+      const existing = map.get(key);
+
+      if (existing) {
+        existing.audits.push(audit);
+      } else {
+        const known = tasksWithSubtasks.find((t) =>
+          isSub ? t.id === audit.subtask!.id : t.id === audit.task.id
+        );
+        const parentKnown = tasksWithSubtasks.find((t) => t.id === audit.task.id);
+        const fallbackTask: Task = {
+          ...audit.task,
+          listId: audit.task.list?.id,
+          createdAt: audit.createdAt,
+        } as unknown as Task;
+
+        const taskRow = known || parentKnown || fallbackTask;
+
+        map.set(key, {
+          key,
+          taskId: audit.task.id,
+          subtaskId: audit.subtask?.id ?? null,
+          isSubtask: isSub,
+          taskTitle: isSub ? (audit.subtask?.title || taskRow.title) : (audit.task?.title || taskRow.title),
+          parentTaskTitle: isSub ? (audit.task?.title || (taskRow as any).parentTask?.title) : undefined,
+          taskRow,
+          audits: [audit],
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [filteredMyAudits, tasksWithSubtasks]);
 
   // 2. Real-time Synchronization via Socket.io
   useEffect(() => {
@@ -1000,19 +1073,6 @@ function WorkspaceDashboardContent({
 
     closedTaskIdRef.current = null;
     lastOpenedUrlTaskId.current = taskToOpen.id;
-
-    if (typeof window !== "undefined") {
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.set("task", taskToOpen.id);
-        if (subtaskId) {
-          url.searchParams.set("subtask", subtaskId);
-        } else {
-          url.searchParams.delete("subtask");
-        }
-        window.history.replaceState(null, "", url.pathname + (url.search || ""));
-      } catch {}
-    }
 
     setSelectedTask(taskToOpen);
   };
@@ -2141,7 +2201,7 @@ function WorkspaceDashboardContent({
       {currentTab === "my" && (
         <div className="space-y-6">
           {/* Audits assigned to me (unchecked, on open tasks) */}
-          {filteredMyAudits.length > 0 && (
+          {groupedMyAudits.length > 0 && (
             <div className="space-y-0.5">
               <div className="flex items-center justify-between px-1 pb-2 pt-2">
                 <div
@@ -2153,82 +2213,145 @@ function WorkspaceDashboardContent({
                     <ShieldCheck className="w-3 h-3" />
                     Audits
                   </span>
+                  {filteredMyAudits.length > groupedMyAudits.length && (
+                    <span className="px-2 py-0.5 rounded-full bg-zinc-800/80 text-[10px] text-zinc-400 font-bold ml-1">
+                      {filteredMyAudits.length} total audits
+                    </span>
+                  )}
                 </div>
                 <span className="text-xs font-semibold text-zinc-400 w-8 shrink-0 text-center">
-                  {filteredMyAudits.length}
+                  {groupedMyAudits.length}
                 </span>
               </div>
 
               {!collapsedGroups.has("__my_audits") && (
                 <>
-                  <div className="hidden sm:flex items-center justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1 pb-1.5 border-b border-zinc-800/60 w-full">
-                    <span className="text-left pl-6">Task</span>
-                    <div className="flex items-center shrink-0 w-[220px] pr-2">
-                      <span className="w-[120px] shrink-0 text-center">Audit</span>
-                      <span className="w-[100px] shrink-0 text-center">Priority</span>
+                  <div className="hidden sm:flex items-center justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-2 pb-2 border-b border-zinc-800/80 w-full mb-1">
+                    <span className="text-left pl-4">Task</span>
+                    <div className="flex items-center gap-1">
+                      <div className="flex items-center shrink-0 w-[320px]">
+                        <span className="flex-1 text-center">Audits</span>
+                        <span className="w-[100px] shrink-0 text-center">Priority</span>
+                      </div>
+                      <div className="w-8 shrink-0" />
                     </div>
                   </div>
 
                   <div className="flex flex-col w-full">
-                    {filteredMyAudits.map((audit) => {
-                      const known = tasksWithSubtasks.find((t) => t.id === audit.task.id);
-                      const taskRow = known || ({ ...audit.task, listId: audit.task.list?.id, createdAt: audit.createdAt } as unknown as Task);
-                      const priorityConfig = getPriorityConfig(audit.task.priority);
-                      const auditLabel = normalizeAuditName(audit.text) === "ui ux audit" ? "UI/UX Audit" : audit.text;
+                    {groupedMyAudits.map((group) => {
+                      const { taskRow } = group;
+                      const priorityConfig = getPriorityConfig(taskRow.priority || group.audits[0]?.task?.priority);
+                      const statusConfig = getStatusConfig(taskRow.status || group.audits[0]?.task?.status, allLists);
 
                       return (
                         <div
-                          key={audit.id}
+                          key={group.key}
+                          id={`audit-row-${group.key}`}
                           onClick={(e) => {
                             if (e.ctrlKey || e.metaKey) {
-                              handleTaskCtrlRightClick(e, taskRow.id, audit.subtask?.id ?? null);
+                              handleTaskCtrlRightClick(e, group.taskId, group.subtaskId);
                               return;
                             }
-                            openRow(taskRow, audit.subtask?.id ?? null);
+                            openRow(taskRow, group.subtaskId);
                           }}
                           onAuxClick={(e) => {
-                            if (e.button === 1) handleTaskCtrlRightClick(e, taskRow.id, audit.subtask?.id ?? null);
+                            if (e.button === 1) handleTaskCtrlRightClick(e, group.taskId, group.subtaskId);
                           }}
-                          onContextMenu={(e) => handleTaskCtrlRightClick(e, taskRow.id, audit.subtask?.id ?? null)}
-                          className="group relative flex items-center justify-between px-1 py-1.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer"
+                          onContextMenu={(e) => handleTaskCtrlRightClick(e, group.taskId, group.subtaskId)}
+                          className={`group relative flex items-center justify-between px-2 py-2.5 hover:bg-accent/50 border-b border-zinc-800/40 transition-colors cursor-pointer ${
+                            (taskRow.status || "").toUpperCase() === "CLOSED" || (taskRow.status || "").toUpperCase() === "DONE" ? "opacity-75" : ""
+                          } ${group.isSubtask ? "bg-violet-500/[0.05] border-l-2 border-l-violet-500/70" : ""}`}
                         >
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-6 pr-4">
-                            <button
-                              type="button"
-                              onClick={(e) => handleCompleteAudit(e, audit)}
-                              className="group/check w-4 h-4 rounded-full border border-emerald-500/50 bg-emerald-500/10 hover:border-emerald-400 hover:bg-emerald-500/20 flex items-center justify-center shrink-0 transition-colors cursor-pointer"
-                              title="Click to complete audit"
-                            >
-                              <Check className="w-2.5 h-2.5 text-emerald-400 opacity-0 group-hover/check:opacity-100 transition-opacity" />
-                            </button>
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pl-4 pr-4 relative z-10">
+                            {/* Status circle indicator */}
+                            <div
+                              className={`w-2.5 h-2.5 rounded-full ${statusConfig.dot} shrink-0`}
+                              style={(statusConfig as any).customColor ? { backgroundColor: (statusConfig as any).customColor } : {}}
+                              title={`Status: ${taskRow.status || group.audits[0]?.task?.status}`}
+                            />
+
                             <span className="text-[13px] font-medium text-zinc-300 group-hover:text-indigo-300 transition-colors truncate">
-                              {audit.task.title}
+                              {group.taskTitle}
                             </span>
-                            {audit.subtask && (
-                              <span className="hidden md:inline text-[10px] text-violet-300 bg-violet-500/15 border border-violet-500/30 rounded px-1.5 py-0.5 shrink-0 max-w-[240px] truncate font-semibold">
-                                Subtask · {audit.subtask.title}
+
+                            {group.isSubtask && (
+                              <span
+                                className="inline-flex items-center gap-1 text-[10px] text-violet-300 bg-violet-500/15 border border-violet-500/30 rounded px-1.5 py-0.5 shrink-0 max-w-[240px] ml-1 font-semibold"
+                                title={`Subtask of ${group.parentTaskTitle || "parent"}`}
+                              >
+                                <span className="uppercase tracking-wide">Subtask</span>
+                                {group.parentTaskTitle && (
+                                  <span className="hidden md:inline truncate font-medium text-violet-300/80">
+                                    · {group.parentTaskTitle}
+                                  </span>
+                                )}
                               </span>
                             )}
-                            {audit.task.list && (
+
+                            {taskRow.list && (
                               <span className="hidden md:inline-flex items-center text-[11px] text-zinc-600 shrink-0 max-w-[200px] truncate ml-1 font-medium group-hover:text-zinc-400 transition-colors">
-                                ≡ {audit.task.list.name}
+                                ≡ {taskRow.list.name}
                               </span>
                             )}
-                            <span className="hidden md:inline text-[10px] text-zinc-500 shrink-0 uppercase tracking-wide font-semibold">
-                              {audit.task.status}
+
+                            <span className="hidden md:inline text-[10px] text-zinc-500 shrink-0 uppercase tracking-wide font-semibold ml-1">
+                              {taskRow.status || group.audits[0]?.task?.status}
                             </span>
+
+                            {/* Mobile-only audit badges */}
+                            <div className="flex sm:hidden items-center gap-1 flex-wrap ml-2">
+                              {group.audits.map((audit) => {
+                                const shortLabel = getShortAuditLabel(audit.text);
+                                const fullLabel = getFullAuditLabel(audit.text);
+                                return (
+                                  <button
+                                    key={audit.id}
+                                    type="button"
+                                    onClick={(e) => handleCompleteAudit(e, audit)}
+                                    className="group/badge inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/30 border border-emerald-500/30 hover:border-emerald-400/60 rounded px-1.5 py-0.5 transition-all cursor-pointer shadow-sm select-none"
+                                    title={`Click to mark ${fullLabel} as completed`}
+                                  >
+                                    <span>{shortLabel}</span>
+                                    <Check className="w-2.5 h-2.5 text-emerald-400/70 group-hover/badge:text-emerald-300 transition-all shrink-0" />
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
 
-                          <div className="hidden sm:flex items-center shrink-0 w-[220px] pr-2">
-                            <div className="flex items-center justify-center w-[120px] shrink-0">
-                              <span className="text-[11px] font-semibold text-emerald-500 bg-emerald-500/10 border border-emerald-500/25 rounded px-1.5 py-0.5 truncate">
-                                {auditLabel}
-                              </span>
+                          <div className="flex items-center gap-1 relative z-10">
+                            <div className="hidden sm:flex items-center shrink-0 w-[320px]">
+                              {/* Desktop Audits Badges */}
+                              <div className="flex-1 flex items-center justify-center gap-1.5 flex-wrap px-2">
+                                {group.audits.map((audit) => {
+                                  const shortLabel = getShortAuditLabel(audit.text);
+                                  const fullLabel = getFullAuditLabel(audit.text);
+                                  return (
+                                    <button
+                                      key={audit.id}
+                                      type="button"
+                                      onClick={(e) => handleCompleteAudit(e, audit)}
+                                      className="group/badge inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/30 border border-emerald-500/30 hover:border-emerald-400/60 rounded px-2 py-0.5 transition-all cursor-pointer shadow-sm select-none"
+                                      title={`Click to mark ${fullLabel} as completed`}
+                                    >
+                                      <span className="truncate max-w-[130px]">{shortLabel}</span>
+                                      <Check className="w-3 h-3 text-emerald-400/70 group-hover/badge:text-emerald-300 group-hover/badge:scale-110 transition-all shrink-0" />
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Priority Pill */}
+                              <div className="w-[100px] flex items-center justify-center shrink-0">
+                                <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-zinc-800/80 shadow-sm">
+                                  <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
+                                  <span className={priorityConfig.color}>
+                                    {priorityConfig.label}
+                                  </span>
+                                </span>
+                              </div>
                             </div>
-                            <div className="flex items-center justify-center gap-1 w-[100px] shrink-0 text-[11px] font-medium">
-                              <Flag className={`w-3.5 h-3.5 shrink-0 ${priorityConfig.iconColor}`} />
-                              <span className={priorityConfig.color}>{priorityConfig.label}</span>
-                            </div>
+                            <div className="w-8 shrink-0" />
                           </div>
                         </div>
                       );

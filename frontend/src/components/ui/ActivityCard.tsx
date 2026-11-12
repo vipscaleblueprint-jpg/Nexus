@@ -269,7 +269,7 @@ export function ActivityCard({
       (actorId === currentUser.id ||
         details?.userId === currentUser.id ||
         (actorName && currentUser.name && actorName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()))) ||
-      (actorName && actorName.trim().toLowerCase() === 'you')
+    (actorName && actorName.trim().toLowerCase() === 'you')
   );
 
   // Check if content or details mention someone
@@ -633,15 +633,13 @@ export function ActivityCard({
       onAuxClick={onContextMenu}
       data-task-id={taskId || details?.taskId}
       data-subtask-id={subtaskId || details?.subtaskId || undefined}
-      className={`group/card relative flex items-start cursor-pointer rounded-xl transition-all duration-150 border ${
-        compact ? 'p-2.5 gap-2' : 'p-3 sm:p-3.5 gap-2.5 sm:gap-3'
-      } ${
-        !isRead
+      className={`group/card relative flex items-start cursor-pointer rounded-xl transition-all duration-150 border ${compact ? 'p-2.5 gap-2' : 'p-3 sm:p-3.5 gap-2.5 sm:gap-3'
+        } ${!isRead
           ? 'bg-[var(--notif-unread-bg)] border-[var(--notif-unread-border)] shadow-[var(--notif-unread-shadow)] ring-1 ring-[var(--notif-unread-ring)] hover:border-[var(--notif-unread-hover-border)] hover:shadow-[var(--notif-unread-hover-shadow)]'
           : isGreyed
-          ? 'bg-card/40 dark:bg-zinc-900/30 border-border/40 hover:bg-card hover:border-border/80 opacity-[0.85] hover:opacity-100'
-          : 'bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border'
-      }`}
+            ? 'bg-card/40 dark:bg-zinc-900/30 border-border/40 hover:bg-card hover:border-border/80 opacity-[0.85] hover:opacity-100'
+            : 'bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border'
+        }`}
     >
       {/* Avatar with dark/light micro-badge */}
       <div className={`shrink-0 relative transition-all duration-150 ${isGreyed ? 'opacity-70 saturate-[0.8]' : ''}`}>
@@ -649,9 +647,8 @@ export function ActivityCard({
           <img
             src={actorAvatar}
             alt=""
-            className={`${
-              compact ? 'size-7' : 'size-8 sm:size-8'
-            } rounded-full object-cover shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs`}
+            className={`${compact ? 'size-7' : 'size-8 sm:size-8'
+              } rounded-full object-cover shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs`}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
               if (e.currentTarget.nextElementSibling) {
@@ -662,18 +659,16 @@ export function ActivityCard({
           />
         ) : null}
         <div
-          className={`${
-            compact ? 'size-7 text-[11px]' : 'size-8 text-xs'
-          } rounded-full ${avatarBg} text-white on-solid flex items-center justify-center font-medium shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs select-none`}
+          className={`${compact ? 'size-7 text-[11px]' : 'size-8 text-xs'
+            } rounded-full ${avatarBg} text-white on-solid flex items-center justify-center font-medium shrink-0 ring-2 ${!isRead ? 'ring-[var(--notif-unread-bg)]' : 'ring-card'} shadow-xs select-none`}
           style={{ display: actorAvatar ? 'none' : 'flex' }}
         >
           {initial}
         </div>
 
         {/* Micro-badge icon in bottom-right corner of avatar */}
-        <div className={`absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full ${!isRead ? 'bg-[var(--notif-unread-bg)]' : 'bg-card'} border border-border text-muted-foreground flex items-center justify-center shadow-xs ${
-          isGreyed ? 'opacity-70' : ''
-        }`}>
+        <div className={`absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full ${!isRead ? 'bg-[var(--notif-unread-bg)]' : 'bg-card'} border border-border text-muted-foreground flex items-center justify-center shadow-xs ${isGreyed ? 'opacity-70' : ''
+          }`}>
           <MicroIcon className="size-2 stroke-[2.2]" />
         </div>
       </div>
@@ -692,9 +687,8 @@ export function ActivityCard({
           {/* Timestamp right-aligned with unread blue dot */}
           <div className="shrink-0 flex items-center gap-1.5 pt-0.5 ml-auto select-none">
             {formattedTime && (
-              <span className={`text-xs font-normal ${
-                isGreyed ? 'text-zinc-500 dark:text-zinc-600' : 'text-muted-foreground'
-              }`}>
+              <span className={`text-xs font-normal ${isGreyed ? 'text-zinc-500 dark:text-zinc-600' : 'text-muted-foreground'
+                }`}>
                 {formattedTime}
               </span>
             )}
@@ -721,36 +715,31 @@ export function ActivityCard({
             <div
               ref={contentWrapperRef}
               style={{ maxHeight: !isExpanded && canExpand ? maxHeight : undefined }}
-              className={`relative rounded-xl border font-normal transition-all duration-200 overflow-hidden break-words [overflow-wrap:anywhere] ${
-                compact ? 'px-2.5 py-1.5 text-xs leading-normal' : 'px-3 py-2 text-xs sm:text-sm leading-relaxed'
-              } ${
-                isGreyed
+              className={`relative rounded-xl border font-normal transition-all duration-200 overflow-hidden break-words [overflow-wrap:anywhere] ${compact ? 'px-2.5 py-1.5 text-xs leading-normal' : 'px-3 py-2 text-xs sm:text-sm leading-relaxed'
+                } ${isGreyed
                   ? 'bg-background/40 dark:bg-black/30 border-border/40 text-zinc-400 dark:text-zinc-400'
                   : !isRead
-                  ? 'bg-[var(--notif-quote-bg)] border-[var(--notif-quote-border)] text-foreground shadow-2xs'
-                  : 'bg-background/60 border-border text-foreground'
-              }`}
+                    ? 'bg-[var(--notif-quote-bg)] border-[var(--notif-quote-border)] text-foreground shadow-2xs'
+                    : 'bg-background/60 border-border text-foreground'
+                }`}
             >
               <CommentContent
                 content={content}
                 maxLinkLength={effectiveMaxLinkLength}
-                className={`${
-                  compact ? 'text-xs' : 'text-xs sm:text-sm'
-                } ${
-                  isGreyed ? 'text-zinc-400 dark:text-zinc-400' : 'text-foreground'
-                } max-w-full break-words [overflow-wrap:anywhere] prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline [&_a]:break-all [&_a]:[overflow-wrap:anywhere] [&_img]:my-0 [&_img]:inline-block`}
+                className={`${compact ? 'text-xs' : 'text-xs sm:text-sm'
+                  } ${isGreyed ? 'text-zinc-400 dark:text-zinc-400' : 'text-foreground'
+                  } max-w-full break-words [overflow-wrap:anywhere] prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline [&_a]:break-all [&_a]:[overflow-wrap:anywhere] [&_img]:my-0 [&_img]:inline-block`}
                 onPreviewImage={onPreviewImage}
               />
 
               {/* Bottom gradient fade when truncated */}
               {!isExpanded && canExpand && (
-                <div className={`absolute bottom-0 left-0 right-0 h-6 ${
-                  isGreyed
+                <div className={`absolute bottom-0 left-0 right-0 h-6 ${isGreyed
                     ? 'bg-gradient-to-t from-background/95 dark:from-zinc-950/95 via-background/60 dark:via-zinc-950/60 to-transparent'
                     : !isRead
-                    ? 'bg-gradient-to-t from-[var(--notif-quote-bg)] via-[var(--notif-quote-bg)]/60 to-transparent'
-                    : 'bg-gradient-to-t from-background/95 via-background/60 to-transparent'
-                } pointer-events-none rounded-b-xl`} />
+                      ? 'bg-gradient-to-t from-[var(--notif-quote-bg)] via-[var(--notif-quote-bg)]/60 to-transparent'
+                      : 'bg-gradient-to-t from-background/95 via-background/60 to-transparent'
+                  } pointer-events-none rounded-b-xl`} />
               )}
             </div>
 

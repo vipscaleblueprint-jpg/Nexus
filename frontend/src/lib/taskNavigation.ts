@@ -157,3 +157,4 @@ export function initGlobalTaskNewTabListeners() {
     window.removeEventListener('auxclick', handleAuxClick, true);
   };
 }
+

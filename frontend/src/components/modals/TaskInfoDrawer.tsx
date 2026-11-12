@@ -1,24 +1,23 @@
 'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
-  ArrowLeft,
   Image as ImageIcon,
   Link2,
-  CheckSquare,
   ExternalLink,
   Copy,
   Check,
   Search,
-  Calendar,
-  Layers,
-  Sparkles,
   Clock,
   User,
-  ListTodo,
+  ClipboardList,
+  Loader2,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { extractImagesFromContent } from '@/lib/commentImages';
 import { openExternalLink } from '@/lib/links';
+import { getThumbnailUrl } from '@/lib/thumbnail';
+import { CommentContent } from '../ui/CommentContent';
 
 export interface TaskInfoDrawerProps {
   task: any;
@@ -53,17 +52,6 @@ export interface ExtractedLinkItem {
   commentId?: string;
 }
 
-export interface ExtractedTasklistItem {
-  id: string;
-  title: string;
-  completed: boolean;
-  groupName: string;
-  status?: string;
-  createdAt: string | number | Date;
-  assignees?: { id?: string; name?: string; avatarUrl?: string }[];
-  source: 'checklist' | 'subtask' | 'comment';
-}
-
 const IMAGE_EXTENSION_REGEX = /\.(jpe?g|png|gif|webp|svg|avif)(\?.*)?$/i;
 
 function isImageUrl(url: string): boolean {
@@ -80,6 +68,181 @@ function extractDomain(url: string): string {
   } catch {
     return 'link';
   }
+}
+
+/**
+ * Identifies whether a comment is an authentic Daily Tracker / Work Log
+ * report originating from the connected Google Spreadsheet (MA Daily Schedule)
+ * or structured as a daily work log report (Action Done, Status, etc.).
+ */
+export function isDailyTrackerComment(comment: any): boolean {
+  if (!comment || typeof comment.content !== 'string') return false;
+  const raw = comment.content;
+  const text = raw.replace(/<[^>]+>/g, '').trim();
+  if (!text) return false;
+
+  // The Google Spreadsheet webhook format (sheets.controller.ts and appscriptlatest.js):
+  // "👤 <Name> | 📅 <DatePosted> | ✏️ <Edited>"
+  // We strictly require both 👤 and 📅, or | 📅 and ✏️ so normal human comments are never captured.
+  if (text.includes('👤') && text.includes('📅')) return true;
+  if (text.includes('| 📅') && (text.includes('| ✏️') || text.includes('✏️'))) return true;
+
+  return false;
+}
+
+/**
+ * Accurately parses the actual work date from the daily tracker comment content
+ * (e.g. from `📅 Nov 4, 2026, 10:50 AM - 11:10 AM`), falling back to comment.createdAt.
+ * Never lumps items into broken month-only buckets like "NOVEMBER 2026".
+ */
+export function parseTrackerDateInfo(comment: any): {
+  dateObj: Date;
+  dateHeader: string;
+  timeRange: string;
+  sortTime: number;
+} {
+  const content = (comment?.content || '').replace(/<[^>]+>/g, '');
+
+  // 1. Try extracting exact date and time range from 📅 <datePart>
+  const match = content.match(/📅\s*([^|✏️\n\r]+)/);
+  if (match) {
+    const rawDatePart = match[1].trim(); // e.g. "Nov 4, 2026, 10:50 AM - 11:10 AM" or "Nov 4, 2026"
+    const dMatch = rawDatePart.match(/([A-Za-z]{3,}\s+\d{1,2},?\s+\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})/);
+    if (dMatch) {
+      const parsedDate = new Date(dMatch[1]);
+      if (!isNaN(parsedDate.getTime())) {
+        const timePart = rawDatePart.replace(dMatch[0], '').replace(/^,\s*/, '').trim();
+
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const startOfYesterday = startOfToday - 86400000;
+        const targetDay = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate()).getTime();
+
+        let dateHeader = parsedDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+
+        if (targetDay === startOfToday) {
+          dateHeader = `Today · ${parsedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        } else if (targetDay === startOfYesterday) {
+          dateHeader = `Yesterday · ${parsedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        }
+
+        return {
+          dateObj: parsedDate,
+          dateHeader,
+          timeRange: timePart,
+          sortTime: targetDay,
+        };
+      }
+    }
+  }
+
+  // 2. Fallback to comment.createdAt
+  const created = new Date(comment?.createdAt || Date.now());
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 86400000;
+  const targetDay = new Date(created.getFullYear(), created.getMonth(), created.getDate()).getTime();
+
+  let dateHeader = isNaN(created.getTime())
+    ? 'Recent'
+    : created.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+
+  if (targetDay === startOfToday) {
+    dateHeader = `Today · ${created.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  } else if (targetDay === startOfYesterday) {
+    dateHeader = `Yesterday · ${created.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  }
+
+  return {
+    dateObj: created,
+    dateHeader,
+    timeRange: '',
+    sortTime: targetDay,
+  };
+}
+
+/**
+ * Groups tracker reports by exact Day (supports ascending or descending order).
+ * Ensures every individual day (e.g. "Wed, Nov 4, 2026") has its own header.
+ */
+function groupReportsByDay(reports: any[], ascending: boolean = false): { group: string; items: any[] }[] {
+  const groups: Record<string, { group: string; sortTime: number; items: any[] }> = {};
+
+  for (const report of reports) {
+    const { dateHeader, sortTime } = parseTrackerDateInfo(report);
+    if (!groups[dateHeader]) {
+      groups[dateHeader] = {
+        group: dateHeader,
+        sortTime,
+        items: [],
+      };
+    }
+    groups[dateHeader].items.push(report);
+  }
+
+  return Object.values(groups)
+    .sort((a, b) => (ascending ? a.sortTime - b.sortTime : b.sortTime - a.sortTime))
+    .map((g) => ({
+      group: g.group,
+      items: g.items.sort((a, b) => {
+        const timeA = new Date(a.createdAt || 0).getTime();
+        const timeB = new Date(b.createdAt || 0).getTime();
+        return ascending ? timeA - timeB : timeB - timeA;
+      }),
+    }));
+}
+
+/**
+ * Groups images and links by day in chronological order.
+ */
+function groupGenericItemsByDay<T extends { createdAt: string | number | Date }>(items: T[]): { group: string; items: T[] }[] {
+  const groups: Record<string, { group: string; sortTime: number; items: T[] }> = {};
+
+  for (const item of items) {
+    const d = new Date(item.createdAt);
+    if (isNaN(d.getTime())) {
+      if (!groups['Earlier']) groups['Earlier'] = { group: 'Earlier', sortTime: 0, items: [] };
+      groups['Earlier'].items.push(item);
+      continue;
+    }
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+    const targetDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+    let groupTitle = d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+    if (targetDay === startOfToday) {
+      groupTitle = `Today · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    } else if (targetDay === startOfYesterday) {
+      groupTitle = `Yesterday · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    }
+
+    if (!groups[groupTitle]) {
+      groups[groupTitle] = { group: groupTitle, sortTime: targetDay, items: [] };
+    }
+    groups[groupTitle].items.push(item);
+  }
+
+  return Object.values(groups)
+    .sort((a, b) => b.sortTime - a.sortTime)
+    .map((g) => ({ group: g.group, items: g.items }));
 }
 
 function formatRelativeTime(dateInput: string | number | Date): string {
@@ -102,42 +265,6 @@ function formatRelativeTime(dateInput: string | number | Date): string {
   return `${Math.floor(diffDays / 365)}y ago`;
 }
 
-function getTimeGroupKey(dateInput: string | number | Date): string {
-  const date = new Date(dateInput);
-  if (isNaN(date.getTime())) return 'Earlier';
-
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = startOfToday - 86400000;
-  const startOfThisWeek = startOfToday - (now.getDay() === 0 ? 6 : now.getDay() - 1) * 86400000;
-
-  const time = date.getTime();
-  if (time >= startOfToday) return 'Today';
-  if (time >= startOfYesterday) return 'Yesterday';
-  if (time >= startOfThisWeek) return 'This Week';
-
-  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-}
-
-function groupItemsByTime<T extends { createdAt: string | number | Date }>(items: T[]): { group: string; items: T[] }[] {
-  const groups: Record<string, T[]> = {};
-  const groupOrder: string[] = [];
-
-  for (const item of items) {
-    const key = getTimeGroupKey(item.createdAt);
-    if (!groups[key]) {
-      groups[key] = [];
-      groupOrder.push(key);
-    }
-    groups[key].push(item);
-  }
-
-  return groupOrder.map((group) => ({
-    group,
-    items: groups[group],
-  }));
-}
-
 export function TaskInfoDrawer({
   task,
   comments,
@@ -147,9 +274,10 @@ export function TaskInfoDrawer({
   currentUser,
   isSubtask = false,
 }: TaskInfoDrawerProps) {
-  const [activeTab, setActiveTab] = useState<'all' | 'images' | 'links' | 'tasklists'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'images' | 'links' | 'tracker'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [copiedCommentId, setCopiedCommentId] = useState<string | null>(null);
 
   // 1. Extract Images
   const extractedImages: ExtractedImageItem[] = useMemo(() => {
@@ -200,7 +328,6 @@ export function TaskInfoDrawer({
     // From Comments & Replies
     if (Array.isArray(comments)) {
       comments.forEach((c: any) => {
-        // Comment attachments
         if (Array.isArray(c.attachments)) {
           c.attachments.forEach((att: any) => {
             const mime = (att.mimeType || '').toLowerCase();
@@ -220,7 +347,6 @@ export function TaskInfoDrawer({
           });
         }
 
-        // Inline content images
         if (c.content) {
           const inlineImages = extractImagesFromContent(c.content);
           inlineImages.forEach((url, idx) => {
@@ -237,7 +363,6 @@ export function TaskInfoDrawer({
           });
         }
 
-        // Replies
         if (Array.isArray(c.replies)) {
           c.replies.forEach((r: any) => {
             if (Array.isArray(r.attachments)) {
@@ -278,7 +403,6 @@ export function TaskInfoDrawer({
       });
     }
 
-    // Sort newest first
     return results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [task, comments]);
 
@@ -290,7 +414,7 @@ export function TaskInfoDrawer({
     const addLink = (link: ExtractedLinkItem) => {
       const trimmedUrl = (link.url || '').trim();
       if (!trimmedUrl || trimmedUrl.startsWith('mention://') || seenUrls.has(trimmedUrl)) return;
-      if (isImageUrl(trimmedUrl)) return; // Exclude direct image files since they are in Images tab
+      if (isImageUrl(trimmedUrl)) return;
       seenUrls.add(trimmedUrl);
       results.push(link);
     };
@@ -305,7 +429,6 @@ export function TaskInfoDrawer({
     ) => {
       if (!text || typeof text !== 'string') return;
 
-      // 1. Markdown links: [Title](url)
       const mdRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/gi;
       let mdMatch: RegExpExecArray | null;
       while ((mdMatch = mdRegex.exec(text)) !== null) {
@@ -324,7 +447,6 @@ export function TaskInfoDrawer({
         });
       }
 
-      // 2. HTML anchor links: <a href="url">Title</a>
       const htmlRegex = /<a\b[^>]*?\bhref=["'](https?:\/\/[^"']+)["'][^>]*>(.*?)<\/a>/gi;
       let htmlMatch: RegExpExecArray | null;
       while ((htmlMatch = htmlRegex.exec(text)) !== null) {
@@ -343,7 +465,6 @@ export function TaskInfoDrawer({
         });
       }
 
-      // 3. Raw URLs
       const urlRegex = /\bhttps?:\/\/[^\s<>"']+/gi;
       let rawMatch: RegExpExecArray | null;
       while ((rawMatch = urlRegex.exec(text)) !== null) {
@@ -364,7 +485,6 @@ export function TaskInfoDrawer({
       }
     };
 
-    // From Task Description
     if (task?.description) {
       parseLinksFromText(
         task.description,
@@ -375,7 +495,6 @@ export function TaskInfoDrawer({
       );
     }
 
-    // From Non-Image Attachments (e.g. documents, PDFs with fileUrl)
     if (Array.isArray(task?.attachments)) {
       task.attachments.forEach((att: any) => {
         if (att.fileUrl && !isImageUrl(att.fileUrl)) {
@@ -393,7 +512,6 @@ export function TaskInfoDrawer({
       });
     }
 
-    // From Comments & Replies
     if (Array.isArray(comments)) {
       comments.forEach((c: any) => {
         parseLinksFromText(c.content, c.createdAt, c.user?.name, c.user?.avatarUrl, 'comment', c.id);
@@ -405,79 +523,21 @@ export function TaskInfoDrawer({
       });
     }
 
-    // Sort newest first
     return results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [task, comments]);
 
-  // 3. Extract Tasklists
-  const extractedTasklists: ExtractedTasklistItem[] = useMemo(() => {
-    const results: ExtractedTasklistItem[] = [];
-
-    // From Checklists
-    if (Array.isArray(task?.checklists)) {
-      task.checklists.forEach((chk: any) => {
-        const groupName = chk.name || 'Checklist';
-        if (Array.isArray(chk.items)) {
-          chk.items.forEach((item: any) => {
-            results.push({
-              id: item.id,
-              title: item.text,
-              completed: Boolean(item.completed),
-              groupName,
-              createdAt: item.createdAt || chk.createdAt || task.createdAt || Date.now(),
-              assignees: item.checkedBy ? [item.checkedBy] : [],
-              source: 'checklist',
-            });
-          });
-        }
+  // 3. Tracker Reports strictly filtered from Google Sheets / Work Logs (chronological ascending)
+  const dailyTrackerReports = useMemo(() => {
+    if (!Array.isArray(comments)) return [];
+    return [...comments]
+      .filter((c) => isDailyTrackerComment(c))
+      .sort((a, b) => {
+        const dateA = parseTrackerDateInfo(a).sortTime;
+        const dateB = parseTrackerDateInfo(b).sortTime;
+        if (dateA !== dateB) return dateA - dateB;
+        return new Date(a.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
       });
-    }
-
-    // From Subtasks
-    if (Array.isArray(task?.subtasks)) {
-      task.subtasks.forEach((st: any) => {
-        results.push({
-          id: st.id,
-          title: st.title,
-          completed: Boolean(st.completed || st.status === 'COMPLETE' || st.status === 'DONE'),
-          groupName: 'Subtasks',
-          status: st.status || 'PENDING',
-          createdAt: st.createdAt || task.createdAt || Date.now(),
-          assignees: st.assignees || (st.User ? [st.User] : []),
-          source: 'subtask',
-        });
-      });
-    }
-
-    // From Comment Task Lists
-    if (Array.isArray(comments)) {
-      comments.forEach((c: any) => {
-        if (!c.content) return;
-        // GFM task list regex: - [ ] text or - [x] text
-        const taskRegex = /^[-*]\s*\[([ xX])\]\s*(.+)$/gm;
-        let match: RegExpExecArray | null;
-        let itemIndex = 0;
-        while ((match = taskRegex.exec(c.content)) !== null) {
-          const isDone = match[1].toLowerCase() === 'x';
-          const title = match[2]?.trim();
-          if (title) {
-            results.push({
-              id: `comment-${c.id}-task-${itemIndex++}`,
-              title,
-              completed: isDone,
-              groupName: `Comment by ${c.user?.name || 'User'}`,
-              createdAt: c.createdAt,
-              assignees: c.user ? [c.user] : [],
-              source: 'comment',
-            });
-          }
-        }
-      });
-    }
-
-    // Sort newest first
-    return results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [task, comments]);
+  }, [comments]);
 
   // Search filtering
   const query = searchQuery.trim().toLowerCase();
@@ -502,22 +562,87 @@ export function TaskInfoDrawer({
     );
   }, [extractedLinks, query]);
 
-  const filteredTasklists = useMemo(() => {
-    if (!query) return extractedTasklists;
-    return extractedTasklists.filter(
-      (item) =>
-        item.title.toLowerCase().includes(query) ||
-        item.groupName.toLowerCase().includes(query) ||
-        item.assignees?.some((a) => a.name?.toLowerCase().includes(query))
+  const filteredTrackerReports = useMemo(() => {
+    if (!query) return dailyTrackerReports;
+    return dailyTrackerReports.filter(
+      (c) =>
+        c.content?.toLowerCase().includes(query) ||
+        c.user?.name?.toLowerCase().includes(query)
     );
-  }, [extractedTasklists, query]);
+  }, [dailyTrackerReports, query]);
 
-  // Grouped by time
-  const imageTimeGroups = useMemo(() => groupItemsByTime(filteredImages), [filteredImages]);
-  const linkTimeGroups = useMemo(() => groupItemsByTime(filteredLinks), [filteredLinks]);
-  const tasklistTimeGroups = useMemo(() => groupItemsByTime(filteredTasklists), [filteredTasklists]);
+  // Pagination for Tracker reports (scrolling up loads older reports, identical to Task comments)
+  const TRACKER_PAGE_SIZE = 15;
+  const [visibleTrackerCount, setVisibleTrackerCount] = useState(TRACKER_PAGE_SIZE);
+  const [isLoadingOlderReports, setIsLoadingOlderReports] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Copy Link Handler
+  const hasOlderTrackerReports = filteredTrackerReports.length > visibleTrackerCount;
+  const olderReportsCount = Math.max(0, filteredTrackerReports.length - visibleTrackerCount);
+
+  // Paginated subset of tracker reports (most recent `visibleTrackerCount` items)
+  const paginatedTrackerReports = useMemo(() => {
+    if (filteredTrackerReports.length <= visibleTrackerCount) {
+      return filteredTrackerReports;
+    }
+    return filteredTrackerReports.slice(filteredTrackerReports.length - visibleTrackerCount);
+  }, [filteredTrackerReports, visibleTrackerCount]);
+
+  // Grouped chronologically by exact day
+  const imageTimeGroups = useMemo(() => groupGenericItemsByDay(filteredImages), [filteredImages]);
+  const linkTimeGroups = useMemo(() => groupGenericItemsByDay(filteredLinks), [filteredLinks]);
+  const trackerDayGroups = useMemo(
+    () => groupReportsByDay(paginatedTrackerReports, true),
+    [paginatedTrackerReports]
+  );
+
+  const loadOlderTrackerReports = useCallback(() => {
+    if (!hasOlderTrackerReports || isLoadingOlderReports) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    setIsLoadingOlderReports(true);
+    const prevScrollHeight = container.scrollHeight;
+    const prevScrollTop = container.scrollTop;
+
+    setTimeout(() => {
+      setVisibleTrackerCount((prev) => Math.min(filteredTrackerReports.length, prev + TRACKER_PAGE_SIZE));
+      setIsLoadingOlderReports(false);
+
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          const newScrollHeight = scrollContainerRef.current.scrollHeight;
+          scrollContainerRef.current.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+        }
+      });
+    }, 120);
+  }, [hasOlderTrackerReports, isLoadingOlderReports, filteredTrackerReports.length]);
+
+  const handleContainerScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      if (activeTab !== 'tracker') return;
+      const { scrollTop } = e.currentTarget;
+      if (scrollTop < 60 && hasOlderTrackerReports && !isLoadingOlderReports) {
+        loadOlderTrackerReports();
+      }
+    },
+    [activeTab, hasOlderTrackerReports, isLoadingOlderReports, loadOlderTrackerReports]
+  );
+
+  useEffect(() => {
+    if (activeTab === 'tracker') {
+      const scrollToBottom = () => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        }
+      };
+      requestAnimationFrame(scrollToBottom);
+      const timer = setTimeout(scrollToBottom, 60);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab]);
+
+  // Copy Handlers
   const handleCopyLink = useCallback((id: string, url: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (navigator?.clipboard?.writeText) {
@@ -527,237 +652,74 @@ export function TaskInfoDrawer({
     }
   }, []);
 
-  // Summary counts
+  const handleCopyReport = useCallback((id: string, text: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (navigator?.clipboard?.writeText) {
+      const plainText = text.replace(/<[^>]+>/g, '').trim();
+      navigator.clipboard.writeText(plainText || text);
+      setCopiedCommentId(id);
+      setTimeout(() => setCopiedCommentId((prev) => (prev === id ? null : prev)), 2000);
+    }
+  }, []);
+
   const totalImages = extractedImages.length;
   const totalLinks = extractedLinks.length;
-  const totalTasklists = extractedTasklists.length;
-  const completedTasklists = extractedTasklists.filter((t) => t.completed).length;
+  const totalReports = dailyTrackerReports.length;
+
+  const tabList = [
+    { key: 'all', label: 'Overview', count: 0 },
+    { key: 'images', label: 'Images', count: totalImages },
+    { key: 'links', label: 'Links', count: totalLinks },
+    { key: 'tracker', label: 'Tracker', count: totalReports },
+  ] as const;
 
   return (
-    <div className="flex flex-col h-full bg-card overflow-hidden text-zinc-200">
-      {/* Top Header: Messenger Chat Info Style */}
-      <div className="px-4 py-3.5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between bg-card">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 -ml-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/70 rounded-lg transition-colors cursor-pointer shrink-0"
-            title="Back to Activity Feed"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div className="min-w-0">
-            <h3 className="font-semibold text-sm text-zinc-100 truncate">
-              {isSubtask ? 'Subtask Info' : 'Chat info'}
-            </h3>
-            <p className="text-[11px] text-zinc-400 truncate">
-              {task?.title || 'Task Details'}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {task?.status && (
-            <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-zinc-800/90 border border-zinc-700/60 text-zinc-300">
-              {task.status}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Overview & Media Preview Collage (Messenger Image 2 Style) */}
-      <div className="p-4 border-b border-zinc-800/60 bg-zinc-900/30 shrink-0 space-y-3">
-        {/* Recent Media Collage (up to 4 thumbnails) */}
-        {extractedImages.length > 0 ? (
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
-                <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Recent Media</span>
-              </span>
+    <div className="flex flex-col h-full bg-card [.theme-light_&]:bg-white overflow-hidden text-zinc-200 [.theme-light_&]:text-zinc-800 transition-colors duration-150">
+      {/* Tabs & Search Bar */}
+      <div className="px-4 py-2.5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 space-y-2.5 bg-card [.theme-light_&]:bg-white transition-colors">
+        {/* Navigation Tabs with Spring Animated Indicator */}
+        <div className="flex items-center gap-1 p-1 bg-zinc-900/60 [.theme-light_&]:bg-zinc-100 rounded-lg border border-zinc-800/60 [.theme-light_&]:border-zinc-200 relative">
+          {tabList.map((t) => {
+            const isActive = activeTab === t.key;
+            return (
               <button
+                key={t.key}
                 type="button"
-                onClick={() => setActiveTab('images')}
-                className="text-[11px] text-blue-400 hover:text-blue-300 font-medium transition-colors cursor-pointer"
+                onClick={() => setActiveTab(t.key)}
+                className={`relative flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors cursor-pointer text-center flex items-center justify-center gap-1 z-10 ${
+                  isActive
+                    ? 'text-zinc-100 [.theme-light_&]:text-zinc-900 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-800'
+                }`}
               >
-                View all ({totalImages})
-              </button>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2 h-20">
-              {extractedImages.slice(0, 4).map((img, idx) => (
-                <div
-                  key={img.id || idx}
-                  onClick={() => onPreviewImage(img.url)}
-                  className="relative group rounded-lg overflow-hidden border border-zinc-800 bg-zinc-900 cursor-pointer aspect-square"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={img.url}
-                    alt={img.fileName || 'Media'}
-                    className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+                {isActive && (
+                  <motion.div
+                    layoutId="activeTaskInfoTabPill"
+                    className="absolute inset-0 bg-zinc-800 [.theme-light_&]:bg-white rounded-md shadow-sm [.theme-light_&]:shadow-xs -z-10"
+                    transition={{ type: 'spring', bounce: 0.15, duration: 0.28 }}
                   />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <span className="text-[10px] text-white font-medium bg-black/60 px-1.5 py-0.5 rounded">
-                      View
-                    </span>
-                  </div>
-                  {idx === 3 && extractedImages.length > 4 && (
-                    <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
-                      <span className="text-xs font-bold text-white">
-                        +{extractedImages.length - 3}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-xs text-zinc-500 py-1">
-            <Clock className="w-3.5 h-3.5" />
-            <span>Created {new Date(task?.createdAt || Date.now()).toLocaleDateString()}</span>
-          </div>
-        )}
-
-        {/* Quick Summary Pill Row */}
-        <div className="grid grid-cols-3 gap-2 pt-1">
-          <button
-            type="button"
-            onClick={() => setActiveTab('images')}
-            className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
-              activeTab === 'images'
-                ? 'bg-indigo-500/10 border-indigo-500/40 text-indigo-300'
-                : 'bg-zinc-800/40 border-zinc-800/60 hover:bg-zinc-800/70 text-zinc-400'
-            }`}
-          >
-            <div className="flex items-center gap-1.5 text-xs font-medium">
-              <ImageIcon className="w-3.5 h-3.5 shrink-0" />
-              <span>Images</span>
-            </div>
-            <div className="text-base font-semibold text-zinc-200 mt-0.5">
-              {totalImages}
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('links')}
-            className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
-              activeTab === 'links'
-                ? 'bg-blue-500/10 border-blue-500/40 text-blue-300'
-                : 'bg-zinc-800/40 border-zinc-800/60 hover:bg-zinc-800/70 text-zinc-400'
-            }`}
-          >
-            <div className="flex items-center gap-1.5 text-xs font-medium">
-              <Link2 className="w-3.5 h-3.5 shrink-0" />
-              <span>Links</span>
-            </div>
-            <div className="text-base font-semibold text-zinc-200 mt-0.5">
-              {totalLinks}
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('tasklists')}
-            className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
-              activeTab === 'tasklists'
-                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
-                : 'bg-zinc-800/40 border-zinc-800/60 hover:bg-zinc-800/70 text-zinc-400'
-            }`}
-          >
-            <div className="flex items-center gap-1.5 text-xs font-medium">
-              <CheckSquare className="w-3.5 h-3.5 shrink-0" />
-              <span>Tasklists</span>
-            </div>
-            <div className="text-base font-semibold text-zinc-200 mt-0.5">
-              {completedTasklists}/{totalTasklists}
-            </div>
-          </button>
-        </div>
-      </div>
-
-      {/* Tabs / Separators & Search Bar */}
-      <div className="px-4 py-2.5 border-b border-zinc-800/60 shrink-0 space-y-2.5 bg-card">
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 p-1 bg-zinc-900/60 rounded-lg border border-zinc-800/60">
-          <button
-            type="button"
-            onClick={() => setActiveTab('all')}
-            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors cursor-pointer text-center ${
-              activeTab === 'all'
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            Overview
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('images')}
-            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors cursor-pointer text-center flex items-center justify-center gap-1 ${
-              activeTab === 'images'
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <span>Images</span>
-            {totalImages > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-700/60 text-zinc-300">
-                {totalImages}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('links')}
-            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors cursor-pointer text-center flex items-center justify-center gap-1 ${
-              activeTab === 'links'
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <span>Links</span>
-            {totalLinks > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-700/60 text-zinc-300">
-                {totalLinks}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('tasklists')}
-            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors cursor-pointer text-center flex items-center justify-center gap-1 ${
-              activeTab === 'tasklists'
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <span>Tasks</span>
-            {totalTasklists > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-700/60 text-zinc-300">
-                {totalTasklists}
-              </span>
-            )}
-          </button>
+                )}
+                <span>{t.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Search Input */}
         <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 [.theme-light_&]:text-zinc-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search images, links, or task items..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
+            placeholder="Search images, links, or tracker reports..."
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-zinc-900 [.theme-light_&]:bg-zinc-50 border border-zinc-800 [.theme-light_&]:border-zinc-200 rounded-lg text-zinc-200 [.theme-light_&]:text-zinc-900 placeholder-zinc-500 [.theme-light_&]:placeholder-zinc-400 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 transition-colors"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs cursor-pointer"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 [.theme-light_&]:text-zinc-400 [.theme-light_&]:hover:text-zinc-700 text-xs cursor-pointer"
             >
               Clear
             </button>
@@ -765,448 +727,590 @@ export function TaskInfoDrawer({
         </div>
       </div>
 
-      {/* Main Content Area with Chronological Time Separators */}
-      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-6">
-        {/* --- VIEW: ALL / OVERVIEW --- */}
-        {activeTab === 'all' && (
-          <div className="space-y-6">
-            {/* 1. Images Section */}
-            <div>
-              <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50">
-                <div className="flex items-center gap-2">
-                  <ImageIcon className="w-4 h-4 text-indigo-400" />
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                    Images & Media ({totalImages})
-                  </h4>
-                </div>
-                {totalImages > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('images')}
-                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
-                  >
-                    See all
-                  </button>
-                )}
-              </div>
-
-              {filteredImages.length === 0 ? (
-                <div className="text-xs text-zinc-500 py-3 text-center bg-zinc-900/30 rounded-lg border border-zinc-800/40">
-                  No images found
-                </div>
-              ) : (
-                <div className="grid grid-cols-3 gap-2.5">
-                  {filteredImages.slice(0, 6).map((img) => (
-                    <div
-                      key={img.id}
-                      onClick={() => onPreviewImage(img.url)}
-                      className="group relative rounded-lg overflow-hidden border border-zinc-800 bg-zinc-900 aspect-square cursor-pointer"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={img.url}
-                        alt={img.fileName || 'Image'}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 flex flex-col justify-end">
-                        <span className="text-[10px] text-zinc-200 font-medium truncate">
-                          {img.authorName || 'User'}
-                        </span>
-                        <span className="text-[9px] text-zinc-400">
-                          {formatRelativeTime(img.createdAt)}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 2. Links Section */}
-            <div>
-              <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50">
-                <div className="flex items-center gap-2">
-                  <Link2 className="w-4 h-4 text-blue-400" />
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                    Shared Links ({totalLinks})
-                  </h4>
-                </div>
-                {totalLinks > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('links')}
-                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
-                  >
-                    See all
-                  </button>
-                )}
-              </div>
-
-              {filteredLinks.length === 0 ? (
-                <div className="text-xs text-zinc-500 py-3 text-center bg-zinc-900/30 rounded-lg border border-zinc-800/40">
-                  No shared links found
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filteredLinks.slice(0, 4).map((link) => (
-                    <div
-                      key={link.id}
-                      onClick={() => openExternalLink(link.url)}
-                      className="p-2.5 rounded-lg border border-zinc-800/70 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700 transition-all flex items-start justify-between gap-3 cursor-pointer group"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className="text-[10px] font-semibold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
-                            {link.domain}
-                          </span>
-                          <span className="text-[11px] text-zinc-400">
-                            · {formatRelativeTime(link.createdAt)}
-                          </span>
-                        </div>
-                        <div className="text-xs font-medium text-zinc-200 group-hover:text-blue-300 transition-colors truncate">
-                          {link.title}
-                        </div>
-                        <div className="text-[11px] text-zinc-500 truncate mt-0.5">
-                          {link.url}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={(e) => handleCopyLink(link.id, link.url, e)}
-                          title="Copy Link"
-                          className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 rounded-md transition-colors cursor-pointer"
-                        >
-                          {copiedLinkId === link.id ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                        <span className="p-1.5 text-zinc-400 group-hover:text-zinc-200">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 3. Tasklists Section */}
-            <div>
-              <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50">
-                <div className="flex items-center gap-2">
-                  <CheckSquare className="w-4 h-4 text-emerald-400" />
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                    Checklists & Subtasks ({totalTasklists})
-                  </h4>
-                </div>
-                {totalTasklists > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('tasklists')}
-                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
-                  >
-                    See all
-                  </button>
-                )}
-              </div>
-
-              {filteredTasklists.length === 0 ? (
-                <div className="text-xs text-zinc-500 py-3 text-center bg-zinc-900/30 rounded-lg border border-zinc-800/40">
-                  No tasklist items found
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filteredTasklists.slice(0, 5).map((t) => (
-                    <div
-                      key={t.id}
-                      className="p-2.5 rounded-lg border border-zinc-800/70 bg-zinc-900/40 flex items-start gap-2.5"
-                    >
-                      <div className="pt-0.5">
-                        <div
-                          className={`w-4 h-4 rounded flex items-center justify-center border ${
-                            t.completed
-                              ? 'bg-emerald-600 border-emerald-500 text-white'
-                              : 'border-zinc-600 bg-zinc-800/60'
-                          }`}
-                        >
-                          {t.completed && <Check className="w-3 h-3 stroke-[3]" />}
-                        </div>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div
-                          className={`text-xs font-medium ${
-                            t.completed ? 'line-through text-zinc-500' : 'text-zinc-200'
-                          }`}
-                        >
-                          {t.title}
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px] text-zinc-400 mt-1">
-                          <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700/50">
-                            {t.groupName}
-                          </span>
-                          <span>· {formatRelativeTime(t.createdAt)}</span>
-                          {t.assignees && t.assignees.length > 0 && (
-                            <span className="text-zinc-400">
-                              · {t.assignees[0]?.name || 'Assigned'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* --- VIEW: IMAGES TAB (Separated by Time) --- */}
-        {activeTab === 'images' && (
-          <div className="space-y-6">
-            {imageTimeGroups.length === 0 ? (
-              <div className="text-center py-12 text-zinc-500">
-                <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400" />
-                <p className="text-xs font-medium">No images shared on this task yet</p>
-                <p className="text-[11px] text-zinc-500 mt-1">
-                  Images attached to comments or the task description will appear here.
-                </p>
-              </div>
-            ) : (
-              imageTimeGroups.map(({ group, items }) => (
-                <div key={group} className="space-y-3">
-                  {/* Time Separator */}
-                  <div className="sticky top-0 z-10 py-1 bg-card/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80">
-                    <Calendar className="w-3.5 h-3.5 text-zinc-500" />
-                    <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                      {group}
-                    </span>
-                    <span className="text-[10px] text-zinc-400">({items.length})</span>
+      {/* Main Content Area with Animated Transitions */}
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleContainerScroll}
+        className="flex-1 overflow-y-auto p-4 custom-scrollbar"
+      >
+        <AnimatePresence mode="wait">
+          {/* --- VIEW: ALL / OVERVIEW --- */}
+          {activeTab === 'all' && (
+            <motion.div
+              key="view-all"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+              className="space-y-6"
+            >
+              {/* 1. Images Section */}
+              <div>
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50 [.theme-light_&]:border-zinc-200">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 [.theme-light_&]:text-zinc-800">
+                      Images & Media
+                    </h4>
                   </div>
+                  {totalImages > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('images')}
+                      className="text-xs text-blue-400 hover:text-blue-300 [.theme-light_&]:text-blue-600 [.theme-light_&]:hover:text-blue-700 transition-colors cursor-pointer"
+                    >
+                      See all
+                    </button>
+                  )}
+                </div>
 
-                  {/* Image Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {items.map((img) => (
+                {filteredImages.length === 0 ? (
+                  <div className="text-xs text-zinc-500 [.theme-light_&]:text-zinc-500 py-3 text-center bg-zinc-900/30 [.theme-light_&]:bg-zinc-50 rounded-lg border border-zinc-800/40 [.theme-light_&]:border-zinc-200">
+                    No images found
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {filteredImages.slice(0, 6).map((img) => (
                       <div
                         key={img.id}
                         onClick={() => onPreviewImage(img.url)}
-                        className="group relative rounded-xl overflow-hidden border border-zinc-800 bg-zinc-900 aspect-square cursor-pointer shadow-sm hover:border-zinc-700 transition-all"
+                        className="group relative rounded-lg overflow-hidden border border-zinc-800 [.theme-light_&]:border-zinc-200 bg-zinc-900 [.theme-light_&]:bg-zinc-100 aspect-square cursor-pointer shadow-xs hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={img.url}
+                          src={getThumbnailUrl(img.url, 360, 40)}
                           alt={img.fileName || 'Image'}
+                          loading="lazy"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            if (target.src !== img.url) target.src = img.url;
+                          }}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                         />
-                        {/* Gradient Overlay with Author and Time (Messenger style) */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex flex-col justify-between">
-                          <div className="flex justify-end">
-                            <button
-                              type="button"
-                              onClick={(e) => handleCopyLink(img.id, img.url, e)}
-                              title="Copy Image URL"
-                              className="p-1 rounded bg-black/60 hover:bg-black/80 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-                            >
-                              {copiedLinkId === img.id ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
-                          <div>
-                            <div className="text-xs font-semibold text-white truncate">
-                              {img.authorName || 'Shared'}
-                            </div>
-                            <div className="text-[10px] text-zinc-300 flex items-center gap-1 mt-0.5">
-                              <Clock className="w-3 h-3" />
-                              <span>{formatRelativeTime(img.createdAt)}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Always-visible compact time badge */}
-                        <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-medium text-zinc-300 backdrop-blur-sm group-hover:opacity-0 transition-opacity">
-                          {formatRelativeTime(img.createdAt)}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 flex flex-col justify-end">
+                          <span className="text-[10px] text-zinc-200 font-medium truncate">
+                            {img.authorName || 'User'}
+                          </span>
+                          <span className="text-[9px] text-zinc-400">
+                            {formatRelativeTime(img.createdAt)}
+                          </span>
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* --- VIEW: LINKS TAB (Separated by Time) --- */}
-        {activeTab === 'links' && (
-          <div className="space-y-6">
-            {linkTimeGroups.length === 0 ? (
-              <div className="text-center py-12 text-zinc-500">
-                <Link2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400" />
-                <p className="text-xs font-medium">No links found on this task</p>
-                <p className="text-[11px] text-zinc-500 mt-1">
-                  URLs pasted in comments, attachments, or description will appear here.
-                </p>
+                )}
               </div>
-            ) : (
-              linkTimeGroups.map(({ group, items }) => (
-                <div key={group} className="space-y-3">
-                  {/* Time Separator */}
-                  <div className="sticky top-0 z-10 py-1 bg-card/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80">
-                    <Calendar className="w-3.5 h-3.5 text-zinc-500" />
-                    <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                      {group}
-                    </span>
-                    <span className="text-[10px] text-zinc-400">({items.length})</span>
-                  </div>
 
-                  {/* Links List */}
+              {/* 2. Links Section */}
+              <div>
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50 [.theme-light_&]:border-zinc-200">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 [.theme-light_&]:text-zinc-800">
+                      Shared Links
+                    </h4>
+                  </div>
+                  {totalLinks > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('links')}
+                      className="text-xs text-blue-400 hover:text-blue-300 [.theme-light_&]:text-blue-600 [.theme-light_&]:hover:text-blue-700 transition-colors cursor-pointer"
+                    >
+                      See all
+                    </button>
+                  )}
+                </div>
+
+                {filteredLinks.length === 0 ? (
+                  <div className="text-xs text-zinc-500 [.theme-light_&]:text-zinc-500 py-3 text-center bg-zinc-900/30 [.theme-light_&]:bg-zinc-50 rounded-lg border border-zinc-800/40 [.theme-light_&]:border-zinc-200">
+                    No shared links found
+                  </div>
+                ) : (
                   <div className="space-y-2">
-                    {items.map((link) => (
+                    {filteredLinks.slice(0, 4).map((link) => (
                       <div
                         key={link.id}
                         onClick={() => openExternalLink(link.url)}
-                        className="p-3 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700 transition-all flex items-start justify-between gap-3 cursor-pointer group shadow-sm"
+                        className="p-2.5 rounded-lg border border-zinc-800/70 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100/90 hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all flex items-start justify-between gap-3 cursor-pointer group shadow-xs"
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-[10px] font-semibold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-[10px] font-semibold text-blue-400 [.theme-light_&]:text-blue-700 bg-blue-500/10 [.theme-light_&]:bg-blue-50 px-1.5 py-0.5 rounded border border-blue-500/20 [.theme-light_&]:border-blue-200">
                               {link.domain}
                             </span>
-                            <span className="text-[11px] text-zinc-400 flex items-center gap-1">
-                              <User className="w-3 h-3 text-zinc-500" />
-                              <span>{link.authorName || 'Teammate'}</span>
-                            </span>
-                            <span className="text-[11px] text-zinc-500">
+                            <span className="text-[11px] text-zinc-400 [.theme-light_&]:text-zinc-500">
                               · {formatRelativeTime(link.createdAt)}
                             </span>
                           </div>
-
-                          <div className="text-xs font-medium text-zinc-100 group-hover:text-blue-300 transition-colors truncate">
+                          <div className="text-xs font-medium text-zinc-200 [.theme-light_&]:text-zinc-900 group-hover:text-blue-300 [.theme-light_&]:group-hover:text-blue-600 transition-colors truncate">
                             {link.title}
                           </div>
-                          <div className="text-[11px] text-zinc-500 truncate mt-0.5 font-mono">
+                          <div className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 truncate mt-0.5">
                             {link.url}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                        <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
                             onClick={(e) => handleCopyLink(link.id, link.url, e)}
-                            title="Copy link"
-                            className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/60 rounded-md transition-colors cursor-pointer"
+                            title="Copy Link"
+                            className="p-1.5 text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-700/60 [.theme-light_&]:hover:bg-zinc-200 rounded-md transition-colors cursor-pointer"
                           >
-                            {copiedLinkId === link.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
+                            <AnimatePresence mode="wait">
+                              {copiedLinkId === link.id ? (
+                                <motion.span
+                                  key="checked"
+                                  initial={{ scale: 0.6, opacity: 0 }}
+                                  animate={{ scale: 1, opacity: 1 }}
+                                  exit={{ scale: 0.6, opacity: 0 }}
+                                  transition={{ duration: 0.15 }}
+                                >
+                                  <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                </motion.span>
+                              ) : (
+                                <motion.span
+                                  key="copy"
+                                  initial={{ scale: 0.8, opacity: 0 }}
+                                  animate={{ scale: 1, opacity: 1 }}
+                                  exit={{ scale: 0.8, opacity: 0 }}
+                                  transition={{ duration: 0.12 }}
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
                           </button>
-                          <span
-                            title="Open link"
-                            className="p-1.5 text-zinc-400 group-hover:text-zinc-100"
-                          >
+                          <span className="p-1.5 text-zinc-400 [.theme-light_&]:text-zinc-500 group-hover:text-zinc-200 [.theme-light_&]:group-hover:text-zinc-800">
                             <ExternalLink className="w-3.5 h-3.5" />
                           </span>
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* --- VIEW: TASKLISTS TAB (Separated by Time & Group) --- */}
-        {activeTab === 'tasklists' && (
-          <div className="space-y-6">
-            {tasklistTimeGroups.length === 0 ? (
-              <div className="text-center py-12 text-zinc-500">
-                <CheckSquare className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400" />
-                <p className="text-xs font-medium">No checklists or subtasks found</p>
-                <p className="text-[11px] text-zinc-500 mt-1">
-                  Task checklists, subtasks, and comment checklists will appear here.
-                </p>
+                )}
               </div>
-            ) : (
-              tasklistTimeGroups.map(({ group, items }) => (
-                <div key={group} className="space-y-3">
-                  {/* Time Separator */}
-                  <div className="sticky top-0 z-10 py-1 bg-card/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80">
-                    <Calendar className="w-3.5 h-3.5 text-zinc-500" />
-                    <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                      {group}
-                    </span>
-                    <span className="text-[10px] text-zinc-400">({items.length})</span>
+
+              {/* 3. Tracker Reports Section (Strictly from Spreadsheet / Work Logs) */}
+              <div>
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-800/50 [.theme-light_&]:border-zinc-200">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 [.theme-light_&]:text-zinc-800">
+                      Tracker Reports
+                    </h4>
                   </div>
-
-                  {/* Tasklist Items */}
-                  <div className="space-y-2">
-                    {items.map((item) => (
-                      <div
-                        key={item.id}
-                        className="p-3 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/40 transition-colors flex items-start gap-3 shadow-sm"
-                      >
-                        <div className="pt-0.5">
-                          <div
-                            className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
-                              item.completed
-                                ? 'bg-emerald-600 border-emerald-500 text-white'
-                                : 'border-zinc-600 bg-zinc-800/60'
-                            }`}
-                          >
-                            {item.completed && <Check className="w-3 h-3 stroke-[3]" />}
-                          </div>
-                        </div>
-
-                        <div className="min-w-0 flex-1">
-                          <div
-                            className={`text-xs font-medium ${
-                              item.completed
-                                ? 'line-through text-zinc-500'
-                                : 'text-zinc-100'
-                            }`}
-                          >
-                            {item.title}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-400 mt-1.5">
-                            <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700/50 font-medium">
-                              {item.groupName}
-                            </span>
-                            {item.status && (
-                              <span className="px-1.5 py-0.5 rounded bg-zinc-800/90 text-zinc-400 border border-zinc-700/40">
-                                {item.status}
-                              </span>
-                            )}
-                            <span className="flex items-center gap-1 text-zinc-500">
-                              <Clock className="w-3 h-3" />
-                              <span>{formatRelativeTime(item.createdAt)}</span>
-                            </span>
-                            {item.assignees && item.assignees.length > 0 && (
-                              <span className="flex items-center gap-1 text-zinc-400">
-                                <User className="w-3 h-3 text-zinc-500" />
-                                <span>{item.assignees[0]?.name}</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {totalReports > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('tracker')}
+                      className="text-xs text-blue-400 hover:text-blue-300 [.theme-light_&]:text-blue-600 [.theme-light_&]:hover:text-blue-700 transition-colors cursor-pointer"
+                    >
+                      See all
+                    </button>
+                  )}
                 </div>
-              ))
-            )}
-          </div>
-        )}
+
+                {filteredTrackerReports.length === 0 ? (
+                  <div className="text-xs text-zinc-500 [.theme-light_&]:text-zinc-500 py-3 text-center bg-zinc-900/30 [.theme-light_&]:bg-zinc-50 rounded-lg border border-zinc-800/40 [.theme-light_&]:border-zinc-200">
+                    No tracker reports found for this task
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {[...filteredTrackerReports].reverse().slice(0, 3).map((report) => {
+                      const { dateHeader, timeRange } = parseTrackerDateInfo(report);
+                      return (
+                        <div
+                          key={report.id}
+                          className="p-3.5 rounded-xl border border-zinc-800/70 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 space-y-2.5 shadow-xs hover:border-zinc-700/80 [.theme-light_&]:hover:border-zinc-300 transition-all"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[11px] text-zinc-300 [.theme-light_&]:text-zinc-700 font-medium">
+                                {dateHeader}
+                              </span>
+                              {timeRange && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-700 border border-emerald-500/20 shrink-0 font-mono">
+                                  {timeRange}
+                                </span>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyReport(report.id, report.content, e)}
+                              title="Copy report"
+                              className="p-1 text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200 rounded transition-colors cursor-pointer"
+                            >
+                              <AnimatePresence mode="wait">
+                                {copiedCommentId === report.id ? (
+                                  <motion.span
+                                    key="checked-c"
+                                    initial={{ scale: 0.6, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 0.6, opacity: 0 }}
+                                    transition={{ duration: 0.15 }}
+                                  >
+                                    <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                  </motion.span>
+                                ) : (
+                                  <motion.span
+                                    key="copy-c"
+                                    initial={{ scale: 0.8, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 0.8, opacity: 0 }}
+                                    transition={{ duration: 0.12 }}
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </motion.span>
+                                )}
+                              </AnimatePresence>
+                            </button>
+                          </div>
+
+                          <div className="text-xs text-zinc-300 [.theme-light_&]:text-zinc-800 leading-relaxed overflow-hidden break-words line-clamp-6">
+                            <CommentContent
+                              content={report.content}
+                              onPreviewImage={onPreviewImage}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* --- VIEW: IMAGES TAB (Separated by Day) --- */}
+          {activeTab === 'images' && (
+            <motion.div
+              key="view-images"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+              className="space-y-6"
+            >
+              {imageTimeGroups.length === 0 ? (
+                <div className="text-center py-12 text-zinc-500 [.theme-light_&]:text-zinc-500">
+                  <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400 [.theme-light_&]:text-zinc-500" />
+                  <p className="text-xs font-medium">No images shared on this task yet</p>
+                  <p className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 mt-1">
+                    Images attached to comments or the task description will appear here.
+                  </p>
+                </div>
+              ) : (
+                imageTimeGroups.map(({ group, items }) => (
+                  <div key={group} className="space-y-3">
+                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 [.theme-light_&]:bg-white/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 [.theme-light_&]:border-zinc-200 transition-colors">
+                      <span className="text-xs font-bold text-zinc-300 [.theme-light_&]:text-zinc-800 uppercase tracking-wider">
+                        {group}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {items.map((img) => (
+                        <div
+                          key={img.id}
+                          onClick={() => onPreviewImage(img.url)}
+                          className="group relative rounded-xl overflow-hidden border border-zinc-800 [.theme-light_&]:border-zinc-200 bg-zinc-900 [.theme-light_&]:bg-zinc-100 aspect-square cursor-pointer shadow-xs hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={getThumbnailUrl(img.url, 480, 45)}
+                            alt={img.fileName || 'Image'}
+                            loading="lazy"
+                            onError={(e) => {
+                              const target = e.currentTarget;
+                              if (target.src !== img.url) target.src = img.url;
+                            }}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex flex-col justify-between">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={(e) => handleCopyLink(img.id, img.url, e)}
+                                title="Copy Image URL"
+                                className="p-1 rounded bg-black/60 hover:bg-black/80 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                              >
+                                <AnimatePresence mode="wait">
+                                  {copiedLinkId === img.id ? (
+                                    <motion.span
+                                      key="checked-img"
+                                      initial={{ scale: 0.6, opacity: 0 }}
+                                      animate={{ scale: 1, opacity: 1 }}
+                                      exit={{ scale: 0.6, opacity: 0 }}
+                                      transition={{ duration: 0.15 }}
+                                    >
+                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    </motion.span>
+                                  ) : (
+                                    <motion.span
+                                      key="copy-img"
+                                      initial={{ scale: 0.8, opacity: 0 }}
+                                      animate={{ scale: 1, opacity: 1 }}
+                                      exit={{ scale: 0.8, opacity: 0 }}
+                                      transition={{ duration: 0.12 }}
+                                    >
+                                      <Copy className="w-3.5 h-3.5" />
+                                    </motion.span>
+                                  )}
+                                </AnimatePresence>
+                              </button>
+                            </div>
+                            <div>
+                              <div className="text-xs font-semibold text-white truncate">
+                                {img.authorName || 'Shared'}
+                              </div>
+                              <div className="text-[10px] text-zinc-300 flex items-center gap-1 mt-0.5">
+                                <Clock className="w-3 h-3" />
+                                <span>{formatRelativeTime(img.createdAt)}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-medium text-zinc-300 backdrop-blur-sm group-hover:opacity-0 transition-opacity">
+                            {formatRelativeTime(img.createdAt)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </motion.div>
+          )}
+
+          {/* --- VIEW: LINKS TAB (Separated by Day) --- */}
+          {activeTab === 'links' && (
+            <motion.div
+              key="view-links"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+              className="space-y-6"
+            >
+              {linkTimeGroups.length === 0 ? (
+                <div className="text-center py-12 text-zinc-500 [.theme-light_&]:text-zinc-500">
+                  <Link2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400 [.theme-light_&]:text-zinc-500" />
+                  <p className="text-xs font-medium">No links found on this task</p>
+                  <p className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 mt-1">
+                    URLs pasted in comments, attachments, or description will appear here.
+                  </p>
+                </div>
+              ) : (
+                linkTimeGroups.map(({ group, items }) => (
+                  <div key={group} className="space-y-3">
+                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 [.theme-light_&]:bg-white/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 [.theme-light_&]:border-zinc-200 transition-colors">
+                      <span className="text-xs font-bold text-zinc-300 [.theme-light_&]:text-zinc-800 uppercase tracking-wider">
+                        {group}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {items.map((link) => (
+                        <div
+                          key={link.id}
+                          onClick={() => openExternalLink(link.url)}
+                          className="p-3 rounded-xl border border-zinc-800/80 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100/90 hover:border-zinc-700 [.theme-light_&]:hover:border-zinc-300 transition-all flex items-start justify-between gap-3 cursor-pointer group shadow-xs"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[10px] font-semibold text-blue-400 [.theme-light_&]:text-blue-700 bg-blue-500/10 [.theme-light_&]:bg-blue-50 px-1.5 py-0.5 rounded border border-blue-500/20 [.theme-light_&]:border-blue-200">
+                                {link.domain}
+                              </span>
+                              <span className="text-[11px] text-zinc-400 [.theme-light_&]:text-zinc-600 flex items-center gap-1">
+                                <User className="w-3 h-3 text-zinc-500 [.theme-light_&]:text-zinc-400" />
+                                <span>{link.authorName || 'Teammate'}</span>
+                              </span>
+                              <span className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400">
+                                · {formatRelativeTime(link.createdAt)}
+                              </span>
+                            </div>
+
+                            <div className="text-xs font-medium text-zinc-100 [.theme-light_&]:text-zinc-900 group-hover:text-blue-300 [.theme-light_&]:group-hover:text-blue-600 transition-colors truncate">
+                              {link.title}
+                            </div>
+                            <div className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 truncate mt-0.5 font-mono">
+                              {link.url}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyLink(link.id, link.url, e)}
+                              title="Copy link"
+                              className="p-1.5 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-700/60 [.theme-light_&]:hover:bg-zinc-200 rounded-md transition-colors cursor-pointer"
+                            >
+                              <AnimatePresence mode="wait">
+                                {copiedLinkId === link.id ? (
+                                  <motion.span
+                                    key="checked-l"
+                                    initial={{ scale: 0.6, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 0.6, opacity: 0 }}
+                                    transition={{ duration: 0.15 }}
+                                  >
+                                    <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                  </motion.span>
+                                ) : (
+                                  <motion.span
+                                    key="copy-l"
+                                    initial={{ scale: 0.8, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 0.8, opacity: 0 }}
+                                    transition={{ duration: 0.12 }}
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </motion.span>
+                                )}
+                              </AnimatePresence>
+                            </button>
+                            <span
+                              title="Open link"
+                              className="p-1.5 text-zinc-400 [.theme-light_&]:text-zinc-500 group-hover:text-zinc-100 [.theme-light_&]:group-hover:text-zinc-800"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </motion.div>
+          )}
+
+          {/* --- VIEW: TRACKER TAB (Strictly Google Sheets Work Logs, Grouped by Day, Paginated on Scroll Up) --- */}
+          {activeTab === 'tracker' && (
+            <motion.div
+              key="view-tracker"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+              className="space-y-6"
+            >
+              {/* Pagination trigger when scrolling up / Load earlier reports button */}
+              {hasOlderTrackerReports && (
+                <div className="py-2.5 flex justify-center items-center">
+                  {isLoadingOlderReports ? (
+                    <div className="flex items-center gap-2 text-xs text-zinc-500 py-1">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                      <span>Loading earlier reports...</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={loadOlderTrackerReports}
+                      className="text-[11px] font-medium text-zinc-400 hover:text-zinc-200 [.theme-light_&]:text-zinc-600 [.theme-light_&]:hover:text-zinc-900 bg-zinc-800/40 hover:bg-zinc-800/80 [.theme-light_&]:bg-zinc-100 [.theme-light_&]:hover:bg-zinc-200 border border-zinc-800 [.theme-light_&]:border-zinc-300 transition-all flex items-center gap-1.5 py-1 px-3 rounded-full cursor-pointer shadow-xs"
+                    >
+                      <Clock className="w-3 h-3 text-zinc-500 [.theme-light_&]:text-zinc-400" />
+                      <span>Load earlier tracker reports ({olderReportsCount} remaining)</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {trackerDayGroups.length === 0 ? (
+                <div className="text-center py-12 text-zinc-500 [.theme-light_&]:text-zinc-500">
+                  <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-40 text-zinc-400 [.theme-light_&]:text-zinc-500" />
+                  <p className="text-xs font-semibold">No tracker reports found</p>
+                  <p className="text-[11px] text-zinc-500 [.theme-light_&]:text-zinc-400 mt-1 max-w-sm mx-auto">
+                    Tracker schedule reports synced from the MA Daily Schedule spreadsheet will appear here organized by work date.
+                  </p>
+                </div>
+              ) : (
+                trackerDayGroups.map(({ group, items }) => (
+                  <div key={group} className="space-y-3">
+                    {/* Exact Day Separator: e.g. "Wed, Nov 4, 2026" */}
+                    <div className="sticky top-0 z-10 py-1.5 bg-card/95 [.theme-light_&]:bg-white/95 backdrop-blur-sm flex items-center gap-2 border-b border-zinc-800/80 [.theme-light_&]:border-zinc-200 transition-colors">
+                      <span className="text-xs font-bold text-zinc-200 [.theme-light_&]:text-zinc-900 uppercase tracking-wider">
+                        {group}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {items.map((report) => {
+                        const { timeRange } = parseTrackerDateInfo(report);
+                        return (
+                          <div
+                            key={report.id}
+                            className="p-3.5 rounded-xl border border-zinc-800/80 [.theme-light_&]:border-zinc-200 bg-zinc-900/40 [.theme-light_&]:bg-zinc-50/70 hover:border-zinc-700/80 [.theme-light_&]:hover:border-zinc-300 transition-all space-y-2.5 shadow-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                {timeRange ? (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-700 border border-emerald-500/20 font-mono font-medium shrink-0">
+                                    {timeRange}
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] text-zinc-400 [.theme-light_&]:text-zinc-600 font-medium">
+                                    Work Log
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[10px] text-zinc-500 [.theme-light_&]:text-zinc-400 hidden sm:inline">
+                                  {new Date(report.createdAt).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleCopyReport(report.id, report.content, e)}
+                                  title="Copy report"
+                                  className="p-1 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200 rounded transition-colors cursor-pointer"
+                                >
+                                  <AnimatePresence mode="wait">
+                                    {copiedCommentId === report.id ? (
+                                      <motion.span
+                                        key="checked-cmt"
+                                        initial={{ scale: 0.6, opacity: 0 }}
+                                        animate={{ scale: 1, opacity: 1 }}
+                                        exit={{ scale: 0.6, opacity: 0 }}
+                                        transition={{ duration: 0.15 }}
+                                      >
+                                        <Check className="w-3.5 h-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                                      </motion.span>
+                                    ) : (
+                                      <motion.span
+                                        key="copy-cmt"
+                                        initial={{ scale: 0.8, opacity: 0 }}
+                                        animate={{ scale: 1, opacity: 1 }}
+                                        exit={{ scale: 0.8, opacity: 0 }}
+                                        transition={{ duration: 0.12 }}
+                                      >
+                                        <Copy className="w-3.5 h-3.5" />
+                                      </motion.span>
+                                    )}
+                                  </AnimatePresence>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="text-xs text-zinc-200 [.theme-light_&]:text-zinc-800 leading-relaxed overflow-hidden break-words">
+                              <CommentContent
+                                content={report.content}
+                                onPreviewImage={onPreviewImage}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
 }
-

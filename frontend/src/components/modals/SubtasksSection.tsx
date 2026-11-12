@@ -997,6 +997,7 @@ function SubtaskRow({
   return (
     <div
       ref={resizeRef}
+      data-subtask-id={subtask.id}
       onMouseEnter={() => {
         if (taskId) prefetchSubtaskActivities(taskId, subtask.id, subtask.title);
       }}

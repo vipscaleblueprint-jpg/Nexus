@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info } from 'lucide-react';
+import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -474,6 +474,40 @@ export function TaskDetailModalContent({
   scrollToComments,
 }: Props) {
   const router = useRouter();
+
+  const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const targetElement = e.target as HTMLElement | null;
+      const subtaskEl = targetElement?.closest?.('[data-subtask-id]');
+      const clickedSubtaskId = subtaskEl?.getAttribute('data-subtask-id');
+      const taskLinkEl = targetElement?.closest?.('a[href*="/tasks/"]') as HTMLAnchorElement | null;
+      let clickedTaskId: string | null = null;
+      if (taskLinkEl) {
+        const match = taskLinkEl.href.match(/\/tasks\/([a-zA-Z0-9_-]+)/);
+        if (match) clickedTaskId = match[1];
+      }
+
+      const targetId = clickedSubtaskId || clickedTaskId || task?.id;
+      if (!targetId) return;
+
+      const fromPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
+      const targetUrl = `/tasks/${targetId}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`;
+
+      try {
+        const newTab = window.open(targetUrl, '_blank');
+        if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
+          onClose();
+          router.push(targetUrl);
+        }
+      } catch {
+        onClose();
+        router.push(targetUrl);
+      }
+    }
+  }, [task?.id, onClose, router]);
   const [isSubtasksExpanded, setIsSubtasksExpanded] = useState(true);
   const [subtasksExpandAllSignal, setSubtasksExpandAllSignal] = useState(0);
   const subtasksHeaderClickTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -3373,6 +3407,7 @@ export function TaskDetailModalContent({
         </div>
       )}
       <div
+        onContextMenu={handleCtrlRightClick}
         className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
       >
         {/* Header */}
@@ -4459,38 +4494,112 @@ export function TaskDetailModalContent({
           />
 
           {/* Right Panel: Activity */}
-          <div ref={activityPanelRef} style={isDesktop ? { width: activityWidth } : undefined} className={`nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 overflow-hidden ${mobilePanelTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}>
-            <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
-              <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
-              <div className="flex gap-2.5 items-center">
-                <span className="text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
-                <button
-                  type="button"
-                  onClick={() => setShowActivityInfo(prev => !prev)}
-                  title={showActivityInfo ? 'Back to Activity' : 'Task Info (Media, Links & Tasklists)'}
-                  className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                    showActivityInfo
-                      ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
-                      : 'border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                  }`}
+          <div ref={activityPanelRef} style={isDesktop ? { width: activityWidth } : undefined} className={`nexus-task-activity-panel flex-shrink-0 bg-card [.theme-light_&]:bg-white flex flex-col border-l border-zinc-800/60 [.theme-light_&]:border-zinc-200 overflow-hidden ${mobilePanelTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}>
+            <AnimatePresence mode="wait" initial={false}>
+              {showActivityInfo ? (
+                <motion.div
+                  key="task-info-header"
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                  className="px-4 sm:px-6 py-3.5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between gap-3 bg-card [.theme-light_&]:bg-white"
                 >
-                  <Info className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowActivityInfo(false)}
+                      title="Back to Activity"
+                      className="p-1.5 -ml-1 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer shrink-0"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <div className="min-w-0 flex flex-col">
+                      <span className="font-bold text-sm text-zinc-100 [.theme-light_&]:text-zinc-900 leading-tight">
+                        Task Info
+                      </span>
+                      <span className="text-xs text-zinc-400 [.theme-light_&]:text-zinc-500 truncate mt-0.5 font-normal">
+                        {task.title || 'Untitled task'}
+                      </span>
+                    </div>
+                  </div>
 
-            {showActivityInfo ? (
-              <TaskInfoDrawer
-                task={task}
-                comments={richComments}
-                onClose={() => setShowActivityInfo(false)}
-                onPreviewImage={setLightboxImage}
-                workspaceUsers={workspaceUsers}
-                currentUser={currentUser}
-                isSubtask={false}
-              />
-            ) : (
-              <>
+                  <div className="shrink-0 flex items-center gap-2">
+                    {(() => {
+                      const activeStatusName = localStatus || task.status || 'OPEN';
+                      const statusObj = internalListStatuses?.find(
+                        (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === activeStatusName.trim().toUpperCase()
+                      );
+                      const hasCustomColor = !!statusObj?.color;
+                      const defaultClasses = STATUS_COLORS[(activeStatusName || '').toUpperCase()] || STATUS_COLORS[activeStatusName] || 'bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 [.theme-light_&]:bg-zinc-100 [.theme-light_&]:text-zinc-700 [.theme-light_&]:border-zinc-300';
+
+                      return (
+                        <span
+                          style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
+                          className={`px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-bold tracking-wider uppercase select-none shadow-sm ${
+                            hasCustomColor ? 'text-white' : defaultClasses
+                          }`}
+                        >
+                          {activeStatusName}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="activity-feed-header"
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                  className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between bg-card [.theme-light_&]:bg-white"
+                >
+                  <h3 className="font-semibold text-sm text-zinc-200 [.theme-light_&]:text-zinc-900">Activity</h3>
+                  <div className="flex gap-2.5 items-center">
+                    <span className="text-zinc-500 [.theme-light_&]:text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowActivityInfo(true)}
+                      title="Task Info (Media, Links & Tracker)"
+                      className="p-1.5 rounded-lg border transition-all cursor-pointer border-zinc-800 [.theme-light_&]:border-zinc-300 bg-zinc-800/40 [.theme-light_&]:bg-zinc-100 text-zinc-400 [.theme-light_&]:text-zinc-500 hover:text-zinc-200 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200"
+                    >
+                      <Info className="w-4 h-4" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence mode="wait" initial={false}>
+              {showActivityInfo ? (
+                <motion.div
+                  key="task-info-drawer-panel"
+                  initial={{ opacity: 0, x: 14 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 14 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  className="flex-1 flex flex-col min-h-0 overflow-hidden"
+                >
+                  <TaskInfoDrawer
+                    task={task}
+                    comments={richComments}
+                    onClose={() => setShowActivityInfo(false)}
+                    onPreviewImage={setLightboxImage}
+                    workspaceUsers={workspaceUsers}
+                    currentUser={currentUser}
+                    isSubtask={false}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="activity-feed-panel"
+                  initial={{ opacity: 0, x: -14 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -14 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  className="flex-1 flex flex-col min-h-0 overflow-hidden"
+                >
                 <div
                   ref={activityScrollRef}
               onScroll={handleActivityScroll}
@@ -5488,9 +5597,10 @@ export function TaskDetailModalContent({
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
               </div>
             </div>
-          </>
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
+    </div>
 
         </div>
       </div>
@@ -5595,6 +5705,39 @@ export function SubtaskDetailView({
   onActivityWidthChange?: (width: number) => void;
 }) {
   const router = useRouter();
+
+  const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const targetElement = e.target as HTMLElement | null;
+      const parentLinkEl = targetElement?.closest?.('[data-parent-task-link]');
+      const taskLinkEl = targetElement?.closest?.('a[href*="/tasks/"]') as HTMLAnchorElement | null;
+      let clickedTaskId: string | null = null;
+      if (taskLinkEl) {
+        const match = taskLinkEl.href.match(/\/tasks\/([a-zA-Z0-9_-]+)/);
+        if (match) clickedTaskId = match[1];
+      }
+
+      const targetId = parentLinkEl ? parentTask?.id : (clickedTaskId || subtask?.id || parentTask?.id);
+      if (!targetId) return;
+
+      const fromPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
+      const targetUrl = `/tasks/${targetId}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`;
+
+      try {
+        const newTab = window.open(targetUrl, '_blank');
+        if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
+          onClose();
+          router.push(targetUrl);
+        }
+      } catch {
+        onClose();
+        router.push(targetUrl);
+      }
+    }
+  }, [subtask?.id, parentTask?.id, onClose, router]);
 
   const subtaskRef = useRef(subtask);
   useEffect(() => {
@@ -7728,6 +7871,7 @@ export function SubtaskDetailView({
 
   return (
     <div
+      onContextMenu={handleCtrlRightClick}
       className="w-full h-full bg-background flex flex-col overflow-hidden cursor-default"
     >
       {/* Header */}
@@ -8734,39 +8878,113 @@ export function SubtaskDetailView({
         <div
           ref={subtaskActivityPanelRef}
           style={isDesktop ? { width: activityWidth } : undefined}
-          className={`nexus-task-activity-panel flex-shrink-0 bg-card flex flex-col border-l border-zinc-800/60 z-10 overflow-hidden ${subtaskMobileTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}
+          className={`nexus-task-activity-panel flex-shrink-0 bg-card [.theme-light_&]:bg-white flex flex-col border-l border-zinc-800/60 [.theme-light_&]:border-zinc-200 z-10 overflow-hidden ${subtaskMobileTab === 'details' ? 'hidden md:flex' : 'flex flex-1 w-full'}`}
         >
-          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between">
-            <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
-            <div className="flex gap-2.5 items-center">
-              <span className="text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
-              <button
-                type="button"
-                onClick={() => setShowActivityInfo(prev => !prev)}
-                title={showActivityInfo ? 'Back to Activity' : 'Subtask Info (Media, Links & Tasklists)'}
-                className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                  showActivityInfo
-                    ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
-                    : 'border-zinc-800 bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                }`}
+          <AnimatePresence mode="wait" initial={false}>
+            {showActivityInfo ? (
+              <motion.div
+                key="subtask-info-header"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="px-4 sm:px-6 py-3.5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between gap-3 bg-card [.theme-light_&]:bg-white"
               >
-                <Info className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+                <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowActivityInfo(false)}
+                    title="Back to Activity"
+                    className="p-1.5 -ml-1 text-zinc-400 hover:text-zinc-100 [.theme-light_&]:text-zinc-500 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800/60 [.theme-light_&]:hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer shrink-0"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div className="min-w-0 flex flex-col">
+                    <span className="font-bold text-sm text-zinc-100 [.theme-light_&]:text-zinc-900 leading-tight">
+                      Subtask Info
+                    </span>
+                    <span className="text-xs text-zinc-400 [.theme-light_&]:text-zinc-500 truncate mt-0.5 font-normal">
+                      {subtask.title || 'Untitled subtask'}
+                    </span>
+                  </div>
+                </div>
 
-          {showActivityInfo ? (
-            <TaskInfoDrawer
-              task={subtask}
-              comments={richComments}
-              onClose={() => setShowActivityInfo(false)}
-              onPreviewImage={setLightboxImage}
-              workspaceUsers={workspaceUsers}
-              currentUser={currentUser}
-              isSubtask={true}
-            />
-          ) : (
-            <>
+                <div className="shrink-0 flex items-center gap-2">
+                  {(() => {
+                    const activeStatusName = localStatus || subtask.status || 'OPEN';
+                    const statusObj = listStatuses?.find(
+                      (s: any) => (s.name || s.title || s.status || '').trim().toUpperCase() === activeStatusName.trim().toUpperCase()
+                    );
+                    const hasCustomColor = !!statusObj?.color;
+                    const defaultClasses = STATUS_COLORS[(activeStatusName || '').toUpperCase()] || STATUS_COLORS[activeStatusName] || 'bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 [.theme-light_&]:bg-zinc-100 [.theme-light_&]:text-zinc-700 [.theme-light_&]:border-zinc-300';
+
+                    return (
+                      <span
+                        style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
+                        className={`px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-bold tracking-wider uppercase select-none shadow-sm ${
+                          hasCustomColor ? 'text-white' : defaultClasses
+                        }`}
+                      >
+                        {activeStatusName}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="subtask-activity-feed-header"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 [.theme-light_&]:border-zinc-200 shrink-0 flex items-center justify-between bg-card [.theme-light_&]:bg-white"
+              >
+                <h3 className="font-semibold text-sm text-zinc-200 [.theme-light_&]:text-zinc-900">Activity</h3>
+                <div className="flex gap-2.5 items-center">
+                  <span className="text-zinc-500 [.theme-light_&]:text-zinc-500 text-xs">Created {new Date(subtask.createdAt || Date.now()).toLocaleDateString()}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowActivityInfo(true)}
+                    title="Subtask Info (Media, Links & Tracker)"
+                    className="p-1.5 rounded-lg border transition-all cursor-pointer border-zinc-800 [.theme-light_&]:border-zinc-300 bg-zinc-800/40 [.theme-light_&]:bg-zinc-100 text-zinc-400 [.theme-light_&]:text-zinc-500 hover:text-zinc-200 [.theme-light_&]:hover:text-zinc-900 hover:bg-zinc-800 [.theme-light_&]:hover:bg-zinc-200"
+                  >
+                    <Info className="w-4 h-4" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence mode="wait" initial={false}>
+            {showActivityInfo ? (
+              <motion.div
+                key="subtask-info-drawer-panel"
+                initial={{ opacity: 0, x: 14 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 14 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="flex-1 flex flex-col min-h-0 overflow-hidden"
+              >
+                <TaskInfoDrawer
+                  task={subtask}
+                  comments={richComments}
+                  onClose={() => setShowActivityInfo(false)}
+                  onPreviewImage={setLightboxImage}
+                  workspaceUsers={workspaceUsers}
+                  currentUser={currentUser}
+                  isSubtask={true}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="subtask-activity-feed-panel"
+                initial={{ opacity: 0, x: -14 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -14 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="flex-1 flex flex-col min-h-0 overflow-hidden"
+              >
               <div
                 ref={activityScrollRef}
             onScroll={handleActivityScroll}
@@ -9717,9 +9935,10 @@ export function SubtaskDetailView({
               <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
             </div>
           </div>
-        </>
+        </motion.div>
       )}
-    </div >
+    </AnimatePresence>
+  </div>
       </div >
       {commentToDelete && (
         <ConfirmDeleteModal
